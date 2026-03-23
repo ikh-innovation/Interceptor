@@ -1,23 +1,22 @@
-# ---------------- EXPERIMENT CONFIG ----------------
-project_config = {
-    'name': 'v0',  # change on new experiment
-    'path': './data/dataset',
-    'runs': './runs',
-    'device': 'cuda'
-}
-
-# ---------------- TRAINING CONFIG ----------------
+'''
+Training config 
+'''
 training_config = {
-    'model': 'yolov8n.pt',
+    
+    'model': 'yolo26n.pt',
+    'device': 0,
     'epochs': 200,
+    'imgsz': 640,
     'batch': 32,
-    'size': 640
+    'yaml': './data/dataset/data.yaml',
+    'name': 'testing',
 }
 
-# ---------------- INFERENCE CONFIG ----------------
+'''
+Inference config
+'''
 inference_config = {
-    'weights': f"./runs/{project_config['name']}/weights/best.pt",
+    'weights': f"path",
     'confidence': 0.03,
-    'test_images': './data/dataset/test/images',
     'size': 640
 }
