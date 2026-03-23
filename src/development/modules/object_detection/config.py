@@ -3,13 +3,13 @@ Training config
 '''
 training_config = {
     
-    'model': 'yolo26n.pt',
+    'model': 'yolo26s.pt',
     'device': 0,
-    'epochs': 200,
+    'epochs': 300,
     'imgsz': 640,
     'batch': 32,
     'yaml': './data/dataset/data.yaml',
-    'name': 'testing',
+    'name': 'yolov26s_v0',
 }
 
 '''
