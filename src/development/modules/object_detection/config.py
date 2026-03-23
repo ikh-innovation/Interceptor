@@ -1,28 +1,23 @@
-'''
-EXPERIMENTS
-'''
-exp_config = {
-    'name':'v0', # change this on new run :)
-    'path':'./data',
-    'runs':'./runs'
+# ---------------- EXPERIMENT CONFIG ----------------
+project_config = {
+    'name': 'v0',  # change on new experiment
+    'path': './data/dataset',
+    'runs': './runs',
+    'device': 'cuda'
 }
 
-'''
-TRAINING
-'''
+# ---------------- TRAINING CONFIG ----------------
 training_config = {
-    'model':'yolov8n.pt',
-    'epochs': 250,
-    'batch': 16,
+    'model': 'yolov8n.pt',
+    'epochs': 200,
+    'batch': 32,
     'size': 640
 }
 
-'''
-INFERENCE
-'''
+# ---------------- INFERENCE CONFIG ----------------
 inference_config = {
-    'weights':f"./runs/{exp_config['name']}/weights/best.pt",
-    'confidence': 0.5,
-    'test_images':'./data/dataset/test/images',
-    'size':640
+    'weights': f"./runs/{project_config['name']}/weights/best.pt",
+    'confidence': 0.03,
+    'test_images': './data/dataset/test/images',
+    'size': 640
 }
