@@ -1,28 +1,22 @@
 '''
-EXPERIMENTS
-'''
-exp_config = {
-    'name':'v0', # change this on new run :)
-    'path':'./data',
-    'runs':'./runs'
-}
-
-'''
-TRAINING
+Training config 
 '''
 training_config = {
-    'model':'yolov8n.pt',
-    'epochs': 250,
-    'batch': 16,
-    'size': 640
+    
+    'model': 'yolo26n.pt',
+    'device': 0,
+    'epochs': 200,
+    'imgsz': 640,
+    'batch': 32,
+    'yaml': './data/dataset/data.yaml',
+    'name': 'testing',
 }
 
 '''
-INFERENCE
+Inference config
 '''
 inference_config = {
-    'weights':f"./runs/{exp_config['name']}/weights/best.pt",
-    'confidence': 0.5,
-    'test_images':'./data/dataset/test/images',
-    'size':640
+    'weights': f"path",
+    'confidence': 0.03,
+    'size': 640
 }
