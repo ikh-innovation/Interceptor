@@ -2,7 +2,6 @@ import sys
 sys.path.append('./')
 
 from ultralytics import YOLO
-
 from src.development.modules.object_detection.config import training_config
 
 class YOLOTrainer:
@@ -15,24 +14,34 @@ class YOLOTrainer:
         """
         self.device = device
         self.model = YOLO(model)
-        self.run_dir = None
 
     def train(self, 
               epochs: int,
               imgsz: int, 
               batch: int,
               yaml: str,
-              name: str):
+              name: str,
+              lr0: float = 0.01,
+              lrf: float = 0.01):
         """
-        Train model
+        Train model using fixed lr0 and lrf.
         """
+        print(f"Training with lr0={lr0}, lrf={lrf}")
         self.model.train(
             data=yaml,
             epochs=epochs,
             imgsz=imgsz,
             batch=batch,
             name=name,
-            device=self.device
+            device=self.device,
+            lr0=lr0,
+            lrf=lrf,
+            augment=True,
+            fliplr=0.5,    
+            flipud=0.1,    
+            mosaic=1.0,    
+            mixup=0.1,     
+            copy_paste=0.1 
         )
 
     def validate(self):
@@ -40,6 +49,7 @@ class YOLOTrainer:
         Validate the trained YOLO model and return metrics.
         """
         return self.model.val()
+
 
 if __name__ == "__main__":
 
@@ -52,7 +62,10 @@ if __name__ == "__main__":
         imgsz=params['imgsz'],
         batch=params['batch'],
         yaml=params['yaml'],
-        name=params['name']
-        )
-    
-    trainer.validate()
+        name=params['name'],
+        lr0=params.get('lr0', 0.01),
+        lrf=params.get('lrf', 0.01)
+    )
+
+    metrics = trainer.validate()
+    print(metrics)

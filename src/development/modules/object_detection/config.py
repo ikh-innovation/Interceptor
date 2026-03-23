@@ -9,7 +9,7 @@ training_config = {
     'imgsz': 640,
     'batch': 32,
     'yaml': './data/dataset/data.yaml',
-    'name': 'yolov26s_v0',
+    'name': 'v0',
 }
 
 '''
