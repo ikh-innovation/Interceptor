@@ -16,7 +16,7 @@ training_config = {
 Inference config
 '''
 inference_config = {
-    'weights': f"path",
-    'confidence': 0.03,
-    'size': 640
+    'weights': f"./runs/detect/{training_config['name']}/weights/best.pt",
+    'conf': 0.5,
+    'imgsz': 640,
 }
