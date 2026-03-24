@@ -210,5 +210,3 @@ __marimo__/
 # Project Interceptor
 /data
 /LRDDv2-4
-/runs
-*.pt

@@ -17,6 +17,6 @@ Inference config
 '''
 inference_config = {
     'weights': f"./runs/detect/{training_config['name']}/weights/best.pt",
-    'conf': 0.5,
+    'conf': 0.1,
     'imgsz': 640,
 }
