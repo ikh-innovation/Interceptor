@@ -40,7 +40,7 @@ class YoloVideoInferencer:
             )
 
             annotated = results[0].plot()
-            cv2.imshow("YOLO Video Inference", cv2.resize(annotated, (256, 256)))
+            cv2.imshow("YOLO Video Inference", cv2.resize(annotated, (1024, 1024)))
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
@@ -49,7 +49,7 @@ class YoloVideoInferencer:
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    path_video = "./data/videos_drones/10.mp4"
+    path_video = "./data/videos_shaheed/1.mp4"
 
     yolo_inferencer = YoloVideoInferencer(
         path_weights=inference_config['weights'],
