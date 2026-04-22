@@ -404,7 +404,6 @@ class DroneTracker:
                     self.layer = "KF-SKIP"
                 skip_tag = " [SKIP]"
 
-            # PX4 commands from pixel error
             if fused:
                 ex  = fused[0] - cx_f
                 ey  = fused[1] - cy_f
@@ -414,7 +413,6 @@ class DroneTracker:
 
             self._draw(frame, fused, roi)
 
-            # Console output
             timing = f"YOLO:{t_yolo:5.1f}ms  KF:{t_kf:.3f}ms  | total:{t_yolo+t_kf:5.1f}ms{skip_tag}"
             px4_str = PX4Commander.format(cmd, self.state)
             print(f"{timing}\n{px4_str}\n")
@@ -427,15 +425,11 @@ class DroneTracker:
         cv2.destroyAllWindows()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# ENTRY POINT
-# ══════════════════════════════════════════════════════════════════════════════
-
 if __name__ == "__main__":
     DroneTracker(
         model_path   = "./runs/detect/v0/weights/best.pt",
-        video_path   = "./data/videos_drones/15.mp4",
+        video_path   = "./data/videos_drones/10.mp4",
         conf_thresh  = 0.05,
         display_size = (640, 640),
-        skip_frames  = 0,   # 0=every frame  1=every 2nd  2=every 3rd ...
+        skip_frames  = 1,  
     ).run()
