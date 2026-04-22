@@ -67,9 +67,9 @@ class AutoLockTracker:
         self.missed = 0
 
         # thresholds
-        self.lost_thresh = 25
-        self.lock_radius = 12   # pixels
-        self.lock_frames = 10   # stability requirement
+        self.lost_thresh = 11
+        self.lock_radius = 5   # pixels
+        self.lock_frames = 3   # stability requirement
 
         self.lock_counter = 0
 
@@ -209,6 +209,6 @@ class AutoLockTracker:
 if __name__ == "__main__":
     app = AutoLockTracker(
         model_path="./runs/detect/v0/weights/best.pt",
-        video_path="./data/videos_shaheed/1.mp4"
+        video_path="./data/videos_drones/2.mp4"
     )
     app.run()

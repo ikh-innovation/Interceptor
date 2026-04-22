@@ -81,9 +81,9 @@ class AutoLockTracker:
         self.lock_counter = 0
 
         # PARAMETERS
-        self.lost_thresh = 25
-        self.lock_radius = 12
-        self.lock_frames = 10
+        self.lost_thresh = 3
+        self.lock_radius = 3
+        self.lock_frames = 3
 
     # =========================
     # DETECTION
