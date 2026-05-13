@@ -19,7 +19,7 @@ class CameraSubscriber(Node):
         # SUBSCRIBE TO CAMERA
         self.subscription = self.create_subscription(
             Image,
-            '/World/quadrotor/body/camera', #CHANGE THIS based on Camera name
+            '/World/quadrotorLookFollowCamera0', #CHANGE THIS based on Camera name
             self.image_callback,
             10
         )
