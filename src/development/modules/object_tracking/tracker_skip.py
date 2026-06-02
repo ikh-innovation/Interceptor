@@ -183,6 +183,9 @@ class DroneTracker:
         self.MISS_TO_PREDICT = 2
         self.MISS_TO_SEARCH  = 20
         self.MIN_ROI_HALF    = 50
+        self._t_yolo_sum = 0.0
+        self._t_kf_sum   = 0.0
+        self._t_frames   = 0
 
     # ──────────────────────────────────────────────────────────────────────────
     # YOLO
@@ -412,8 +415,15 @@ class DroneTracker:
                 cmd = dict(vx=0.0, vy=0.0, vz=0.0, yaw_rate=0.0)
 
             self._draw(frame, fused, roi)
+            self._t_yolo_sum += t_yolo
+            self._t_kf_sum   += t_kf
+            self._t_frames   += 1
 
-            timing = f"YOLO:{t_yolo:5.1f}ms  KF:{t_kf:.3f}ms  | total:{t_yolo+t_kf:5.1f}ms{skip_tag}"
+            n = self._t_frames
+            timing = (
+                f"YOLO:{t_yolo:5.1f}ms  KF:{t_kf:.3f}ms  | total:{t_yolo+t_kf:5.1f}ms{skip_tag}"
+                f"  [avg/{n}: YOLO:{self._t_yolo_sum/n:5.1f}  KF:{self._t_kf_sum/n:.3f}  total:{(self._t_yolo_sum+self._t_kf_sum)/n:5.1f}]"
+            )
             px4_str = PX4Commander.format(cmd, self.state)
             print(f"{timing}\n{px4_str}\n")
 
