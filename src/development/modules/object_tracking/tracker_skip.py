@@ -25,6 +25,9 @@ PX4 OFFBOARD output (MAVLink SET_POSITION_TARGET_LOCAL_NED, BODY_NED frame):
   yaw_r →  yaw_rate (rad/s, +CW)   from image horizontal error
 """
 
+import os
+os.environ.pop("SESSION_MANAGER", None)  # prevents ICE crash with Qt on domain-user sessions
+
 import cv2
 import numpy as np
 from time import perf_counter
@@ -438,8 +441,8 @@ class DroneTracker:
 if __name__ == "__main__":
     DroneTracker(
         model_path   = "./runs/detect/v0/weights/best.pt",
-        video_path   = "./data/videos_drones/10.mp4",
-        conf_thresh  = 0.05,
+        video_path   = "./data/videos_drones/field.MP4",
+        conf_thresh  = 0.3,
         display_size = (640, 640),
-        skip_frames  = 1,  
+        skip_frames  = 0,  
     ).run()
