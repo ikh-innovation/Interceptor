@@ -201,12 +201,23 @@ class PX4Commander:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class DroneTracker:
-    _WIN = "INTERCEPTOR DRONE TRACKER  [SKY + ADAPTIVE ZOOM]"
+    _WIN = "WASP DRONE TRACKER  [SKY + ADAPTIVE ZOOM]"
     _COLOR = {
         "SEARCH":  (0,   0,   255),
         "LOCK":    (0,   255, 0),
         "PREDICT": (0,   165, 255),
     }
+
+    # ── HUD palette (BGR) — clean targeting-system look ─────────────────────────
+    C_LOCK    = ( 96, 255, 120)   # locked: green
+    C_SEARCH  = ( 70, 180, 255)   # searching: amber
+    C_PREDICT = (230, 200, 100)   # coasting on Kalman: cyan
+    C_HUD     = (200, 230, 205)   # neutral chrome (lines, reticle, labels)
+    C_DIM     = (110, 120, 110)   # de-emphasised
+    C_WARN    = ( 70,  70, 240)   # red (lost / rejected)
+    C_INK     = ( 22,  26,  22)   # translucent panel fill
+    _ACCENT   = {"SEARCH": C_SEARCH, "LOCK": C_LOCK, "PREDICT": C_PREDICT}
+    _HUD_FONT = cv2.FONT_HERSHEY_DUPLEX
 
     # ── zoom-inset (picture-in-picture) ─────────────────────────────────────────
     INSET_SRC  = 100   # native-px window cropped around the detection
@@ -258,7 +269,8 @@ class DroneTracker:
         self.missed    = 0
         self.last_bbox = None
         self.pos       = None
-        self.layer     = "—"
+        self.layer     = "STANDBY"
+        self.conf      = None    # last detection confidence (for the HUD)
         self._frame_idx = 0
 
         self.sky_mask        = None
@@ -422,6 +434,7 @@ class DroneTracker:
             self.missed    = 0
             self.state     = "LOCK"
             fused          = (cx, cy)
+            self.conf      = float(conf)
             self.layer     = (f"ZOOM {conf:.2f}" if small else f"CLOSE {conf:.2f}")
         elif kf_pred and self.state != "SEARCH":
             self.missed += 1
@@ -446,20 +459,23 @@ class DroneTracker:
         self.missed    = 0
         self.last_bbox = None
         self.kalman    = KalmanTracker()
-        self.layer     = "—"
+        self.layer     = "STANDBY"
+        self.conf      = None
 
     # ──────────────────────────────────────────────────────────────────────────
     # VISUALISATION  (unchanged)
     # ──────────────────────────────────────────────────────────────────────────
 
-    def _draw_sky(self, frame):
+    def _draw_sky(self, frame, color):
         if self.sky_mask is None:
             return
         tint = frame.copy()
-        tint[self.sky_mask > 0] = (255, 120, 0)
-        cv2.addWeighted(tint, 0.18, frame, 0.82, 0, frame)
+        tint[self.sky_mask > 0] = (120, 90, 40)            # subtle cool wash
+        cv2.addWeighted(tint, 0.12, frame, 0.88, 0, frame)
+        # skyline drawn as a dashed line, matching the HUD's dashed style
         cnts, _ = cv2.findContours(self.sky_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(frame, cnts, -1, (255, 200, 0), 1, cv2.LINE_AA)
+        for c in cnts:
+            self._dashed_poly(frame, c, color, dash=8, gap=7, thick=1)
 
     def _draw_inset(self, frame, frame_full, pos):
         """Bottom-right picture-in-picture: a ~100x100 native-px window around
@@ -495,66 +511,189 @@ class DroneTracker:
         if y0 >= 0 and x0 >= 0:
             frame[y0:y0 + self.INSET_DISP, x0:x0 + self.INSET_DISP] = z
 
-    def _draw(self, frame, frame_full, pos, roi):
-        if self.show_sky:
-            self._draw_sky(frame)
+    # ── HUD primitives ──────────────────────────────────────────────────────────
 
-        color      = self._COLOR.get(self.state, (255, 255, 255))
+    @staticmethod
+    def _panel(frame, p1, p2, fill, alpha, border=None):
+        """Translucent filled rectangle with an optional 1px border."""
+        x1, y1 = p1; x2, y2 = p2
+        x1 = max(0, x1); y1 = max(0, y1)
+        x2 = min(frame.shape[1], x2); y2 = min(frame.shape[0], y2)
+        if x2 <= x1 or y2 <= y1:
+            return
+        sub = frame[y1:y2, x1:x2]
+        cv2.addWeighted(np.full_like(sub, fill), alpha, sub, 1 - alpha, 0, sub)
+        if border is not None:
+            cv2.rectangle(frame, (x1, y1), (x2 - 1, y2 - 1), border, 1, cv2.LINE_AA)
+
+    def _text(self, frame, txt, org, scale, color, thick=1, font=None):
+        """Anti-aliased text with a soft shadow for legibility over video."""
+        font = font or self._HUD_FONT
+        cv2.putText(frame, txt, (org[0] + 1, org[1] + 1), font, scale,
+                    (0, 0, 0), thick + 1, cv2.LINE_AA)
+        cv2.putText(frame, txt, org, font, scale, color, thick, cv2.LINE_AA)
+
+    @staticmethod
+    def _corner_box(frame, x1, y1, x2, y2, color, length=16, thick=2):
+        """Target bracket: only the four corners (targeting-system style)."""
+        L = max(5, int(min(length, (x2 - x1) / 2, (y2 - y1) / 2)))
+        for (cx, cy, sx, sy) in ((x1, y1, 1, 1), (x2, y1, -1, 1),
+                                 (x1, y2, 1, -1), (x2, y2, -1, -1)):
+            cv2.line(frame, (cx, cy), (cx + sx * L, cy), color, thick, cv2.LINE_AA)
+            cv2.line(frame, (cx, cy), (cx, cy + sy * L), color, thick, cv2.LINE_AA)
+
+    def _reticle(self, frame, cx, cy, color):
+        """Centre gunsight: gapped cross + dot."""
+        gap, arm = 9, 16
+        cv2.line(frame, (cx - gap - arm, cy), (cx - gap, cy), color, 1, cv2.LINE_AA)
+        cv2.line(frame, (cx + gap, cy), (cx + gap + arm, cy), color, 1, cv2.LINE_AA)
+        cv2.line(frame, (cx, cy - gap - arm), (cx, cy - gap), color, 1, cv2.LINE_AA)
+        cv2.line(frame, (cx, cy + gap), (cx, cy + gap + arm), color, 1, cv2.LINE_AA)
+        cv2.circle(frame, (cx, cy), 2, color, -1, cv2.LINE_AA)
+
+    @staticmethod
+    def _dashed(frame, p1, p2, color, dash=9, gap=7, thick=1):
+        p1 = np.array(p1, float); p2 = np.array(p2, float)
+        d = p2 - p1; L = float(np.hypot(*d))
+        if L < 1:
+            return
+        u = d / L
+        n = int(L // (dash + gap)) + 1
+        for i in range(n):
+            a = p1 + u * (i * (dash + gap))
+            b = p1 + u * min(i * (dash + gap) + dash, L)
+            cv2.line(frame, tuple(a.astype(int)), tuple(b.astype(int)),
+                     color, thick, cv2.LINE_AA)
+
+    @staticmethod
+    def _dashed_poly(frame, pts, color, dash=8, gap=7, thick=1):
+        """Dashed polyline that keeps a continuous dash pattern along a contour."""
+        pts = pts.reshape(-1, 2).astype(float)
+        if len(pts) < 2:
+            return
+        period = dash + gap
+        carry = 0.0                       # distance into the current dash/gap cycle
+        for i in range(1, len(pts)):
+            a, b = pts[i - 1], pts[i]
+            d = b - a
+            seg = float(np.hypot(*d))
+            if seg < 1e-6:
+                continue
+            u = d / seg
+            pos = 0.0
+            while pos < seg:
+                phase  = carry % period
+                remain = (dash - phase) if phase < dash else (period - phase)
+                step   = min(remain, seg - pos)
+                if phase < dash:
+                    p0 = a + u * pos
+                    p1 = a + u * (pos + step)
+                    cv2.line(frame, tuple(p0.astype(int)), tuple(p1.astype(int)),
+                             color, thick, cv2.LINE_AA)
+                pos   += step
+                carry += step
+
+    def _draw_frame_ticks(self, frame, color):
+        """Subtle bracket in each viewport corner — frames the scene."""
+        h, w = frame.shape[:2]
+        m, L = 6, 22
+        for (cx, cy, sx, sy) in ((m, m, 1, 1), (w - m, m, -1, 1),
+                                 (m, h - m, 1, -1), (w - m, h - m, -1, -1)):
+            cv2.line(frame, (cx, cy), (cx + sx * L, cy), color, 1, cv2.LINE_AA)
+            cv2.line(frame, (cx, cy), (cx, cy + sy * L), color, 1, cv2.LINE_AA)
+
+    # ── HUD panels ───────────────────────────────────────────────────────────────
+
+    def _draw_header(self, frame, accent):
+        w = frame.shape[1]
+        self._panel(frame, (0, 0), (w, 30), self.C_INK, 0.45)
+        cv2.line(frame, (0, 30), (w, 30), accent, 1, cv2.LINE_AA)
+
+        title = "WASP  //  SKY-TRACK"
+        self._text(frame, title, (12, 21), 0.5, self.C_HUD, 1)
+
+        # confidence next to the title (only while locked on)
+        if self.conf is not None and self.state == "LOCK":
+            (tw, _), _ = cv2.getTextSize(title, self._HUD_FONT, 0.5, 1)
+            self._text(frame, f"CONF {self.conf * 100:.0f}%",
+                       (12 + tw + 24, 21), 0.5, accent, 1)
+
+        # state chip, right-aligned
+        (sw, _), _ = cv2.getTextSize(self.state, self._HUD_FONT, 0.5, 1)
+        x0 = w - sw - 30
+        cv2.circle(frame, (x0 - 2, 15), 5, accent, -1, cv2.LINE_AA)
+        self._text(frame, self.state, (x0 + 10, 21), 0.5, accent, 1)
+
+    def _draw_telemetry(self, frame, cmd, pos, cx_f, cy_f):
+        h, w = frame.shape[:2]
+        x1, y1 = 10, h - 72
+        x2, y2 = min(w - 200, 360), h - 10   # stop short of the bottom-right inset
+        self._panel(frame, (x1, y1), (x2, y2), self.C_INK, 0.5, border=self.C_DIM)
+
+        tx = x1 + 12
+        self._text(frame, "TELEMETRY", (tx, y1 + 18), 0.42, self.C_DIM, 1)
+
+        # deviation / azimuth / elevation
+        if pos:
+            ex = pos[0] - cx_f; ey = pos[1] - cy_f
+            az = np.degrees(ex * (self.px4.H_FOV / self.fw))
+            el = np.degrees(-ey * (self.px4.V_FOV / self.fh))
+            dev = f"DEV {ex:+04d},{ey:+04d}px   AZ {az:+05.1f}  EL {el:+05.1f}"
+        else:
+            dev = "DEV  ----,----px   AZ  ----  EL  ----"
+        self._text(frame, dev, (tx, y1 + 38), 0.42, self.C_HUD, 1)
+
+        # PX4 command line
+        px4 = (f"vx {cmd['vx']:+.2f}  vy {cmd['vy']:+.2f}  "
+               f"vz {cmd['vz']:+.2f}  yaw {cmd['yaw_rate']:+.2f}")
+        self._text(frame, px4, (tx, y1 + 58), 0.42, self.C_HUD, 1)
+
+    # ── master draw ──────────────────────────────────────────────────────────────
+
+    def _draw(self, frame, frame_full, pos, roi, cmd):
         h, w       = frame.shape[:2]
         cx_f, cy_f = w // 2, h // 2
+        accent     = self._ACCENT.get(self.state, self.C_HUD)
 
-        cv2.drawMarker(frame, (cx_f, cy_f), (80, 80, 80),
-                       cv2.MARKER_CROSS, 20, 1, cv2.LINE_AA)
+        if self.show_sky:
+            self._draw_sky(frame, accent)
 
+        self._draw_frame_ticks(frame, self.C_DIM)
+        self._reticle(frame, cx_f, cy_f, self.C_HUD)
+
+        # search ROI while coasting on the Kalman filter
         if roi and self.state == "PREDICT":
-            cv2.rectangle(frame, (roi[0], roi[1]), (roi[2], roi[3]),
-                          (60, 60, 200), 1)
+            self._corner_box(frame, roi[0], roi[1], roi[2], roi[3], self.C_DIM, 10, 1)
 
         if pos:
             px, py = int(pos[0]), int(pos[1])
-            err_x  = px - cx_f
-            err_y  = py - cy_f
-            mag    = float(np.hypot(err_x, err_y))
 
-            if mag > 5:
-                arrow_len = min(mag * 0.55, 110)
-                nx = err_x / mag
-                ny = err_y / mag
-                tip = (int(cx_f + nx * arrow_len), int(cy_f + ny * arrow_len))
+            # designation line from boresight to target
+            self._dashed(frame, (cx_f, cy_f), (px, py), accent, thick=1)
 
-                if   mag < 30:  arrow_col = (0, 255, 0)
-                elif mag < 100: arrow_col = (0, 200, 255)
-                else:           arrow_col = (0, 60,  255)
-
-                cv2.arrowedLine(frame, (cx_f, cy_f), tip,
-                                arrow_col, 3, tipLength=0.25, line_type=cv2.LINE_AA)
-
-            cv2.line(frame, (cx_f, cy_f), (px, py), color, 1, cv2.LINE_AA)
-
-            if self.last_bbox:
-                bx, by, bw, bh = self.last_bbox
-                box_col = color if self.state == "LOCK" else (80, 80, 180)
-                cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), box_col, 2)
-
-            cv2.drawMarker(frame, (px, py), color,
-                           cv2.MARKER_CROSS, 24, 2, cv2.LINE_AA)
-
-            vx, vy = self.kalman.velocity()
-            if np.hypot(vx, vy) > 0.5:
-                tip_v = (int(px + vx * 8), int(py + vy * 8))
-                cv2.arrowedLine(frame, (px, py), tip_v,
-                                (0, 255, 255), 2, tipLength=0.4, line_type=cv2.LINE_AA)
-
+            # uncertainty gate when coasting
             if self.state == "PREDICT":
                 sx, sy = self.kalman.pos_sigma()
                 cv2.ellipse(frame, (px, py),
-                            (max(10, int(sx * 3)), max(10, int(sy * 3))),
-                            0, 0, 360, (80, 80, 255), 1, cv2.LINE_AA)
+                            (max(12, int(sx * 3)), max(12, int(sy * 3))),
+                            0, 0, 360, self.C_PREDICT, 1, cv2.LINE_AA)
 
-        cv2.putText(frame, self.state, (12, 36),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2, cv2.LINE_AA)
-        cv2.putText(frame, self.layer, (12, 62),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.58, (180, 180, 180), 1, cv2.LINE_AA)
+            # target bracket — scales with the box, stays visible for tiny drones
+            bw, bh = (self.last_bbox[2], self.last_bbox[3]) if self.last_bbox else (20, 20)
+            half   = max(16, max(bw, bh) // 2 + 8)
+            self._corner_box(frame, px - half, py - half, px + half, py + half,
+                             accent, length=min(16, half // 2), thick=2)
+            cv2.circle(frame, (px, py), 2, accent, -1, cv2.LINE_AA)
+
+            # velocity vector (thin lead indicator)
+            vx, vy = self.kalman.velocity()
+            if np.hypot(vx, vy) > 0.5:
+                tip = (int(px + vx * 8), int(py + vy * 8))
+                cv2.arrowedLine(frame, (px, py), tip, self.C_HUD, 1,
+                                tipLength=0.3, line_type=cv2.LINE_AA)
+
+        self._draw_header(frame, accent)
+        self._draw_telemetry(frame, cmd, pos, cx_f, cy_f)
 
         self._draw_inset(frame, frame_full, pos)
 
@@ -609,7 +748,7 @@ class DroneTracker:
             else:
                 cmd = dict(vx=0.0, vy=0.0, vz=0.0, yaw_rate=0.0)
 
-            self._draw(frame_disp, frame_full, fused, roi)
+            self._draw(frame_disp, frame_full, fused, roi, cmd)
 
             timing  = f"YOLO:{t_yolo:5.1f}ms  KF:{t_kf:.3f}ms  | total:{t_yolo+t_kf:5.1f}ms{skip_tag}"
             px4_str = PX4Commander.format(cmd, self.state)
@@ -630,5 +769,5 @@ if __name__ == "__main__":
         conf_thresh  = 0.01,
         display_size = (640, 640),
         skip_frames  = 0,
-        show_sky     = True,
+        show_sky     = False,
     ).run()
