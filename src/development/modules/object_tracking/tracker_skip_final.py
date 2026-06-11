@@ -771,3 +771,9 @@ if __name__ == "__main__":
         skip_frames  = 0,
         show_sky     = False,
     ).run()
+
+# MEETING NOTES
+#
+# ~ [HIGH PRIO] Pilot must focus on the use case from now on
+# ~ [HIGH PRIO] PX4 commands => Real Drone Turning => Plan
+# ~ [LOW  PRIO] Detections seem good. we need more.
