@@ -35,20 +35,28 @@ Zoom inset
 A bottom-right picture-in-picture shows a ~100x100 native-px window around the
 detection, magnified, so even a sub-pixel-on-screen drone is actually visible.
 
-Sky gate, Kalman and PX4 output are unchanged from tracker_skip_sky.py.
+Sky gate
+--------
+The sky mask is colour-thresholded (bright + blue/low-sat) and then refined with
+a ground-from-bottom pass: only a non-sky region that rises from the bottom edge
+of the frame counts as ground.  Dark/blue-ish blobs floating inside the sky are
+reclaimed as sky rather than rejected as ground, and sky-only footage yields no
+ground at all.  Kalman and PX4 output are unchanged from tracker_skip_sky.py.
 """
 
 import os
-os.environ.pop("SESSION_MANAGER", None)  # prevents ICE crash with Qt on domain-user sessions
+os.environ.pop("SESSION_MANAGER", None) 
 
 import cv2
 import numpy as np
+from collections import deque
+from pathlib import Path
 from time import perf_counter
 from ultralytics import YOLO
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SKY DETECTOR  (unchanged from tracker_skip_sky.py)
+# SKY DETECTOR  (color sky + ground-from-bottom reclaim)
 # ══════════════════════════════════════════════════════════════════════════════
 
 class SkyDetector:
@@ -61,6 +69,19 @@ class SkyDetector:
     SKY_FRAC      = 0.60
 
     TOP_BAND = 3
+
+    # ── ground-from-bottom reclaim ──────────────────────────────────────────────
+    # A non-sky region is only believed to be GROUND if its connected component
+    # rises from the BOTTOM of the frame.  Dark / blue-ish blobs that float
+    # inside the sky (haze, dark clouds, distant terrain on the horizon, codec
+    # noise) are NOT connected to that bottom mass, so they are reclaimed as SKY
+    # instead of being mistaken for ground — which is what used to make the
+    # sky-gate reject valid detections over them.
+    BOTTOM_BAND     = 3      # rows at the bottom edge that seed the ground mass
+    # Guard for sky-only footage: a non-sky blob that merely clips the bottom
+    # edge must cover at least this fraction of the frame to be trusted as real
+    # ground.  Below it the scene is treated as all-sky → no false ground.
+    GROUND_MIN_FRAC = 0.02
 
     def __init__(self):
         self._k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
@@ -79,12 +100,45 @@ class SkyDetector:
 
         n, labels = cv2.connectedComponents(sky)
         if n <= 1:
-            return np.zeros_like(sky)
-        top_labels = np.unique(labels[: self.TOP_BAND, :])
-        top_labels = top_labels[top_labels != 0]
-        if top_labels.size == 0:
-            return np.zeros_like(sky)
-        return np.isin(labels, top_labels).astype(np.uint8) * 255
+            top_sky = np.zeros_like(sky)
+        else:
+            top_labels = np.unique(labels[: self.TOP_BAND, :])
+            top_labels = top_labels[top_labels != 0]
+            top_sky = (np.isin(labels, top_labels).astype(np.uint8) * 255
+                       if top_labels.size else np.zeros_like(sky))
+
+        return self._reclaim_embedded_blobs(top_sky)
+
+    def _reclaim_embedded_blobs(self, sky):
+        """Treat as SKY any non-sky region that is not part of the ground mass.
+
+        Ground is modelled as the non-sky pixels connected to the BOTTOM edge of
+        the frame and large enough to be real terrain.  Everything that is not
+        that bottom-rising mass — dark blue-ish blobs nestled inside the sky
+        included — is reclaimed as sky, so the sky-gate stops rejecting
+        detections that sit over such blobs.  When no bottom-connected mass is
+        large enough (sky-only footage) the whole frame becomes sky and nothing
+        is ever flagged as ground.
+        """
+        Hm, Wm  = sky.shape
+        non_sky = (sky == 0).astype(np.uint8)
+
+        n, labels, stats, _ = cv2.connectedComponentsWithStats(non_sky)
+        if n <= 1:
+            return np.full_like(sky, 255)        # frame is entirely sky-coloured
+
+        band          = max(1, self.BOTTOM_BAND)
+        bottom_labels = np.unique(labels[Hm - band:, :])
+        bottom_labels = bottom_labels[bottom_labels != 0]
+
+        min_area = self.GROUND_MIN_FRAC * Hm * Wm
+        keep     = [lab for lab in bottom_labels
+                    if stats[lab, cv2.CC_STAT_AREA] >= min_area]
+
+        ground = np.isin(labels, keep) if keep else np.zeros(sky.shape, bool)
+        out    = np.where(ground, 0, 255).astype(np.uint8)
+        out[sky > 0] = 255                       # never drop genuine top sky
+        return out
 
     def background_is_sky(self, mask, bbox):
         x, y, w, h = bbox
@@ -245,12 +299,16 @@ class DroneTracker:
 
     def __init__(
         self,
-        model_path   = "./runs/detect/v0/weights/best.pt",
-        video_path   = "./data/videos_drones/10.mp4",
-        conf_thresh  = 0.05,
-        display_size = (640, 640),
-        skip_frames  = 0,
-        show_sky     = True,
+        model_path     = "./runs/detect/v0/weights/best.pt",
+        video_path     = "./data/videos_drones/10.mp4",
+        conf_thresh    = 0.05,
+        display_size   = (640, 640),
+        skip_frames    = 0,
+        show_sky       = True,
+        record_dir     = None,    
+        record_pad_sec = 2.0,    
+        headless       = False,   
+        max_frames     = None,  
     ):
         self.model        = YOLO(model_path)
         self.video_path   = video_path
@@ -259,6 +317,10 @@ class DroneTracker:
         self.fw, self.fh  = display_size
         self.skip_frames  = max(0, int(skip_frames))
         self.show_sky     = show_sky
+        self.record_dir     = record_dir
+        self.record_pad_sec = float(record_pad_sec)
+        self.headless       = headless
+        self.max_frames     = max_frames
 
         self.kalman  = KalmanTracker()
         self.px4     = PX4Commander()
@@ -270,7 +332,7 @@ class DroneTracker:
         self.last_bbox = None
         self.pos       = None
         self.layer     = "STANDBY"
-        self.conf      = None    # last detection confidence (for the HUD)
+        self.conf      = None    
         self._frame_idx = 0
 
         self.sky_mask        = None
@@ -402,7 +464,7 @@ class DroneTracker:
         roi      = None
         yolo_det = None
 
-        small = self._target_is_small()   # gates the zoom + CLAHE
+        small = self._target_is_small()  
 
         if self.state in ("LOCK", "PREDICT") and kf_pred:
             roi         = self._predict_roi()
@@ -410,8 +472,6 @@ class DroneTracker:
             yolo_det = self._detect_region(frame_full, self._roi_disp_to_native(roi),
                                            track_imgsz, enhance=(self.USE_CLAHE and small))
             if yolo_det is None:
-                # lost in the ROI → re-search the whole sky crop.  Use the
-                # high-res zoom only for a small target; a big one needs no zoom.
                 sky_bbox = self._sky_bbox_native()
                 if sky_bbox is not None:
                     srch_imgsz = self.IMGSZ_SEARCH if small else self.IMGSZ_TRACK
@@ -419,7 +479,6 @@ class DroneTracker:
                                                    srch_imgsz, enhance=(self.USE_CLAHE and small))
                 roi = None
         else:
-            # cold search: target size unknown → assume small, use the zoom
             sky_bbox = self._sky_bbox_native()
             if sky_bbox is not None:
                 yolo_det = self._detect_region(frame_full, sky_bbox,
@@ -452,7 +511,7 @@ class DroneTracker:
             self.layer = "GROUND-REJ" if self._ground_rejected else "LOST"
 
         self.pos = fused
-        return fused, t_kf, t_yolo, roi
+        return fused, t_kf, t_yolo, roi, (yolo_det is not None)
 
     def _reset(self):
         self.state     = "SEARCH"
@@ -470,9 +529,8 @@ class DroneTracker:
         if self.sky_mask is None:
             return
         tint = frame.copy()
-        tint[self.sky_mask > 0] = (120, 90, 40)            # subtle cool wash
+        tint[self.sky_mask > 0] = (120, 90, 40)            
         cv2.addWeighted(tint, 0.12, frame, 0.88, 0, frame)
-        # skyline drawn as a dashed line, matching the HUD's dashed style
         cnts, _ = cv2.findContours(self.sky_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for c in cnts:
             self._dashed_poly(frame, c, color, dash=8, gap=7, thick=1)
@@ -483,10 +541,8 @@ class DroneTracker:
         if pos is None or frame_full is None:
             return
         src = self.INSET_SRC
-        # detection centre in NATIVE coords (pos is in display coords)
         ncx = int(pos[0] * self.full_w / self.fw)
         ncy = int(pos[1] * self.full_h / self.fh)
-        # window, clamped to stay fully inside the native frame
         x1 = min(max(0, ncx - src // 2), max(0, self.full_w - src))
         y1 = min(max(0, ncy - src // 2), max(0, self.full_h - src))
         crop = frame_full[y1:y1 + src, x1:x1 + src]
@@ -496,7 +552,6 @@ class DroneTracker:
         z = cv2.resize(crop, (self.INSET_DISP, self.INSET_DISP),
                        interpolation=cv2.INTER_LINEAR)
         color = self._COLOR.get(self.state, (255, 255, 255))
-        # mark the detection centre inside the inset
         rel_x = int((ncx - x1) * self.INSET_DISP / src)
         rel_y = int((ncy - y1) * self.INSET_DISP / src)
         cv2.drawMarker(z, (rel_x, rel_y), color, cv2.MARKER_CROSS, 18, 1, cv2.LINE_AA)
@@ -572,7 +627,7 @@ class DroneTracker:
         if len(pts) < 2:
             return
         period = dash + gap
-        carry = 0.0                       # distance into the current dash/gap cycle
+        carry = 0.0                      
         for i in range(1, len(pts)):
             a, b = pts[i - 1], pts[i]
             d = b - a
@@ -612,28 +667,29 @@ class DroneTracker:
         title = "WASP  //  SKY-TRACK"
         self._text(frame, title, (12, 21), 0.5, self.C_HUD, 1)
 
-        # confidence next to the title (only while locked on)
-        if self.conf is not None and self.state == "LOCK":
-            (tw, _), _ = cv2.getTextSize(title, self._HUD_FONT, 0.5, 1)
-            self._text(frame, f"CONF {self.conf * 100:.0f}%",
-                       (12 + tw + 24, 21), 0.5, accent, 1)
+        (tw, _), _ = cv2.getTextSize(title, self._HUD_FONT, 0.5, 1)
+        self._text(frame, "IKH - DEFENSE LABS", (12 + tw + 20, 21),
+                   0.5, self.C_DIM, 1)
 
-        # state chip, right-aligned
         (sw, _), _ = cv2.getTextSize(self.state, self._HUD_FONT, 0.5, 1)
         x0 = w - sw - 30
         cv2.circle(frame, (x0 - 2, 15), 5, accent, -1, cv2.LINE_AA)
         self._text(frame, self.state, (x0 + 10, 21), 0.5, accent, 1)
 
+        if self.conf is not None and self.state == "LOCK":
+            ctxt = f"CONF {self.conf * 100:.0f}%"
+            (cw, _), _ = cv2.getTextSize(ctxt, self._HUD_FONT, 0.5, 1)
+            self._text(frame, ctxt, (x0 - cw - 18, 21), 0.5, accent, 1)
+
     def _draw_telemetry(self, frame, cmd, pos, cx_f, cy_f):
         h, w = frame.shape[:2]
         x1, y1 = 10, h - 72
-        x2, y2 = min(w - 200, 360), h - 10   # stop short of the bottom-right inset
+        x2, y2 = min(w - 200, 360), h - 10   
         self._panel(frame, (x1, y1), (x2, y2), self.C_INK, 0.5, border=self.C_DIM)
 
         tx = x1 + 12
         self._text(frame, "TELEMETRY", (tx, y1 + 18), 0.42, self.C_DIM, 1)
 
-        # deviation / azimuth / elevation
         if pos:
             ex = pos[0] - cx_f; ey = pos[1] - cy_f
             az = np.degrees(ex * (self.px4.H_FOV / self.fw))
@@ -643,7 +699,6 @@ class DroneTracker:
             dev = "DEV  ----,----px   AZ  ----  EL  ----"
         self._text(frame, dev, (tx, y1 + 38), 0.42, self.C_HUD, 1)
 
-        # PX4 command line
         px4 = (f"vx {cmd['vx']:+.2f}  vy {cmd['vy']:+.2f}  "
                f"vz {cmd['vz']:+.2f}  yaw {cmd['yaw_rate']:+.2f}")
         self._text(frame, px4, (tx, y1 + 58), 0.42, self.C_HUD, 1)
@@ -661,31 +716,26 @@ class DroneTracker:
         self._draw_frame_ticks(frame, self.C_DIM)
         self._reticle(frame, cx_f, cy_f, self.C_HUD)
 
-        # search ROI while coasting on the Kalman filter
         if roi and self.state == "PREDICT":
             self._corner_box(frame, roi[0], roi[1], roi[2], roi[3], self.C_DIM, 10, 1)
 
         if pos:
             px, py = int(pos[0]), int(pos[1])
 
-            # designation line from boresight to target
             self._dashed(frame, (cx_f, cy_f), (px, py), accent, thick=1)
 
-            # uncertainty gate when coasting
             if self.state == "PREDICT":
                 sx, sy = self.kalman.pos_sigma()
                 cv2.ellipse(frame, (px, py),
                             (max(12, int(sx * 3)), max(12, int(sy * 3))),
                             0, 0, 360, self.C_PREDICT, 1, cv2.LINE_AA)
 
-            # target bracket — scales with the box, stays visible for tiny drones
             bw, bh = (self.last_bbox[2], self.last_bbox[3]) if self.last_bbox else (20, 20)
             half   = max(16, max(bw, bh) // 2 + 8)
             self._corner_box(frame, px - half, py - half, px + half, py + half,
                              accent, length=min(16, half // 2), thick=2)
             cv2.circle(frame, (px, py), 2, accent, -1, cv2.LINE_AA)
 
-            # velocity vector (thin lead indicator)
             vx, vy = self.kalman.velocity()
             if np.hypot(vx, vy) > 0.5:
                 tip = (int(px + vx * 8), int(py + vy * 8))
@@ -706,8 +756,32 @@ class DroneTracker:
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open: {self.video_path}")
 
-        cv2.namedWindow(self._WIN, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self._WIN, *self.display_size)
+        src_fps = cap.get(cv2.CAP_PROP_FPS)
+        if not src_fps or src_fps != src_fps or src_fps <= 1:  
+            src_fps = 30.0
+
+        rec_on       = self.record_dir is not None
+        pad          = max(1, int(round(self.record_pad_sec * src_fps)))
+        pre_buf      = deque(maxlen=pad)  
+        writer       = None                
+        post_left    = 0                   
+        last_written = -1                 
+        n_windows    = 0                   
+        n_written    = 0                  
+        fourcc       = None
+        out_dir      = None
+        out_path     = None
+        if rec_on:
+            out_dir  = Path(self.record_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            fourcc   = cv2.VideoWriter_fourcc(*"mp4v")
+            out_path = out_dir / f"{Path(self.video_path).stem}_detections.mp4"
+            print(f"[REC] reel -> {out_path.resolve()}  | fps={src_fps:.2f}  "
+                  f"pad={pad}f (~{self.record_pad_sec:.1f}s each side)")
+
+        if not self.headless:
+            cv2.namedWindow(self._WIN, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(self._WIN, *self.display_size)
 
         period = self.skip_frames + 1
 
@@ -727,15 +801,16 @@ class DroneTracker:
             is_yolo_frame = (self._frame_idx % period == 0)
 
             if is_yolo_frame:
-                fused, t_kf, t_yolo, roi = self._process(frame_full, frame_disp)
+                fused, t_kf, t_yolo, roi, detected = self._process(frame_full, frame_disp)
                 skip_tag = ""
             else:
                 self.sky_mask = self.sky.mask(frame_disp)
                 t0    = perf_counter()
                 fused = self.kalman.predict() if self.kalman.initialized else None
                 t_kf  = (perf_counter() - t0) * 1000
-                t_yolo = 0.0
-                roi    = None
+                t_yolo   = 0.0
+                roi      = None
+                detected = False
                 if fused:
                     self.pos   = fused
                     self.layer = "KF-SKIP"
@@ -750,30 +825,61 @@ class DroneTracker:
 
             self._draw(frame_disp, frame_full, fused, roi, cmd)
 
+            if rec_on:
+                if detected:
+                    if post_left == 0:                      
+                        n_windows += 1
+                        if writer is None:                
+                            writer = cv2.VideoWriter(
+                                str(out_path), fourcc, src_fps,
+                                (frame_disp.shape[1], frame_disp.shape[0]))
+                        for i, f in pre_buf:                
+                            if i > last_written:
+                                writer.write(f); last_written = i; n_written += 1
+                        print(f"[REC] window {n_windows} @ frame {self._frame_idx} "
+                              f"(~{self._frame_idx / src_fps:.1f}s)")
+                    writer.write(frame_disp)
+                    last_written = self._frame_idx; n_written += 1
+                    post_left = pad                         
+                elif post_left > 0:                          
+                    writer.write(frame_disp)
+                    last_written = self._frame_idx; n_written += 1
+                    post_left -= 1
+                pre_buf.append((self._frame_idx, frame_disp.copy()))
+
             timing  = f"YOLO:{t_yolo:5.1f}ms  KF:{t_kf:.3f}ms  | total:{t_yolo+t_kf:5.1f}ms{skip_tag}"
             px4_str = PX4Commander.format(cmd, self.state)
             print(f"{timing}\n{px4_str}\n")
 
-            cv2.imshow(self._WIN, frame_disp)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+            if not self.headless:
+                cv2.imshow(self._WIN, frame_disp)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+
+            if self.max_frames is not None and self._frame_idx >= self.max_frames:
                 break
 
+        if writer is not None:
+            writer.release()
         cap.release()
-        cv2.destroyAllWindows()
+        if not self.headless:
+            cv2.destroyAllWindows()
+        if rec_on:
+            secs = n_written / src_fps
+            print(f"[REC] done — {n_windows} detection window(s), {n_written} frames "
+                  f"(~{secs:.1f}s) -> "
+                  f"{out_path.resolve() if out_path else out_dir.resolve()}")
 
 
 if __name__ == "__main__":
     DroneTracker(
-        model_path   = "./runs/detect/v0/weights/best.pt",
-        video_path   = "./data/videos_drones/field.MP4",
-        conf_thresh  = 0.01,
-        display_size = (640, 640),
-        skip_frames  = 0,
-        show_sky     = False,
+        model_path     = "./runs/detect/v0/weights/best.pt",
+        video_path     = "./data/videos_drones/field2.MP4",
+        conf_thresh    = 0.01,
+        display_size   = (640, 640),
+        skip_frames    = 0,
+        show_sky       = True,
+        record_dir     = "./captures",  
+        record_pad_sec = 5.0,
+        headless       = os.environ.get("TRACKER_HEADLESS") == "1",
     ).run()
-
-# MEETING NOTES
-#
-# ~ [HIGH PRIO] Pilot must focus on the use case from now on
-# ~ [HIGH PRIO] PX4 commands => Real Drone Turning => Plan
-# ~ [LOW  PRIO] Detections seem good. we need more.
