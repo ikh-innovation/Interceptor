@@ -1,5 +1,5 @@
 """
-tracker_skip_final.py  –  Drone Intercept Tracker  (SKY-GATED + ADAPTIVE ZOOM)
+tracker.py  –  Drone Intercept Tracker  (SKY-GATED + ADAPTIVE ZOOM)
 ==============================================================================
 Final tracker.  Detects SMALL / DISTANT drones in the sky that the plain
 640x640 pipeline misses, while staying lightweight on big/close targets.
