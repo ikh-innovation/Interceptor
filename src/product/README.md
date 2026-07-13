@@ -24,7 +24,7 @@ and adds a typed config + CLI so it can be deployed and tuned without editing co
 | Input              | video file only                     | video file, webcam, `/dev/videoN`, RTSP, GStreamer        |
 | Detection results  | —                                   | **unchanged** (same model call, thresholds, and pass order) |
 
-Latency win on Jetson: run with `--no-viz`. All HUD drawing is skipped entirely
+Latency win on Jetson: run with `viz_enabled=False`. All HUD drawing is skipped entirely
 (not just `imshow`), while detection/tracking/flight output stay bit‑for‑bit the same.
 
 ---
@@ -42,39 +42,48 @@ Validated on Python 3.11 with the pinned versions in `requirements.txt`.
 
 ## Quick start
 
-Run from the **repository root** (asset paths in `config.yaml` are relative to it):
+The entrypoint is the `Client` class in [`run.py`](run.py). Set the parameters you
+want in its `__main__` block and launch from the **repository root** (asset paths
+in `config.yaml` are relative to it):
 
 ```bash
-# Video file, with the targeting HUD window:
 python src/product/run.py
-
-# Live camera, headless + max performance (typical Jetson deployment):
-python src/product/run.py --source 0 --no-viz
-
-# Short offline smoke test, no window, summary only:
-python src/product/run.py --max-frames 60 --no-window --quiet
 ```
 
-Press `q` in the HUD window to quit.
+```python
+# Video file, with the targeting HUD window:
+Client(source="./data/videos_drones/field.MP4").run()
 
-## CLI
+# Live camera, headless + max performance (typical Jetson deployment):
+Client(source=0, viz_enabled=False).run()
 
-Every flag overrides the matching `config.yaml` value:
+# Short offline smoke test, no window, summary only:
+Client(max_frames=60, show_window=False, log_per_frame=False).run()
+```
 
-| Flag             | Effect                                                           |
+`Client` can also be imported and driven from your own script. Press `q` in the
+HUD window to quit.
+
+## Client parameters
+
+Every parameter left as `None` falls back to its `config.yaml` value; anything you
+pass overrides it. `config` selects the base config file.
+
+| Parameter        | Effect                                                          |
 | ---------------- | --------------------------------------------------------------- |
-| `--config PATH`  | Use a different config file                                      |
-| `--source S`     | Video file / `0` / `/dev/videoN` / `rtsp://…` / GStreamer string |
-| `--model PATH`   | YOLO weights                                                    |
-| `--conf F`       | Confidence acceptance threshold                                 |
-| `--skip-frames N`| Detection rate = `fps / (N + 1)`                                |
-| `--max-frames N` | Stop after N frames                                             |
-| `--mav-device D` | e.g. `/dev/ttyACM0`; unset ⇒ offline, commands print‑only       |
-| `--no-viz`       | Disable HUD + window (fastest)                                  |
-| `--no-window`    | Keep HUD, skip `imshow`                                         |
-| `--no-log`       | Disable all logging                                             |
-| `--quiet`        | Per‑frame logs off, keep the summary                           |
-| `--log-level L`  | `INFO` (default), `DEBUG`, …                                    |
+| `config`         | Path to the base config file                                    |
+| `source`         | Video file / `0` / `/dev/videoN` / `rtsp://…` / GStreamer string |
+| `model`          | YOLO weights                                                    |
+| `conf_thresh`    | Confidence acceptance threshold                                 |
+| `skip_frames`    | Detection rate = `fps / (N + 1)`                                |
+| `max_frames`     | Stop after N frames                                             |
+| `mav_device`     | e.g. `/dev/ttyACM0`; `None` ⇒ offline, commands print‑only      |
+| `mav_baud`       | MAVLink baud rate                                               |
+| `viz_enabled`    | `False` disables HUD + window (fastest)                         |
+| `show_window`    | `False` keeps the HUD but skips `imshow`                        |
+| `log_enabled`    | `False` disables all logging                                    |
+| `log_per_frame`  | `False` keeps only the end‑of‑stream summary                    |
+| `log_level`      | `INFO` (default), `DEBUG`, …                                    |
 
 ## Logging
 
@@ -83,11 +92,11 @@ layer, YOLO/Kalman timing, fused pixel position, and the outgoing flight command
 at end of stream it prints a summary (frames, detection rate, throughput, YOLO
 latency mean/min/max/std, state histogram). Stats are computed with O(1) memory,
 so it is safe on an indefinitely long live stream. Toggle with `logging.enabled`
-/ `logging.per_frame` in the config or `--no-log` / `--quiet`.
+/ `logging.per_frame` in the config or `log_enabled` / `log_per_frame` on `Client`.
 
 ## Camera sources
 
-`--source` accepts:
+`source` accepts:
 
 - a **file path** (`./data/videos_drones/field.MP4`)
 - a **webcam index** (`0`)
@@ -112,9 +121,9 @@ but nothing is transmitted.
 
 - Install **torch/torchvision from NVIDIA's JetPack wheels** — do not pip‑install
   the desktop pins. Use the CUDA‑enabled OpenCV bundled with JetPack.
-- Run with `--no-viz` (and `--quiet` if stdout is slow).
+- Run with `viz_enabled=False` (and `log_per_frame=False` if stdout is slow).
 - Keep `detection.warmup: true` so the first frame does not pay CUDA init latency.
-- For the CSI camera pass an `nvarguscamerasrc` GStreamer pipeline to `--source`.
+- For the CSI camera pass an `nvarguscamerasrc` GStreamer pipeline as `source`.
 
 ## Layout
 
