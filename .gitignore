@@ -211,3 +211,6 @@ __marimo__/
 /data
 /captures
 /LRDDv2-4
+
+# Generated cheatsheet doc (rebuild locally, do not commit)
+src/development/modules/object_tracking/ARDUPILOT_CHEATSHEET.pdf
