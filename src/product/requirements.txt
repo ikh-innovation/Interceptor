@@ -1,0 +1,19 @@
+# WASP tracker — production dependencies (pinned to the validated environment).
+# Python 3.11.  Install into a clean venv:  python -m venv .venv && . .venv/bin/activate
+#   pip install -r requirements.txt
+
+ultralytics==8.4.24
+opencv-python==4.13.0.92
+numpy==2.3.5
+pymavlink==2.4.49
+PyYAML==6.0.3
+
+# PyTorch — required by ultralytics.
+# Desktop / x86 CUDA (validated):
+torch==2.10.0
+torchvision==0.25.0
+
+# NVIDIA Jetson (JetPack): do NOT pip-install the two lines above.
+# Torch/torchvision must come from NVIDIA's JetPack wheels for the board, and
+# use the OpenCV that ships with JetPack (CUDA-enabled) instead of opencv-python.
+# See README.md "Jetson deployment".

@@ -1,0 +1,69 @@
+# WASP tracker runtime configuration.
+# Paths are resolved against the current working directory (run from the repo root).
+
+model:
+  path: ./runs/detect/v0/weights/best.pt
+  conf_thresh: 0.01
+
+source:
+  # Video file, camera index (0), /dev/videoN, rtsp:// URL, or a GStreamer pipeline.
+  path: ./data/videos_drones/field.MP4
+  display_width: 640
+  display_height: 640
+  skip_frames: 0          # detection rate = camera_fps / (skip_frames + 1)
+  max_frames: null
+  camera_buffer_size: 1   # keep 1 for lowest live-camera latency
+
+detection:
+  imgsz_search: 1280      # high-res pass on the sky crop (small / distant target)
+  imgsz_track: 640        # ROI pass once a small target is locked
+  imgsz_close: 416        # cheap ROI pass for a big / close target
+  crop_pad: 24
+  big_obj_frac: 0.06      # box longer side > frac * frame height => "close"
+  use_clahe: false        # off: model trained on un-equalised footage
+  clahe_clip: 2.0
+  clahe_grid: 8
+  min_roi_half: 50
+  warmup: true            # prime CUDA before the first frame (Jetson latency)
+
+sky:
+  show: true
+  v_min: 150
+  s_max: 60
+  h_lo: 90
+  h_hi: 140
+  ring_pad_frac: 0.6
+  ring_pad_min: 12
+  sky_frac: 0.60
+  top_band: 3
+  bottom_band: 3
+  ground_min_frac: 0.02
+
+tracking:
+  miss_to_predict: 2
+  miss_to_search: 20
+
+control:
+  mav_device: null        # e.g. /dev/ttyACM0 ; null => offline, commands print-only
+  mav_baud: 115200
+  h_fov_deg: 90.0         # SET TO THE REAL DEPLOYED LENS FOV BEFORE FLIGHT
+  v_fov_deg: 90.0
+  k_yaw: 1.5
+  k_vz: 2.0
+  fwd_lock: 2.0
+  fwd_predict: 0.5
+  fwd_search: 0.0
+  max_yaw: 1.5
+  max_vz: 2.0
+  max_fwd: 3.0
+
+visualization:
+  enabled: true           # false => no HUD, no window (fastest; Jetson deploy)
+  show_window: true       # false => draw HUD but skip imshow
+  show_sky: true
+  show_inset: true
+
+logging:
+  enabled: true           # stdout only, never written to a file
+  per_frame: true         # false => only the end-of-stream summary
+  level: INFO
