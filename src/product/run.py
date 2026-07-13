@@ -24,6 +24,8 @@ class Client:
         log_enabled=None,
         log_per_frame=None,
         log_level=None,
+        log_sink=None,
+        log_dir=None,
     ):
         self.config = Config.load(config, {
             "source": source,
@@ -38,6 +40,8 @@ class Client:
             "log_enabled": log_enabled,
             "log_per_frame": log_per_frame,
             "log_level": log_level,
+            "log_sink": log_sink,
+            "log_dir": log_dir,
         })
         self.pipeline = TrackingPipeline(self.config)
 

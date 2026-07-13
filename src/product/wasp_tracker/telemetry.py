@@ -1,6 +1,8 @@
 import logging
 import sys
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from time import perf_counter
 from typing import Optional
 
@@ -44,10 +46,11 @@ class NullTrackerLogger(TrackerLogger):
         pass
 
 
-class ConsoleTrackerLogger(TrackerLogger):
-    def __init__(self, per_frame, level):
+class RecordingTrackerLogger(TrackerLogger):
+    def __init__(self, logger, per_frame, path=None):
         self.per_frame = per_frame
-        self._log = _stdout_logger(level)
+        self.path = path
+        self._log = logger
         self._meta = {}
         self._t0 = perf_counter()
         self._frames = 0
@@ -64,7 +67,8 @@ class ConsoleTrackerLogger(TrackerLogger):
         self._states = {}
         self._yolo_ms = [0, 0.0, 0.0, 0.0, 0.0]
         self._log.info(
-            "stream start | source=%s model=%s display=%sx%s skip=%s",
+            "run start | %s | source=%s model=%s display=%sx%s skip=%s",
+            datetime.now().isoformat(timespec="seconds"),
             meta.get("source"), meta.get("model"),
             meta.get("display_w"), meta.get("display_h"), meta.get("skip_frames"))
 
@@ -102,14 +106,16 @@ class ConsoleTrackerLogger(TrackerLogger):
             "────────────────────────────────────",
         ]
         self._log.info("\n".join(lines))
+        _close(self._log)
 
     def _format(self, record):
         tag = "YOLO" if record.is_yolo else "SKIP"
+        det = "DET" if record.detected else "---"
         pos = f"{record.pos[0]:>4},{record.pos[1]:>4}" if record.pos else "----,----"
         cmd = record.cmd
         tx = "TX" if record.sent else "HOLD"
         return (
-            f"f{record.frame_idx:06d} {tag} {record.state:<7} {record.layer:<14} "
+            f"f{record.frame_idx:06d} {tag} {det} {record.state:<7} {record.layer:<14} "
             f"yolo={record.t_yolo_ms:6.1f}ms kf={record.t_kf_ms:.3f}ms "
             f"pos={pos} "
             f"cmd[fwd{cmd['vx']:+.2f} lat{cmd['vy']:+.2f} vz{cmd['vz']:+.2f} yaw{cmd['yaw_rate']:+.3f}] {tx}"
@@ -121,19 +127,48 @@ class LoggerFactory:
     def create(config):
         if not config.enabled:
             return NullTrackerLogger()
-        return ConsoleTrackerLogger(config.per_frame, config.level)
+        to_stdout = config.sink in ("console", "both")
+        to_file = config.sink in ("file", "both") or not to_stdout
+        logger, path = _build_logger(config.level, to_stdout, to_file, config.log_dir)
+        if path is not None:
+            print(f"[LOG] run log -> {path}")
+        return RecordingTrackerLogger(logger, config.per_frame, path)
 
 
-def _stdout_logger(level):
+def _build_logger(level, to_stdout, to_file, log_dir):
     logger = logging.getLogger(_LOGGER_NAME)
+    _close(logger)
     logger.handlers.clear()
     logger.propagate = False
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(logging.Formatter("%(asctime)s.%(msecs)03d WASP %(message)s",
-                                            datefmt="%H:%M:%S"))
-    logger.addHandler(handler)
     logger.setLevel(getattr(logging, str(level).upper(), logging.INFO))
-    return logger
+
+    if to_stdout:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("%(asctime)s.%(msecs)03d WASP %(message)s",
+                                               datefmt="%H:%M:%S"))
+        logger.addHandler(handler)
+
+    path = None
+    if to_file:
+        directory = Path(log_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        base = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        path = directory / f"{base}.log"
+        suffix = 1
+        while path.exists():
+            path = directory / f"{base}_{suffix}.log"
+            suffix += 1
+        handler = logging.FileHandler(path, mode="w", encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s WASP %(message)s",
+                                               datefmt="%Y-%m-%d %H:%M:%S"))
+        logger.addHandler(handler)
+
+    return logger, path
+
+
+def _close(logger):
+    for handler in list(logger.handlers):
+        handler.close()
 
 
 def _welford(agg, x):

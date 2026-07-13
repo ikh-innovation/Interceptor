@@ -85,6 +85,8 @@ class LoggingConfig:
     enabled: bool = True
     per_frame: bool = True
     level: str = "INFO"
+    sink: str = "file"
+    log_dir: str = "logs"
 
 
 @dataclass
@@ -141,6 +143,8 @@ def _apply_overrides(cfg, overrides):
         "log_enabled": ("logging", "enabled"),
         "log_per_frame": ("logging", "per_frame"),
         "log_level": ("logging", "level"),
+        "log_sink": ("logging", "sink"),
+        "log_dir": ("logging", "log_dir"),
     }
     for key, value in overrides.items():
         if value is None or key not in routes:

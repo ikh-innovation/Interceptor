@@ -44,7 +44,8 @@ FrameSource ──▶ resize ──▶ SkyDetector.mask ──▶ FrameContext
 - **State machine** — `TargetTracker` owns the `SEARCH → LOCK → PREDICT` FSM and
   the Kalman lifecycle, keeping transition rules in one place.
 - **Observer** — `TrackerLogger` receives a `FrameRecord` each frame and a
-  summary at end of stream, decoupled from control flow.
+  summary at end of stream, decoupled from control flow; the factory picks the
+  sink (per-run file, console, or null).
 
 ## Module map
 
@@ -61,7 +62,7 @@ FrameSource ──▶ resize ──▶ SkyDetector.mask ──▶ FrameContext
 | `control/ardupilot.py`        | Centering control law + MAVLink link                       |
 | `visualization/renderer.py`   | Renderer interface, null renderer, factory                 |
 | `visualization/hud.py`        | Targeting HUD                                              |
-| `telemetry.py`                | Console / null logger + factory                            |
+| `telemetry.py`                | Per-run file / console / null logger + factory             |
 | `pipeline.py`                 | Orchestrator (Template Method)                             |
 
 ## "Same detections" guarantees

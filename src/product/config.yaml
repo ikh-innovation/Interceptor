@@ -64,6 +64,8 @@ visualization:
   show_inset: true
 
 logging:
-  enabled: true           # stdout only, never written to a file
+  enabled: true
   per_frame: true         # false => only the end-of-stream summary
   level: INFO
+  sink: file              # file | console | both
+  log_dir: logs           # per-run file: logs/run_<timestamp>.log (git-ignored)

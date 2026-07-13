@@ -19,7 +19,7 @@ and adds a typed config + CLI so it can be deployed and tuned without editing co
 | ------------------ | ----------------------------------- | --------------------------------------------------------- |
 | Structure          | one 1000‑line file                  | modular package, one responsibility per module            |
 | Visualization      | always drawn, `imshow` toggled      | fully optional Null‑renderer (zero cost when off)         |
-| Logging            | `print()` per frame                 | custom stdout logger, per‑frame **and** end‑of‑stream summary, optional |
+| Logging            | `print()` per frame                 | custom logger to a per‑run file (or stdout), per‑frame **and** end‑of‑stream summary, optional |
 | Config             | constants in the class              | `config.yaml` + typed dataclasses + CLI overrides         |
 | Input              | video file only                     | video file, webcam, `/dev/videoN`, RTSP, GStreamer        |
 | Detection results  | —                                   | **unchanged** (same model call, thresholds, and pass order) |
@@ -84,15 +84,26 @@ pass overrides it. `config` selects the base config file.
 | `log_enabled`    | `False` disables all logging                                    |
 | `log_per_frame`  | `False` keeps only the end‑of‑stream summary                    |
 | `log_level`      | `INFO` (default), `DEBUG`, …                                    |
+| `log_sink`       | `file` (default) / `console` / `both`                           |
+| `log_dir`        | Directory for per‑run log files (default `logs`)                |
 
 ## Logging
 
-The logger writes to **stdout only — never to a file**. Per frame it emits state,
-layer, YOLO/Kalman timing, fused pixel position, and the outgoing flight command;
-at end of stream it prints a summary (frames, detection rate, throughput, YOLO
-latency mean/min/max/std, state histogram). Stats are computed with O(1) memory,
-so it is safe on an indefinitely long live stream. Toggle with `logging.enabled`
-/ `logging.per_frame` in the config or `log_enabled` / `log_per_frame` on `Client`.
+By default each run writes its own timestamped file, **`logs/run_<timestamp>.log`**
+(the `logs/` directory is git‑ignored; the path is printed at start‑up). Per frame
+it records the frame index, `DET`/`---` detection flag, state, layer/confidence,
+YOLO + Kalman timing in ms, fused pixel position, and the outgoing flight command;
+at end of stream it appends a summary (frames, detection rate, throughput, YOLO
+latency mean/min/max/std, state histogram) — so the file tells the whole story of
+the video. Stats use O(1) memory, so it is safe on an indefinitely long live stream.
+
+- `logging.sink`: `file` (default) · `console` (stdout) · `both`
+- `logging.log_dir`: where per‑run files go (default `logs`)
+- `logging.per_frame`: `false` keeps only the summary
+- `logging.enabled`: `false` disables logging entirely
+
+Override per run on `Client` with `log_sink`, `log_dir`, `log_per_frame`,
+`log_enabled`, `log_level`.
 
 ## Camera sources
 
@@ -121,7 +132,7 @@ but nothing is transmitted.
 
 - Install **torch/torchvision from NVIDIA's JetPack wheels** — do not pip‑install
   the desktop pins. Use the CUDA‑enabled OpenCV bundled with JetPack.
-- Run with `viz_enabled=False` (and `log_per_frame=False` if stdout is slow).
+- Run with `viz_enabled=False` (and `log_per_frame=False` to skip per‑frame disk writes).
 - Keep `detection.warmup: true` so the first frame does not pay CUDA init latency.
 - For the CSI camera pass an `nvarguscamerasrc` GStreamer pipeline as `source`.
 
