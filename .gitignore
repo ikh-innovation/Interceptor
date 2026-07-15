@@ -209,3 +209,12 @@ __marimo__/
 
 # Project Interceptor
 /data
+/captures
+/LRDDv2-4
+
+# Generated cheatsheet doc (rebuild locally, do not commit)
+src/development/modules/object_tracking/ARDUPILOT_CHEATSHEET.pdf
+
+# WASP tracker per-run logs
+logs/
+src/product/logs/
