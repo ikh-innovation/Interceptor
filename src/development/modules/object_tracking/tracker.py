@@ -59,8 +59,11 @@ os.environ.pop("SESSION_MANAGER", None)
 
 import cv2
 import numpy as np
+from collections import deque
+from pathlib import Path
 from time import perf_counter
 from ultralytics import YOLO
+from dataclasses import dataclass
 
 try:
     from pymavlink import mavutil
@@ -389,7 +392,7 @@ class DroneTracker:
     INSET_DISP = 180   # on-screen size of the inset (square, bottom-right)
 
     # ── zoom / enhancement parameters ──────────────────────────────────────────
-    IMGSZ_SEARCH = 1280   # high-res inference on the sky crop (SMALL/far target)
+    IMGSZ_SEARCH = 640   # high-res inference on the sky crop (SMALL/far target)
     IMGSZ_TRACK  = 640    # ROI inference for a SMALL target once locked
     IMGSZ_CLOSE  = 416    # cheap ROI inference for a BIG/close target (no zoom)
     CROP_PAD     = 24     # native px of padding added around the sky bbox
@@ -410,12 +413,18 @@ class DroneTracker:
 
     def __init__(
         self,
-        model_path     = "./runs/detect/v0/weights/best.pt",
-        video_path     = "./data/videos_drones/10.mp4",
+        model_path      = "/runs/detect/v0/weights/best.pt",
+        video_path      = "/data/ClipExport.mp4",
+        # ── NEW: live camera ──────────────────────────────────────────────────
+        camera_pipeline = None,   # GStreamer pipeline string; if set, overrides video_path
+        camera_fps      = 30.0,   # fallback FPS when cap.get(CAP_PROP_FPS) returns 0
+        # ─────────────────────────────────────────────────────────────────────
         conf_thresh    = 0.05,
         display_size   = (640, 640),
         skip_frames    = 0,
         show_sky       = True,
+        record_dir     = None,
+        record_pad_sec = 2.0,
         headless       = False,
         max_frames     = None,
         mav_device     = None,      # e.g. "/dev/ttyACM0" (Jetson USB -> Lucid H7)
@@ -423,11 +432,15 @@ class DroneTracker:
     ):
         self.model        = YOLO(model_path)
         self.video_path   = video_path
+        self.camera_pipeline = camera_pipeline
+        self.camera_fps      = float(camera_fps)        
         self.conf_thresh  = conf_thresh
         self.display_size = display_size
         self.fw, self.fh  = display_size
         self.skip_frames  = max(0, int(skip_frames))
         self.show_sky     = show_sky
+        self.record_dir      = record_dir
+        self.record_pad_sec  = float(record_pad_sec)
         self.headless     = headless
         self.max_frames   = max_frames
 
@@ -908,6 +921,44 @@ class DroneTracker:
         self._draw_flightcmd(frame, cmd, pos, cx_f, cy_f, sent, accent)
 
         self._draw_inset(frame, frame_full, pos)
+        
+        
+    # ──────────────────────────────────────────────────────────────────────────
+    # CAPTURE FACTORY  ← new helper that opens the right source
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _open_capture(self):
+        """Open VideoCapture from either a GStreamer pipeline or a file path.
+
+        Returns (cap, src_fps, source_label).
+        """
+        if self.camera_pipeline is not None:
+            print(f"[CAP] Opening GStreamer pipeline:\n      {self.camera_pipeline}")
+            cap = cv2.VideoCapture(self.camera_pipeline, cv2.CAP_GSTREAMER)
+            if not cap.isOpened():
+                raise RuntimeError(
+                    "Cannot open GStreamer pipeline.  Check that:\n"
+                    "  • OpenCV was built with GStreamer support\n"
+                    "  • nvarguscamerasrc / nvvidconv are available on this device\n"
+                    "  • sensor-id is correct\n"
+                    f"Pipeline: {self.camera_pipeline}"
+                )
+            # GStreamer appsink usually reports 0 for FPS — fall back to caller's value
+            reported = cap.get(cv2.CAP_PROP_FPS)
+            src_fps  = reported if (reported and reported == reported and reported > 1) \
+                       else self.camera_fps
+            label = f"camera (pipeline, ~{src_fps:.1f} fps)"
+        else:
+            print(f"[CAP] Opening file: {self.video_path}")
+            cap = cv2.VideoCapture(self.video_path)
+            if not cap.isOpened():
+                raise RuntimeError(f"Cannot open: {self.video_path}")
+            reported = cap.get(cv2.CAP_PROP_FPS)
+            src_fps  = reported if (reported and reported == reported and reported > 1) \
+                       else 30.0
+            label = f"file ({self.video_path}, {src_fps:.1f} fps)"
+
+        return cap, src_fps, label
 
     # ──────────────────────────────────────────────────────────────────────────
     # MAIN LOOP
@@ -917,9 +968,33 @@ class DroneTracker:
         # Fail loudly BEFORE flight if the link is dead or the firmware is wrong.
         self.ap.connect()
 
-        cap = cv2.VideoCapture(self.video_path)
-        if not cap.isOpened():
-            raise RuntimeError(f"Cannot open: {self.video_path}")
+        cap, src_fps, source_label = self._open_capture()
+        print(f"[RUN] Source: {source_label}")
+            
+        # ── recording setup ────────────────────────────────────────────────────
+        rec_on       = self.record_dir is not None
+        pad          = max(1, int(round(self.record_pad_sec * src_fps)))
+        pre_buf      = deque(maxlen=pad)
+        writer       = None
+        post_left    = 0
+        last_written = -1
+        n_windows    = 0
+        n_written    = 0
+        fourcc       = None
+        out_dir      = None
+        out_path     = None            
+
+        if rec_on:
+            out_dir = Path(self.record_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            # derive a sensible filename regardless of whether we have a file path
+            stem = (Path(self.video_path).stem
+                    if self.camera_pipeline is None
+                    else "camera_live")
+            out_path = out_dir / f"{stem}_detections.mp4"
+            print(f"[REC] reel -> {out_path.resolve()}  | fps={src_fps:.2f}  "
+                  f"pad={pad}f (~{self.record_pad_sec:.1f}s each side)")            
 
         if not self.headless:
             cv2.namedWindow(self._WIN, cv2.WINDOW_NORMAL)
@@ -979,6 +1054,24 @@ class DroneTracker:
                 sent_tag = " [no send]"
 
             self._draw(frame_disp, frame_full, fused, roi, cmd, is_yolo_frame)
+          
+            # ── detection-gated recording ──────────────────────────────────────
+            if rec_on:
+               if post_left == 0:
+                   n_windows += 1
+                   if writer is None:
+                       writer = cv2.VideoWriter(
+                           str(out_path), fourcc, src_fps,
+                           (frame_disp.shape[1], frame_disp.shape[0]))
+                   for i, f in pre_buf:
+                       if i > last_written:
+                           writer.write(f); last_written = i; n_written += 1
+                   print(f"[REC] window {n_windows} @ frame {self._frame_idx} "
+                         f"(~{self._frame_idx / src_fps:.1f}s)")
+               writer.write(frame_disp)
+               last_written = self._frame_idx; n_written += 1
+               post_left = pad
+               pre_buf.append((self._frame_idx, frame_disp.copy()))            
 
             timing  = f"YOLO:{t_yolo:5.1f}ms  KF:{t_kf:.3f}ms  | total:{t_yolo+t_kf:5.1f}ms{skip_tag}"
             cmd_str = ArduPilotCommander.format(cmd, self.state) + sent_tag
@@ -993,19 +1086,129 @@ class DroneTracker:
                 break
 
         self.ap.close()        # sends a final all-stop, then closes the link
+        if writer is not None:
+            writer.release()
         cap.release()
         if not self.headless:
             cv2.destroyAllWindows()
 
+        if rec_on:
+            secs = n_written / src_fps
+            print(f"[REC] done — {n_windows} detection window(s), {n_written} frames "
+                  f"(~{secs:.1f}s) -> "
+                  f"{out_path.resolve() if out_path else out_dir.resolve()}")            
+
+def env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.lower() in ("1", "true", "yes", "on")
+
+
+@dataclass
+class CameraConfig:
+    # Camera selection
+    sensor_id: int = int(os.getenv("CAM_SENSOR_ID", "0"))
+    sensor_mode: int = int(os.getenv("CAM_SENSOR_MODE", "0"))
+
+    # Video mode
+    width: int = int(os.getenv("CAM_WIDTH", "1280"))
+    height: int = int(os.getenv("CAM_HEIGHT", "720"))
+    fps: int = int(os.getenv("CAM_FPS", "30"))
+
+    # Image orientation
+    flip_method: int = int(os.getenv("CAM_FLIP_METHOD", "0"))
+
+    # Auto/manual controls
+    ae_lock: bool = env_bool("CAM_AE_LOCK", False)
+    awb_lock: bool = env_bool("CAM_AWB_LOCK", False)
+
+    exposure_us: int = int(os.getenv("CAM_EXPOSURE_US", "0"))
+    gain: float = float(os.getenv("CAM_GAIN", "0"))
+    digital_gain: float = float(os.getenv("CAM_DIGITAL_GAIN", "0"))
+
+    # Image processing
+    tnr_mode: int = int(os.getenv("CAM_TNR_MODE", "1"))
+    tnr_strength: float = float(os.getenv("CAM_TNR_STRENGTH", "0.5"))
+
+    ee_mode: int = int(os.getenv("CAM_EE_MODE", "1"))
+    ee_strength: float = float(os.getenv("CAM_EE_STRENGTH", "0.5"))
+
+    # Appsink
+    drop: bool = env_bool("CAM_DROP", True)
+    max_buffers: int = int(os.getenv("CAM_MAX_BUFFERS", "1"))
+    sync: bool = env_bool("CAM_SYNC", False)
+
+
+def make_pipeline(cfg: CameraConfig) -> str:
+    props = [
+        f"sensor-id={cfg.sensor_id}",
+        f"sensor-mode={cfg.sensor_mode}",
+        f"tnr-mode={cfg.tnr_mode}",
+        f"tnr-strength={cfg.tnr_strength}",
+        f"ee-mode={cfg.ee_mode}",
+        f"ee-strength={cfg.ee_strength}",
+    ]
+
+    if cfg.ae_lock:
+        props.append("aelock=true")
+
+    if cfg.awb_lock:
+        props.append("awblock=true")
+
+    # Manual exposure
+    if cfg.exposure_us > 0:
+        props.append(
+            f'exposuretimerange="{cfg.exposure_us} {cfg.exposure_us}"'
+        )
+
+    # Manual analog gain
+    if cfg.gain > 0:
+        props.append(f'gainrange="{cfg.gain} {cfg.gain}"')
+
+    # Manual digital gain
+    if cfg.digital_gain > 0:
+        props.append(
+            f'ispdigitalgainrange="{cfg.digital_gain} {cfg.digital_gain}"'
+        )
+
+    pipeline = (
+        f"nvarguscamerasrc {' '.join(props)} ! "
+        f"video/x-raw(memory:NVMM), "
+        f"width={cfg.width}, "
+        f"height={cfg.height}, "
+        f"framerate={cfg.fps}/1 ! "
+        f"nvvidconv flip-method={cfg.flip_method} ! "
+        f"video/x-raw, format=BGRx ! "
+        f"videoconvert ! "
+        f"video/x-raw, format=BGR ! "
+        f"appsink "
+        f"drop={'1' if cfg.drop else '0'} "
+        f"max-buffers={cfg.max_buffers} "
+        f"sync={'true' if cfg.sync else 'false'}"
+    )
+
+    return pipeline
+
+
+# -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    cam_cfg = CameraConfig()
+    CAP_PIPELINE = make_pipeline(cam_cfg)
+
     DroneTracker(
         model_path   = "./runs/detect/v0/weights/best.pt",
-        video_path   = "./data/videos_drones/field.MP4",
+        camera_pipeline=CAP_PIPELINE,
+        camera_fps=cam_cfg.fps,
+        # --- FILE MODE (comment out camera_pipeline above, uncomment below) ---
+        # video_path   = "./data/videos_drones/field.MP4",
         conf_thresh  = 0.01,
         display_size = (640, 640),
         skip_frames  = 0,
         show_sky     = True,
+        record_dir      = "./captures",
+        record_pad_sec  = 5.0,
         headless     = os.environ.get("TRACKER_HEADLESS") == "1",
         # On the Jetson set MAV_DEVICE=/dev/ttyACM0 (USB bench link to the
         # Lucid H7) or the UART device (FC side: SERIALn_PROTOCOL = 2).
