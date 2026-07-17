@@ -69,3 +69,27 @@ logging:
   level: INFO
   sink: file              # file | console | both
   log_dir: logs           # per-run file: logs/run_<timestamp>.log (git-ignored)
+
+camera:
+  sensor_id: 0
+  sensor_mode: 0
+  width: 1920
+  height: 1080
+  fps: 30
+  flip_method: 0
+  ae_lock: false
+  awb_lock: false
+  exposure_us: 10000
+  gain: 1.0
+  digital_gain: 1.0
+  tnr_mode: 1
+  tnr_strength: 0.5
+  ee_mode: 1
+  ee_strength: 0.5
+  drop: true
+  max_buffers: 1
+  sync: false
+
+source:
+  path: csi
+  camera_buffer_size: 1

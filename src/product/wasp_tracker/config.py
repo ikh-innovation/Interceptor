@@ -88,6 +88,39 @@ class LoggingConfig:
     sink: str = "file"
     log_dir: str = "logs"
 
+@dataclass
+class CameraConfig:
+    # Camera selection
+    sensor_id: int = 0
+    sensor_mode: int = 0
+
+    # Video mode
+    width: int = 1280
+    height: int = 720
+    fps: int = 30
+
+    # Image orientation
+    flip_method: int = 0
+
+    # Auto/manual controls
+    ae_lock: bool = False
+    awb_lock: bool = False
+
+    exposure_us: int = 0
+    gain: float = 0.0
+    digital_gain: float = 0.0
+
+    # Image processing
+    tnr_mode: int = 1
+    tnr_strength: float = 0.5
+
+    ee_mode: int = 1
+    ee_strength: float = 0.5
+
+    # Appsink
+    drop: bool = True
+    max_buffers: int = 1
+    sync: bool = False
 
 @dataclass
 class Config:
@@ -99,6 +132,7 @@ class Config:
     control: ControlConfig = field(default_factory=ControlConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    camera: CameraConfig = field(default_factory=CameraConfig)
 
     @classmethod
     def load(cls, path=None, overrides=None):

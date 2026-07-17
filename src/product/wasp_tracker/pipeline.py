@@ -25,7 +25,7 @@ class TrackingPipeline:
         self.planner = DetectionPlanner(self.detector, config.detection)
         self.tracker = TargetTracker(config.tracking, config.detection.big_obj_frac)
         self.commander = ArduPilotCommander(config.control)
-        self.source = FrameSourceFactory.create(config.source)
+        self.source = FrameSourceFactory.create(config.source, config.camera)
         self.renderer = RendererFactory.create(config.visualization, self.commander,
                                                config.source.skip_frames)
         self.logger = LoggerFactory.create(config.logging)
