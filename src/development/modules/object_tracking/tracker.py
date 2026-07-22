@@ -61,7 +61,7 @@ import cv2
 import numpy as np
 from collections import deque
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, sleep
 from ultralytics import YOLO
 from dataclasses import dataclass
 from huggingface_hub import hf_hub_download
@@ -446,25 +446,19 @@ class DroneTracker:
     # what recovers small drones here.  Flip this to True only if you retrain /
     # fine-tune the model on contrast-enhanced data.
     USE_CLAHE    = False  # contrast-boost the crop before inference
-    model_pth = hf_hub_download(
-            repo_id="iitolstykh/YOLO-Face-Person-Detector",
-            filename="yolov8x_person_face.pt",
-            repo_type="model"
-    )
 
     def __init__(
         self,
-        #model_path      = "/runs/detect/v0/weights/best.pt",
-        model_path = model_pth,
-        video_path      = "/data/ClipExport.mp4",
-        # ── NEW: live camera ──────────────────────────────────────────────────
-        camera_pipeline = None,   # GStreamer pipeline string; if set, overrides video_path
+        model_path      = "/runs/detect/v0/weights/best.pt",
+        # ── live camera (GStreamer pipeline, required) ────────────────────────
+        camera_pipeline = None,   # GStreamer pipeline string
         camera_fps      = 30.0,   # fallback FPS when cap.get(CAP_PROP_FPS) returns 0
         # ─────────────────────────────────────────────────────────────────────
         conf_thresh    = 0.05,
         display_size   = (640, 640),
         skip_frames    = 0,
         show_sky       = True,
+        use_sky_mask   = True,    # False → detect on the FULL frame (no sky gate/crop)
         record_dir     = None,
         record_pad_sec = 2.0,
         headless       = False,
@@ -473,7 +467,18 @@ class DroneTracker:
         mav_baud       = 115200,
     ):
         self.model        = YOLO(model_path)
-        self.video_path   = video_path
+        # Restrict detection to the "face" class only.  Resolve its class id from
+        # the model's own label map so it works regardless of index order
+        # (this model exposes e.g. {0: 'person', 1: 'face'}).
+        names = self.model.names
+        names = names if isinstance(names, dict) else dict(enumerate(names))
+        self.face_class = next(
+            (i for i, n in names.items() if "face" in str(n).lower()), None)
+        if self.face_class is None:
+            raise RuntimeError(
+                f"No 'face' class in model labels {names} — cannot detect faces.")
+        print(f"[MODEL] face-only detection: class {self.face_class} "
+              f"('{names[self.face_class]}'), max 1 object")
         self.camera_pipeline = camera_pipeline
         self.camera_fps      = float(camera_fps)        
         self.conf_thresh  = conf_thresh
@@ -481,6 +486,7 @@ class DroneTracker:
         self.fw, self.fh  = display_size
         self.skip_frames  = max(0, int(skip_frames))
         self.show_sky     = show_sky
+        self.use_sky_mask = use_sky_mask
         self.record_dir      = record_dir
         self.record_pad_sec  = float(record_pad_sec)
         self.headless     = headless
@@ -509,6 +515,11 @@ class DroneTracker:
         self.MISS_TO_PREDICT = 2
         self.MISS_TO_SEARCH  = 20
         self.MIN_ROI_HALF    = 50
+
+        # Jetson camera bring-up resilience (see _open_capture).
+        self.CAM_OPEN_RETRIES  = 5     # full pipeline re-opens on first-buffer failure
+        self.CAM_WARMUP_READS  = 30    # reads per attempt to catch the first good frame
+        self.CAM_RETRY_WAIT_S  = 0.8   # settle time between re-opens
 
     # ──────────────────────────────────────────────────────────────────────────
     # helpers
@@ -552,7 +563,9 @@ class DroneTracker:
         if enhance:
             crop = self._enhance(crop)
 
-        res = self.model(crop, imgsz=imgsz, verbose=False)
+        # classes=[face] → face detections only; max_det=1 → a single object.
+        res = self.model(crop, imgsz=imgsz, classes=[self.face_class],
+                         max_det=1, verbose=False)
         if not res or not res[0].boxes:
             return None
         boxes = res[0].boxes
@@ -576,7 +589,13 @@ class DroneTracker:
         return max(bw, bh) < self.fh * self.BIG_OBJ_FRAC
 
     def _sky_bbox_native(self):
-        """Bounding box of the sky mask, in native coords, padded."""
+        """Bounding box of the sky mask, in native coords, padded.
+
+        With the sky mask disabled, the search region is the entire frame so
+        YOLO detects anywhere in the image.
+        """
+        if not self.use_sky_mask:
+            return (0, 0, self.full_w, self.full_h)
         if self.sky_mask is None:
             return None
         ys, xs = np.where(self.sky_mask > 0)
@@ -619,7 +638,9 @@ class DroneTracker:
     # ──────────────────────────────────────────────────────────────────────────
 
     def _process(self, frame_full, frame_disp):
-        self.sky_mask = self.sky.mask(frame_disp)
+        # sky_mask None ⇒ no sky gate in _accept_box and full-frame region in
+        # _sky_bbox_native, i.e. YOLO runs on the whole image.
+        self.sky_mask = self.sky.mask(frame_disp) if self.use_sky_mask else None
         self._ground_rejected = False
 
         t0      = perf_counter()
@@ -970,35 +991,62 @@ class DroneTracker:
     # ──────────────────────────────────────────────────────────────────────────
 
     def _open_capture(self):
-        """Open VideoCapture from either a GStreamer pipeline or a file path.
+        """Open the live camera from its GStreamer pipeline.
 
         Returns (cap, src_fps, source_label).
         """
-        if self.camera_pipeline is not None:
-            print(f"[CAP] Opening GStreamer pipeline:\n      {self.camera_pipeline}")
+        if self.camera_pipeline is None:
+            raise RuntimeError("camera_pipeline is required (no capture source set).")
+
+        print(f"[CAP] Opening GStreamer pipeline:\n      {self.camera_pipeline}")
+        # On Jetson, nvarguscamerasrc intermittently fails to map the FIRST
+        # capture buffer ("NvBufSurfaceFromFd Failed" / "dmabuf_fd -1 mapped
+        # entry NOT found").  When it does, that error propagates and KILLS
+        # the source thread, so no frame ever arrives — retrying read() on the
+        # same handle is useless because the thread is already dead.  The only
+        # recovery is to tear the pipeline down and open a FRESH one; because
+        # the failure is a startup race it usually clears within a few tries.
+        cap  = None
+        warm = None
+        for attempt in range(self.CAM_OPEN_RETRIES):
             cap = cv2.VideoCapture(self.camera_pipeline, cv2.CAP_GSTREAMER)
-            if not cap.isOpened():
-                raise RuntimeError(
-                    "Cannot open GStreamer pipeline.  Check that:\n"
-                    "  • OpenCV was built with GStreamer support\n"
-                    "  • nvarguscamerasrc / nvvidconv are available on this device\n"
-                    "  • sensor-id is correct\n"
-                    f"Pipeline: {self.camera_pipeline}"
-                )
-            # GStreamer appsink usually reports 0 for FPS — fall back to caller's value
-            reported = cap.get(cv2.CAP_PROP_FPS)
-            src_fps  = reported if (reported and reported == reported and reported > 1) \
-                       else self.camera_fps
-            label = f"camera (pipeline, ~{src_fps:.1f} fps)"
-        else:
-            print(f"[CAP] Opening file: {self.video_path}")
-            cap = cv2.VideoCapture(self.video_path)
-            if not cap.isOpened():
-                raise RuntimeError(f"Cannot open: {self.video_path}")
-            reported = cap.get(cv2.CAP_PROP_FPS)
-            src_fps  = reported if (reported and reported == reported and reported > 1) \
-                       else 30.0
-            label = f"file ({self.video_path}, {src_fps:.1f} fps)"
+            if cap.isOpened():
+                # Warm up: pull frames until one arrives or the source dies.
+                for _ in range(self.CAM_WARMUP_READS):
+                    ok, warm = cap.read()
+                    if ok and warm is not None:
+                        break
+            if warm is not None:
+                if attempt:
+                    print(f"[CAP] camera came up on attempt {attempt + 1}")
+                break
+            # This attempt is dead — release and try a clean re-open.
+            cap.release()
+            cap = None
+            print(f"[CAP] no frames on attempt {attempt + 1}/"
+                  f"{self.CAM_OPEN_RETRIES} (NvBufSurfaceFromFd?) — reopening")
+            sleep(self.CAM_RETRY_WAIT_S)
+
+        if warm is None:
+            raise RuntimeError(
+                "GStreamer pipeline opened but delivered no frames after "
+                f"{self.CAM_OPEN_RETRIES} attempts.\n"
+                "  nvarguscamerasrc failed to map capture buffers "
+                "('NvBufSurfaceFromFd Failed').  Try, in order:\n"
+                "      sudo systemctl restart nvargus-daemon\n"
+                "      sudo reboot            # clears a wedged VI/NVCSI/Argus state\n"
+                "  Also confirm no other process holds the camera and that the\n"
+                "  CSI ribbon is seated.  Verify the stack independently with:\n"
+                "      gst-launch-1.0 nvarguscamerasrc sensor-id=0 num-buffers=30 ! "
+                "fakesink\n"
+                f"Pipeline: {self.camera_pipeline}"
+            )
+
+        # GStreamer appsink usually reports 0 for FPS — fall back to caller's value
+        reported = cap.get(cv2.CAP_PROP_FPS)
+        src_fps  = reported if (reported and reported == reported and reported > 1) \
+                   else self.camera_fps
+        label = f"camera (pipeline, ~{src_fps:.1f} fps)"
 
         return cap, src_fps, label
 
@@ -1039,11 +1087,7 @@ class DroneTracker:
             out_dir = Path(self.record_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            # derive a sensible filename regardless of whether we have a file path
-            stem = (Path(self.video_path).stem
-                    if self.camera_pipeline is None
-                    else "camera_live")
-            out_path = out_dir / f"{stem}_detections.mp4"
+            out_path = out_dir / "camera_live_detections.mp4"
             print(f"[REC] reel -> {out_path.resolve()}  | fps={src_fps:.2f}  "
                   f"pad={pad}f (~{self.record_pad_sec:.1f}s each side)")            
 
@@ -1071,7 +1115,7 @@ class DroneTracker:
             if is_yolo_frame:
                 fused, _, _, roi, _ = self._process(frame_full, frame_disp)
             else:
-                self.sky_mask = self.sky.mask(frame_disp)
+                self.sky_mask = self.sky.mask(frame_disp) if self.use_sky_mask else None
                 fused = self.kalman.predict() if self.kalman.initialized else None
                 roi   = None
                 if fused:
@@ -1165,7 +1209,15 @@ def env_bool(name: str, default: bool) -> bool:
 class CameraConfig:
     # Camera selection
     sensor_id: int = int(os.getenv("CAM_SENSOR_ID", "0"))
-    sensor_mode: int = int(os.getenv("CAM_SENSOR_MODE", "0"))
+    # Sensor mode MUST be able to produce the width/height/fps requested below.
+    # On the IMX219 the modes are:
+    #   0: 3280x2464@21  1: 3280x1848@28  2: 1920x1080@30
+    #   3: 1640x1232@30  4: 1280x720@60
+    # Mode 0 (full-res, 21 fps) cannot output 1280x720@30 — that mismatch makes
+    # nvarguscamerasrc fail with "Frame Rate specified is greater than supported"
+    # / InvalidState.  Default to mode 4, which matches the 720p defaults below.
+    # Set CAM_SENSOR_MODE=-1 to let Argus auto-select a mode from the caps.
+    sensor_mode: int = int(os.getenv("CAM_SENSOR_MODE", "4"))
 
     # Video mode
     width: int = int(os.getenv("CAM_WIDTH", "1280"))
@@ -1199,12 +1251,16 @@ class CameraConfig:
 def make_pipeline(cfg: CameraConfig) -> str:
     props = [
         f"sensor-id={cfg.sensor_id}",
-        f"sensor-mode={cfg.sensor_mode}",
         f"tnr-mode={cfg.tnr_mode}",
         f"tnr-strength={cfg.tnr_strength}",
         f"ee-mode={cfg.ee_mode}",
         f"ee-strength={cfg.ee_strength}",
     ]
+
+    # Pin the sensor mode only when explicitly chosen (>= 0).  A negative value
+    # means "let Argus auto-select the mode that satisfies the caps below".
+    if cfg.sensor_mode >= 0:
+        props.insert(1, f"sensor-mode={cfg.sensor_mode}")
 
     if cfg.ae_lock:
         props.append("aelock=true")
@@ -1252,17 +1308,22 @@ def make_pipeline(cfg: CameraConfig) -> str:
 if __name__ == "__main__":
     cam_cfg = CameraConfig()
     CAP_PIPELINE = make_pipeline(cam_cfg)
+    model_pth = hf_hub_download(
+        repo_id="iitolstykh/YOLO-Face-Person-Detector",
+        filename="yolov8x_person_face.pt",
+        repo_type="model"
+    )
 
     DroneTracker(
-        model_path   = "./runs/detect/v0/weights/best.pt",
+        #model_path   = "./runs/detect/v0/weights/best.pt",
+        model_path   = model_pth,
         camera_pipeline=CAP_PIPELINE,
         camera_fps=cam_cfg.fps,
-        # --- FILE MODE (comment out camera_pipeline above, uncomment below) ---
-        # video_path   = "./data/videos_drones/field.MP4",
         conf_thresh  = 0.01,
         display_size = (640, 640),
         skip_frames  = 0,
-        show_sky     = True,
+        show_sky     = False,
+        use_sky_mask = False,      # detect on the full frame, not just the sky region
         record_dir      = "./captures",
         record_pad_sec  = 5.0,
         headless     = os.environ.get("TRACKER_HEADLESS") == "1",
