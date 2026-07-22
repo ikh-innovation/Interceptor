@@ -64,6 +64,7 @@ from pathlib import Path
 from time import perf_counter
 from ultralytics import YOLO
 from dataclasses import dataclass
+from huggingface_hub import hf_hub_download
 
 try:
     from pymavlink import mavutil
@@ -445,10 +446,16 @@ class DroneTracker:
     # what recovers small drones here.  Flip this to True only if you retrain /
     # fine-tune the model on contrast-enhanced data.
     USE_CLAHE    = False  # contrast-boost the crop before inference
+    model_pth = hf_hub_download(
+            repo_id="iitolstykh/YOLO-Face-Person-Detector",
+            filename="yolov8x_person_face.pt",
+            repo_type="model"
+    )
 
     def __init__(
         self,
-        model_path      = "/runs/detect/v0/weights/best.pt",
+        #model_path      = "/runs/detect/v0/weights/best.pt",
+        model_path = model_pth,
         video_path      = "/data/ClipExport.mp4",
         # ── NEW: live camera ──────────────────────────────────────────────────
         camera_pipeline = None,   # GStreamer pipeline string; if set, overrides video_path
