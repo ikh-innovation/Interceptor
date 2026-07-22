@@ -61,7 +61,9 @@ import cv2
 import numpy as np
 from collections import deque
 from pathlib import Path
+import threading
 from time import perf_counter, sleep
+from datetime import datetime
 from ultralytics import YOLO
 from dataclasses import dataclass
 from huggingface_hub import hf_hub_download
@@ -273,37 +275,176 @@ class ArduPilotCommander:
     # Active:  velocity vx/vy/vz (bits 3-5) and yaw_rate (bit 11).
     TYPE_MASK = 0b010111000111       # 1479
 
-    def __init__(self, device=None, baud=115200):
-        self.device = device         # e.g. "/dev/ttyACM0"; None = print-only
-        self.baud   = baud
-        self.master = None
-        self._t0    = perf_counter()
+    def __init__(self, conn=None, baud=115200,
+                 source_system=1, source_component=191,
+                 send_hz=15.0, statustext_hz=2.0,
+                 no_face_behavior="search", no_face_timeout=2.0,
+                 gcs_mirror="udpout:127.0.0.1:14550",
+                 log_dir="/home/iknowhow/face_tracker/logs"):
+        # conn: pymavlink connection string.  Default deployment routes through
+        # mavlink-router/MAVProxy: "udpin:127.0.0.1:14551".  A serial path such
+        # as "/dev/ttyACM0" also works (baud used only then).  None = print-only.
+        #
+        # gcs_mirror: MAVProxy does NOT forward one --out link to another, so a
+        # GCS on 14550 never sees what we send on 14551.  To make tracker's
+        # commands visible in Mission Planner we ALSO send (STATUSTEXT + the
+        # setpoint) straight to the GCS port.  None disables the mirror.
+        self.conn             = conn
+        self.gcs_mirror       = gcs_mirror
+        self.baud             = baud
+        self.source_system    = int(source_system)      # 1  = vehicle system id
+        self.source_component = int(source_component)    # 191 = ONBOARD_COMPUTER
+        self.send_hz          = float(send_hz)
+        self.statustext_hz    = float(statustext_hz)
+        self.no_face_behavior = no_face_behavior         # "search"|"hover"|"stop"
+        self.no_face_timeout  = float(no_face_timeout)
+        self.log_dir          = log_dir
+
+        self.master  = None
+        self._mirror = None         # send-only link to the GCS (Mission Planner)
+        self.linked  = False        # True after the first VEHICLE heartbeat
+        self._mode   = None
+        self._guided = False
+        self._t0     = perf_counter()
+
+        # setpoint shared with the tx thread (main loop writes, tx thread reads)
+        self._lock        = threading.Lock()
+        self._cmd         = dict(vx=0.0, vy=0.0, vz=0.0, yaw_rate=0.0)
+        self._target_off  = None
+        self._last_face_t = 0.0
+
+        self._stop_evt  = threading.Event()
+        self._rx_thread = None
+        self._tx_thread = None
+        self._log_fh    = None
+        self._log_path  = None
+        self._last_stt  = 0.0
 
     # ── link ──────────────────────────────────────────────────────────────────
     def connect(self):
-        """Open the MAVLink link and verify the FC really runs ArduPilot."""
-        if self.device is None:
-            print("[MAV] no device configured — offline, commands are print-only")
+        """Open the MAVLink link (UDP via the router, or serial) and lock onto
+        the ArduPilot vehicle heartbeat, then start the rx/tx threads."""
+        if self.conn is None:
+            print("[MAV] no connection configured — offline, commands are print-only")
             return
         if mavutil is None:
             raise RuntimeError("pymavlink not installed:  pip install pymavlink")
 
-        print(f"[MAV] connecting {self.device} @ {self.baud} ...")
-        self.master = mavutil.mavlink_connection(self.device, baud=self.baud)
-        hb = self.master.wait_heartbeat(timeout=10)
+        print(f"[MAV] connecting {self.conn}  "
+              f"(src sys={self.source_system} comp={self.source_component}) ...")
+        self.master = mavutil.mavlink_connection(
+            self.conn, baud=self.baud,
+            source_system=self.source_system,
+            source_component=self.source_component)
+
+        hb = self._wait_vehicle_heartbeat(timeout=15)
         if hb is None:
-            raise RuntimeError(f"[MAV] no heartbeat on {self.device} within 10 s")
-        if hb.autopilot != mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA:
             raise RuntimeError(
-                f"[MAV] FC is NOT running ArduPilot (autopilot id {hb.autopilot}). "
-                "The Lucid H7 is likely flashed with Betaflight/INAV — MAVLink "
-                "setpoints are the wrong transport there. Flash ArduPilot Copter "
-                "or revisit the integration brief.")
-        print(f"[MAV] ArduPilot heartbeat  sys={self.master.target_system} "
-              f"comp={self.master.target_component}  mode={hb.custom_mode}")
-        if hb.custom_mode != self.GUIDED_MODE:
-            print("[MAV] WARNING: vehicle is not in GUIDED — velocity setpoints "
-                  "are ignored until GUIDED is engaged (RC/GCS or set_guided()).")
+                f"[MAV] no ArduPilot vehicle heartbeat on {self.conn} within 15 s. "
+                "Is the router up?  Check: systemctl status face-tracker-router")
+        self.linked  = True
+        self._mode   = hb.custom_mode
+        self._guided = (hb.custom_mode == self.GUIDED_MODE)
+        print(f"[MAV] linked vehicle sys={self.master.target_system} "
+              f"comp={self.master.target_component}  mode={hb.custom_mode} "
+              f"{'(GUIDED)' if self._guided else '(NOT GUIDED — setpoints gated)'}")
+
+        if self.gcs_mirror:
+            try:
+                self._mirror = mavutil.mavlink_connection(
+                    self.gcs_mirror, source_system=self.source_system,
+                    source_component=self.source_component)
+                print(f"[MAV] GCS mirror -> {self.gcs_mirror} "
+                      "(tracker commands visible in Mission Planner)")
+            except Exception as e:
+                print(f"[MAV] GCS mirror disabled ({e})")
+                self._mirror = None
+
+        self._open_log()
+        self._stop_evt.clear()
+        self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True)
+        self._tx_thread = threading.Thread(target=self._tx_loop, daemon=True)
+        self._rx_thread.start()
+        self._tx_thread.start()
+        print(f"[MAV] streaming setpoints @ {self.send_hz:.0f} Hz, "
+              f"STATUSTEXT @ {self.statustext_hz:.0f} Hz, "
+              f"no-face='{self.no_face_behavior}'")
+
+    def _wait_vehicle_heartbeat(self, timeout):
+        """Wait for the AUTOPILOT heartbeat specifically.  The router bus also
+        carries GCS heartbeats (Mission Planner, MAVProxy) with the same or a
+        different system id; latching target onto one of those would send our
+        setpoints to a ground station, not the FC.  Filter them out."""
+        deadline = perf_counter() + timeout
+        while perf_counter() < deadline:
+            msg = self.master.recv_match(type="HEARTBEAT", blocking=True, timeout=1)
+            if msg is None:
+                continue
+            if msg.autopilot == mavutil.mavlink.MAV_AUTOPILOT_INVALID:
+                continue                                  # a GCS/router heartbeat
+            if msg.type == mavutil.mavlink.MAV_TYPE_GCS:
+                continue
+            self.master.target_system    = msg.get_srcSystem()
+            self.master.target_component = msg.get_srcComponent()
+            return msg
+        return None
+
+    def _rx_loop(self):
+        """Track the FC flight mode from its heartbeats (for GUIDED-gating) and
+        keep the UDP socket drained so it never backs up."""
+        while not self._stop_evt.is_set():
+            try:
+                msg = self.master.recv_match(blocking=True, timeout=1)
+            except Exception:
+                continue
+            if msg is None:
+                continue
+            if (msg.get_type() == "HEARTBEAT"
+                    and msg.autopilot != mavutil.mavlink.MAV_AUTOPILOT_INVALID
+                    and msg.type != mavutil.mavlink.MAV_TYPE_GCS):
+                with self._lock:
+                    self._mode   = msg.custom_mode
+                    self._guided = (msg.custom_mode == self.GUIDED_MODE)
+
+    def _tx_loop(self):
+        """Transmit the latest setpoint at a FIXED rate, independent of the
+        detection FPS.  Gated on GUIDED; honours the no-face safety behaviour."""
+        period = 1.0 / self.send_hz
+        next_t = perf_counter()
+        while not self._stop_evt.is_set():
+            now = perf_counter()
+            with self._lock:
+                cmd       = dict(self._cmd)
+                off       = self._target_off
+                guided    = self._guided
+                last_face = self._last_face_t
+
+            # Safety: only the "stop" behaviour halts the stream after a timeout.
+            stopped = (self.no_face_behavior == "stop"
+                       and (now - last_face) > self.no_face_timeout)
+
+            # To the FC: GUIDED-gated (only command when the FC will honour it).
+            sent = False
+            if self.linked and guided and not stopped:
+                self._tx_once(cmd, self.master)
+                sent = True
+            # To the GCS mirror: always (unless stopped), so Mission Planner's
+            # inspector shows the intended command stream regardless of FC mode.
+            if self._mirror is not None and not stopped:
+                self._tx_once(cmd, self._mirror)
+
+            if self.linked and (now - self._last_stt) >= (1.0 / self.statustext_hz):
+                self._last_stt = now
+                self._statustext(cmd, off, guided, stopped)
+
+            self._log_row(now, cmd, off, guided, sent, stopped)
+
+            next_t += period
+            dt = next_t - perf_counter()
+            if dt > 0:
+                self._stop_evt.wait(dt)
+            else:
+                next_t = perf_counter()      # fell behind; resync
 
     def set_guided(self):
         """Request GUIDED mode.  Deliberately NOT called automatically: engage
@@ -316,12 +457,40 @@ class ArduPilotCommander:
             mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
             self.GUIDED_MODE, 0, 0, 0, 0, 0)
 
+    def update(self, cmd, target_off, have_face):
+        """Called each detection frame: publish the latest setpoint for the tx
+        thread to stream.  Returns True if the link is live AND transmitting
+        (linked + GUIDED), for the HUD/console 'TX' indicator."""
+        now = perf_counter()
+        with self._lock:
+            self._cmd        = dict(cmd)
+            self._target_off = target_off
+            if have_face:
+                self._last_face_t = now
+            guided = self._guided
+        return bool(self.master is not None and self.linked and guided)
+
     def close(self):
+        self._stop_evt.set()
+        if self._tx_thread is not None:
+            self._tx_thread.join(timeout=2)
+        if self._rx_thread is not None:
+            self._rx_thread.join(timeout=2)
         if self.master is not None:
-            # final all-stop so the FC is not left chasing the last setpoint
-            self.send(dict(vx=0.0, vy=0.0, vz=0.0, yaw_rate=0.0))
+            try:                        # final all-stop; don't die on a dead link
+                stop = dict(vx=0.0, vy=0.0, vz=0.0, yaw_rate=0.0)
+                self._tx_once(stop, self.master)
+                self._tx_once(stop, self._mirror)
+            except Exception:
+                pass
             self.master.close()
             self.master = None
+        if self._mirror is not None:
+            self._mirror.close()
+            self._mirror = None
+        if self._log_fh is not None:
+            self._log_fh.close()
+            self._log_fh = None
 
     # ── control law ───────────────────────────────────────────────────────────
     def compute(self, err_x, err_y, state, fw, fh):
@@ -338,30 +507,86 @@ class ArduPilotCommander:
         return dict(vx=vx, vy=vy, vz=vz, yaw_rate=yaw_rate)
 
     def search_command(self):
-        """No target in view: don't idle — advance straight ahead at the
-        controller's MAX forward speed, holding the current heading (yaw_rate 0)
-        and altitude (vz 0), so the drone keeps closing/sweeping until the
-        tracker re-acquires.  This is the SEARCH behaviour: fly forward in the
-        direction the camera is currently looking, full speed."""
-        return dict(vx=self.MAX_FWD, vy=0.0, vz=0.0, yaw_rate=0.0)
+        """No target in view.  Behaviour selected by NO_FACE_BEHAVIOR:
+          • "search" → advance straight ahead at MAX forward speed, holding
+            heading and altitude, so the drone keeps closing/sweeping until the
+            tracker re-acquires (the original interception behaviour).
+          • "hover"  → zero velocity setpoint (actively hold).
+          • "stop"   → zero velocity now; the tx thread also stops transmitting
+            after NO_FACE_TIMEOUT so the FC falls back per its GUID_TIMEOUT."""
+        if self.no_face_behavior == "search":
+            return dict(vx=self.MAX_FWD, vy=0.0, vz=0.0, yaw_rate=0.0)
+        return dict(vx=0.0, vy=0.0, vz=0.0, yaw_rate=0.0)   # hover / stop
 
-    def send(self, cmd):
-        """One velocity + yaw-rate setpoint.  Called once per YOLO frame, so
-        the MAVLink command rate always equals the detection rate.  Returns
-        True if the message was written to the link, False if offline."""
-        if self.master is None:
+    def _tx_once(self, cmd, conn):
+        """Write ONE velocity + yaw-rate setpoint to the given link (the FC
+        master, or the GCS mirror for visibility).  Not rate-managed here.
+
+        Never raises: a connected-UDP socket can surface a transient
+        ECONNREFUSED (ICMP port-unreachable when a receiver blips), and that
+        must NOT kill the tx thread and with it the whole guidance stream.
+        Returns True if the datagram was handed to the socket."""
+        if conn is None:
             return False
-        self.master.mav.set_position_target_local_ned_send(
-            int((perf_counter() - self._t0) * 1000),      # time_boot_ms
-            self.master.target_system,
-            self.master.target_component,
-            self.FRAME_BODY_OFFSET_NED,
-            self.TYPE_MASK,
-            0.0, 0.0, 0.0,                                # position  (ignored)
-            cmd["vx"], cmd["vy"], cmd["vz"],              # velocity  m/s, body
-            0.0, 0.0, 0.0,                                # accel     (ignored)
-            0.0, cmd["yaw_rate"])                         # yaw ign., yaw rate
-        return True
+        try:
+            conn.mav.set_position_target_local_ned_send(
+                int((perf_counter() - self._t0) * 1000),      # time_boot_ms
+                self.master.target_system,
+                self.master.target_component,
+                self.FRAME_BODY_OFFSET_NED,
+                self.TYPE_MASK,
+                0.0, 0.0, 0.0,                                # position  (ignored)
+                cmd["vx"], cmd["vy"], cmd["vz"],              # velocity  m/s, body
+                0.0, 0.0, 0.0,                                # accel     (ignored)
+                0.0, cmd["yaw_rate"])                         # yaw ign., yaw rate
+            return True
+        except Exception:
+            return False
+
+    def _statustext(self, cmd, off, guided, stopped):
+        """A compact STATUSTEXT (≤50 chars) so the offset + command show up in
+        Mission Planner's Messages tab.  Throttled by statustext_hz."""
+        if self.master is None:
+            return
+        if stopped:
+            txt = "FT no-face STOP"
+        elif off is not None:
+            txt = (f"FT ex{off[0]:+d} ey{off[1]:+d} "
+                   f"yaw{cmd['yaw_rate']:+.2f} vz{cmd['vz']:+.2f}")
+        else:
+            txt = f"FT search vx{cmd['vx']:.1f} yaw{cmd['yaw_rate']:+.2f}"
+        if not guided:
+            txt = "!GUIDED " + txt
+        payload = txt[:50].encode()
+        for conn in (self.master, self._mirror):
+            if conn is None:
+                continue
+            try:
+                conn.mav.statustext_send(mavutil.mavlink.MAV_SEVERITY_INFO, payload)
+            except Exception:
+                pass
+
+    def _open_log(self):
+        """Timestamped CSV of every tx-thread tick (whether sent or gated)."""
+        Path(self.log_dir).mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._log_path = str(Path(self.log_dir) / f"commands_{stamp}.csv")
+        self._log_fh = open(self._log_path, "w", buffering=1)
+        self._log_fh.write("t_s,mode,guided,sent,stopped,ex,ey,vx,vy,vz,yaw_rate\n")
+        print(f"[MAV] command log -> {self._log_path}")
+
+    def _log_row(self, now, cmd, off, guided, sent, stopped):
+        if self._log_fh is None:
+            return
+        ex = "" if off is None else off[0]
+        ey = "" if off is None else off[1]
+        try:
+            self._log_fh.write(
+                f"{now - self._t0:.3f},{self._mode},{int(guided)},{int(sent)},"
+                f"{int(stopped)},{ex},{ey},{cmd['vx']:.3f},{cmd['vy']:.3f},"
+                f"{cmd['vz']:.3f},{cmd['yaw_rate']:.4f}\n")
+        except Exception:
+            pass
 
     @staticmethod
     def format_command(state, cmd, target_off, sent, live, is_yolo):
@@ -463,8 +688,17 @@ class DroneTracker:
         record_pad_sec = 2.0,
         headless       = False,
         max_frames     = None,
-        mav_device     = None,      # e.g. "/dev/ttyACM0" (Jetson USB -> Lucid H7)
-        mav_baud       = 115200,
+        # MAVLink guidance link.  Default routes through the local MAVLink router
+        # (MAVProxy/mavlink-router) rather than owning the FC serial port
+        # directly.  None → offline / print-only.
+        mav_conn         = "udpin:127.0.0.1:14551",
+        mav_source_system    = 1,      # share the vehicle system id
+        mav_source_component = 191,    # MAV_COMP_ID_ONBOARD_COMPUTER
+        mav_send_hz          = 15.0,   # setpoint stream rate, independent of FPS
+        mav_statustext_hz    = 2.0,    # STATUSTEXT rate into MP Messages tab
+        no_face_behavior     = "search",  # "search" | "hover" | "stop"
+        no_face_timeout      = 2.0,    # s of no-face before "stop" halts the stream
+        mav_gcs_mirror       = "udpout:127.0.0.1:14550",  # visibility in MP; None=off
     ):
         self.model        = YOLO(model_path)
         # Restrict detection to the "face" class only.  Resolve its class id from
@@ -493,7 +727,15 @@ class DroneTracker:
         self.max_frames   = max_frames
 
         self.kalman  = KalmanTracker()
-        self.ap      = ArduPilotCommander(mav_device, mav_baud)
+        self.ap      = ArduPilotCommander(
+            conn=mav_conn,
+            source_system=mav_source_system,
+            source_component=mav_source_component,
+            send_hz=mav_send_hz,
+            statustext_hz=mav_statustext_hz,
+            no_face_behavior=no_face_behavior,
+            no_face_timeout=no_face_timeout,
+            gcs_mirror=mav_gcs_mirror)
         self.sky     = SkyDetector()
         self._clahe  = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
@@ -908,7 +1150,7 @@ class DroneTracker:
 
         if not sent:
             lamp, tag = self.C_DIM, "HOLD"
-        elif self.ap.master is None:
+        elif not self.ap.linked:
             lamp, tag = self.C_SEARCH, "SIM"
         else:
             lamp, tag = self.C_LOCK, "TX"
@@ -1143,8 +1385,10 @@ class DroneTracker:
                     cmd = self.ap.compute(target_off[0], target_off[1],
                                           self.state, self.fw, self.fh)
                 else:
-                    cmd = self.ap.search_command()   # SEARCH: forward at max
-                actually_sent = self.ap.send(cmd)    # False when offline
+                    cmd = self.ap.search_command()   # no face: per NO_FACE_BEHAVIOR
+                # Publish the latest setpoint; the commander's tx thread streams
+                # it to the FC at a fixed rate independent of the detection FPS.
+                actually_sent = self.ap.update(cmd, target_off, have_face=bool(fused))
                 self._last_cmd = cmd
             else:
                 cmd = self._last_cmd               # HUD display only, not sent
@@ -1175,7 +1419,7 @@ class DroneTracker:
             # Print ONLY the real controller command steering the drone.
             print(ArduPilotCommander.format_command(
                 self.state, cmd, target_off, actually_sent,
-                live=self.ap.master is not None, is_yolo=is_yolo_frame))
+                live=self.ap.linked, is_yolo=is_yolo_frame))
 
             if not self.headless:
                 cv2.imshow(self._WIN, frame_disp)
@@ -1327,8 +1571,12 @@ if __name__ == "__main__":
         record_dir      = "./captures",
         record_pad_sec  = 5.0,
         headless     = os.environ.get("TRACKER_HEADLESS") == "1",
-        # On the Jetson set MAV_DEVICE=/dev/ttyACM0 (USB bench link to the
-        # Lucid H7) or the UART device (FC side: SERIALn_PROTOCOL = 2).
-        # Unset → offline: commands are computed and printed, nothing is sent.
-        mav_device   = os.environ.get("MAV_DEVICE"),
+        # MAVLink guidance goes through the local router (MAVProxy/mavlink-router)
+        # on udpin:127.0.0.1:14551 — the router owns the FC serial port.
+        # Override with MAV_CONN (e.g. MAV_CONN=/dev/ttyACM0 for a direct serial
+        # link, or MAV_CONN=none to run offline / print-only).
+        mav_conn     = (None if os.environ.get("MAV_CONN", "").lower() == "none"
+                        else os.environ.get("MAV_CONN", "udpin:127.0.0.1:14551")),
+        # no_face_behavior: "search" (fly forward, current) | "hover" | "stop".
+        no_face_behavior = os.environ.get("NO_FACE_BEHAVIOR", "search"),
     ).run()
