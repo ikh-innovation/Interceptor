@@ -336,11 +336,20 @@ class ArduPilotCommander:
 
         return dict(vx=vx, vy=vy, vz=vz, yaw_rate=yaw_rate)
 
+    def search_command(self):
+        """No target in view: don't idle — advance straight ahead at the
+        controller's MAX forward speed, holding the current heading (yaw_rate 0)
+        and altitude (vz 0), so the drone keeps closing/sweeping until the
+        tracker re-acquires.  This is the SEARCH behaviour: fly forward in the
+        direction the camera is currently looking, full speed."""
+        return dict(vx=self.MAX_FWD, vy=0.0, vz=0.0, yaw_rate=0.0)
+
     def send(self, cmd):
         """One velocity + yaw-rate setpoint.  Called once per YOLO frame, so
-        the MAVLink command rate always equals the detection rate."""
+        the MAVLink command rate always equals the detection rate.  Returns
+        True if the message was written to the link, False if offline."""
         if self.master is None:
-            return
+            return False
         self.master.mav.set_position_target_local_ned_send(
             int((perf_counter() - self._t0) * 1000),      # time_boot_ms
             self.master.target_system,
@@ -351,17 +360,43 @@ class ArduPilotCommander:
             cmd["vx"], cmd["vy"], cmd["vz"],              # velocity  m/s, body
             0.0, 0.0, 0.0,                                # accel     (ignored)
             0.0, cmd["yaw_rate"])                         # yaw ign., yaw rate
+        return True
 
     @staticmethod
-    def format(cmd, state):
-        return (
-            f"[ARDUPILOT GUIDED BODY_OFFSET_NED]  "
-            f"fwd:{cmd['vx']:+.2f} m/s  "
-            f"lat:{cmd['vy']:+.2f} m/s  "
-            f"vz:{cmd['vz']:+.2f} m/s  "
-            f"yaw:{cmd['yaw_rate']:+.3f} rad/s"
-            f"  | state:{state}"
-        )
+    def format_command(state, cmd, target_off, sent, live, is_yolo):
+        """One clean line describing the REAL steering command the controller
+        is issuing, and where it went.
+
+        target_off : (ex, ey) pixel offset of the target from frame centre when
+                     a target is in view (→ centre on it); None while SEARCH
+                     (→ advance straight ahead at max forward speed).
+        sent       : True if this setpoint was transmitted to the flight
+                     controller this frame.
+        live       : True when a real MAVLink link is open (False = mp4/offline
+                     simulation, nothing can be transmitted).
+        is_yolo    : False on skip frames (Kalman coast, never transmitted).
+
+        vy is omitted: horizontal centring is done with yaw, so lateral
+        velocity is always 0 by design.
+        """
+        cmd_s = (f"fwd {cmd['vx']:+.2f}  vz {cmd['vz']:+.2f} m/s  "
+                 f"yaw {cmd['yaw_rate']:+.3f} rad/s")
+        if sent:
+            dest = "TX->FC"
+        elif not is_yolo:
+            dest = "held (skip frame)"
+        elif live:
+            dest = f"not sent (state={state})"
+        else:
+            dest = "SIM (no FC attached)"
+
+        if target_off is None:
+            # SEARCH: no target → advance straight ahead at max forward speed.
+            body = "no target — advancing straight ahead (max fwd, hold heading)"
+        else:
+            ex, ey = target_off
+            body = f"target {ex:+05d},{ey:+05d}px -> centre"
+        return f"[CTRL] {state:<7} {body} | {cmd_s} | {dest}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -968,6 +1003,15 @@ class DroneTracker:
         # Fail loudly BEFORE flight if the link is dead or the firmware is wrong.
         self.ap.connect()
 
+        # Controller calibration in effect.  The camera FOV converts pixel error
+        # to an angular error, so it MUST match the real deployed lens or the
+        # centring gains are wrong on the airframe — surface it every run.
+        print(f"[CTRL CFG] camera FOV h/v = {np.degrees(self.ap.H_FOV):.1f}/"
+              f"{np.degrees(self.ap.V_FOV):.1f} deg  (calibrate to the real lens!)  | "
+              f"gains yaw={self.ap.K_YAW} vz={self.ap.K_VZ}  | "
+              f"limits yaw<={self.ap.MAX_YAW} vz<={self.ap.MAX_VZ} "
+              f"fwd<={self.ap.MAX_FWD} m/s")
+
         cap, src_fps, source_label = self._open_capture()
         print(f"[RUN] Source: {source_label}")
             
@@ -1018,42 +1062,46 @@ class DroneTracker:
             is_yolo_frame = (self._frame_idx % period == 0)
 
             if is_yolo_frame:
-                fused, t_kf, t_yolo, roi, _ = self._process(frame_full, frame_disp)
-                skip_tag = ""
+                fused, _, _, roi, _ = self._process(frame_full, frame_disp)
             else:
                 self.sky_mask = self.sky.mask(frame_disp)
-                t0    = perf_counter()
                 fused = self.kalman.predict() if self.kalman.initialized else None
-                t_kf  = (perf_counter() - t0) * 1000
-                t_yolo   = 0.0
-                roi      = None
+                roi   = None
                 if fused:
                     self.pos   = fused
                     self.layer = "KF-SKIP"
-                skip_tag = " [SKIP]"
 
-            # ── FLIGHT COMMAND — rate locked to the detection rate ────────────
-            # A MAVLink setpoint goes out ONLY on YOLO frames, so the command
-            # frequency to the FC always equals the detection frequency:
-            # camera_fps / (skip_frames + 1).  On skip frames nothing is sent;
-            # ArduPilot keeps flying the last setpoint (GUID_TIMEOUT guards
-            # against the link going stale).  No target → zero velocity, so
-            # the airframe brakes/hovers instead of coasting blind.
+            # ── STEERING COMMAND ─────────────────────────────────────────────
+            # A MAVLink setpoint is transmitted to the flight controller on
+            # EVERY detection frame (rate = camera_fps / (skip_frames + 1)):
+            #   • target in view (LOCK/PREDICT) → centre it: yaw + vz null the
+            #     pixel offset so the drone converges on the target.
+            #   • no target (SEARCH)            → advance straight ahead at MAX
+            #     forward speed, holding heading & altitude, until re-acquired.
+            # Skip frames send nothing; the FC coasts on its last setpoint
+            # (GUID_TIMEOUT guards the link).
+            # commanding: a setpoint is issued this frame (any detection frame).
+            # actually_sent: it was really written to the FC (live link only;
+            # offline it is computed for display/SIM but not transmitted).
+            commanding    = is_yolo_frame
+            actually_sent = False
+            target_off    = None
             if is_yolo_frame:
                 if fused:
-                    ex  = fused[0] - cx_f
-                    ey  = fused[1] - cy_f
-                    cmd = self.ap.compute(ex, ey, self.state, self.fw, self.fh)
+                    target_off = (fused[0] - cx_f, fused[1] - cy_f)
+                    cmd = self.ap.compute(target_off[0], target_off[1],
+                                          self.state, self.fw, self.fh)
                 else:
-                    cmd = dict(vx=0.0, vy=0.0, vz=0.0, yaw_rate=0.0)
-                self.ap.send(cmd)
+                    cmd = self.ap.search_command()   # SEARCH: forward at max
+                actually_sent = self.ap.send(cmd)    # False when offline
                 self._last_cmd = cmd
-                sent_tag = ""
             else:
-                cmd      = self._last_cmd     # HUD/log display only, not sent
-                sent_tag = " [no send]"
+                cmd = self._last_cmd               # HUD display only, not sent
+                if fused:
+                    target_off = (fused[0] - cx_f, fused[1] - cy_f)
 
-            self._draw(frame_disp, frame_full, fused, roi, cmd, is_yolo_frame)
+            # HUD lamp: TX (live+commanding) / SIM (offline+commanding) / HOLD.
+            self._draw(frame_disp, frame_full, fused, roi, cmd, commanding)
           
             # ── detection-gated recording ──────────────────────────────────────
             if rec_on:
@@ -1073,9 +1121,10 @@ class DroneTracker:
                post_left = pad
                pre_buf.append((self._frame_idx, frame_disp.copy()))            
 
-            timing  = f"YOLO:{t_yolo:5.1f}ms  KF:{t_kf:.3f}ms  | total:{t_yolo+t_kf:5.1f}ms{skip_tag}"
-            cmd_str = ArduPilotCommander.format(cmd, self.state) + sent_tag
-            print(f"{timing}\n{cmd_str}\n")
+            # Print ONLY the real controller command steering the drone.
+            print(ArduPilotCommander.format_command(
+                self.state, cmd, target_off, actually_sent,
+                live=self.ap.master is not None, is_yolo=is_yolo_frame))
 
             if not self.headless:
                 cv2.imshow(self._WIN, frame_disp)
