@@ -35,7 +35,24 @@ FT_DIR     = HOME / "face_tracker"                     # logs + mavproxy state
 LOG_DIR    = FT_DIR / "logs"
 STATE_DIR  = FT_DIR / "mavproxy-state"
 
-FC_DEV   = os.environ.get("FC_DEV", "/dev/ttyACM0")
+def _resolve_fc_dev() -> str:
+    """Locate the flight controller's MAVLink serial interface.
+
+    The board's by-id serial string is NOT stable across boots (observed
+    changing), and its raw ACM number re-enumerates too — so a hardcoded path
+    breaks after a reboot.  Match the stable ArduPilot vendor prefix on the
+    MAVLink interface (``-if00``) instead.  An explicit FC_DEV that actually
+    exists always wins; otherwise auto-detect, falling back to /dev/ttyACM0."""
+    env = os.environ.get("FC_DEV")
+    if env and Path(env).exists():
+        return env
+    matches = sorted(Path("/dev/serial/by-id").glob("usb-ArduPilot_*-if00"))
+    if matches:
+        return str(matches[0])
+    return env or "/dev/ttyACM0"
+
+
+FC_DEV   = _resolve_fc_dev()
 FC_BAUD  = os.environ.get("FC_BAUD", "115200")        # nominal; USB CDC-ACM ignores it
 CAM_DEV  = os.environ.get("CAM_DEV", "/dev/video0")
 

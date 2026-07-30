@@ -55,7 +55,8 @@ equals the detection rate set by skip_frames (camera_fps / (skip_frames + 1)).
 """
 
 import os
-os.environ.pop("SESSION_MANAGER", None) 
+import sys
+os.environ.pop("SESSION_MANAGER", None)
 
 import cv2
 import numpy as np
@@ -280,7 +281,21 @@ class ArduPilotCommander:
                  send_hz=15.0, statustext_hz=2.0,
                  no_face_behavior="search", no_face_timeout=2.0,
                  gcs_mirror="udpout:127.0.0.1:14550",
-                 log_dir="/home/iknowhow/face_tracker/logs"):
+                 log_dir="/home/iknowhow/face_tracker/logs",
+                 # ── control transport ────────────────────────────────────────
+                 # "guided": SET_POSITION_TARGET velocity/yaw-rate — needs the FC
+                 #   armed, airborne, and holding a position estimate (GPS/EKF).
+                 # "rc":     RC_CHANNELS_OVERRIDE — injects stick values the FC
+                 #   turns into yaw/pitch rates in ACRO/STABILIZE.  Works on a
+                 #   stationary gimbal with NO GPS, the instant motors are armed.
+                 #   The RC channel map AND calibration are read from the FC at
+                 #   connect (RCMAP_*, RC{n}_MIN/MAX/TRIM/REVERSED) — nothing about
+                 #   the transmitter is hardcoded.
+                 control_mode="guided",
+                 rc_axes=("yaw", "pitch"),  # axes the tracker drives (rest = pilot)
+                 rc_gain=0.5,               # deflection at the control limit (0..1)
+                 rc_yaw_reversed=False,     # XOR the FC's RC{n}_REVERSED per axis if
+                 rc_pitch_reversed=False):  # it drives the WRONG way
         # conn: pymavlink connection string.  Default deployment routes through
         # mavlink-router/MAVProxy: "udpin:127.0.0.1:14551".  A serial path such
         # as "/dev/ttyACM0" also works (baud used only then).  None = print-only.
@@ -300,11 +315,21 @@ class ArduPilotCommander:
         self.no_face_timeout  = float(no_face_timeout)
         self.log_dir          = log_dir
 
+        self.control_mode     = control_mode             # "guided" | "rc"
+        self.rc_axes          = tuple(rc_axes)
+        self.rc_gain          = float(rc_gain)
+        self.rc_user_rev      = {"yaw":   bool(rc_yaw_reversed),
+                                 "pitch": bool(rc_pitch_reversed)}
+        self.rc_cfg           = {}    # per-axis {chan,min,max,trim,reversed}, from FC
+
         self.master  = None
         self._mirror = None         # send-only link to the GCS (Mission Planner)
         self.linked  = False        # True after the first VEHICLE heartbeat
         self._mode   = None
         self._guided = False
+        self._armed  = False        # MAV_MODE_FLAG_SAFETY_ARMED — motors live
+        self._gps_fix = 0           # GPS_RAW_INT.fix_type (0/1 = no fix, 3+ = 3D)
+        self._warned_blocked = False  # one-shot: sending but the FC can't act
         self._t0     = perf_counter()
 
         # setpoint shared with the tx thread (main loop writes, tx thread reads)
@@ -345,9 +370,11 @@ class ArduPilotCommander:
         self.linked  = True
         self._mode   = hb.custom_mode
         self._guided = (hb.custom_mode == self.GUIDED_MODE)
+        self._armed  = bool(hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
         print(f"[MAV] linked vehicle sys={self.master.target_system} "
               f"comp={self.master.target_component}  mode={hb.custom_mode} "
-              f"{'(GUIDED)' if self._guided else '(NOT GUIDED — setpoints gated)'}")
+              f"{'(GUIDED)' if self._guided else '(NOT GUIDED — setpoints gated)'}  "
+              f"{'ARMED' if self._armed else 'DISARMED — motors off, nothing will move'}")
 
         if self.gcs_mirror:
             try:
@@ -360,15 +387,23 @@ class ArduPilotCommander:
                 print(f"[MAV] GCS mirror disabled ({e})")
                 self._mirror = None
 
+        # RC config MUST be read before the rx thread starts (it would otherwise
+        # consume the PARAM_VALUE replies).
+        if self.control_mode == "rc":
+            print(f"[MAV] control=RC-OVERRIDE — driving [{', '.join(self.rc_axes)}] "
+                  f"in ACRO/STABILIZE when ARMED + target locked; releases to the "
+                  f"pilot otherwise. No GPS needed. Reading TX map/cal from FC:")
+            self.rc_cfg = self._fetch_rc_config()
+
         self._open_log()
         self._stop_evt.clear()
         self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True)
         self._tx_thread = threading.Thread(target=self._tx_loop, daemon=True)
         self._rx_thread.start()
         self._tx_thread.start()
-        print(f"[MAV] streaming setpoints @ {self.send_hz:.0f} Hz, "
+        print(f"[MAV] streaming @ {self.send_hz:.0f} Hz, "
               f"STATUSTEXT @ {self.statustext_hz:.0f} Hz, "
-              f"no-face='{self.no_face_behavior}'")
+              f"control='{self.control_mode}', no-face='{self.no_face_behavior}'")
 
     def _wait_vehicle_heartbeat(self, timeout):
         """Wait for the AUTOPILOT heartbeat specifically.  The router bus also
@@ -405,6 +440,11 @@ class ArduPilotCommander:
                 with self._lock:
                     self._mode   = msg.custom_mode
                     self._guided = (msg.custom_mode == self.GUIDED_MODE)
+                    self._armed  = bool(msg.base_mode
+                                        & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+            elif msg.get_type() == "GPS_RAW_INT":
+                with self._lock:
+                    self._gps_fix = msg.fix_type
 
     def _tx_loop(self):
         """Transmit the latest setpoint at a FIXED rate, independent of the
@@ -417,21 +457,46 @@ class ArduPilotCommander:
                 cmd       = dict(self._cmd)
                 off       = self._target_off
                 guided    = self._guided
+                armed     = self._armed
+                gps_fix   = self._gps_fix
                 last_face = self._last_face_t
 
             # Safety: only the "stop" behaviour halts the stream after a timeout.
             stopped = (self.no_face_behavior == "stop"
                        and (now - last_face) > self.no_face_timeout)
 
-            # To the FC: GUIDED-gated (only command when the FC will honour it).
+            have_face = off is not None      # target locked this frame?
             sent = False
-            if self.linked and guided and not stopped:
-                self._tx_once(cmd, self.master)
-                sent = True
-            # To the GCS mirror: always (unless stopped), so Mission Planner's
-            # inspector shows the intended command stream regardless of FC mode.
-            if self._mirror is not None and not stopped:
-                self._tx_once(cmd, self._mirror)
+
+            if self.control_mode == "rc":
+                # RC override (ACRO/STABILIZE, no GPS, works on a gimbal): drive the
+                # configured axes ONLY while ARMED and a target is locked; otherwise
+                # release every channel so the pilot keeps full manual control.
+                steer = bool(self.linked and armed and have_face and not stopped)
+                self._rc_override_once(cmd, steer, self.master)
+                sent = steer
+                if self.linked and not armed and not self._warned_blocked:
+                    print("[MAV][WARN] RC-override mode but the FC is DISARMED — "
+                          "arm the motors to see the drone move.")
+                    self._warned_blocked = True
+            else:
+                # GUIDED velocity/yaw-rate — gated on the FC actually being in GUIDED.
+                if self.linked and guided and not stopped:
+                    self._tx_once(cmd, self.master)
+                    sent = True
+                    # Transmitting, but GUIDED only MOVES the copter when armed,
+                    # airborne, and holding a position estimate.  Name the blocker
+                    # once so a silent "no motion" run isn't mistaken for a bug.
+                    if not self._warned_blocked and (not armed or gps_fix < 3):
+                        reason = ("DISARMED (motors off)" if not armed
+                                  else f"no 3D GPS fix (fix_type={gps_fix}) — GUIDED "
+                                       "velocity control needs a position estimate")
+                        print(f"[MAV][WARN] sending GUIDED setpoints but the FC "
+                              f"will NOT act: {reason}.")
+                        self._warned_blocked = True
+                # GCS mirror (GUIDED only): show intended setpoints in MP's inspector.
+                if self._mirror is not None and not stopped:
+                    self._tx_once(cmd, self._mirror)
 
             if self.linked and (now - self._last_stt) >= (1.0 / self.statustext_hz):
                 self._last_stt = now
@@ -468,7 +533,13 @@ class ArduPilotCommander:
             if have_face:
                 self._last_face_t = now
             guided = self._guided
-        return bool(self.master is not None and self.linked and guided)
+            armed  = self._armed
+        if self.master is None or not self.linked:
+            return False
+        if self.control_mode == "rc":
+            # RC override actually drives the motors when armed + target locked.
+            return bool(armed and have_face)
+        return bool(guided)
 
     def close(self):
         self._stop_evt.set()
@@ -478,9 +549,15 @@ class ArduPilotCommander:
             self._rx_thread.join(timeout=2)
         if self.master is not None:
             try:                        # final all-stop; don't die on a dead link
-                stop = dict(vx=0.0, vy=0.0, vz=0.0, yaw_rate=0.0)
-                self._tx_once(stop, self.master)
-                self._tx_once(stop, self._mirror)
+                if self.control_mode == "rc":
+                    # Hand every channel back to the pilot (steer=False = release).
+                    # Send several times — a single datagram can be dropped.
+                    for _ in range(5):
+                        self._rc_override_once(self._cmd, False, self.master)
+                else:
+                    stop = dict(vx=0.0, vy=0.0, vz=0.0, yaw_rate=0.0)
+                    self._tx_once(stop, self.master)
+                    self._tx_once(stop, self._mirror)
             except Exception:
                 pass
             self.master.close()
@@ -543,6 +620,95 @@ class ArduPilotCommander:
         except Exception:
             return False
 
+    # Which command field drives each RC axis, and its saturation limit.
+    _RC_SRC = {"yaw": ("yaw_rate", "MAX_YAW"), "pitch": ("vz", "MAX_VZ")}
+
+    def _fetch_param(self, name, timeout=3.0):
+        """Read ONE FC parameter synchronously (PARAM_REQUEST_READ → PARAM_VALUE).
+        MUST be called before the rx thread starts, or it will eat the reply.
+        Returns the float value, or None on timeout."""
+        try:
+            self.master.mav.param_request_read_send(
+                self.master.target_system, self.master.target_component,
+                name.encode(), -1)
+        except Exception:
+            return None
+        deadline = perf_counter() + timeout
+        while perf_counter() < deadline:
+            msg = self.master.recv_match(type="PARAM_VALUE", blocking=True, timeout=1)
+            if msg is None:
+                continue
+            pid = msg.param_id
+            if isinstance(pid, bytes):
+                pid = pid.decode(errors="ignore")
+            if pid.strip("\x00") == name:
+                return float(msg.param_value)
+        return None
+
+    def _fetch_rc_config(self):
+        """Learn the transmitter mapping + calibration from the FC so NOTHING is
+        hardcoded: RCMAP_<AXIS> gives the input channel, RC{n}_MIN/MAX/TRIM/REVERSED
+        its calibrated range.  Falls back to raw defaults (and says so) only if a
+        read fails."""
+        cfg = {}
+        fallback_chan = {"yaw": 4, "pitch": 2}   # ArduCopter AETR defaults
+        for axis in self.rc_axes:
+            ch = self._fetch_param(f"RCMAP_{axis.upper()}")
+            ch = int(ch) if ch else fallback_chan.get(axis, 0)
+            mn = self._fetch_param(f"RC{ch}_MIN")
+            mx = self._fetch_param(f"RC{ch}_MAX")
+            tr = self._fetch_param(f"RC{ch}_TRIM")
+            rv = self._fetch_param(f"RC{ch}_REVERSED")
+            got = None not in (mn, mx, tr)
+            c = dict(chan=ch,
+                     min=int(mn) if mn else 1000,
+                     max=int(mx) if mx else 2000,
+                     trim=int(tr) if tr else 1500,
+                     reversed=bool(int(rv)) if rv is not None else False,
+                     from_fc=got)
+            cfg[axis] = c
+            src = "from FC" if got else "DEFAULTS — param read FAILED, verify wiring"
+            note = "" if 1 <= ch <= 8 else "  [WARN: chan>8, not overridable]"
+            print(f"[MAV][RC] {axis:5s}: ch{c['chan']} min={c['min']} "
+                  f"trim={c['trim']} max={c['max']} rev={c['reversed']} ({src}){note}")
+        return cfg
+
+    def _axis_pwm(self, norm, cfg, user_rev):
+        """Map a normalized command (−1..1) to a PWM using the FC's own calibration
+        (asymmetric trim honoured), scaled by rc_gain and clamped to [min,max]."""
+        norm = max(-1.0, min(1.0, norm)) * self.rc_gain
+        if cfg["reversed"] ^ user_rev:
+            norm = -norm
+        if norm >= 0:
+            pwm = cfg["trim"] + norm * (cfg["max"] - cfg["trim"])
+        else:
+            pwm = cfg["trim"] + norm * (cfg["trim"] - cfg["min"])
+        return int(round(max(cfg["min"], min(cfg["max"], pwm))))
+
+    def _rc_override_once(self, cmd, steer, conn):
+        """Send ONE RC_CHANNELS_OVERRIDE.  When steer=True, drive the configured
+        axes from cmd; otherwise send all-zeros = RELEASE every channel back to the
+        pilot.  Channels we don't drive are always 0 (released).  Never raises."""
+        if conn is None:
+            return False
+        chans = [0] * 8                       # 0 → released to the pilot's radio
+        if steer:
+            for axis in self.rc_axes:
+                c = self.rc_cfg.get(axis)
+                if not c or not (1 <= c["chan"] <= 8):
+                    continue
+                field, limname = self._RC_SRC[axis]
+                lim = getattr(self, limname, 0.0)
+                norm = (cmd.get(field, 0.0) / lim) if lim else 0.0
+                chans[c["chan"] - 1] = self._axis_pwm(
+                    norm, c, self.rc_user_rev.get(axis, False))
+        try:
+            conn.mav.rc_channels_override_send(
+                self.master.target_system, self.master.target_component, *chans)
+            return True
+        except Exception:
+            return False
+
     def _statustext(self, cmd, off, guided, stopped):
         """A compact STATUSTEXT (≤50 chars) so the offset + command show up in
         Mission Planner's Messages tab.  Throttled by statustext_hz."""
@@ -555,7 +721,9 @@ class ArduPilotCommander:
                    f"yaw{cmd['yaw_rate']:+.2f} vz{cmd['vz']:+.2f}")
         else:
             txt = f"FT search vx{cmd['vx']:.1f} yaw{cmd['yaw_rate']:+.2f}"
-        if not guided:
+        if self.control_mode == "rc":
+            txt = ("RC " if self._armed else "!ARM ") + txt
+        elif not guided:
             txt = "!GUIDED " + txt
         payload = txt[:50].encode()
         for conn in (self.master, self._mirror):
@@ -572,7 +740,8 @@ class ArduPilotCommander:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._log_path = str(Path(self.log_dir) / f"commands_{stamp}.csv")
         self._log_fh = open(self._log_path, "w", buffering=1)
-        self._log_fh.write("t_s,mode,guided,sent,stopped,ex,ey,vx,vy,vz,yaw_rate\n")
+        self._log_fh.write(
+            "t_s,mode,guided,armed,gps,sent,stopped,ex,ey,vx,vy,vz,yaw_rate\n")
         print(f"[MAV] command log -> {self._log_path}")
 
     def _log_row(self, now, cmd, off, guided, sent, stopped):
@@ -580,11 +749,13 @@ class ArduPilotCommander:
             return
         ex = "" if off is None else off[0]
         ey = "" if off is None else off[1]
+        with self._lock:
+            armed, gps = int(self._armed), self._gps_fix
         try:
             self._log_fh.write(
-                f"{now - self._t0:.3f},{self._mode},{int(guided)},{int(sent)},"
-                f"{int(stopped)},{ex},{ey},{cmd['vx']:.3f},{cmd['vy']:.3f},"
-                f"{cmd['vz']:.3f},{cmd['yaw_rate']:.4f}\n")
+                f"{now - self._t0:.3f},{self._mode},{int(guided)},{armed},{gps},"
+                f"{int(sent)},{int(stopped)},{ex},{ey},{cmd['vx']:.3f},"
+                f"{cmd['vy']:.3f},{cmd['vz']:.3f},{cmd['yaw_rate']:.4f}\n")
         except Exception:
             pass
 
@@ -686,6 +857,8 @@ class DroneTracker:
         use_sky_mask   = True,    # False → detect on the FULL frame (no sky gate/crop)
         record_dir     = None,
         record_pad_sec = 2.0,
+        log_dir        = None,   # command CSV dir; None → ./data next to tracker.py
+        run_stamp      = None,   # shared per-run timestamp (video/log/csv share it)
         headless       = False,
         max_frames     = None,
         # MAVLink guidance link.  Default routes through the local MAVLink router
@@ -699,6 +872,13 @@ class DroneTracker:
         no_face_behavior     = "search",  # "search" | "hover" | "stop"
         no_face_timeout      = 2.0,    # s of no-face before "stop" halts the stream
         mav_gcs_mirror       = "udpout:127.0.0.1:14550",  # visibility in MP; None=off
+        # Control transport: "guided" (SET_POSITION_TARGET; needs GPS + airborne)
+        # or "rc" (RC_CHANNELS_OVERRIDE; works on a gimbal in ACRO, no GPS).
+        control_mode         = "guided",
+        rc_axes              = ("yaw", "pitch"),
+        rc_gain              = 0.5,
+        rc_yaw_reversed      = False,
+        rc_pitch_reversed    = False,
     ):
         self.model        = YOLO(model_path)
         # Restrict detection to the "face" class only.  Resolve its class id from
@@ -723,6 +903,8 @@ class DroneTracker:
         self.use_sky_mask = use_sky_mask
         self.record_dir      = record_dir
         self.record_pad_sec  = float(record_pad_sec)
+        # One timestamp per run ties the video, log, and command CSV together.
+        self.run_stamp = run_stamp or datetime.now().strftime("%Y%m%d_%H%M%S")
         self.headless     = headless
         self.max_frames   = max_frames
 
@@ -735,7 +917,13 @@ class DroneTracker:
             statustext_hz=mav_statustext_hz,
             no_face_behavior=no_face_behavior,
             no_face_timeout=no_face_timeout,
-            gcs_mirror=mav_gcs_mirror)
+            gcs_mirror=mav_gcs_mirror,
+            log_dir=(str(log_dir) if log_dir else str(_DATA_DIR)),
+            control_mode=control_mode,
+            rc_axes=rc_axes,
+            rc_gain=rc_gain,
+            rc_yaw_reversed=rc_yaw_reversed,
+            rc_pitch_reversed=rc_pitch_reversed)
         self.sky     = SkyDetector()
         self._clahe  = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
@@ -1329,7 +1517,7 @@ class DroneTracker:
             out_dir = Path(self.record_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            out_path = out_dir / "camera_live_detections.mp4"
+            out_path = out_dir / f"{self.run_stamp}.mp4"   # new file per run
             print(f"[REC] reel -> {out_path.resolve()}  | fps={src_fps:.2f}  "
                   f"pad={pad}f (~{self.record_pad_sec:.1f}s each side)")            
 
@@ -1549,7 +1737,55 @@ def make_pipeline(cfg: CameraConfig) -> str:
 
 # -----------------------------------------------------------------------------
 
+# All persistent run outputs (video, console log, command CSV) land here, next
+# to tracker.py, so they survive across runs regardless of the launch cwd.
+_DATA_DIR = Path(__file__).resolve().parent / "data"
+
+
+class _Tee:
+    """Duplicate a stream to the console AND a log file (line-buffered), so the
+    full console output is persisted offline while still showing live.
+
+    Every line written to the FILE is prefixed with a wall-clock timestamp
+    (HH:MM:SS.mmm) so log entries can be lined up against the recorded video —
+    the video file is named with this run's start time, so log-time minus that
+    start is the position in the reel.  The live console stays unprefixed."""
+    def __init__(self, stream, fh):
+        self._stream, self._fh = stream, fh
+        self._need_prefix = True          # at the start of a fresh line
+
+    @staticmethod
+    def _prefix():
+        now = datetime.now()
+        return f"[{now.strftime('%H:%M:%S')}.{now.microsecond // 1000:03d}] "
+
+    def write(self, data):
+        self._stream.write(data)          # console: unchanged
+        out = []                          # file: timestamp each line start
+        for ch in data:
+            if self._need_prefix:
+                out.append(self._prefix())
+                self._need_prefix = False
+            out.append(ch)
+            if ch == "\n":
+                self._need_prefix = True
+        self._fh.write("".join(out))
+        return len(data)
+
+    def flush(self):
+        self._stream.flush()
+        self._fh.flush()
+
+
 if __name__ == "__main__":
+    # Single timestamp for this run: <stamp>.mp4 / <stamp>.log / commands_<stamp>.csv
+    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+    RUN_STAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+    _log_fh = open(_DATA_DIR / f"{RUN_STAMP}.log", "w", buffering=1)
+    sys.stdout = _Tee(sys.stdout, _log_fh)
+    sys.stderr = _Tee(sys.stderr, _log_fh)
+    print(f"[LOG] console mirrored to {(_DATA_DIR / f'{RUN_STAMP}.log')}")
+
     cam_cfg = CameraConfig()
     CAP_PIPELINE = make_pipeline(cam_cfg)
     model_pth = hf_hub_download(
@@ -1568,8 +1804,10 @@ if __name__ == "__main__":
         skip_frames  = 0,
         show_sky     = False,
         use_sky_mask = False,      # detect on the full frame, not just the sky region
-        record_dir      = "./captures",
+        record_dir      = str(_DATA_DIR),   # <stamp>.mp4 lands here
         record_pad_sec  = 5.0,
+        log_dir         = str(_DATA_DIR),   # commands_<stamp>.csv lands here
+        run_stamp       = RUN_STAMP,        # share the run timestamp
         headless     = os.environ.get("TRACKER_HEADLESS") == "1",
         # MAVLink guidance goes through the local router (MAVProxy/mavlink-router)
         # on udpin:127.0.0.1:14551 — the router owns the FC serial port.
@@ -1579,4 +1817,14 @@ if __name__ == "__main__":
                         else os.environ.get("MAV_CONN", "udpin:127.0.0.1:14551")),
         # no_face_behavior: "search" (fly forward, current) | "hover" | "stop".
         no_face_behavior = os.environ.get("NO_FACE_BEHAVIOR", "search"),
+        # CONTROL_MODE: "guided" (default) | "rc" (RC-override; ACRO, no GPS, works
+        # on a stationary gimbal).  CONTROL_AXES picks which axes to drive (comma
+        # list of yaw/pitch); channel map + calibration are read from the FC.
+        control_mode     = os.environ.get("CONTROL_MODE", "guided"),
+        rc_axes          = tuple(a.strip() for a in
+                                 os.environ.get("CONTROL_AXES", "yaw,pitch").split(",")
+                                 if a.strip()),
+        rc_gain          = float(os.environ.get("RC_GAIN", "0.5")),
+        rc_yaw_reversed  = os.environ.get("RC_YAW_REVERSED", "0") == "1",
+        rc_pitch_reversed = os.environ.get("RC_PITCH_REVERSED", "0") == "1",
     ).run()
