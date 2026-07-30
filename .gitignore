@@ -25,7 +25,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-
+yolo-env/
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
@@ -218,3 +218,7 @@ src/development/modules/object_tracking/ARDUPILOT_CHEATSHEET.pdf
 # WASP tracker per-run logs
 logs/
 src/product/logs/
+
+# WASP tracker per-run outputs (videos, console logs, command CSVs)
+src/development/modules/object_tracking/data/
+src/development/modules/object_tracking/captures/
