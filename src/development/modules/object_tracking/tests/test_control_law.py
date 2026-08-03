@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""Offline verification of fc_control: signs, limits, plumbing, convergence."""
+import math
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from fc_control import (AcroCommander, ArduPilotAcro, ControlLaw, _deadband,
+                        _msp_frame, commander_from_env)
+
+FW = FH = 640
+fails = []
+
+
+def check(name, cond, detail=""):
+    print(f"  [{'PASS' if cond else 'FAIL'}] {name}" + (f"  {detail}" if detail else ""))
+    if not cond:
+        fails.append(name)
+
+
+print("\n=== 1. sign conventions ===")
+law = ControlLaw(h_fov_deg=62.2, v_fov_deg=48.8, deadband_frac=0.03, slew_per_s=1e9)
+
+c = law.compute(+160, 0, FW, FH)      # target RIGHT of centre
+check("target right -> yaw stick positive (yaw right)", c["yaw_stick"] > 0,
+      f"yaw_stick={c['yaw_stick']:+.3f}")
+law.neutral()
+c = law.compute(-160, 0, FW, FH)
+check("target left  -> yaw stick negative", c["yaw_stick"] < 0,
+      f"yaw_stick={c['yaw_stick']:+.3f}")
+law.neutral()
+c = law.compute(0, +160, FW, FH)      # target BELOW centre
+check("target below -> pitch stick negative (nose DOWN)", c["pitch_stick"] < 0,
+      f"pitch_stick={c['pitch_stick']:+.3f}")
+law.neutral()
+c = law.compute(0, -160, FW, FH)
+check("target above -> pitch stick positive (nose UP)", c["pitch_stick"] > 0,
+      f"pitch_stick={c['pitch_stick']:+.3f}")
+
+print("\n=== 2. deadband / saturation / limits ===")
+law.neutral()
+c = law.compute(4, 4, FW, FH)         # 4px of 320 = 1.25% < 3% deadband
+check("inside deadband -> exactly zero", c["yaw_stick"] == 0.0 and c["pitch_stick"] == 0.0,
+      f"yaw={c['yaw_stick']} pitch={c['pitch_stick']}")
+check("deadband rescale is continuous", abs(_deadband(0.03000001, 0.03)) < 1e-5)
+check("deadband reaches 1.0 at the edge", abs(_deadband(1.0, 0.03) - 1.0) < 1e-9)
+
+law2 = ControlLaw(kp_yaw=50.0, kp_pitch=50.0, stick_limit=0.55, slew_per_s=1e9)
+c = law2.compute(319, 319, FW, FH)
+check("saturates at stick_limit", abs(c["yaw_stick"]) <= 0.55 + 1e-9
+      and abs(abs(c["yaw_stick"]) - 0.55) < 1e-9, f"yaw_stick={c['yaw_stick']:+.4f}")
+check("reported rate matches the clamped stick",
+      abs(c["yaw_rate"] - 0.55 * law2.max_yaw_rate) < 1e-6,
+      f"{math.degrees(c['yaw_rate']):.1f} deg/s")
+
+print("\n=== 3. slew limiting ===")
+law3 = ControlLaw(kp_yaw=50.0, stick_limit=1.0, slew_per_s=2.0, deadband_frac=0.0)
+import time
+law3.compute(0, 0, FW, FH, dt=0.05)   # seed
+c = law3.compute(319, 0, FW, FH, dt=0.1)   # demand full stick, 0.1 s elapsed
+check("slew caps the step (<=0.25 after 0.1s at 2/s)", 0.0 < c["yaw_stick"] <= 0.30,
+      f"yaw_stick={c['yaw_stick']:+.3f}")
+
+print("\n=== 4. inversion flags ===")
+lawi = ControlLaw(invert_yaw=True, invert_pitch=True, slew_per_s=1e9)
+ci = lawi.compute(+160, +160, FW, FH)
+check("YAW_REVERSED flips the yaw stick", ci["yaw_stick"] < 0, f"{ci['yaw_stick']:+.3f}")
+check("PITCH_REVERSED flips the pitch stick", ci["pitch_stick"] > 0,
+      f"{ci['pitch_stick']:+.3f}")
+
+print("\n=== 5. closed-loop convergence (kinematic sim) ===")
+
+
+def simulate(kp, seconds=6.0, dt=0.05, tgt_az_deg=25.0, tgt_el_deg=-15.0,
+             hfov=62.2, vfov=48.8, latency_steps=2):
+    """Camera boresight integrates the commanded body rates.  If the sign
+    convention is right the pixel error must decay to inside the deadband."""
+    L = ControlLaw(h_fov_deg=hfov, v_fov_deg=vfov, kp_yaw=kp, kp_pitch=kp,
+                   deadband_frac=0.03, stick_limit=0.55, slew_per_s=3.0)
+    psi = 0.0                     # heading (rad)
+    theta = 0.0                   # pitch   (rad)
+    tgt_az = math.radians(tgt_az_deg)
+    tgt_el = math.radians(tgt_el_deg)
+    tan_h, tan_v = math.tan(math.radians(hfov) / 2), math.tan(math.radians(vfov) / 2)
+    pipe = [(0.0, 0.0)] * latency_steps        # detection latency
+    hist = []
+    for _ in range(int(seconds / dt)):
+        az_rel = tgt_az - psi                  # >0 target to the right
+        el_rel = tgt_el - theta                # >0 target above boresight
+        if abs(az_rel) > math.radians(80) or abs(el_rel) > math.radians(80):
+            return None, "boresight ran away"
+        ex = (math.tan(az_rel) / tan_h) * (FW / 2)
+        ey = -(math.tan(el_rel) / tan_v) * (FH / 2)   # below centre -> +ey
+        pipe.append((ex, ey))
+        mex, mey = pipe.pop(0)
+        c = L.compute(mex, mey, FW, FH, dt=dt)
+        psi += c["yaw_rate"] * dt
+        theta += c["pitch_rate"] * dt
+        hist.append((math.degrees(az_rel), math.degrees(el_rel)))
+    return hist, None
+
+
+for kp in (1.0, 2.0, 3.0):
+    hist, err = simulate(kp)
+    if err:
+        check(f"kp={kp}: converges", False, err)
+        continue
+    az0, el0 = hist[0]
+    azf, elf = hist[-1]
+    peak_over = max(0.0, -min(a for a, _ in hist))   # overshoot past 0 in azimuth
+    check(f"kp={kp}: azimuth error {az0:+.1f} -> {azf:+.1f} deg (converges)",
+          abs(azf) < abs(az0) * 0.25,
+          f"overshoot {peak_over:.1f} deg")
+    check(f"kp={kp}: elevation error {el0:+.1f} -> {elf:+.1f} deg (converges)",
+          abs(elf) < abs(el0) * 0.25)
+
+print("\n=== 6. a genuinely reversed axis: diverges, and the flag fixes it ===")
+
+
+def simulate_reversed(invert):
+    """Model an airframe/TX whose yaw axis responds BACKWARDS to the stick: the
+    plant applies -stick*max_rate.  Without YAW_REVERSED the loop must run away
+    (that is the symptom on the gimbal); setting it must recover convergence."""
+    L = ControlLaw(kp_yaw=2.0, slew_per_s=3.0, deadband_frac=0.03,
+                   invert_yaw=invert)
+    psi, tgt = 0.0, math.radians(25.0)
+    tan_h = math.tan(math.radians(62.2) / 2)
+    worst = 0.0
+    for _ in range(160):
+        az_rel = tgt - psi
+        if abs(az_rel) > math.radians(85):
+            return math.degrees(az_rel)
+        ex = (math.tan(az_rel) / tan_h) * (FW / 2)
+        c = L.compute(ex, 0, FW, FH, dt=0.05)
+        psi += -(c["yaw_stick"] * L.max_yaw_rate) * 0.05   # REVERSED plant
+        worst = max(worst, abs(math.degrees(tgt - psi)))
+    return math.degrees(tgt - psi)
+
+
+bad = simulate_reversed(invert=False)
+good = simulate_reversed(invert=True)
+check("reversed axis without the flag DIVERGES (so a polarity error is caught)",
+      abs(bad) > 25.0, f"final error {bad:+.1f} deg")
+check("YAW_REVERSED=1 recovers convergence on that same axis",
+      abs(good) < 6.0, f"final error {good:+.1f} deg")
+
+print("\n=== 7. RC PWM mapping ===")
+be = ArduPilotAcro.__new__(ArduPilotAcro)          # no link needed
+be.rc = {"yaw": dict(chan=4, min=1100, max=1900, trim=1500, reversed=False),
+         "pitch": dict(chan=2, min=1000, max=2000, trim=1450, reversed=True)}
+check("centre stick -> trim", be._axis_pwm("yaw", 0.0) == 1500)
+check("full right -> max", be._axis_pwm("yaw", 1.0) == 1900)
+check("full left  -> min", be._axis_pwm("yaw", -1.0) == 1100)
+check("half right honours asymmetric trim",
+      be._axis_pwm("pitch", 0.5) == int(round(1450 - 0.5 * (1450 - 1000))),
+      f"reversed axis -> {be._axis_pwm('pitch', 0.5)}")
+check("clamped inside [min,max]", 1100 <= be._axis_pwm("yaw", 5.0) <= 1900)
+
+print("\n=== 8. MSP framing ===")
+f = _msp_frame(105)
+check("MSP request header", f[:3] == b"$M<", repr(f))
+check("MSP zero-payload crc = len^cmd", f[-1] == (0 ^ 105), f"crc={f[-1]}")
+f2 = _msp_frame(200, bytes([0x01, 0x02]))
+check("MSP crc over payload", f2[-1] == (2 ^ 200 ^ 1 ^ 2), f"crc={f2[-1]}")
+
+print("\n=== 9. offline commander end-to-end ===")
+tmp = tempfile.mkdtemp()
+os.environ["MAV_CONN"] = "none"
+cmdr = commander_from_env(log_dir=tmp, verbose=False)
+cmdr.connect()
+check("offline backend links=False", cmdr.linked is False)
+check("no-crash compute+update", True)
+for i in range(10):
+    c = cmdr.compute(100, -50, "LOCK", FW, FH)
+    cmdr.update(c, (100, -50), have_face=True)
+    time.sleep(0.02)
+line = cmdr.format_command("LOCK", c, (100, -50), False, cmdr.linked, True)
+check("format_command mentions SIM when offline", "SIM" in line, line)
+c0 = cmdr.compute(0, 0, "SEARCH", FW, FH)
+check("SEARCH state -> neutral sticks",
+      c0["yaw_stick"] == 0.0 and c0["pitch_stick"] == 0.0)
+cmdr.close()
+csv = list(Path(tmp).glob("control_*.csv"))
+check("control CSV written", len(csv) == 1, str(csv))
+if csv:
+    rows = csv[0].read_text().strip().splitlines()
+    check("CSV has a header + rows", len(rows) > 1, f"{len(rows)} lines")
+    check("CSV header names sticks not velocities",
+          "yaw_stick" in rows[0] and "vz" not in rows[0], rows[0])
+cmdr.close()                                    # idempotent
+check("close() is idempotent", True)
+
+print("\n" + "=" * 60)
+if fails:
+    print(f"{len(fails)} FAILURE(S): " + ", ".join(fails))
+    sys.exit(1)
+print("ALL CHECKS PASSED")

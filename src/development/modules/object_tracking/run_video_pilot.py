@@ -2,6 +2,16 @@
 """
 run_video_pilot.py  --  WASP tracker on a recorded clip, steering the pilot (FC)
 
+    !! STALE — DOES NOT RUN.  Kept only as a reference for a future video-input
+    harness.  Use run_pipeline.py for anything real.
+
+    It passes video_path / mav_device / mav_baud to DroneTracker, none of which
+    have existed since the tracker moved to a GStreamer camera pipeline, and it
+    describes the GUIDED velocity setpoints that were removed (see fc_control.py
+    for why they could never steer a gimbal-mounted airframe).  Reviving this
+    means re-adding a file source to DroneTracker._open_capture and building the
+    commander with fc_control.commander_from_env.
+
 Runs tracker.py's DroneTracker against a video file and, when --connect is
 given, opens the SAME MAVLink link controller_testing.py validates (device +
 baud) so the flight controller ("the pilot") receives the live GUIDED

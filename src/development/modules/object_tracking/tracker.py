@@ -45,13 +45,20 @@ ground at all.
 
 Flight control output
 ---------------------
-Steering goes to an ArduPilot Copter FC (TBS Lucid H7 / STM32H743) over
-MAVLink as GUIDED-mode velocity + yaw-rate setpoints
-(SET_POSITION_TARGET_LOCAL_NED, MAV_FRAME_BODY_OFFSET_NED).  The control law
-centres the detection in the frame: yaw rate nulls the horizontal pixel error,
-climb/descend (NED vz) nulls the vertical error, and vx closes on the target
-while locked.  One setpoint is sent per YOLO frame, so the command rate always
-equals the detection rate set by skip_frames (camera_fps / (skip_frames + 1)).
+Steering goes to the FC as STICK COMMANDS while the pilot flies in ACRO — see
+fc_control.py for the full rationale.  In ACRO a stick deflection commands a
+body angular RATE, which is exactly what "rotate until the target is centred"
+needs: yaw rate nulls the horizontal pixel error and pitch rate nulls the
+vertical one.  Roll, throttle and arming always stay with the pilot.
+
+This replaces the previous GUIDED velocity setpoints, which could never move
+this airframe: GUIDED is a mode the drone is never in (so nothing was ever
+transmitted), and a velocity setpoint needs an EKF position estimate the
+gimbal-mounted airframe does not have.
+
+The commander streams the latest command at a fixed rate independent of the
+detection FPS, and releases every channel back to the pilot whenever the target
+is lost, the FC is disarmed, or the tracker exits.
 """
 
 import os
@@ -62,17 +69,14 @@ import cv2
 import numpy as np
 from collections import deque
 from pathlib import Path
-import threading
 from time import perf_counter, sleep
 from datetime import datetime
 from ultralytics import YOLO
 from dataclasses import dataclass
 from huggingface_hub import hf_hub_download
 
-try:
-    from pymavlink import mavutil
-except ImportError:          # offline development box without pymavlink
-    mavutil = None
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from fc_control import AcroCommander, ControlLaw, commander_from_env
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -231,572 +235,6 @@ class KalmanTracker:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ARDUPILOT COMMANDER  (TBS Lucid H7 / STM32H743, ArduPilot Copter, MAVLink2)
-# ══════════════════════════════════════════════════════════════════════════════
-
-class ArduPilotCommander:
-    """Centering control law + MAVLink link to an ArduPilot Copter FC.
-
-    The detection's pixel offset from the frame centre is converted to an
-    angular error through the camera FOV.  Yaw rate nulls the horizontal
-    error and NED vertical velocity nulls the vertical error, so the airframe
-    continuously steers to keep the target at the centre of the frame while
-    vx (body-forward) closes on it.
-
-    Transport: SET_POSITION_TARGET_LOCAL_NED in MAV_FRAME_BODY_OFFSET_NED —
-    velocities are interpreted relative to the vehicle's current heading,
-    which is what ArduPilot Copter GUIDED mode expects for body-frame
-    velocity + yaw-rate control.  The FC must be in GUIDED mode to honour
-    these setpoints, and ArduPilot stops trusting a stale velocity target
-    after GUID_TIMEOUT (default 3 s) — so the send rate, which is locked to
-    the detection rate (camera_fps / (skip_frames + 1)), must stay well above
-    ~0.3 Hz.  At 30 fps even skip_frames = 10 gives ~2.7 Hz, still safe.
-
-    Bench link: Jetson USB -> FC, enumerates as /dev/ttyACM0.
-    Airframe link: spare UART with SERIALn_PROTOCOL = 2 (MAVLink2).
-    """
-
-    # Set these to the REAL lens FOV of the deployed camera before flight.
-    H_FOV = np.radians(90.0)
-    V_FOV = np.radians(90.0)
-
-    K_YAW = 1.5
-    K_VZ  = 2.0
-
-    FWD = {"LOCK": 2.0, "PREDICT": 0.5, "SEARCH": 0.0}
-
-    MAX_YAW  = 1.5
-    MAX_VZ   = 2.0
-    MAX_FWD  = 3.0
-
-    GUIDED_MODE = 4                  # ArduPilot Copter custom_mode for GUIDED
-    FRAME_BODY_OFFSET_NED = 9        # MAV_FRAME_BODY_OFFSET_NED
-    # POSITION_TARGET_TYPEMASK: a SET bit means IGNORE that field.
-    # Ignored: position x/y/z (1+2+4), accel (64+128+256), yaw angle (1024).
-    # Active:  velocity vx/vy/vz (bits 3-5) and yaw_rate (bit 11).
-    TYPE_MASK = 0b010111000111       # 1479
-
-    def __init__(self, conn=None, baud=115200,
-                 source_system=1, source_component=191,
-                 send_hz=15.0, statustext_hz=2.0,
-                 no_face_behavior="search", no_face_timeout=2.0,
-                 gcs_mirror="udpout:127.0.0.1:14550",
-                 log_dir="/home/iknowhow/face_tracker/logs",
-                 # ── control transport ────────────────────────────────────────
-                 # "guided": SET_POSITION_TARGET velocity/yaw-rate — needs the FC
-                 #   armed, airborne, and holding a position estimate (GPS/EKF).
-                 # "rc":     RC_CHANNELS_OVERRIDE — injects stick values the FC
-                 #   turns into yaw/pitch rates in ACRO/STABILIZE.  Works on a
-                 #   stationary gimbal with NO GPS, the instant motors are armed.
-                 #   The RC channel map AND calibration are read from the FC at
-                 #   connect (RCMAP_*, RC{n}_MIN/MAX/TRIM/REVERSED) — nothing about
-                 #   the transmitter is hardcoded.
-                 control_mode="guided",
-                 rc_axes=("yaw", "pitch"),  # axes the tracker drives (rest = pilot)
-                 rc_gain=0.5,               # deflection at the control limit (0..1)
-                 rc_yaw_reversed=False,     # XOR the FC's RC{n}_REVERSED per axis if
-                 rc_pitch_reversed=False):  # it drives the WRONG way
-        # conn: pymavlink connection string.  Default deployment routes through
-        # mavlink-router/MAVProxy: "udpin:127.0.0.1:14551".  A serial path such
-        # as "/dev/ttyACM0" also works (baud used only then).  None = print-only.
-        #
-        # gcs_mirror: MAVProxy does NOT forward one --out link to another, so a
-        # GCS on 14550 never sees what we send on 14551.  To make tracker's
-        # commands visible in Mission Planner we ALSO send (STATUSTEXT + the
-        # setpoint) straight to the GCS port.  None disables the mirror.
-        self.conn             = conn
-        self.gcs_mirror       = gcs_mirror
-        self.baud             = baud
-        self.source_system    = int(source_system)      # 1  = vehicle system id
-        self.source_component = int(source_component)    # 191 = ONBOARD_COMPUTER
-        self.send_hz          = float(send_hz)
-        self.statustext_hz    = float(statustext_hz)
-        self.no_face_behavior = no_face_behavior         # "search"|"hover"|"stop"
-        self.no_face_timeout  = float(no_face_timeout)
-        self.log_dir          = log_dir
-
-        self.control_mode     = control_mode             # "guided" | "rc"
-        self.rc_axes          = tuple(rc_axes)
-        self.rc_gain          = float(rc_gain)
-        self.rc_user_rev      = {"yaw":   bool(rc_yaw_reversed),
-                                 "pitch": bool(rc_pitch_reversed)}
-        self.rc_cfg           = {}    # per-axis {chan,min,max,trim,reversed}, from FC
-
-        self.master  = None
-        self._mirror = None         # send-only link to the GCS (Mission Planner)
-        self.linked  = False        # True after the first VEHICLE heartbeat
-        self._mode   = None
-        self._guided = False
-        self._armed  = False        # MAV_MODE_FLAG_SAFETY_ARMED — motors live
-        self._gps_fix = 0           # GPS_RAW_INT.fix_type (0/1 = no fix, 3+ = 3D)
-        self._warned_blocked = False  # one-shot: sending but the FC can't act
-        self._t0     = perf_counter()
-
-        # setpoint shared with the tx thread (main loop writes, tx thread reads)
-        self._lock        = threading.Lock()
-        self._cmd         = dict(vx=0.0, vy=0.0, vz=0.0, yaw_rate=0.0)
-        self._target_off  = None
-        self._last_face_t = 0.0
-
-        self._stop_evt  = threading.Event()
-        self._rx_thread = None
-        self._tx_thread = None
-        self._log_fh    = None
-        self._log_path  = None
-        self._last_stt  = 0.0
-
-    # ── link ──────────────────────────────────────────────────────────────────
-    def connect(self):
-        """Open the MAVLink link (UDP via the router, or serial) and lock onto
-        the ArduPilot vehicle heartbeat, then start the rx/tx threads."""
-        if self.conn is None:
-            print("[MAV] no connection configured — offline, commands are print-only")
-            return
-        if mavutil is None:
-            raise RuntimeError("pymavlink not installed:  pip install pymavlink")
-
-        print(f"[MAV] connecting {self.conn}  "
-              f"(src sys={self.source_system} comp={self.source_component}) ...")
-        self.master = mavutil.mavlink_connection(
-            self.conn, baud=self.baud,
-            source_system=self.source_system,
-            source_component=self.source_component)
-
-        hb = self._wait_vehicle_heartbeat(timeout=15)
-        if hb is None:
-            raise RuntimeError(
-                f"[MAV] no ArduPilot vehicle heartbeat on {self.conn} within 15 s. "
-                "Is the router up?  Check: systemctl status face-tracker-router")
-        self.linked  = True
-        self._mode   = hb.custom_mode
-        self._guided = (hb.custom_mode == self.GUIDED_MODE)
-        self._armed  = bool(hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-        print(f"[MAV] linked vehicle sys={self.master.target_system} "
-              f"comp={self.master.target_component}  mode={hb.custom_mode} "
-              f"{'(GUIDED)' if self._guided else '(NOT GUIDED — setpoints gated)'}  "
-              f"{'ARMED' if self._armed else 'DISARMED — motors off, nothing will move'}")
-
-        if self.gcs_mirror:
-            try:
-                self._mirror = mavutil.mavlink_connection(
-                    self.gcs_mirror, source_system=self.source_system,
-                    source_component=self.source_component)
-                print(f"[MAV] GCS mirror -> {self.gcs_mirror} "
-                      "(tracker commands visible in Mission Planner)")
-            except Exception as e:
-                print(f"[MAV] GCS mirror disabled ({e})")
-                self._mirror = None
-
-        # RC config MUST be read before the rx thread starts (it would otherwise
-        # consume the PARAM_VALUE replies).
-        if self.control_mode == "rc":
-            print(f"[MAV] control=RC-OVERRIDE — driving [{', '.join(self.rc_axes)}] "
-                  f"in ACRO/STABILIZE when ARMED + target locked; releases to the "
-                  f"pilot otherwise. No GPS needed. Reading TX map/cal from FC:")
-            self.rc_cfg = self._fetch_rc_config()
-
-        self._open_log()
-        self._stop_evt.clear()
-        self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True)
-        self._tx_thread = threading.Thread(target=self._tx_loop, daemon=True)
-        self._rx_thread.start()
-        self._tx_thread.start()
-        print(f"[MAV] streaming @ {self.send_hz:.0f} Hz, "
-              f"STATUSTEXT @ {self.statustext_hz:.0f} Hz, "
-              f"control='{self.control_mode}', no-face='{self.no_face_behavior}'")
-
-    def _wait_vehicle_heartbeat(self, timeout):
-        """Wait for the AUTOPILOT heartbeat specifically.  The router bus also
-        carries GCS heartbeats (Mission Planner, MAVProxy) with the same or a
-        different system id; latching target onto one of those would send our
-        setpoints to a ground station, not the FC.  Filter them out."""
-        deadline = perf_counter() + timeout
-        while perf_counter() < deadline:
-            msg = self.master.recv_match(type="HEARTBEAT", blocking=True, timeout=1)
-            if msg is None:
-                continue
-            if msg.autopilot == mavutil.mavlink.MAV_AUTOPILOT_INVALID:
-                continue                                  # a GCS/router heartbeat
-            if msg.type == mavutil.mavlink.MAV_TYPE_GCS:
-                continue
-            self.master.target_system    = msg.get_srcSystem()
-            self.master.target_component = msg.get_srcComponent()
-            return msg
-        return None
-
-    def _rx_loop(self):
-        """Track the FC flight mode from its heartbeats (for GUIDED-gating) and
-        keep the UDP socket drained so it never backs up."""
-        while not self._stop_evt.is_set():
-            try:
-                msg = self.master.recv_match(blocking=True, timeout=1)
-            except Exception:
-                continue
-            if msg is None:
-                continue
-            if (msg.get_type() == "HEARTBEAT"
-                    and msg.autopilot != mavutil.mavlink.MAV_AUTOPILOT_INVALID
-                    and msg.type != mavutil.mavlink.MAV_TYPE_GCS):
-                with self._lock:
-                    self._mode   = msg.custom_mode
-                    self._guided = (msg.custom_mode == self.GUIDED_MODE)
-                    self._armed  = bool(msg.base_mode
-                                        & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-            elif msg.get_type() == "GPS_RAW_INT":
-                with self._lock:
-                    self._gps_fix = msg.fix_type
-
-    def _tx_loop(self):
-        """Transmit the latest setpoint at a FIXED rate, independent of the
-        detection FPS.  Gated on GUIDED; honours the no-face safety behaviour."""
-        period = 1.0 / self.send_hz
-        next_t = perf_counter()
-        while not self._stop_evt.is_set():
-            now = perf_counter()
-            with self._lock:
-                cmd       = dict(self._cmd)
-                off       = self._target_off
-                guided    = self._guided
-                armed     = self._armed
-                gps_fix   = self._gps_fix
-                last_face = self._last_face_t
-
-            # Safety: only the "stop" behaviour halts the stream after a timeout.
-            stopped = (self.no_face_behavior == "stop"
-                       and (now - last_face) > self.no_face_timeout)
-
-            have_face = off is not None      # target locked this frame?
-            sent = False
-
-            if self.control_mode == "rc":
-                # RC override (ACRO/STABILIZE, no GPS, works on a gimbal): drive the
-                # configured axes ONLY while ARMED and a target is locked; otherwise
-                # release every channel so the pilot keeps full manual control.
-                steer = bool(self.linked and armed and have_face and not stopped)
-                self._rc_override_once(cmd, steer, self.master)
-                sent = steer
-                if self.linked and not armed and not self._warned_blocked:
-                    print("[MAV][WARN] RC-override mode but the FC is DISARMED — "
-                          "arm the motors to see the drone move.")
-                    self._warned_blocked = True
-            else:
-                # GUIDED velocity/yaw-rate — gated on the FC actually being in GUIDED.
-                if self.linked and guided and not stopped:
-                    self._tx_once(cmd, self.master)
-                    sent = True
-                    # Transmitting, but GUIDED only MOVES the copter when armed,
-                    # airborne, and holding a position estimate.  Name the blocker
-                    # once so a silent "no motion" run isn't mistaken for a bug.
-                    if not self._warned_blocked and (not armed or gps_fix < 3):
-                        reason = ("DISARMED (motors off)" if not armed
-                                  else f"no 3D GPS fix (fix_type={gps_fix}) — GUIDED "
-                                       "velocity control needs a position estimate")
-                        print(f"[MAV][WARN] sending GUIDED setpoints but the FC "
-                              f"will NOT act: {reason}.")
-                        self._warned_blocked = True
-                # GCS mirror (GUIDED only): show intended setpoints in MP's inspector.
-                if self._mirror is not None and not stopped:
-                    self._tx_once(cmd, self._mirror)
-
-            if self.linked and (now - self._last_stt) >= (1.0 / self.statustext_hz):
-                self._last_stt = now
-                self._statustext(cmd, off, guided, stopped)
-
-            self._log_row(now, cmd, off, guided, sent, stopped)
-
-            next_t += period
-            dt = next_t - perf_counter()
-            if dt > 0:
-                self._stop_evt.wait(dt)
-            else:
-                next_t = perf_counter()      # fell behind; resync
-
-    def set_guided(self):
-        """Request GUIDED mode.  Deliberately NOT called automatically: engage
-        from RC/GCS during bench + flight test, or call this explicitly."""
-        if self.master is None:
-            return
-        self.master.mav.command_long_send(
-            self.master.target_system, self.master.target_component,
-            mavutil.mavlink.MAV_CMD_DO_SET_MODE, 0,
-            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
-            self.GUIDED_MODE, 0, 0, 0, 0, 0)
-
-    def update(self, cmd, target_off, have_face):
-        """Called each detection frame: publish the latest setpoint for the tx
-        thread to stream.  Returns True if the link is live AND transmitting
-        (linked + GUIDED), for the HUD/console 'TX' indicator."""
-        now = perf_counter()
-        with self._lock:
-            self._cmd        = dict(cmd)
-            self._target_off = target_off
-            if have_face:
-                self._last_face_t = now
-            guided = self._guided
-            armed  = self._armed
-        if self.master is None or not self.linked:
-            return False
-        if self.control_mode == "rc":
-            # RC override actually drives the motors when armed + target locked.
-            return bool(armed and have_face)
-        return bool(guided)
-
-    def close(self):
-        self._stop_evt.set()
-        if self._tx_thread is not None:
-            self._tx_thread.join(timeout=2)
-        if self._rx_thread is not None:
-            self._rx_thread.join(timeout=2)
-        if self.master is not None:
-            try:                        # final all-stop; don't die on a dead link
-                if self.control_mode == "rc":
-                    # Hand every channel back to the pilot (steer=False = release).
-                    # Send several times — a single datagram can be dropped.
-                    for _ in range(5):
-                        self._rc_override_once(self._cmd, False, self.master)
-                else:
-                    stop = dict(vx=0.0, vy=0.0, vz=0.0, yaw_rate=0.0)
-                    self._tx_once(stop, self.master)
-                    self._tx_once(stop, self._mirror)
-            except Exception:
-                pass
-            self.master.close()
-            self.master = None
-        if self._mirror is not None:
-            self._mirror.close()
-            self._mirror = None
-        if self._log_fh is not None:
-            self._log_fh.close()
-            self._log_fh = None
-
-    # ── control law ───────────────────────────────────────────────────────────
-    def compute(self, err_x, err_y, state, fw, fh):
-        ang_x = err_x * (self.H_FOV / fw)
-        ang_y = err_y * (self.V_FOV / fh)
-
-        # err_x > 0  → target right of centre → yaw right (+ NED yaw rate)
-        # err_y > 0  → target below centre    → descend   (+ NED vz is down)
-        yaw_rate = float(np.clip( self.K_YAW * ang_x,  -self.MAX_YAW, self.MAX_YAW))
-        vz       = float(np.clip( self.K_VZ  * ang_y,  -self.MAX_VZ,  self.MAX_VZ))
-        vx       = float(np.clip( self.FWD.get(state, 0.0), 0.0, self.MAX_FWD))
-        vy       = 0.0
-
-        return dict(vx=vx, vy=vy, vz=vz, yaw_rate=yaw_rate)
-
-    def search_command(self):
-        """No target in view.  Behaviour selected by NO_FACE_BEHAVIOR:
-          • "search" → advance straight ahead at MAX forward speed, holding
-            heading and altitude, so the drone keeps closing/sweeping until the
-            tracker re-acquires (the original interception behaviour).
-          • "hover"  → zero velocity setpoint (actively hold).
-          • "stop"   → zero velocity now; the tx thread also stops transmitting
-            after NO_FACE_TIMEOUT so the FC falls back per its GUID_TIMEOUT."""
-        if self.no_face_behavior == "search":
-            return dict(vx=self.MAX_FWD, vy=0.0, vz=0.0, yaw_rate=0.0)
-        return dict(vx=0.0, vy=0.0, vz=0.0, yaw_rate=0.0)   # hover / stop
-
-    def _tx_once(self, cmd, conn):
-        """Write ONE velocity + yaw-rate setpoint to the given link (the FC
-        master, or the GCS mirror for visibility).  Not rate-managed here.
-
-        Never raises: a connected-UDP socket can surface a transient
-        ECONNREFUSED (ICMP port-unreachable when a receiver blips), and that
-        must NOT kill the tx thread and with it the whole guidance stream.
-        Returns True if the datagram was handed to the socket."""
-        if conn is None:
-            return False
-        try:
-            conn.mav.set_position_target_local_ned_send(
-                int((perf_counter() - self._t0) * 1000),      # time_boot_ms
-                self.master.target_system,
-                self.master.target_component,
-                self.FRAME_BODY_OFFSET_NED,
-                self.TYPE_MASK,
-                0.0, 0.0, 0.0,                                # position  (ignored)
-                cmd["vx"], cmd["vy"], cmd["vz"],              # velocity  m/s, body
-                0.0, 0.0, 0.0,                                # accel     (ignored)
-                0.0, cmd["yaw_rate"])                         # yaw ign., yaw rate
-            return True
-        except Exception:
-            return False
-
-    # Which command field drives each RC axis, and its saturation limit.
-    _RC_SRC = {"yaw": ("yaw_rate", "MAX_YAW"), "pitch": ("vz", "MAX_VZ")}
-
-    def _fetch_param(self, name, timeout=3.0):
-        """Read ONE FC parameter synchronously (PARAM_REQUEST_READ → PARAM_VALUE).
-        MUST be called before the rx thread starts, or it will eat the reply.
-        Returns the float value, or None on timeout."""
-        try:
-            self.master.mav.param_request_read_send(
-                self.master.target_system, self.master.target_component,
-                name.encode(), -1)
-        except Exception:
-            return None
-        deadline = perf_counter() + timeout
-        while perf_counter() < deadline:
-            msg = self.master.recv_match(type="PARAM_VALUE", blocking=True, timeout=1)
-            if msg is None:
-                continue
-            pid = msg.param_id
-            if isinstance(pid, bytes):
-                pid = pid.decode(errors="ignore")
-            if pid.strip("\x00") == name:
-                return float(msg.param_value)
-        return None
-
-    def _fetch_rc_config(self):
-        """Learn the transmitter mapping + calibration from the FC so NOTHING is
-        hardcoded: RCMAP_<AXIS> gives the input channel, RC{n}_MIN/MAX/TRIM/REVERSED
-        its calibrated range.  Falls back to raw defaults (and says so) only if a
-        read fails."""
-        cfg = {}
-        fallback_chan = {"yaw": 4, "pitch": 2}   # ArduCopter AETR defaults
-        for axis in self.rc_axes:
-            ch = self._fetch_param(f"RCMAP_{axis.upper()}")
-            ch = int(ch) if ch else fallback_chan.get(axis, 0)
-            mn = self._fetch_param(f"RC{ch}_MIN")
-            mx = self._fetch_param(f"RC{ch}_MAX")
-            tr = self._fetch_param(f"RC{ch}_TRIM")
-            rv = self._fetch_param(f"RC{ch}_REVERSED")
-            got = None not in (mn, mx, tr)
-            c = dict(chan=ch,
-                     min=int(mn) if mn else 1000,
-                     max=int(mx) if mx else 2000,
-                     trim=int(tr) if tr else 1500,
-                     reversed=bool(int(rv)) if rv is not None else False,
-                     from_fc=got)
-            cfg[axis] = c
-            src = "from FC" if got else "DEFAULTS — param read FAILED, verify wiring"
-            note = "" if 1 <= ch <= 8 else "  [WARN: chan>8, not overridable]"
-            print(f"[MAV][RC] {axis:5s}: ch{c['chan']} min={c['min']} "
-                  f"trim={c['trim']} max={c['max']} rev={c['reversed']} ({src}){note}")
-        return cfg
-
-    def _axis_pwm(self, norm, cfg, user_rev):
-        """Map a normalized command (−1..1) to a PWM using the FC's own calibration
-        (asymmetric trim honoured), scaled by rc_gain and clamped to [min,max]."""
-        norm = max(-1.0, min(1.0, norm)) * self.rc_gain
-        if cfg["reversed"] ^ user_rev:
-            norm = -norm
-        if norm >= 0:
-            pwm = cfg["trim"] + norm * (cfg["max"] - cfg["trim"])
-        else:
-            pwm = cfg["trim"] + norm * (cfg["trim"] - cfg["min"])
-        return int(round(max(cfg["min"], min(cfg["max"], pwm))))
-
-    def _rc_override_once(self, cmd, steer, conn):
-        """Send ONE RC_CHANNELS_OVERRIDE.  When steer=True, drive the configured
-        axes from cmd; otherwise send all-zeros = RELEASE every channel back to the
-        pilot.  Channels we don't drive are always 0 (released).  Never raises."""
-        if conn is None:
-            return False
-        chans = [0] * 8                       # 0 → released to the pilot's radio
-        if steer:
-            for axis in self.rc_axes:
-                c = self.rc_cfg.get(axis)
-                if not c or not (1 <= c["chan"] <= 8):
-                    continue
-                field, limname = self._RC_SRC[axis]
-                lim = getattr(self, limname, 0.0)
-                norm = (cmd.get(field, 0.0) / lim) if lim else 0.0
-                chans[c["chan"] - 1] = self._axis_pwm(
-                    norm, c, self.rc_user_rev.get(axis, False))
-        try:
-            conn.mav.rc_channels_override_send(
-                self.master.target_system, self.master.target_component, *chans)
-            return True
-        except Exception:
-            return False
-
-    def _statustext(self, cmd, off, guided, stopped):
-        """A compact STATUSTEXT (≤50 chars) so the offset + command show up in
-        Mission Planner's Messages tab.  Throttled by statustext_hz."""
-        if self.master is None:
-            return
-        if stopped:
-            txt = "FT no-face STOP"
-        elif off is not None:
-            txt = (f"FT ex{off[0]:+d} ey{off[1]:+d} "
-                   f"yaw{cmd['yaw_rate']:+.2f} vz{cmd['vz']:+.2f}")
-        else:
-            txt = f"FT search vx{cmd['vx']:.1f} yaw{cmd['yaw_rate']:+.2f}"
-        if self.control_mode == "rc":
-            txt = ("RC " if self._armed else "!ARM ") + txt
-        elif not guided:
-            txt = "!GUIDED " + txt
-        payload = txt[:50].encode()
-        for conn in (self.master, self._mirror):
-            if conn is None:
-                continue
-            try:
-                conn.mav.statustext_send(mavutil.mavlink.MAV_SEVERITY_INFO, payload)
-            except Exception:
-                pass
-
-    def _open_log(self):
-        """Timestamped CSV of every tx-thread tick (whether sent or gated)."""
-        Path(self.log_dir).mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self._log_path = str(Path(self.log_dir) / f"commands_{stamp}.csv")
-        self._log_fh = open(self._log_path, "w", buffering=1)
-        self._log_fh.write(
-            "t_s,mode,guided,armed,gps,sent,stopped,ex,ey,vx,vy,vz,yaw_rate\n")
-        print(f"[MAV] command log -> {self._log_path}")
-
-    def _log_row(self, now, cmd, off, guided, sent, stopped):
-        if self._log_fh is None:
-            return
-        ex = "" if off is None else off[0]
-        ey = "" if off is None else off[1]
-        with self._lock:
-            armed, gps = int(self._armed), self._gps_fix
-        try:
-            self._log_fh.write(
-                f"{now - self._t0:.3f},{self._mode},{int(guided)},{armed},{gps},"
-                f"{int(sent)},{int(stopped)},{ex},{ey},{cmd['vx']:.3f},"
-                f"{cmd['vy']:.3f},{cmd['vz']:.3f},{cmd['yaw_rate']:.4f}\n")
-        except Exception:
-            pass
-
-    @staticmethod
-    def format_command(state, cmd, target_off, sent, live, is_yolo):
-        """One clean line describing the REAL steering command the controller
-        is issuing, and where it went.
-
-        target_off : (ex, ey) pixel offset of the target from frame centre when
-                     a target is in view (→ centre on it); None while SEARCH
-                     (→ advance straight ahead at max forward speed).
-        sent       : True if this setpoint was transmitted to the flight
-                     controller this frame.
-        live       : True when a real MAVLink link is open (False = mp4/offline
-                     simulation, nothing can be transmitted).
-        is_yolo    : False on skip frames (Kalman coast, never transmitted).
-
-        vy is omitted: horizontal centring is done with yaw, so lateral
-        velocity is always 0 by design.
-        """
-        cmd_s = (f"fwd {cmd['vx']:+.2f}  vz {cmd['vz']:+.2f} m/s  "
-                 f"yaw {cmd['yaw_rate']:+.3f} rad/s")
-        if sent:
-            dest = "TX->FC"
-        elif not is_yolo:
-            dest = "held (skip frame)"
-        elif live:
-            dest = f"not sent (state={state})"
-        else:
-            dest = "SIM (no FC attached)"
-
-        if target_off is None:
-            # SEARCH: no target → advance straight ahead at max forward speed.
-            body = "no target — advancing straight ahead (max fwd, hold heading)"
-        else:
-            ex, ey = target_off
-            body = f"target {ex:+05d},{ey:+05d}px -> centre"
-        return f"[CTRL] {state:<7} {body} | {cmd_s} | {dest}"
-
-
-# ══════════════════════════════════════════════════════════════════════════════
 # DRONE TRACKER  (sky-gated + sky-crop zoom + CLAHE)
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -861,24 +299,11 @@ class DroneTracker:
         run_stamp      = None,   # shared per-run timestamp (video/log/csv share it)
         headless       = False,
         max_frames     = None,
-        # MAVLink guidance link.  Default routes through the local MAVLink router
-        # (MAVProxy/mavlink-router) rather than owning the FC serial port
-        # directly.  None → offline / print-only.
-        mav_conn         = "udpin:127.0.0.1:14551",
-        mav_source_system    = 1,      # share the vehicle system id
-        mav_source_component = 191,    # MAV_COMP_ID_ONBOARD_COMPUTER
-        mav_send_hz          = 15.0,   # setpoint stream rate, independent of FPS
-        mav_statustext_hz    = 2.0,    # STATUSTEXT rate into MP Messages tab
-        no_face_behavior     = "search",  # "search" | "hover" | "stop"
-        no_face_timeout      = 2.0,    # s of no-face before "stop" halts the stream
-        mav_gcs_mirror       = "udpout:127.0.0.1:14550",  # visibility in MP; None=off
-        # Control transport: "guided" (SET_POSITION_TARGET; needs GPS + airborne)
-        # or "rc" (RC_CHANNELS_OVERRIDE; works on a gimbal in ACRO, no GPS).
-        control_mode         = "guided",
-        rc_axes              = ("yaw", "pitch"),
-        rc_gain              = 0.5,
-        rc_yaw_reversed      = False,
-        rc_pitch_reversed    = False,
+        # Flight-control link.  Pass a ready-made AcroCommander, or leave it None
+        # and one is built from the environment (see fc_control.commander_from_env
+        # for every knob: MAV_CONN, FC_TRANSPORT, CONTROL_AXES, KP_*, CAM_*FOV_DEG,
+        # YAW_REVERSED / PITCH_REVERSED, STICK_LIMIT, ...).
+        commander      = None,
     ):
         self.model        = YOLO(model_path)
         # Restrict detection to the "face" class only.  Resolve its class id from
@@ -909,25 +334,12 @@ class DroneTracker:
         self.max_frames   = max_frames
 
         self.kalman  = KalmanTracker()
-        self.ap      = ArduPilotCommander(
-            conn=mav_conn,
-            source_system=mav_source_system,
-            source_component=mav_source_component,
-            send_hz=mav_send_hz,
-            statustext_hz=mav_statustext_hz,
-            no_face_behavior=no_face_behavior,
-            no_face_timeout=no_face_timeout,
-            gcs_mirror=mav_gcs_mirror,
-            log_dir=(str(log_dir) if log_dir else str(_DATA_DIR)),
-            control_mode=control_mode,
-            rc_axes=rc_axes,
-            rc_gain=rc_gain,
-            rc_yaw_reversed=rc_yaw_reversed,
-            rc_pitch_reversed=rc_pitch_reversed)
+        self.ap      = commander or commander_from_env(
+            log_dir=(str(log_dir) if log_dir else str(_DATA_DIR)))
         self.sky     = SkyDetector()
         self._clahe  = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
-        self._last_cmd = dict(vx=0.0, vy=0.0, vz=0.0, yaw_rate=0.0)
+        self._last_cmd = self.ap.neutral_command()
 
         self.state     = "SEARCH"
         self.missed    = 0
@@ -1322,12 +734,22 @@ class DroneTracker:
                               color, -1, cv2.LINE_AA)
 
     def _draw_flightcmd(self, frame, cmd, pos, cx_f, cy_f, sent, accent):
-        """Single flight panel: target deviation from centre + the ArduPilot
-        command going out right now (yaw / climb / forward gauges).  Lamp:
-        TX = setpoint sent this frame (YOLO frame), HOLD = skip frame (nothing
-        sent, FC flies the last setpoint), SIM = no MAVLink device configured."""
+        """Flight panel: target deviation, the STICK command going to the FC
+        right now, and the FC's own reported state.
+
+        The lamp reports what actually happened to the command, never merely
+        that one was computed — the old HUD showed "TX" while the tracker was
+        transmitting nothing at all, which is exactly how a dead control path
+        went unnoticed:
+            DRIVE   sticks sent AND the FC echoed them back (confirmed)
+            TX      sticks sent, confirmation still pending
+            REFUSED sticks sent but the FC is discarding them
+            ARM?    a target is locked but the FC is disarmed
+            IDLE    channels released to the pilot (no target)
+            SIM     no flight controller attached
+        """
         h, _ = frame.shape[:2]
-        pw, ph = 246, 118
+        pw, ph = 252, 130
         x1 = 10
         y1 = h - 10 - ph
         x2, y2 = x1 + pw, y1 + ph
@@ -1336,40 +758,62 @@ class DroneTracker:
         tx = x1 + 12
         self._text(frame, "FLIGHT CMD", (tx, y1 + 18), 0.42, self.C_DIM, 1)
 
-        if not sent:
-            lamp, tag = self.C_DIM, "HOLD"
-        elif not self.ap.linked:
+        confirmed = self.ap.override_confirmed
+        if not self.ap.linked:
             lamp, tag = self.C_SEARCH, "SIM"
+        elif sent and confirmed is False:
+            lamp, tag = self.C_WARN, "REFUSED"
+        elif sent:
+            lamp, tag = self.C_LOCK, ("DRIVE" if confirmed else "TX")
+        elif pos is not None and not self.ap.armed:
+            lamp, tag = self.C_SEARCH, "ARM?"
         else:
-            lamp, tag = self.C_LOCK, "TX"
+            lamp, tag = self.C_DIM, "IDLE"
         (tw, _), _ = cv2.getTextSize(tag, self._HUD_FONT, 0.42, 1)
         cv2.circle(frame, (x2 - tw - 24, y1 + 13), 4, lamp, -1, cv2.LINE_AA)
         self._text(frame, tag, (x2 - tw - 14, y1 + 18), 0.42, lamp, 1)
 
         if pos:
             ex = pos[0] - cx_f; ey = pos[1] - cy_f
-            az = np.degrees(ex * (self.ap.H_FOV / self.fw))
-            el = np.degrees(-ey * (self.ap.V_FOV / self.fh))
-            dev = f"DEV {ex:+04d},{ey:+04d}px  AZ{az:+05.1f} EL{el:+05.1f}"
+            dev = (f"DEV {ex:+04d},{ey:+04d}px  "
+                   f"AZ{cmd.get('az_deg', 0.0):+05.1f} EL{cmd.get('el_deg', 0.0):+05.1f}")
         else:
             dev = "DEV ----,----px  AZ----- EL-----"
         self._text(frame, dev, (tx, y1 + 36), 0.36, self.C_HUD, 1)
 
+        # Gauges show the commanded BODY RATE, not the raw stick, so the bar and
+        # the number always agree: with YAW_REVERSED/PITCH_REVERSED set the stick
+        # sign is flipped to suit a reversed axis while the physical intent is
+        # unchanged, and it is the intent the operator needs to read.
+        lim = max(1e-3, self.ap.law.stick_limit)
         bar_x, bar_w, bar_h = tx + 42, 110, 8
         rows = (
-            # label   frac                                value      bidirectional
-            ("YAW", cmd["yaw_rate"] / self.ap.MAX_YAW, f"{cmd['yaw_rate']:+.2f}r/s", True),
-            ("CLB", -cmd["vz"]      / self.ap.MAX_VZ,  f"{-cmd['vz'] + 0.0:+.2f}m/s", True),
-            ("FWD", cmd["vx"]       / self.ap.MAX_FWD, f"{cmd['vx']:.2f}m/s",        False),
+            ("YAW", cmd["yaw_rate"] / (lim * self.ap.max_yaw_rate),
+             f"{np.degrees(cmd['yaw_rate']):+04.0f}d/s"),
+            ("PIT", cmd["pitch_rate"] / (lim * self.ap.max_pitch_rate),
+             f"{np.degrees(cmd['pitch_rate']):+04.0f}d/s"),
         )
-        for i, (label, frac, val, bidir) in enumerate(rows):
+        for i, (label, frac, val) in enumerate(rows):
             y = y1 + 48 + i * 20
             self._text(frame, label, (tx, y + bar_h), 0.38, self.C_HUD, 1)
-            self._hbar(frame, bar_x, y, bar_w, bar_h, frac, accent, bidir)
+            self._hbar(frame, bar_x, y, bar_w, bar_h, frac, accent, True)
             self._text(frame, val, (bar_x + bar_w + 8, y + bar_h), 0.38, self.C_HUD, 1)
 
-        rate = f"TX RATE = DET RATE  (skip {self.skip_frames})"
-        self._text(frame, rate, (tx, y1 + ph - 8), 0.34, self.C_DIM, 1)
+        # FC truth: what mode it is really in and whether the motors are live.
+        # With no link there is no arm state to report, so say that rather than
+        # printing a stale flag next to "offline".
+        if self.ap.linked:
+            head = f"FC {self.ap.mode_name}"
+            arm_txt = "ARMED" if self.ap.armed else "DISARMED"
+            arm_col = self.C_LOCK if self.ap.armed else self.C_WARN
+        else:
+            head, arm_txt, arm_col = "FC", "not connected", self.C_SEARCH
+        self._text(frame, head, (tx, y1 + 104), 0.36, self.C_HUD, 1)
+        (mw, _), _ = cv2.getTextSize(head, self._HUD_FONT, 0.36, 1)
+        self._text(frame, arm_txt, (tx + mw + 10, y1 + 104), 0.36, arm_col, 1)
+
+        self._text(frame, f"{self.ap.send_hz:.0f}Hz stream  (skip {self.skip_frames})",
+                   (tx, y1 + ph - 8), 0.34, self.C_DIM, 1)
 
     # ── master draw ──────────────────────────────────────────────────────────────
 
@@ -1485,17 +929,23 @@ class DroneTracker:
     # ──────────────────────────────────────────────────────────────────────────
 
     def run(self):
-        # Fail loudly BEFORE flight if the link is dead or the firmware is wrong.
-        self.ap.connect()
+        """Run the tracker, guaranteeing the sticks go back to the pilot.
 
-        # Controller calibration in effect.  The camera FOV converts pixel error
-        # to an angular error, so it MUST match the real deployed lens or the
-        # centring gains are wrong on the airframe — surface it every run.
-        print(f"[CTRL CFG] camera FOV h/v = {np.degrees(self.ap.H_FOV):.1f}/"
-              f"{np.degrees(self.ap.V_FOV):.1f} deg  (calibrate to the real lens!)  | "
-              f"gains yaw={self.ap.K_YAW} vz={self.ap.K_VZ}  | "
-              f"limits yaw<={self.ap.MAX_YAW} vz<={self.ap.MAX_VZ} "
-              f"fwd<={self.ap.MAX_FWD} m/s")
+        Whatever happens in the loop — Ctrl-C, a camera fault, an unhandled
+        exception — the finally block releases every overridden channel and
+        closes the link.  Without it a crash mid-steer would leave the last
+        override latched on the FC until RC_OVERRIDE_TIME expired.
+        """
+        try:
+            self._run()
+        finally:
+            self.ap.close()
+
+    def _run(self):
+        # Identify the firmware, read the FC's own RC map/rates, and print every
+        # blocker BEFORE a single frame is processed.  Fails loudly if the link
+        # is dead or the board is not something we can steer.
+        self.ap.connect()
 
         cap, src_fps, source_label = self._open_capture()
         print(f"[RUN] Source: {source_label}")
@@ -1553,38 +1003,36 @@ class DroneTracker:
                     self.layer = "KF-SKIP"
 
             # ── STEERING COMMAND ─────────────────────────────────────────────
-            # A MAVLink setpoint is transmitted to the flight controller on
-            # EVERY detection frame (rate = camera_fps / (skip_frames + 1)):
-            #   • target in view (LOCK/PREDICT) → centre it: yaw + vz null the
-            #     pixel offset so the drone converges on the target.
-            #   • no target (SEARCH)            → advance straight ahead at MAX
-            #     forward speed, holding heading & altitude, until re-acquired.
-            # Skip frames send nothing; the FC coasts on its last setpoint
-            # (GUID_TIMEOUT guards the link).
-            # commanding: a setpoint is issued this frame (any detection frame).
-            # actually_sent: it was really written to the FC (live link only;
-            # offline it is computed for display/SIM but not transmitted).
-            commanding    = is_yolo_frame
-            actually_sent = False
-            target_off    = None
+            # Each detection frame recomputes the stick command that centres the
+            # target; the commander's tx thread streams the latest one to the FC
+            # at a FIXED rate (SEND_HZ, default 20 Hz) independent of the
+            # detection FPS, so a slow YOLO frame never starves the FC and skip
+            # frames do not create gaps in the stream.
+            #   • target in view (LOCK/PREDICT) → yaw + pitch rates null the
+            #     pixel offset, so the airframe rotates onto the target.
+            #   • no target (SEARCH)            → sticks released to the pilot.
+            # The sticks are driven ONLY while the FC is armed and a target is
+            # locked; every other instant the channels go back to the pilot.
+            target_off = None
             if is_yolo_frame:
                 if fused:
                     target_off = (fused[0] - cx_f, fused[1] - cy_f)
                     cmd = self.ap.compute(target_off[0], target_off[1],
                                           self.state, self.fw, self.fh)
                 else:
-                    cmd = self.ap.search_command()   # no face: per NO_FACE_BEHAVIOR
-                # Publish the latest setpoint; the commander's tx thread streams
-                # it to the FC at a fixed rate independent of the detection FPS.
-                actually_sent = self.ap.update(cmd, target_off, have_face=bool(fused))
+                    cmd = self.ap.neutral_command()     # no target: centre + release
+                self.ap.update(cmd, target_off, have_face=bool(fused))
                 self._last_cmd = cmd
             else:
-                cmd = self._last_cmd               # HUD display only, not sent
+                cmd = self._last_cmd               # HUD display only
                 if fused:
                     target_off = (fused[0] - cx_f, fused[1] - cy_f)
 
-            # HUD lamp: TX (live+commanding) / SIM (offline+commanding) / HOLD.
-            self._draw(frame_disp, frame_full, fused, roi, cmd, commanding)
+            # The commander's own live flag — true only when stick values are
+            # really going out AND the FC is armed to act on them.
+            actually_sent = self.ap.steering
+
+            self._draw(frame_disp, frame_full, fused, roi, cmd, actually_sent)
           
             # ── detection-gated recording ──────────────────────────────────────
             if rec_on:
@@ -1605,7 +1053,7 @@ class DroneTracker:
                pre_buf.append((self._frame_idx, frame_disp.copy()))            
 
             # Print ONLY the real controller command steering the drone.
-            print(ArduPilotCommander.format_command(
+            print(self.ap.format_command(
                 self.state, cmd, target_off, actually_sent,
                 live=self.ap.linked, is_yolo=is_yolo_frame))
 
@@ -1617,7 +1065,7 @@ class DroneTracker:
             if self.max_frames is not None and self._frame_idx >= self.max_frames:
                 break
 
-        self.ap.close()        # sends a final all-stop, then closes the link
+        self.ap.close()        # releases every channel, then closes the link
         if writer is not None:
             writer.release()
         cap.release()
@@ -1809,22 +1257,15 @@ if __name__ == "__main__":
         log_dir         = str(_DATA_DIR),   # commands_<stamp>.csv lands here
         run_stamp       = RUN_STAMP,        # share the run timestamp
         headless     = os.environ.get("TRACKER_HEADLESS") == "1",
-        # MAVLink guidance goes through the local router (MAVProxy/mavlink-router)
-        # on udpin:127.0.0.1:14551 — the router owns the FC serial port.
-        # Override with MAV_CONN (e.g. MAV_CONN=/dev/ttyACM0 for a direct serial
-        # link, or MAV_CONN=none to run offline / print-only).
-        mav_conn     = (None if os.environ.get("MAV_CONN", "").lower() == "none"
-                        else os.environ.get("MAV_CONN", "udpin:127.0.0.1:14551")),
-        # no_face_behavior: "search" (fly forward, current) | "hover" | "stop".
-        no_face_behavior = os.environ.get("NO_FACE_BEHAVIOR", "search"),
-        # CONTROL_MODE: "guided" (default) | "rc" (RC-override; ACRO, no GPS, works
-        # on a stationary gimbal).  CONTROL_AXES picks which axes to drive (comma
-        # list of yaw/pitch); channel map + calibration are read from the FC.
-        control_mode     = os.environ.get("CONTROL_MODE", "guided"),
-        rc_axes          = tuple(a.strip() for a in
-                                 os.environ.get("CONTROL_AXES", "yaw,pitch").split(",")
-                                 if a.strip()),
-        rc_gain          = float(os.environ.get("RC_GAIN", "0.5")),
-        rc_yaw_reversed  = os.environ.get("RC_YAW_REVERSED", "0") == "1",
-        rc_pitch_reversed = os.environ.get("RC_PITCH_REVERSED", "0") == "1",
+        # The flight-control link is configured entirely from the environment —
+        # see fc_control.commander_from_env for the full list.  The defaults are
+        # the deployed ones: talk to the FC through the local MAVProxy router on
+        # udpin:127.0.0.1:14551, auto-detect the firmware, and drive yaw + pitch
+        # in ACRO.  Useful overrides:
+        #   MAV_CONN=/dev/ttyACM0   bypass the router, own the FC serial port
+        #   MAV_CONN=none           offline: commands computed and printed only
+        #   YAW_REVERSED=1 / PITCH_REVERSED=1   if an axis drives the wrong way
+        #   KP_YAW=3.0 KP_PITCH=3.0             more aggressive centring
+        #   STICK_LIMIT=0.35                    gentler authority ceiling
+        commander    = commander_from_env(log_dir=str(_DATA_DIR)),
     ).run()
