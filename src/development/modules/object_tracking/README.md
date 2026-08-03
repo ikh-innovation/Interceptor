@@ -16,7 +16,6 @@ Two independent faults, both silent:
    gate was `False` on every frame and not one byte ever left the Jetson. The HUD
    still lit "TX", because it reported "a setpoint was computed", not "a setpoint
    was sent".
-
 2. **Even the RC path was being discarded by the FC.** The tracker sent
    `RC_CHANNELS_OVERRIDE` from `source_system=1`. ArduPilot accepts overrides
    *only* from the system id in `SYSID_MYGCS` (default **255**):
@@ -45,14 +44,14 @@ does not land, it says so loudly instead of pretending to fly.
 
 ## Files
 
-| File | Role |
-|---|---|
-| `fc_control.py` | Control law + FC transports (ArduPilot RC override, Betaflight MSP), transmit thread, safety gating, CSV log |
-| `fc_check.py` | **Bench diagnostic.** Identifies the firmware, reports every setting that gates an override, proves an override is accepted, and can wiggle the sticks |
-| `run_pipeline.py` | Launcher: identifies the firmware, wires the right transport, verifies overrides, then runs the tracker |
-| `tracker.py` | Detection, Kalman tracking, HUD, and the per-frame control update |
-| `wasp-pipeline.service` | systemd user unit for boot-time start |
-| `tests/` | Self-test suite. Needs no flight controller and no camera. |
+| File                      | Role                                                                                                                                                         |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `fc_control.py`         | Control law + FC transports (ArduPilot RC override, Betaflight MSP), transmit thread, safety gating, CSV log                                                 |
+| `fc_check.py`           | **Bench diagnostic.** Identifies the firmware, reports every setting that gates an override, proves an override is accepted, and can wiggle the sticks |
+| `run_pipeline.py`       | Launcher: identifies the firmware, wires the right transport, verifies overrides, then runs the tracker                                                      |
+| `tracker.py`            | Detection, Kalman tracking, HUD, and the per-frame control update                                                                                            |
+| `wasp-pipeline.service` | systemd user unit for boot-time start                                                                                                                        |
+| `tests/`                | Self-test suite. Needs no flight controller and no camera.                                                                                                   |
 
 ### Self-test (no hardware needed)
 
@@ -76,7 +75,31 @@ silently. Run these after any change to the control path.
 Run these in order. Do not skip step 1 — it answers the only question that
 matters before YOLO is even involved.
 
+Each step needs the rig in a **different physical state**, and they escalate
+deliberately: nothing that can move is powered until the step before it has
+passed. Set the rig up as the table says *before* running the command.
+
+| Step | Battery / ESCs | Props | Receiver + pilot | FC state | Can it move? |
+|---|---|---|---|---|---|
+| 1 — identify + verify | **not needed** (FC on Jetson USB) | off | not needed | **disarmed** | no |
+| 2 — wiggle | **connected** | **off** | pilot holding TX | **armed**, mid throttle | motors spin, no rotation |
+| 3 — tracker, dry | connected | **off** | pilot holding TX | disarmed → arm *after* preflight | motors spin, no rotation |
+| 4 — direction + tune | connected | **off** | pilot holding TX | armed, mid throttle | motors spin, no rotation |
+| 5 — the demo | connected | **on** | pilot holding TX | armed, mid throttle | **yes — it rotates** |
+
+Two things that catch people out:
+
+* **USB power alone does not power the ESCs.** Step 1 works with just the Jetson's
+  USB cable to the FC — that runs the gyro, MAVLink and the parameter store, which
+  is all the check needs. From step 2 on you need the flight battery, or the motors
+  cannot respond no matter how good the link is.
+* **Start step 3 with the FC disarmed.** `run_pipeline.py`'s preflight skips the
+  override check if the FC is already armed (it would command real rotation). Let
+  preflight finish, then have the pilot arm once the tracker window is up.
+
 ### 1. What is on the board, and will it accept a stick command?
+
+Rig: Jetson on, FC on USB, **no battery, no props**. Nothing can move.
 
 ```bash
 cd src/development/modules/object_tracking
@@ -98,23 +121,28 @@ Read the verdict:
 * **`nothing answered`** → power, cable, port ownership, or `dialout` group.
 
 If a MAVProxy router is already running it owns the FC serial port. Either probe
-through it (`--connect udpin:127.0.0.1:14551`) or stop it (`pkill -f
-mavproxy.py`) and probe the port directly.
+through it (`--connect udpin:127.0.0.1:14551`) or stop it (`pkill -f mavproxy.py`) and probe the port directly.
 
-### 2. Make it visibly move, without YOLO
+### 2. Prove the FC acts on the sticks, without YOLO
 
-**PROPS OFF.** Arm from the transmitter in ACRO and hold mid throttle, then:
+**PROPS OFF.** Battery connected (the ESCs need it — USB alone does not power
+them). Pilot arms in ACRO and holds mid throttle, then:
 
 ```bash
 python3 fc_check.py --wiggle 8 --yes
 ```
 
-The airframe should sweep in yaw and pitch. The printout includes the motor
-output spread, which is the real proof the FC turned the sticks into
-differential thrust.
+Watch the **motor output spread** in the printout: it is read from
+`SERVO_OUTPUT_RAW` and is the last link in the chain before physics. It should
+swing as the sticks sweep, and the motors should change pitch audibly.
 
-If the override is accepted but nothing turns, it is **throttle** — see
-*Throttle authority* below.
+**The airframe will NOT rotate with the props off.** Rotation comes from
+differential prop thrust; bare motors produce negligible torque. Props off you
+are checking numbers and sound. Actual rotation only happens once props are
+fitted (step 5).
+
+If the spread stays at 0 while the override is `ACCEPTED`, it is **throttle** —
+see *Throttle authority* below.
 
 ### 3. Run the tracker
 
@@ -122,8 +150,21 @@ If the override is accepted but nothing turns, it is **throttle** — see
 python3 run_pipeline.py --no-mp
 ```
 
-Preflight identifies the firmware, starts the router, verifies overrides, and
-only then loads YOLO. Watch the console:
+Rig: battery connected, **props off**, pilot holding the TX, FC **disarmed** when
+you press enter. Preflight identifies the firmware, starts the router, verifies
+overrides, and only then loads YOLO — the override check is skipped if the FC is
+already armed, so arm only once the tracker window is up and detecting your head.
+
+Order of operations:
+
+1. Start `run_pipeline.py`, FC disarmed. Wait for preflight to pass and the HUD to
+   appear.
+2. Confirm the HUD is tracking your head (`LOCK`, bracket on your face). Lamp will
+   read `ARM?` — correct: a target is locked but the motors are off.
+3. Pilot arms in ACRO and brings throttle to mid. Lamp goes `DRIVE`, console shows
+   `TX->FC (confirmed)`, motors go asymmetric as you move.
+
+Watch the console:
 
 ```
 [CTRL] LOCK    target +0142,-0071px -> centre | yaw +0.11 ( +22.3 d/s)  pitch +0.03 (+10.1 d/s) | TX->FC (confirmed)
@@ -132,19 +173,32 @@ only then loads YOLO. Watch the console:
 `TX->FC (confirmed)` means bytes left the Jetson **and** the FC echoed them
 back. The HUD lamp says the same thing:
 
-| Lamp | Meaning |
-|---|---|
-| `DRIVE` | sticks sent and confirmed by the FC |
-| `TX` | sticks sent, confirmation still pending |
-| `REFUSED` | sticks sent but the FC is discarding them |
-| `ARM?` | target locked, FC disarmed — nothing will move |
-| `IDLE` | no target: channels released to the pilot |
-| `SIM` | no FC attached |
+| Lamp        | Meaning                                         |
+| ----------- | ----------------------------------------------- |
+| `DRIVE`   | sticks sent and confirmed by the FC             |
+| `TX`      | sticks sent, confirmation still pending         |
+| `REFUSED` | sticks sent but the FC is discarding them       |
+| `ARM?`    | target locked, FC disarmed — nothing will move |
+| `IDLE`    | no target: channels released to the pilot       |
+| `SIM`     | no FC attached                                  |
 
 ### 4. Check the direction, then tune
 
-If the drone turns **away** from the head and runs to the gimbal stop, that axis
-is reversed. Set the flag and restart — do not change the gains:
+Rig: still **props off**, armed, mid throttle.
+
+With no props there is no rotation to watch, so check direction from the
+**numbers** instead — that way a reversed axis is caught before it can slam the
+airframe into a gimbal stop under power:
+
+* Stand to the **right** of the boresight. The console `yaw` value must be
+  **positive** (yawing right, toward you). Negative ⇒ yaw is reversed.
+* Stand **below** the boresight. The console `pitch` value must be **negative**
+  (nose down, toward you). Positive ⇒ pitch is reversed.
+
+Cross-check against the motor spread from `fc_check.py --wiggle` if you want to
+see which motors are being favoured.
+
+If an axis is reversed, set the flag and restart — do not change the gains:
 
 ```bash
 YAW_REVERSED=1 python3 run_pipeline.py --no-mp     # or PITCH_REVERSED=1
@@ -152,17 +206,35 @@ YAW_REVERSED=1 python3 run_pipeline.py --no-mp     # or PITCH_REVERSED=1
 
 Then tune, one knob at a time:
 
-| Symptom | Change |
-|---|---|
-| Too slow to centre | `KP_YAW` / `KP_PITCH` up (2.0 → 3.0) |
-| Oscillates around centre | `KP_*` down, or `KD_YAW`/`KD_PITCH` up to 0.1–0.3 |
-| Twitches on a centred target | `DEADBAND_FRAC` up (0.03 → 0.05) |
-| Too violent overall | `STICK_LIMIT` down (0.55 → 0.35) |
-| Jerky stick steps | `SLEW_PER_S` down (3.0 → 1.5) |
+| Symptom                      | Change                                                   |
+| ---------------------------- | -------------------------------------------------------- |
+| Too slow to centre           | `KP_YAW` / `KP_PITCH` up (2.0 → 3.0)                |
+| Oscillates around centre     | `KP_*` down, or `KD_YAW`/`KD_PITCH` up to 0.1–0.3 |
+| Twitches on a centred target | `DEADBAND_FRAC` up (0.03 → 0.05)                      |
+| Too violent overall          | `STICK_LIMIT` down (0.55 → 0.35)                      |
+| Jerky stick steps            | `SLEW_PER_S` down (3.0 → 1.5)                         |
 
 Every run writes `data/control_<stamp>.csv` with the pixel error, the angular
 error, both stick values, both commanded rates, and whether the override was
 confirmed — plot that rather than guessing.
+
+### 5. Props on — the actual demo
+
+Only after steps 1–4 have all passed. This is the first time the airframe can
+actually rotate.
+
+Before fitting props: gimbal firmly mounted and free through its full travel,
+everyone clear of the disc, pilot's thumb on the disarm switch, and start
+`STICK_LIMIT` low (`0.35`) for the first run — you can raise it once you have
+seen it behave.
+
+```bash
+STICK_LIMIT=0.35 python3 run_pipeline.py --no-mp
+```
+
+Same order as step 3: start disarmed, confirm tracking, then arm in ACRO and
+bring throttle to mid. The airframe should now rotate to put your head in the
+centre of the frame and hold it there as you move.
 
 ---
 
@@ -195,12 +267,12 @@ firmware behaviour, not something the tracker can work around.
 
 Other non-software blockers, all reported by `fc_check.py`:
 
-| Setting | Problem |
-|---|---|
-| `RC_OPTIONS` bit 1 (value 2) | FC ignores all GCS overrides. Clear it. |
-| `ACRO_TRAINER` = 1 or 2 | Auto-levels and limits lean angle, fighting a sustained pitch command. Set to 0. |
-| yaw/pitch on a channel > 8 | `RC_CHANNELS_OVERRIDE` only reaches channels 1–8. Remap `RCMAP_YAW` / `RCMAP_PITCH`. |
-| No receiver signal | The pilot cannot arm, and a released channel has no source. |
+| Setting                        | Problem                                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------------------------- |
+| `RC_OPTIONS` bit 1 (value 2) | FC ignores all GCS overrides. Clear it.                                                     |
+| `ACRO_TRAINER` = 1 or 2      | Auto-levels and limits lean angle, fighting a sustained pitch command. Set to 0.            |
+| yaw/pitch on a channel > 8     | `RC_CHANNELS_OVERRIDE` only reaches channels 1–8. Remap `RCMAP_YAW` / `RCMAP_PITCH`. |
+| No receiver signal             | The pilot cannot arm, and a released channel has no source.                                 |
 
 ---
 
@@ -234,22 +306,22 @@ it on. That switch is also the pilot's kill switch for the tracker's authority.
 All of it is environment variables, so the service unit and a manual run behave
 identically. Defaults are in `fc_control.commander_from_env`.
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `MAV_CONN` | `udpin:127.0.0.1:14551` | FC link. A serial path works too. `none` = offline, compute and print only. |
-| `FC_TRANSPORT` | `auto` | `auto` \| `mavlink` \| `msp` \| `none` |
-| `CONTROL_AXES` | `yaw,pitch` | Which axes the tracker drives |
-| `MAV_SOURCE_SYSTEM` | *(read from FC)* | Override the sysid we send from. Leave unset. |
-| `CAM_HFOV_DEG` / `CAM_VFOV_DEG` | `62.2` / `48.8` | True lens FOV. A wrong value only rescales the gain. |
-| `KP_YAW` / `KP_PITCH` | `2.0` | rad/s of body rate per rad of angular error |
-| `KD_YAW` / `KD_PITCH` | `0.0` | Damping, for overshoot from detection latency |
-| `STICK_LIMIT` | `0.55` | Never deflect a stick further than this |
-| `DEADBAND_FRAC` | `0.03` | Centre deadband, fraction of the half-frame |
-| `SLEW_PER_S` | `3.0` | Max stick change per second |
-| `YAW_REVERSED` / `PITCH_REVERSED` | `0` | Set to `1` if an axis drives the wrong way |
-| `SEND_HZ` | `20` | Stream rate, independent of detection FPS |
-| `REQUIRE_ARMED` | `1` | `0` drives the sticks even while disarmed (bench only) |
-| `NO_TARGET_BEHAVIOR` | `release` | `release` \| `hold` |
+| Variable                              | Default                   | Meaning                                                                                        |
+| ------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------- |
+| `MAV_CONN`                          | `udpin:127.0.0.1:14551` | FC link. A serial path ink. A serial pathworks too.`none` = offline, compute and print only. |
+| `FC_TRANSPORT`                      | `auto`                  | `auto` \| `mavlink` \| `msp` \| `none`                                                 |
+| `CONTROL_AXES`                      | `yaw,pitch`             | Which axes the tracker drives                                                                  |
+| `MAV_SOURCE_SYSTEM`                 | *(read from FC)*        | Override the sysid we send from. Leave unset.                                                  |
+| `CAM_HFOV_DEG` / `CAM_VFOV_DEG`   | `62.2` / `48.8`       | True lens FOV. A wrong value only rescales the gain.                                           |
+| `KP_YAW` / `KP_PITCH`             | `2.0`                   | rad/s of body rate per rad of angular error                                                    |
+| `KD_YAW` / `KD_PITCH`             | `0.0`                   | Damping, for overshoot from detection latency                                                  |
+| `STICK_LIMIT`                       | `0.55`                  | Never deflect a stick further than this                                                        |
+| `DEADBAND_FRAC`                     | `0.03`                  | Centre deadband, fraction of the half-frame                                                    |
+| `SLEW_PER_S`                        | `3.0`                   | Max stick change per second                                                                    |
+| `YAW_REVERSED` / `PITCH_REVERSED` | `0`                     | Set to`1` if an axis drives the wrong way                                                    |
+| `SEND_HZ`                           | `20`                    | Stream rate, independent of detection FPS                                                      |
+| `REQUIRE_ARMED`                     | `1`                     | `0` drives the sticks even while disarmed (bench only)                                       |
+| `NO_TARGET_BEHAVIOR`                | `release`               | `release` \| `hold`                                                                        |
 
 Launcher flags: `--no-mp` (skip Mission Planner), `--direct` (no router, tracker
 owns the FC serial — removes the router as a failure mode), `--no-verify` (skip

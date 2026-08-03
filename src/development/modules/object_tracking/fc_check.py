@@ -18,8 +18,9 @@ It does four things:
                 the test the tracker never had: previously an override could be
                 dropped in silence and nothing anywhere would say so.  Safe
                 while disarmed — it proves the transport, not the motors.
-  4. WIGGLE     (opt-in) sweep the yaw and pitch sticks so you can watch the
-                airframe move on the gimbal.  PROPS OFF.
+  4. WIGGLE     (opt-in) sweep the yaw and pitch sticks and report the motor
+                output spread, proving the FC turns sticks into differential
+                thrust.  PROPS OFF — the airframe will not rotate without props.
 
 Typical session on the Jetson
 -----------------------------
@@ -434,13 +435,22 @@ def verify_override(master, cfg, hold=2.5):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def wiggle(master, cfg, seconds=8.0, amplitude=0.35, period=3.0):
-    """Sweep yaw and pitch with a slow sine so the airframe visibly moves on the
-    gimbal.  Also prints SERVO_OUTPUT_RAW spread, which is the real proof the FC
-    turned our sticks into differential motor thrust."""
+    """Sweep yaw and pitch with a slow sine and print the SERVO_OUTPUT_RAW spread.
+
+    The spread is the proof: it shows the FC turned our sticks into differential
+    MOTOR output, which is the last link in the chain before physics.
+
+    Note what this does and does not show.  With the props OFF the airframe will
+    NOT rotate — rotation comes from differential prop thrust, and bare motors
+    produce negligible torque.  Props off you are checking the numbers and the
+    sound; actual rotation only happens with props fitted.
+    """
     print(f"\n[4] wiggle for {seconds:.0f}s  "
           f"(amplitude {amplitude * 100:.0f}% stick, {period:.0f}s period)")
-    print("    PROPS MUST BE OFF.  The pilot must be ARMED in ACRO and holding")
-    print("    mid throttle, or the mixer has no authority and nothing will turn.")
+    print("    The FC must be ARMED in ACRO with the pilot holding mid throttle,")
+    print("    or the mixer has no headroom and the motor spread stays at 0.")
+    print("    PROPS OFF: expect the motors to change pitch audibly and the spread")
+    print("    below to swing — but NOT the airframe to turn.  Rotation needs props.")
 
     yaw, pitch = cfg["axes"]["yaw"], cfg["axes"]["pitch"]
 
@@ -517,7 +527,7 @@ def main():
                     help="send a real override and prove the FC applied it "
                          "(safe while disarmed)")
     ap.add_argument("--wiggle", type=float, default=0.0, metavar="SECONDS",
-                    help="sweep yaw/pitch so the airframe visibly moves. PROPS OFF")
+                    help="sweep yaw/pitch and report the motor spread. PROPS OFF")
     ap.add_argument("--amplitude", type=float, default=0.35,
                     help="wiggle stick amplitude, 0..1 (default 0.35)")
     ap.add_argument("--yes", action="store_true",

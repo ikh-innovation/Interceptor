@@ -169,19 +169,45 @@ applied, so matching on it would manufacture a false "confirmed".
 
 ## 5. Bring-up procedure
 
+Each step needs a different physical rig state, escalating deliberately: nothing
+that can move is powered until the previous step has passed.
+
+| Step | Battery / ESCs | Props | Pilot + TX | FC | Can it move? |
+|---|---|---|---|---|---|
+| 1 identify + verify | **not needed** (FC on Jetson USB) | off | not needed | disarmed | no |
+| 2 wiggle | connected | **off** | yes | armed, mid throttle | motors spin, no rotation |
+| 3 tracker, dry | connected | **off** | yes | disarm → arm *after* preflight | motors spin, no rotation |
+| 4 direction + tune | connected | **off** | yes | armed, mid throttle | motors spin, no rotation |
+| 5 the demo | connected | **on** | yes | armed, mid throttle | **yes** |
+
 ```bash
 cd src/development/modules/object_tracking
 
 # 1. Which firmware, and will it accept a stick command?  Safe while disarmed:
-#    an override changes the FC's stick INPUT, not the motors.
+#    an override changes the FC's stick INPUT, not the motors.  USB power to the
+#    FC is enough here — the ESCs are not involved.
 python3 fc_check.py --verify
 
-# 2. Make it visibly move, no YOLO.  PROPS OFF, armed in ACRO, mid throttle.
+# 2. Prove the FC acts on the sticks, no YOLO.  Battery IN, PROPS OFF, armed in
+#    ACRO at mid throttle.  Watch the motor SPREAD number and listen to the
+#    motors — with no props the airframe will NOT rotate.
 python3 fc_check.py --wiggle 8 --yes
 
-# 3. Full pipeline.
+# 3. Full pipeline.  Start DISARMED (preflight skips the override check if the FC
+#    is already armed), let preflight pass, confirm the HUD is tracking, THEN arm.
 python3 run_pipeline.py --no-mp
+
+# 5. Props on, the real demo.  Only after 1-4 pass.  Start conservative.
+STICK_LIMIT=0.35 python3 run_pipeline.py --no-mp
 ```
+
+**Two traps.** USB power alone does not power the ESCs — from step 2 on the
+flight battery must be connected. And the airframe cannot rotate with props off,
+because rotation comes from differential prop thrust; bare motors produce
+negligible torque. Props off you verify by the motor-spread number and the sound,
+and check axis direction from the sign of the console `yaw`/`pitch` values
+(stand right of boresight ⇒ yaw must be positive; stand below ⇒ pitch must be
+negative).
 
 `fc_check.py --verify` sweeps candidate system ids and tells you which one the FC
 accepts. `--wiggle` also prints the motor output spread from `SERVO_OUTPUT_RAW`,
