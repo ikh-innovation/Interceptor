@@ -201,9 +201,10 @@ check("close() is idempotent", True)
 
 print("\n=== 10. adaptive law: snap on far, ease in near ===")
 
-# The preset shipped as `run.py --adaptive`, and the default.  Keep these in
-# lockstep with run.py's ADAPTIVE dict — the point of this section is that the
-# shipped numbers are the ones proven stable.
+# The adaptive SHAPE is still supported by fc_control (CONTROL_SHAPE=adaptive) but
+# is no longer a run.py preset — run.py ships exactly one preset, see section 11.
+# These checks stay because the shape code is still reachable and its sign
+# conventions must keep matching the linear law's.
 AD = dict(shape="adaptive", shape_gamma=1.6, shape_sat=0.42,
           kd_yaw=0.18, kd_pitch=0.18, stick_limit=0.60,
           stick_limit_yaw=0.60, stick_limit_pitch=0.18,
@@ -338,6 +339,44 @@ def crossings_of(hist):
             + sum(1 for i in range(1, len(hist)) if hist[i][1] * hist[i - 1][1] < 0))
 
 
+def simulate_kw(law_kw, tgt_az_deg, tgt_el_deg, seconds=8.0, dt=0.05, lat=2,
+                noise=0.0, seed=7, hfov=62.2, vfov=48.8):
+    """The section-5 kinematic sim, but taking a full ControlLaw kwargs dict and
+    able to inject detection jitter.
+
+    `noise` is peak pixel error added to the measurement, from a deterministic LCG
+    so a failure is reproducible.  Jitter matters because the derivative term is
+    computed from the detection position: a law that looks fine on clean input can
+    still chase noise on real input.
+    """
+    L = ControlLaw(h_fov_deg=hfov, v_fov_deg=vfov, **law_kw)
+    psi = theta = 0.0
+    tgt_az, tgt_el = math.radians(tgt_az_deg), math.radians(tgt_el_deg)
+    tan_h = math.tan(math.radians(hfov) / 2)
+    tan_v = math.tan(math.radians(vfov) / 2)
+    pipe = [(0.0, 0.0)] * lat
+    hist = []
+    state = seed
+    for _ in range(int(seconds / dt)):
+        az_rel, el_rel = tgt_az - psi, tgt_el - theta
+        if abs(az_rel) > math.radians(80) or abs(el_rel) > math.radians(80):
+            return None
+        ex = (math.tan(az_rel) / tan_h) * (FW / 2)
+        ey = -(math.tan(el_rel) / tan_v) * (FH / 2)
+        if noise:
+            state = (state * 1103515245 + 12345) & 0x7FFFFFFF
+            ex += ((state / 0x7FFFFFFF) - 0.5) * 2 * noise
+            state = (state * 1103515245 + 12345) & 0x7FFFFFFF
+            ey += ((state / 0x7FFFFFFF) - 0.5) * 2 * noise
+        pipe.append((ex, ey))
+        mex, mey = pipe.pop(0)
+        c = L.compute(mex, mey, FW, FH, dt=dt)
+        psi += c["yaw_rate"] * dt
+        theta += c["pitch_rate"] * dt
+        hist.append((math.degrees(az_rel), math.degrees(el_rel)))
+    return hist
+
+
 # Six starting geometries, both signs on both axes.  A preset that only works
 # from one corner is not a preset.
 GEOMS = [(25.0, -15.0), (8.0, -5.0), (-30.0, 12.0),
@@ -358,33 +397,123 @@ check("adaptive: converges from every starting geometry", not diverged,
 check("adaptive: does NOT limit-cycle on any geometry", worst_cross_ad <= 3,
       f"max {worst_cross_ad} zero crossings")
 
-# The claim run.py makes in its own docstring, asserted here so it cannot rot.
-worst_lin = 0.0
-lin_diverged = False
-for az, el in GEOMS:
-    # The real --tuned preset, not section 5's looser stand-in.
-    h = simulate(3.5, kp_pitch=6.0, kd=0.15, stick_limit=0.35, slew=3.0,
-                 tgt_az_deg=az, tgt_el_deg=el)[0]
-    s = settle_of(h)
-    if s is None:
-        lin_diverged = True
-        break
-    worst_lin = max(worst_lin, s)
-check("adaptive settles faster than the --tuned linear preset",
-      lin_diverged or worst_ad < worst_lin,
-      f"adaptive {worst_ad:.2f}s vs tuned-linear "
-      + ("diverged" if lin_diverged else f"{worst_lin:.2f}s"))
+print("\n=== 11. the shipped TUNED preset: the only thing that flies ===")
 
-# The --max preset diverges.  That is WHY it is not the default, so lock it in:
-# if a future change ever makes it stable, this test should be revisited, not
-# silently left claiming something false.
-max_hist = simulate(12.0, tgt_az_deg=25.0, tgt_el_deg=-15.0,
-                    kp_pitch=30.0, stick_limit=1.0, slew=10.0, kd=0.4,
-                    deadband=0.04)[0]
-check("--max preset is confirmed unstable (documented, not the default)",
-      settle_of(max_hist) is None,
-      "diverges as documented" if settle_of(max_hist) is None
-      else f"NOW settles in {settle_of(max_hist):.2f}s — update run.py's docs")
+# These MUST equal run.py's TUNED dict.  run.py's comment block makes specific
+# numerical claims about this preset; this section is what stops those claims from
+# quietly becoming false.
+TUNED_KW = dict(kp_yaw=4.5, kp_pitch=6.0, kd_yaw=0.10, kd_pitch=0.10,
+                stick_limit=0.65, stick_limit_yaw=0.65, stick_limit_pitch=0.22,
+                slew_per_s=11.0, deadband_frac=0.03)
+
+# Eight geometries, both signs on both axes.  Six was not enough: a candidate that
+# passed six went unstable on the seventh during tuning.
+GEOMS8 = GEOMS + [(35.0, 5.0), (-20.0, -8.0)]
+
+
+def sim_tuned(az, el, lat=2, noise=0.0, seed=7):
+    return simulate_kw(TUNED_KW, az, el, lat=lat, noise=noise, seed=seed)
+
+
+worst2 = 0.0
+bad = []
+for az, el in GEOMS8:
+    h = sim_tuned(az, el, lat=2)
+    s = settle_of(h)
+    if s is None or (h and crossings_of(h) > 4):
+        bad.append((az, el))
+        continue
+    worst2 = max(worst2, s)
+check("TUNED converges from all 8 geometries at 0.1s detection latency",
+      not bad, f"failed at {bad}" if bad else f"worst {worst2:.2f}s")
+check("TUNED settles within 0.6s (run.py claims 0.50s)", worst2 <= 0.60,
+      f"{worst2:.2f}s")
+
+worst3 = 0.0
+bad3 = []
+for az, el in GEOMS8:
+    h = sim_tuned(az, el, lat=3)
+    s = settle_of(h)
+    if s is None or (h and crossings_of(h) > 4):
+        bad3.append((az, el))
+        continue
+    worst3 = max(worst3, s)
+check("TUNED still converges at 1.5x the detection latency", not bad3,
+      f"failed at {bad3}" if bad3 else f"worst {worst3:.2f}s")
+
+# Jitter robustness on several noise seeds.  The PREVIOUS tuned managed 3 of 5
+# here, which is the concrete sense in which this preset is not just faster.
+seeds_ok = 0
+for seed in (1, 7, 13, 29, 101):
+    good = True
+    for az, el in GEOMS8:
+        h = sim_tuned(az, el, lat=3, noise=8.0, seed=seed)
+        if settle_of(h) is None or (h and crossings_of(h) > 4):
+            good = False
+            break
+    seeds_ok += good
+check("TUNED survives 8px detection jitter on all 5 noise seeds",
+      seeds_ok == 5, f"{seeds_ok}/5")
+
+# And it must beat what it replaced, on the same bar.
+prev = dict(kp_yaw=3.5, kp_pitch=6.0, kd_yaw=0.15, kd_pitch=0.15,
+            stick_limit=0.35, slew_per_s=3.0, deadband_frac=0.03)
+prev_worst = 0.0
+for az, el in GEOMS8:
+    s = settle_of(simulate_kw(prev, az, el, lat=2))
+    prev_worst = max(prev_worst, s if s is not None else 99.0)
+check("TUNED is faster than the preset it replaced",
+      worst2 < prev_worst, f"{worst2:.2f}s vs previous {prev_worst:.2f}s")
+
+# Pitch authority is deliberately BELOW yaw.  run.py explains why; assert it so
+# nobody "fixes" the asymmetry by raising pitch and reintroducing the limit cycle.
+LT = ControlLaw(**TUNED_KW)
+check("TUNED: pitch ceiling is lower than yaw (ACRO_RP_RATE 360 vs 202)",
+      LT.stick_limit_pitch < LT.stick_limit_yaw,
+      f"pitch {LT.stick_limit_pitch} < yaw {LT.stick_limit_yaw}")
+# Pitch is at its ceiling in the sense that matters: raising KP_PITCH one step
+# destabilises outright.  This is the check that stops "make pitch more
+# aggressive" from being applied without re-running the search.
+# One step hotter does not fail by refusing to settle — it fails by HUNTING:
+# extra zero crossings on clean input, and total collapse once the detection is
+# noisy.  Hunting around the target is exactly the "imprecise" symptom reported
+# from the field, so this is the failure mode that matters, and it is what a
+# naive "turn the pitch gain up" would reintroduce.
+hotter_pitch = dict(TUNED_KW, kp_pitch=8.0)
+hot_hunts = False
+for az, el in GEOMS8:
+    h = simulate_kw(hotter_pitch, az, el, lat=3)
+    if h is None or crossings_of(h) > 4:
+        hot_hunts = True
+        break
+hot_seeds = 0
+for seed in (1, 7, 13, 29, 101):
+    good = True
+    for az, el in GEOMS8:
+        h = simulate_kw(hotter_pitch, az, el, lat=3, noise=8.0, seed=seed)
+        if h is None or settle_of(h) is None or crossings_of(h) > 4:
+            good = False
+            break
+    hot_seeds += good
+check("KP_PITCH=8.0 hunts and/or dies on jitter — pitch is already maxed",
+      hot_hunts or hot_seeds < 5,
+      f"hunts={hot_hunts}, jitter {hot_seeds}/5 (TUNED gets 5/5)")
+
+# The pitch CEILING is not what limits the steady-state command (KP_PITCH gets
+# nowhere near 0.22 on a normal error); its job is clipping jitter transients.
+# Loosening it measurably costs noise robustness, which is why it is not "spare".
+loose_ceiling = dict(TUNED_KW, stick_limit_pitch=0.40)
+loose_ok = 0
+for seed in (1, 7, 13, 29, 101):
+    good = True
+    for az, el in GEOMS8:
+        h = simulate_kw(loose_ceiling, az, el, lat=3, noise=8.0, seed=seed)
+        if settle_of(h) is None or (h and crossings_of(h) > 4):
+            good = False
+            break
+    loose_ok += good
+check("the pitch ceiling earns its keep: loosening it costs jitter robustness",
+      loose_ok < 5, f"0.40 ceiling -> {loose_ok}/5 seeds vs 0.22 -> 5/5")
 
 print("\n" + "=" * 60)
 if fails:

@@ -1,20 +1,15 @@
 #!/usr/bin/env python3
 """One-command launcher for the WASP head tracker.
 
-Replaces the long incantation:
-
-    cd .../object_tracking && KP_YAW=3.5 KP_PITCH=6.0 KD_YAW=0.15 KD_PITCH=0.15 \
-      STICK_LIMIT=0.35 DISPLAY=:0 ~/yolo-env/bin/python run_pipeline.py --direct
-
-with:
-
-    ./run.py
+The single entry point.  Everything the tracker needs — interpreter, gains, FC
+discovery, display — is decided here so that what flies is never a function of
+what somebody remembered to type.
 
 What it does, in order:
 
   1. Re-execs itself under the yolo-env interpreter if it was started with a
      python that has no ultralytics (the system python3 does not).
-  2. Applies the bench-tuned gains as DEFAULTS — anything already set in the
+  2. Applies the tuned gains as DEFAULTS — anything already set in the
      environment wins, so `KP_YAW=6 ./run.py` still works.
   3. WAITS for the flight controller to appear and answer a heartbeat, so this
      can be started BEFORE the drone is powered up.  Ctrl-C while waiting exits
@@ -25,15 +20,14 @@ The pilot's mode switch remains the handover control (REQUIRE_RATE_MODE=1, the
 default): STABILIZE = the pilot has every channel, ACRO = the tracker drives
 yaw and pitch.  Starting this script never takes control on its own.
 
-    ./run.py                 ADAPTIVE (default): snap onto the target, ease in.
-                             Fastest and most robust option in simulation.
-    ./run.py --tuned         linear, hardware-tested (KP 3.5/6.0, stick <= 0.35)
-    ./run.py --fast          linear, strong but bounded (KP 6.0/15.0)
-    ./run.py --max           full stick authority.  DIVERGES in the kinematic
-                             simulator — kept only for deliberate experiments.
-    ./run.py --gentle        original conservative gains, for backing right out
+    ./run.py                 the tuned preset.  There is only one.
+    ./run.py --tuned         same thing; accepted so the systemd unit stays valid
     ./run.py --no-wait       fail immediately if the FC is not already up
     ./run.py -- --no-verify  everything after `--` goes to run_pipeline.py
+
+Individual values still override, so a one-off experiment needs no new flag:
+
+    KP_YAW=6 STICK_LIMIT_YAW=0.8 ./run.py
 
 The pilot must hold MID THROTTLE throughout.  In ACRO the attitude controller's
 authority scales with throttle: at idle the mixer has no headroom to differentiate
@@ -59,98 +53,60 @@ if os.environ.get("_WASP_REEXEC") != "1" and YOLO_PY.exists():
         os.execv(str(YOLO_PY), [str(YOLO_PY), str(Path(__file__).resolve())]
                  + sys.argv[1:])
 
-# ── 2. presets ────────────────────────────────────────────────────────────────
-# ADAPTIVE — snap onto the target, then ease into the centre.  The default.
+# ── 2. the preset ─────────────────────────────────────────────────────────────
+# TUNED is the only preset.  ADAPTIVE / MAX / FAST / GENTLE were removed after the
+# field flights: extra knobs meant the thing that actually flew was whichever flag
+# somebody last typed, which is the opposite of what a flight-control default is
+# for.  One preset, tuned as hard as the hardware allows, is the whole point.
 #
-# The complaint every linear preset shares: one KP has to serve both the far
-# field and the near field.  Tune it to swing hard onto a target at the frame
-# edge and it twitches on a nearly-centred one; tune it to be calm at the centre
-# and it crawls toward anything far away.  KP is a straight line through the
-# origin, and no value of it is both steep far out and shallow close in.
+# Raised 2026-08-05 after the field test reported imprecise, sluggish movement.
+# The numbers come from a grid search over KP x per-axis ceiling x KD x slew,
+# scored on settling time across EIGHT starting geometries and then re-scored for
+# robustness at worse latency and against 8 px of detection jitter on five noise
+# seeds.  Against the previous values:
 #
-# So this preset stops using KP and shapes the deflection directly:
+#                        settle @0.1s lat   @0.15s lat   stable w/ jitter
+#     previous tuned          1.10 s          1.05 s          3 of 5 seeds
+#     THIS                    0.50 s          0.90 s          5 of 5 seeds
 #
-#     |offset| >= SHAPE_SAT (42%)  ->  the axis ceiling, immediately
-#     |offset| inside that         ->  (offset/0.42) ** 1.6, collapsing fast
+# So it is both ~2x quicker onto the target and strictly more robust, not a trade.
 #
-# The two axes get DIFFERENT ceilings, which is the whole reason this preset can
-# be fast at all.  ACRO_RP_RATE is 360 deg/s against ACRO_Y_RATE's 202, so the
-# same deflection is 1.8x the angular rate in pitch, and pitch is what goes
-# unstable first against detection latency.  One shared ceiling has to be set low
-# enough for pitch, which needlessly throttles yaw — and yaw is the axis you
-# actually watch swing onto the target.  So: yaw 60%, pitch 18%.
+# What changed, and why it is not symmetric:
 #
-# These numbers are not guesses.  They are the best of a grid search over
-# SHAPE_SAT x yaw ceiling x pitch ceiling x gamma x KD, scored on settling time
-# across six starting geometries and then re-scored for robustness against worse
-# latency and against 8 px of detection jitter.  Measured against the kinematic
-# simulator in tests/test_control_law.py, at 0.1 s detection latency:
+#   YAW got the aggression.  Ceiling 0.35 -> 0.65 and slew 3 -> 11/s.  The slew
+#   limiter was a hidden brake: at 3/s the stick needed a third of a second just
+#   to reach its ceiling, so every turn began late.  That, more than KP, is what
+#   "not precise" felt like.  KP 3.5 -> 4.5.
 #
-#     --adaptive      settles in 0.60 s worst case
-#     --tuned         settles in 1.10 s worst case
-#     --max           NEVER settles: it diverges on every geometry tried
+#   PITCH got its ceiling LOWERED, 0.35 -> 0.22, and KP left at 6.0.  This is
+#   deliberate and it is the one place the field request cannot be honoured as
+#   asked.  ArduPilot is set to ACRO_RP_RATE=360 deg/s against ACRO_Y_RATE=202,
+#   so an identical deflection is 1.8x the angular rate in pitch.  Pitch is
+#   therefore the axis that goes unstable first against detection latency, and
+#   every configuration in the search that raised pitch authority started
+#   limit-cycling: it overshoots the target, corrects, overshoots back.  A pitch
+#   axis that hunts IS the imprecision, so more pitch gain would make the
+#   reported symptom worse, not better.
 #
-# and with 8 px of detection noise at 0.15 s latency, --adaptive still settles
-# (0.90 s) while --tuned goes unstable.  Faster AND more robust, not a trade.
-ADAPTIVE = {
-    "CONTROL_SHAPE": "adaptive",
-    "SHAPE_GAMMA": "1.6",
-    "SHAPE_SAT": "0.42",
-    "KD_YAW": "0.18", "KD_PITCH": "0.18",
-    "STICK_LIMIT": "0.60",
-    "STICK_LIMIT_YAW": "0.60",
-    "STICK_LIMIT_PITCH": "0.18",
-    "SLEW_PER_S": "12.0",
-    "DEADBAND_FRAC": "0.03",
-}
-# MAX — the default: the fastest yaw/pitch this airframe can be commanded to do.
+#   KD went DOWN, 0.15 -> 0.10.  The derivative term is computed from the
+#   detection position, so it amplifies detection jitter; less of it is what took
+#   the jitter robustness from 3/5 seeds to 5/5.
 #
-# The ceiling is the FC's own ACRO full-stick rates, ACRO_Y_RATE=202.5 deg/s and
-# ACRO_RP_RATE=360 deg/s.  STICK_LIMIT=1.0 reaches them; nothing here can exceed
-# them without changing those FC params, which would also change how the pilot's
-# own sticks feel, so they are left alone.
+# If pitch needs to feel stronger, the lever is on the FC, not here: lowering
+# ACRO_RP_RATE toward yaw's 202 deg/s would let pitch use much more stick travel
+# for the same angular rate. That also changes how the pilot's own pitch stick
+# feels, so it is a decision for the pilot, not a default to change quietly.
 #
-# The gains are set so full stick is reached at roughly a QUARTER-frame error
-# (~160 px yaw, ~150 px pitch) rather than at a few pixels.  Saturating on tiny
-# errors is what turns high gain into a limit-cycle oscillation: the loop slams
-# full deflection, overshoots, slams the other way.  Reaching the ceiling on a
-# large error keeps the response linear where the target actually sits.
-#
-#   yaw:   stick 1.0 at atan(1.0*3.5343/KP) -> ~161 px  with KP_YAW=12
-#   pitch: stick 1.0 at atan(1.0*6.2832/KP) -> ~150 px  with KP_PITCH=30
-#
-# KD is raised hard because damping is what buys back stability at this gain, and
-# SLEW_PER_S is raised so the limiter is no longer the thing capping the response
-# (at 3.0/s, reaching full stick took a third of a second — that WAS the lag).
-# DEADBAND is widened slightly: at this gain, detection jitter on a centred face
-# would otherwise be amplified into visible twitching.
-MAXSPD = {
-    "KP_YAW": "12.0", "KP_PITCH": "30.0",
-    "KD_YAW": "0.4", "KD_PITCH": "0.4",
-    "STICK_LIMIT": "1.0",
-    "SLEW_PER_S": "10.0",
-    "DEADBAND_FRAC": "0.04",
-}
-# Strong but with deliberate headroom left in the stick, if MAX proves twitchy.
-FAST = {
-    "KP_YAW": "6.0", "KP_PITCH": "15.0",
-    "KD_YAW": "0.25", "KD_PITCH": "0.25",
-    "STICK_LIMIT": "0.55",
-    "SLEW_PER_S": "6.0",
-}
-# Tested on the real FC on 2026-08-04, props off, armed in ACRO:
-#   656/656 frames locked, 619 confirmed, 0 refused, 0 wrong directions,
-#   3 stick reversals in 78 s (no oscillation), peak stick 0.16 yaw / 0.10 pitch.
+# ROLL is not driven and is not in this preset.  Roll, throttle and arming stay
+# with the pilot by design; the tracker only ever touches yaw and pitch.
 TUNED = {
-    "KP_YAW": "3.5", "KP_PITCH": "6.0",
-    "KD_YAW": "0.15", "KD_PITCH": "0.15",
-    "STICK_LIMIT": "0.35",
-}
-# The original defaults, for backing out if anything looks twitchy.
-GENTLE = {
-    "KP_YAW": "2.0", "KP_PITCH": "2.0",
-    "KD_YAW": "0.0", "KD_PITCH": "0.0",
-    "STICK_LIMIT": "0.35",
+    "KP_YAW": "4.5", "KP_PITCH": "6.0",
+    "KD_YAW": "0.10", "KD_PITCH": "0.10",
+    "STICK_LIMIT": "0.65",
+    "STICK_LIMIT_YAW": "0.65",
+    "STICK_LIMIT_PITCH": "0.22",
+    "SLEW_PER_S": "11.0",
+    "DEADBAND_FRAC": "0.03",
 }
 
 
@@ -226,25 +182,15 @@ def wait_for_heartbeat(dev, tries=20):
 
 def main():
     argv = sys.argv[1:]
-    # ADAPTIVE is the default because it is both the fastest and the most robust
-    # option in simulation.  MAXSPD is kept reachable, but it diverges in the
-    # kinematic sim and must not be the thing that runs by accident.
-    preset, wait = ADAPTIVE, True
-    preset_name = "ADAPTIVE (snap on, ease in)"
+    wait = True
     passthrough = []
 
     while argv:
         a = argv.pop(0)
-        if a == "--adaptive":
-            preset, preset_name = ADAPTIVE, "ADAPTIVE (snap on, ease in)"
-        elif a in ("--max", "--maxspeed"):
-            preset, preset_name = MAXSPD, "MAX SPEED"
-        elif a == "--fast":
-            preset, preset_name = FAST, "fast"
-        elif a == "--tuned":
-            preset, preset_name = TUNED, "tuned (hardware-tested 2026-08-04)"
-        elif a == "--gentle":
-            preset, preset_name = GENTLE, "gentle"
+        # --tuned is accepted and is a no-op: it is the only preset, and the
+        # systemd unit passes it explicitly.  Keep it valid.
+        if a == "--tuned":
+            pass
         elif a == "--no-wait":
             wait = False
         elif a == "--":
@@ -256,6 +202,7 @@ def main():
         else:
             passthrough.append(a)
 
+    preset = TUNED
     for k, v in preset.items():
         os.environ.setdefault(k, v)
     os.environ.setdefault("DISPLAY", ":0")
@@ -264,36 +211,19 @@ def main():
     print("WASP head tracker")
     print("=" * 74)
     env = os.environ
-    print(f"  preset       : {preset_name}")
-    if env.get("CONTROL_SHAPE", "linear").lower() == "adaptive":
-        # KP is deliberately absent in this mode, so never read it here.
-        print(f"  law          : adaptive  ceiling at "
-              f"{float(env['SHAPE_SAT']) * 100:.0f}% off-centre, "
-              f"gamma {env['SHAPE_GAMMA']}")
-        print(f"  ceilings     : yaw {env.get('STICK_LIMIT_YAW', env['STICK_LIMIT'])}"
-              f"  pitch {env.get('STICK_LIMIT_PITCH', env['STICK_LIMIT'])}"
-              f"   (pitch is lower on purpose: ACRO_RP_RATE 360 vs yaw 202 deg/s)")
-        print(f"  gains        : KD {env['KD_YAW']}/{env['KD_PITCH']}  "
-              f"slew {env['SLEW_PER_S']}/s")
-    else:
-        print(f"  gains        : KP {env.get('KP_YAW', '2.0')}/"
-              f"{env.get('KP_PITCH', '2.0')}  "
-              f"KD {env.get('KD_YAW', '0.0')}/{env.get('KD_PITCH', '0.0')}  "
-              f"stick<={env.get('STICK_LIMIT', '0.55')}  "
-              f"slew {env.get('SLEW_PER_S', '3.0')}/s")
+    print(f"  preset       : tuned  (raised 2026-08-05 after the field test)")
+    print(f"  gains        : KP {env['KP_YAW']}/{env['KP_PITCH']}  "
+          f"KD {env['KD_YAW']}/{env['KD_PITCH']}  slew {env['SLEW_PER_S']}/s")
+    print(f"  ceilings     : yaw {env['STICK_LIMIT_YAW']}  "
+          f"pitch {env['STICK_LIMIT_PITCH']}"
+          f"   (pitch lower on purpose: ACRO_RP_RATE 360 vs ACRO_Y_RATE 202 deg/s)")
+    print(f"  driven axes  : yaw, pitch.  Roll, throttle and arming stay with "
+          f"the pilot.")
     print("  mode gate    : ON — the pilot's switch decides.  STABILIZE = the "
           "pilot has\n                 everything; ACRO = the tracker drives "
           "yaw and pitch.")
     print("  handover     : automatic, both ways, as many times as you like.")
     print("  stop         : Ctrl-C — releases every channel back to the pilot.")
-    if preset is MAXSPD:
-        print("-" * 74)
-        print("  MAX SPEED: full stick authority.  At the ceiling this commands")
-        print("  202 deg/s yaw and 360 deg/s pitch — the FC's own ACRO_Y_RATE /")
-        print("  ACRO_RP_RATE.  That is ~6x the deflection the last hardware run")
-        print("  actually used, so OSCILLATION is now the failure mode to watch:")
-        print("  if it shakes or hunts around your face, Ctrl-C and use --fast.")
-        print("  PROPS OFF for the first run at this preset.")
     print("-" * 74)
     print("  THROTTLE: the pilot must hold MID throttle the whole time.  In ACRO")
     print("  rotation comes from differential motor thrust, so at low throttle")

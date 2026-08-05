@@ -55,7 +55,7 @@ ExecStartPre=/bin/sleep 15
 # tests/test_control_law.py: settles in 0.60s worst case across six starting
 # geometries versus 1.10s for --tuned, and unlike --tuned it stays stable with
 # detection jitter.  Swap to --tuned if it ever misbehaves on hardware.
-ExecStart=/home/iknowhow/Documents/Interceptor-1/src/development/modules/object_tracking/run.py --adaptive
+ExecStart=/home/iknowhow/Documents/Interceptor-1/src/development/modules/object_tracking/run.py --tuned
 
 # Boot failures are invisible without this: the user journal is not
 # persistent on this Jetson, so keep our own rolling log.

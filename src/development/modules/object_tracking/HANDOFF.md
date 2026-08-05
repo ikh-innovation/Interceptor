@@ -281,6 +281,37 @@ Plot that instead of guessing.
 
 ## 7. Tuning
 
+### The adaptive law, and why "raise KP" stops working
+
+A linear law has one slope through the origin, so a single `KP` must serve both a
+target at the frame edge and a target nearly centred. Tune it to swing hard on the
+former and it twitches on the latter; tune it calm for the latter and it crawls.
+There is no `KP` that is steep far out and shallow close in — which is why raising
+`KP` past a point only buys instability, and why the `--max` preset **diverges in
+the kinematic simulator on every geometry tried.**
+
+`CONTROL_SHAPE=adaptive` replaces the proportional map with a saturating power
+curve: the axis ceiling beyond `SHAPE_SAT` off-centre (hard swing onto target), and
+`(offset/SHAPE_SAT) ** SHAPE_GAMMA` inside it (gentle final approach). Per-axis
+ceilings matter more than they look: pitch commands 1.8x the angular rate of yaw at
+equal deflection, so pitch destabilises first and a single shared ceiling has to be
+set low enough for pitch, needlessly throttling yaw.
+
+Measured in `tests/test_control_law.py` across six starting geometries at 0.1 s
+detection latency:
+
+| Preset | Worst-case settle | With 8 px jitter @0.15 s latency |
+|---|---|---|
+| `--adaptive` (yaw 0.60 / pitch 0.18, sat 0.42, gamma 1.6, KD 0.18) | **0.60 s** | stable, 0.90 s |
+| `--tuned` (KP 3.5/6.0, stick 0.35) | 1.10 s | **unstable** |
+| `--max` (KP 12/30, stick 1.0) | **never settles** | never settles |
+
+Faster *and* more robust, so `--adaptive` is `run.py`'s default. Beyond ~0.2 s of
+detection latency **every** preset goes unstable — at that point the fix is latency,
+not gain.
+
+### Tuning the linear presets
+
 One knob at a time, and read the CSV between changes.
 
 | Symptom | Change |
@@ -305,6 +336,10 @@ One knob at a time, and read the CSV between changes.
 | `STICK_LIMIT` | `0.55` | Hard ceiling on deflection |
 | `DEADBAND_FRAC` | `0.03` | Centre deadband, fraction of half-frame |
 | `SLEW_PER_S` | `3.0` | Max stick change per second |
+| `CONTROL_SHAPE` | `linear` | `adaptive` swaps the proportional stick map for a saturating power curve. `KP_*` unused in that mode; `KD_*` still damp |
+| `SHAPE_SAT` | `0.30` | Adaptive: offset (after deadband rescale) at which the axis ceiling is commanded |
+| `SHAPE_GAMMA` | `1.6` | Adaptive: curve exponent; higher = softer near centre |
+| `STICK_LIMIT_YAW` / `STICK_LIMIT_PITCH` | *= `STICK_LIMIT`* | Per-axis ceilings. Pitch needs a lower one: `ACRO_RP_RATE` 360 vs `ACRO_Y_RATE` 202 deg/s |
 | `YAW_REVERSED` / `PITCH_REVERSED` | `0` | `1` if an axis drives the wrong way |
 | `SEND_HZ` | `20` | Stream rate, independent of detection FPS |
 | `REQUIRE_ARMED` | `1` | `0` drives sticks while disarmed (bench only) |
