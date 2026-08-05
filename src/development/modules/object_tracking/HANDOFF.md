@@ -85,7 +85,8 @@ and replaced by:
 | File | Role |
 |---|---|
 | `fc_control.py` | **NEW.** Control law + FC transports + transmit thread + safety gating + CSV log |
-| `run.py` | **NEW.** One-command launcher: picks the yolo-env interpreter, applies a gain preset (`--max` default, `--fast`, `--tuned`, `--gentle`), waits for the FC so it can be started before the drone is powered, then execs `run_pipeline.py --direct` |
+| `run.py` | **NEW.** The single entry point: picks the yolo-env interpreter, applies the one tuned gain set, waits for the FC so it can be started before the drone is powered, then execs `run_pipeline.py --direct` |
+| `wasp-tracker.service` | **NEW.** systemd *user* unit, enabled — auto-starts `run.py --tuned` at Jetson power-up via autologin's `graphical-session.target`. Logs to `~/wasp-logs/wasp-tracker.log` because the user journal is not persistent here |
 | `fc_check.py` | **NEW.** Bench diagnostic: identify firmware, report gating settings, prove an override is accepted, wiggle the sticks |
 | `run_pipeline.py` | **REWRITTEN.** Identifies firmware before anything claims the port, wires the right transport, verifies overrides, then runs the tracker |
 | `tracker.py` | **MODIFIED.** Old commander removed; builds `AcroCommander` from env; HUD and console line now report the truth |
@@ -281,36 +282,56 @@ Plot that instead of guessing.
 
 ## 7. Tuning
 
-### The adaptive law, and why "raise KP" stops working
+### One preset, and why the gains are asymmetric
 
-A linear law has one slope through the origin, so a single `KP` must serve both a
-target at the frame edge and a target nearly centred. Tune it to swing hard on the
-former and it twitches on the latter; tune it calm for the latter and it crawls.
-There is no `KP` that is steep far out and shallow close in — which is why raising
-`KP` past a point only buys instability, and why the `--max` preset **diverges in
-the kinematic simulator on every geometry tried.**
+`run.py` ships exactly one preset. The `--adaptive` / `--max` / `--fast` /
+`--gentle` flags were removed after the field flights: with several presets, what
+actually flew was whichever flag was last typed, which is the opposite of what a
+flight-control default is for. Individual values still override for one-off
+experiments (`KP_YAW=6 ./run.py`).
 
-`CONTROL_SHAPE=adaptive` replaces the proportional map with a saturating power
-curve: the axis ceiling beyond `SHAPE_SAT` off-centre (hard swing onto target), and
-`(offset/SHAPE_SAT) ** SHAPE_GAMMA` inside it (gentle final approach). Per-axis
-ceilings matter more than they look: pitch commands 1.8x the angular rate of yaw at
-equal deflection, so pitch destabilises first and a single shared ceiling has to be
-set low enough for pitch, needlessly throttling yaw.
+Raised 2026-08-05 after a field test reported imprecise, sluggish movement. Chosen
+by grid search over `KP` x per-axis ceiling x `KD` x slew, scored on settling time
+across **eight** starting geometries, then re-scored at 1.5x detection latency and
+against 8 px of detection jitter on five noise seeds. Locked in
+`tests/test_control_law.py` §11.
 
-Measured in `tests/test_control_law.py` across six starting geometries at 0.1 s
-detection latency:
+| | settle @0.1 s lat | @0.15 s lat | stable w/ 8 px jitter |
+|---|---|---|---|
+| previous (KP 3.5/6.0, stick 0.35, slew 3) | 1.10 s | 1.05 s | 3 of 5 seeds |
+| **current** (below) | **0.50 s** | **0.90 s** | **5 of 5 seeds** |
 
-| Preset | Worst-case settle | With 8 px jitter @0.15 s latency |
-|---|---|---|
-| `--adaptive` (yaw 0.60 / pitch 0.18, sat 0.42, gamma 1.6, KD 0.18) | **0.60 s** | stable, 0.90 s |
-| `--tuned` (KP 3.5/6.0, stick 0.35) | 1.10 s | **unstable** |
-| `--max` (KP 12/30, stick 1.0) | **never settles** | never settles |
+`KP_YAW 4.5, KP_PITCH 6.0, KD 0.10, STICK_LIMIT_YAW 0.65, STICK_LIMIT_PITCH 0.22,
+SLEW_PER_S 11.0`
 
-Faster *and* more robust, so `--adaptive` is `run.py`'s default. Beyond ~0.2 s of
-detection latency **every** preset goes unstable — at that point the fix is latency,
-not gain.
+**Yaw got the aggression.** Ceiling 0.35 → 0.65, slew 3 → 11/s. The slew limiter
+was a hidden brake: at 3/s the stick needed a third of a second just to reach its
+ceiling, so every turn began late. That, more than `KP`, is what "not precise"
+felt like.
 
-### Tuning the linear presets
+**Pitch did not, and cannot.** `ACRO_RP_RATE=360` against `ACRO_Y_RATE=202` means
+an identical deflection is 1.8x the angular rate in pitch, so pitch destabilises
+first against detection latency. `KP_PITCH=8.0` already **hunts** on clean input
+and fails all five jitter seeds — and hunting around the target *is* the
+imprecision, so raising pitch gain makes the reported symptom worse. Both facts
+are asserted in §11 so nobody re-raises it without re-running the search.
+
+The pitch ceiling of 0.22 is not spare capacity either: `KP_PITCH=6` never
+commands more than ~0.12 on a normal error, so the ceiling's real job is clipping
+**jitter transients**. Loosening it to 0.40 drops jitter robustness to 3 of 5.
+
+**If pitch must feel stronger, the lever is on the FC:** lowering `ACRO_RP_RATE`
+toward yaw's 202 deg/s lets pitch use far more stick travel for the same angular
+rate. That also changes how the pilot's own pitch stick feels, so it is the
+pilot's decision, not a default to change quietly.
+
+**Roll is never driven.** Roll, throttle and arming stay with the pilot.
+
+Beyond ~0.2 s of detection latency every configuration tried goes unstable. At
+that point the fix is latency, not gain.
+
+### Tuning by hand
+
 
 One knob at a time, and read the CSV between changes.
 
