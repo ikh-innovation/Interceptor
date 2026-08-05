@@ -81,7 +81,7 @@ import struct
 import threading
 from datetime import datetime
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, sleep
 
 try:
     from pymavlink import mavutil
@@ -171,7 +171,31 @@ class ControlLaw:
                  # latency, and a single shared ceiling has to be set low enough
                  # for pitch — throwing away yaw authority for no reason.
                  stick_limit_yaw=None,
-                 stick_limit_pitch=None):
+                 stick_limit_pitch=None,
+                 # ── pitch role ───────────────────────────────────────────────
+                 # "aim"      : pitch nulls the target's VERTICAL pixel error.
+                 #              Correct on a gimbal, where the airframe cannot
+                 #              translate and pitch only points the camera.
+                 # "approach" : pitch holds a nose-DOWN lean so the airframe flies
+                 #              FORWARD, and ignores vertical pixel error
+                 #              entirely.  Correct in free flight.
+                 #
+                 # Off a gimbal these two are not variations of the same thing,
+                 # they are in direct conflict: a multirotor's pitch attitude IS
+                 # its direction of travel, so "aim the camera up at a target
+                 # above me" and "fly towards it" are opposite commands on one
+                 # axis.  Aiming up is what made the airframe retreat.
+                 pitch_mode="aim",
+                 approach_deg=12.0,       # max nose-down lean, at full throttle
+                 approach_kp=2.5,         # rad/s of pitch rate per rad of lean err
+                 approach_thr_deadband=0.05):
+        # Guard the lean hard: a multirotor at 30 deg of lean is accelerating at
+        # ~0.58 g and still climbing in commanded angle if the loop misbehaves.
+        self.approach_deg = float(_clamp(approach_deg, 0.0, 30.0))
+        self.approach_kp = max(0.0, float(approach_kp))
+        self.approach_thr_deadband = float(_clamp(approach_thr_deadband, 0.0, 0.9))
+        self.pitch_mode = ("approach" if str(pitch_mode).lower() == "approach"
+                           else "aim")
         self.h_fov = math.radians(float(h_fov_deg))
         self.v_fov = math.radians(float(v_fov_deg))
         self.kp_yaw = float(kp_yaw)
@@ -205,8 +229,46 @@ class ControlLaw:
         self._yaw_stick = 0.0
         self._pitch_stick = 0.0
 
+    # ── the approach term ─────────────────────────────────────────────────────
+    def approach_pitch_stick(self, measured_pitch_rad, throttle_frac):
+        """Pitch deflection that flies the airframe FORWARD, whatever the target's
+        vertical position in frame.
+
+        In ACRO a stick is a RATE, so a fixed forward lean cannot be commanded
+        open-loop: hold a nose-down rate and the airframe keeps rotating past
+        vertical.  So this closes an outer loop on the FC's own measured pitch:
+
+            target_lean = -approach_deg * throttle_demand      (negative = nose down)
+            pitch_rate  = approach_kp * (target_lean - measured_pitch)
+
+        Once the lean is reached the error is zero, the rate command is zero, and
+        ACRO holds the attitude — which is a steady forward acceleration.  Because
+        the loop is closed on a measured angle it cannot run away.
+
+        Two hard guarantees, both of which are the reported bug:
+          * `target_lean` is never positive, so this NEVER commands nose-up and can
+            therefore never fly the airframe backwards.
+          * a missing or stale attitude reading returns 0.0 rather than a guess,
+            because commanding a rate to correct a frozen angle would never stop.
+        """
+        if measured_pitch_rad is None:
+            return 0.0
+        db = self.approach_thr_deadband
+        demand = (throttle_frac - db) / (1.0 - db) if throttle_frac > db else 0.0
+        demand = _clamp(demand, 0.0, 1.0)
+        if demand <= 0.0:
+            return 0.0
+        target_lean = -math.radians(self.approach_deg) * demand
+        # Never nose-up: clamping the TARGET (not the output) means an airframe
+        # already leaning further down than asked is allowed to come back up to
+        # the target, but the target itself can never point backwards.
+        target_lean = min(0.0, target_lean)
+        rate = self.approach_kp * (target_lean - measured_pitch_rad)
+        return rate / self.max_pitch_rate
+
     # ── the law ───────────────────────────────────────────────────────────────
-    def compute(self, err_x, err_y, fw, fh, dt=None):
+    def compute(self, err_x, err_y, fw, fh, dt=None,
+                measured_pitch_rad=None, throttle_frac=0.0):
         """err_x/err_y: bbox-centre minus frame-centre, in DISPLAY pixels.
         err_x > 0 -> target right of centre.  err_y > 0 -> target below centre.
 
@@ -270,6 +332,13 @@ class ControlLaw:
 
             yaw_stick = yaw_rate / self.max_yaw_rate
             pitch_stick = pitch_rate / self.max_pitch_rate
+
+        if self.pitch_mode == "approach":
+            # Replace, never blend.  Adding the aim term back in would reintroduce
+            # exactly the nose-up-when-the-target-is-high behaviour this mode
+            # exists to remove; vertical framing is the pilot's altitude to manage.
+            pitch_stick = self.approach_pitch_stick(measured_pitch_rad,
+                                                    throttle_frac)
 
         if self.invert_yaw:
             yaw_stick = -yaw_stick
@@ -339,6 +408,12 @@ class ControlLaw:
         else:
             law = (f"KP yaw/pitch {self.kp_yaw:.2f}/{self.kp_pitch:.2f}  "
                    f"KD {self.kd_yaw:.2f}/{self.kd_pitch:.2f}  ")
+        if self.pitch_mode == "approach":
+            law += (f"pitch=APPROACH (lean up to {self.approach_deg:.0f} deg "
+                    f"nose-down on pilot throttle, KP {self.approach_kp:.1f}; "
+                    f"vertical pixel error ignored)  ")
+        else:
+            law += "pitch=AIM (nulls vertical pixel error)  "
         return (f"FOV {math.degrees(self.h_fov):.1f}x{math.degrees(self.v_fov):.1f} deg  "
                 + law
                 + f"deadband {self.deadband_frac * 100:.1f}%  "
@@ -384,6 +459,20 @@ class FcBackend:
 
     def close(self):
         pass
+
+    def pitch_rad(self, max_age=0.5):
+        """Measured pitch angle, positive NOSE-UP, or None if unavailable.
+
+        None is the honest answer for a transport that cannot measure attitude
+        (MSP, offline), and the approach controller treats None as "do not command
+        a lean" rather than assuming level.
+        """
+        return None
+
+    def throttle_frac(self):
+        """The pilot's throttle above mid, 0..1.  0 when unknown, which means the
+        approach controller asks for nothing."""
+        return 0.0
 
     def in_rate_mode(self):
         """True when a stick deflection commands a body RATE on this FC right
@@ -446,6 +535,17 @@ class ArduPilotAcro(FcBackend):
         self._steer_since = None      # when we started steering (for the check)
         self._echo_warned = False
         self._t0 = perf_counter()
+        # Measured attitude, for the approach controller's outer loop.  None until
+        # the first ATTITUDE arrives; `_attitude_t` lets callers reject stale data
+        # rather than lean on a number that stopped updating.
+        self._pitch_rad = None
+        self._roll_rad = None
+        self._attitude_t = None
+        # The pilot's own throttle stick, 0..1 of the travel above mid.  This is
+        # the "come at me" command: the pilot asks for approach with the stick they
+        # are already holding, and backing it off is an instant, natural abort.
+        self._throttle_frac = 0.0
+        self._throttle_chan = None
 
     # ── link bring-up ─────────────────────────────────────────────────────────
     def connect(self):
@@ -484,6 +584,7 @@ class ArduPilotAcro(FcBackend):
         self._read_config()
         self._adopt_gcs_sysid()
         self._request_rc_channels_stream()
+        self._request_attitude_stream()
 
         self._stop.clear()
         self._rx = threading.Thread(target=self._rx_loop, daemon=True)
@@ -578,7 +679,17 @@ class ArduPilotAcro(FcBackend):
         for axis in self.axes:
             self.rc[axis] = self._read_axis(axis)
 
-    def _read_axis(self, axis):
+        # Throttle is NEVER driven, but the approach controller reads it as the
+        # pilot's "come at me" command, so its calibration is needed even though
+        # it is not one of our axes.  Loaded quietly: a failure here degrades the
+        # approach to zero lean, it must not block steering.
+        if "throttle" not in self.rc:
+            try:
+                self.rc["throttle"] = self._read_axis("throttle", announce=False)
+            except Exception:
+                pass
+
+    def _read_axis(self, axis, announce=True):
         fallback_chan = {"yaw": 4, "pitch": 2, "roll": 1, "throttle": 3}
         ch = self._param(f"RCMAP_{axis.upper()}")
         ch = int(ch) if ch else fallback_chan.get(axis, 0)
@@ -595,9 +706,12 @@ class ArduPilotAcro(FcBackend):
                    from_fc=from_fc)
         src = "from FC" if from_fc else "DEFAULTS (param read failed!)"
         warn = "" if 1 <= cfg["chan"] <= 8 else "  [chan>8 cannot be overridden!]"
-        self._say(f"[FC][RC] {axis:8s} ch{cfg['chan']}  "
-                  f"min={cfg['min']} trim={cfg['trim']} max={cfg['max']} "
-                  f"rev={int(cfg['reversed'])}  ({src}){warn}")
+        if announce:
+            self._say(f"[FC][RC] {axis:8s} ch{cfg['chan']}  "
+                      f"min={cfg['min']} trim={cfg['trim']} max={cfg['max']} "
+                      f"rev={int(cfg['reversed'])}  ({src}){warn}")
+        if not announce:
+            return cfg
         if not 1 <= cfg["chan"] <= 8:
             self.blockers.append(
                 f"{axis} is on RC channel {cfg['chan']}; RC_CHANNELS_OVERRIDE only "
@@ -641,6 +755,30 @@ class ArduPilotAcro(FcBackend):
         except Exception:
             pass
 
+    def _request_attitude_stream(self, hz=20.0):
+        """Ask for ATTITUDE.  Required by the approach controller: holding a fixed
+        forward lean is an ATTITUDE problem, and ACRO gives us only a rate input,
+        so the outer loop has to be closed on the FC's own measured pitch.
+
+        ArduPilot sends nothing but HEARTBEAT until a GCS asks, so this is not
+        optional — measured on the real board: no request, no ATTITUDE at all;
+        with the request, a clean 20 Hz.
+        """
+        try:
+            self.master.mav.command_long_send(
+                self.master.target_system, self.master.target_component,
+                mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
+                mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE,
+                int(1e6 / max(1.0, hz)), 0, 0, 0, 0, 0)
+        except Exception:
+            pass
+        try:                       # legacy fallback for older firmware
+            self.master.mav.request_data_stream_send(
+                self.master.target_system, self.master.target_component,
+                mavutil.mavlink.MAV_DATA_STREAM_EXTRA1, int(hz), 1)
+        except Exception:
+            pass
+
     # ── background rx / heartbeat ─────────────────────────────────────────────
     def _rx_loop(self):
         while not self._stop.is_set():
@@ -658,6 +796,13 @@ class ArduPilotAcro(FcBackend):
                     self._apply_heartbeat(msg)
             elif t == "RC_CHANNELS":
                 self._check_echo(msg)
+                self._apply_pilot_throttle(msg)
+            elif t == "ATTITUDE":
+                with self._lock:
+                    # MAVLink ATTITUDE.pitch is positive NOSE-UP.
+                    self._pitch_rad = float(msg.pitch)
+                    self._roll_rad = float(msg.roll)
+                    self._attitude_t = perf_counter()
 
     def _hb_loop(self):
         """Announce ourselves as a GCS at 1 Hz.  Standard behaviour for anything
@@ -669,6 +814,55 @@ class ArduPilotAcro(FcBackend):
                     mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0, 0)
             except Exception:
                 pass
+
+    def _apply_pilot_throttle(self, rc_msg):
+        """Track how far the pilot has the throttle above mid, as 0..1.
+
+        Read from RC_CHANNELS, which is the pilot's real stick — we never override
+        throttle, so this is genuinely their input.  Calibration comes from the
+        FC's own RC{n}_MIN/TRIM/MAX, so a transmitter with an offset throttle trim
+        still reads correctly.  Mid is taken as the midpoint of MIN..MAX rather
+        than TRIM, because on a throttle channel TRIM sits at the bottom of the
+        travel (measured on this airframe: RC1 min 988, trim 990, max 2010) and
+        using it would report near-full throttle at hover.
+        """
+        cfg = self.rc.get("throttle")
+        if cfg is None:
+            return
+        chan = cfg["chan"]
+        if not (1 <= chan <= 18):
+            return
+        raw = getattr(rc_msg, f"chan{chan}_raw", 0)
+        if not raw or raw == 65535:
+            return
+        lo, hi = float(cfg["min"]), float(cfg["max"])
+        if hi - lo < 1.0:
+            return
+        mid = 0.5 * (lo + hi)
+        if cfg.get("reversed"):
+            frac = (mid - raw) / (mid - lo)
+        else:
+            frac = (raw - mid) / (hi - mid)
+        with self._lock:
+            self._throttle_chan = chan
+            self._throttle_frac = _clamp(frac, 0.0, 1.0)
+
+    def pitch_rad(self, max_age=0.5):
+        """Measured pitch (positive NOSE-UP), or None if it is missing or stale.
+
+        Returning None rather than a last-known value is deliberate: the approach
+        controller commands a rate to correct an attitude error, and a frozen
+        attitude reading would make it command that rate forever.
+        """
+        with self._lock:
+            t, p = self._attitude_t, self._pitch_rad
+        if t is None or p is None:
+            return None
+        return None if (perf_counter() - t) > max_age else p
+
+    def throttle_frac(self):
+        with self._lock:
+            return self._throttle_frac
 
     def _check_echo(self, rc_msg):
         """Confirm the FC took our sticks: ArduPilot copies an active override
@@ -1326,6 +1520,23 @@ class AcroCommander:
                  "OFF (REQUIRE_RATE_MODE=0) — steering is NOT gated on ACRO"))
 
         blockers = list(self.backend.blockers)
+        if self.law.pitch_mode == "approach":
+            # The approach loop is closed on the FC's measured attitude, so if
+            # ATTITUDE never arrives the pitch command is silently 0 and the
+            # airframe simply will not go forward.  That is safe but baffling in
+            # the field, so say it here rather than let it be diagnosed in the air.
+            #
+            # Wait for the first sample before judging: preflight runs within a
+            # few hundred ms of the stream request, so testing immediately reports
+            # a failure on every healthy start.
+            deadline = perf_counter() + 3.0
+            while self.backend.pitch_rad() is None and perf_counter() < deadline:
+                sleep(0.1)
+            if self.backend.pitch_rad() is None:
+                blockers.append(
+                    "PITCH_MODE=approach needs ATTITUDE from the FC and none has "
+                    "arrived yet.  Pitch will command 0 (no forward lean) until it "
+                    "does.  If this persists the stream request was refused.")
         if self.require_armed and not self.backend.armed:
             blockers.append("The FC is DISARMED — overrides are accepted but the "
                             "motors are off.  Arm from the transmitter in ACRO.")
@@ -1360,10 +1571,21 @@ class AcroCommander:
     # ── per-detection-frame input ────────────────────────────────────────────
     def compute(self, err_x, err_y, state, fw, fh):
         """Pixel offset -> stick command.  `state` is the tracker's LOCK /
-        PREDICT / SEARCH; only a real fix should steer, so SEARCH is neutral."""
+        PREDICT / SEARCH; only a real fix should steer, so SEARCH is neutral.
+
+        The measured pitch and the pilot's throttle are pulled from the backend
+        here rather than plumbed through the tracker, so the tracker's call site
+        does not need to know whether pitch is aiming or approaching.
+        """
         if state == "SEARCH":
             return self.law.neutral()
-        return self.law.compute(err_x, err_y, fw, fh)
+        pitch_rad = throttle = None
+        if self.backend is not None:
+            pitch_rad = self.backend.pitch_rad()
+            throttle = self.backend.throttle_frac()
+        return self.law.compute(err_x, err_y, fw, fh,
+                                measured_pitch_rad=pitch_rad,
+                                throttle_frac=(throttle or 0.0))
 
     def neutral_command(self):
         return self.law.neutral()
@@ -1596,6 +1818,20 @@ def commander_from_env(log_dir=None, verbose=True):
         STICK_LIMIT     max deflection, 0..1.  Default 0.55.
         DEADBAND_FRAC   centre deadband as a fraction of the half-frame.
         SLEW_PER_S      max stick change per second.
+        PITCH_MODE      aim (default) | approach.
+                        aim      = pitch nulls the target's vertical pixel error.
+                                   Correct ON A GIMBAL, where pitch only points
+                                   the camera and the airframe cannot translate.
+                        approach = pitch holds a nose-DOWN lean so the airframe
+                                   flies FORWARD, and ignores vertical pixel error.
+                                   Correct IN FREE FLIGHT.  Requires ATTITUDE from
+                                   the FC; without it the pitch command is 0.
+        APPROACH_DEG    max nose-down lean in approach mode, at full throttle.
+                        Default 12.  Hard-clamped to 30.
+        APPROACH_KP     rad/s of pitch rate per rad of lean error.  Default 2.5.
+        APPROACH_THR_DEADBAND
+                        throttle fraction above mid before any lean is commanded.
+                        Default 0.05.
         CONTROL_SHAPE   linear (default) | adaptive.  "adaptive" replaces the
                         proportional stick map with a saturating power curve:
                         full deflection beyond SHAPE_SAT off-centre so the turn
@@ -1631,6 +1867,10 @@ def commander_from_env(log_dir=None, verbose=True):
         shape=os.environ.get("CONTROL_SHAPE", "linear"),
         shape_gamma=_env_f("SHAPE_GAMMA", 1.6),
         shape_sat=_env_f("SHAPE_SAT", 0.30),
+        pitch_mode=os.environ.get("PITCH_MODE", "aim"),
+        approach_deg=_env_f("APPROACH_DEG", 12.0),
+        approach_kp=_env_f("APPROACH_KP", 2.5),
+        approach_thr_deadband=_env_f("APPROACH_THR_DEADBAND", 0.05),
         stick_limit_yaw=(_env_f("STICK_LIMIT_YAW", None)),
         stick_limit_pitch=(_env_f("STICK_LIMIT_PITCH", None)),
     )

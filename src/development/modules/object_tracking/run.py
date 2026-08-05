@@ -99,6 +99,26 @@ if os.environ.get("_WASP_REEXEC") != "1" and YOLO_PY.exists():
 #
 # ROLL is not driven and is not in this preset.  Roll, throttle and arming stay
 # with the pilot by design; the tracker only ever touches yaw and pitch.
+#
+# PITCH_MODE=approach — the fix for "it flies backwards when I am above it".
+#
+# Off the gimbal, a multirotor's pitch attitude IS its direction of travel.  So
+# using pitch to aim the camera vertically and expecting forward flight are
+# opposite commands on one axis: with the target above the nose, aiming up meant
+# leaning back, and leaning back means flying away.  That is not a gain problem
+# and no tuning fixes it.
+#
+# In approach mode pitch stops looking at vertical pixel error entirely and instead
+# holds a nose-DOWN lean, scaled by how far the pilot has the throttle above mid.
+# Full throttle = maximum lean = come at me; throttle back to mid = level = stop.
+# The lean is held by closing a loop on the FC's own measured ATTITUDE (requested
+# at 20 Hz at connect — ArduPilot sends nothing unasked), because in ACRO a stick
+# is a rate and an open-loop nose-down command would just keep rotating.
+#
+# The target's vertical position in frame no longer affects pitch at all, so:
+# above, below, left or right, the airframe yaws onto the target and flies FORWARD.
+# Vertical framing becomes altitude, which is the pilot's throttle — and the lens
+# has 48.8 deg of vertical view (+/-24 deg) of tolerance for it.
 TUNED = {
     "KP_YAW": "4.5", "KP_PITCH": "6.0",
     "KD_YAW": "0.10", "KD_PITCH": "0.10",
@@ -107,6 +127,10 @@ TUNED = {
     "STICK_LIMIT_PITCH": "0.22",
     "SLEW_PER_S": "11.0",
     "DEADBAND_FRAC": "0.03",
+    "PITCH_MODE": "approach",
+    "APPROACH_DEG": "12.0",
+    "APPROACH_KP": "2.5",
+    "APPROACH_THR_DEADBAND": "0.05",
 }
 
 

@@ -282,6 +282,52 @@ Plot that instead of guessing.
 
 ## 7. Tuning
 
+### Pitch has two incompatible jobs: PITCH_MODE
+
+On the gimbal, pitch only points the camera — the airframe cannot translate, so
+nulling vertical pixel error is exactly right. **Off the gimbal it is wrong, and
+not by a little.** A multirotor's pitch attitude *is* its direction of travel, so
+"aim up at a target above me" and "fly towards it" are opposite commands on one
+axis. Field symptom, reported 2026-08-05: the pilot flew slightly below the
+target, the camera looked up, the airframe leaned back, and it **retreated** on
+throttle. No gain value fixes that; it is a role conflict, not a tuning error.
+
+| `PITCH_MODE` | Pitch does | Correct when |
+|---|---|---|
+| `aim` | nulls the target's vertical pixel error | **on the gimbal** |
+| `approach` | holds a nose-DOWN lean; ignores vertical pixel error | **in free flight** |
+
+`approach` (what `run.py` now sets) works like this:
+
+```
+target_lean = -APPROACH_DEG * pilot_throttle_above_mid     (never positive)
+pitch_rate  = APPROACH_KP * (target_lean - measured_pitch)
+```
+
+* **The pilot's throttle is the approach command.** Above mid scales the lean, mid
+  or below commands none. Backing the throttle off is an instant, natural abort
+  with the stick they are already holding.
+* **It closes on measured `ATTITUDE`, not on a rate.** In ACRO a stick is a rate,
+  so an open-loop nose-down command keeps rotating past vertical. ArduPilot sends
+  no `ATTITUDE` until asked, so the backend requests it at 20 Hz on connect —
+  verified on the real board: no request, no `ATTITUDE` at all.
+* **`target_lean` can never be positive**, so this can never command nose-up and
+  therefore can never fly backwards, wherever the target sits in frame.
+* **A missing or stale `ATTITUDE` commands zero pitch**, never a last-known value:
+  a rate correcting a frozen angle would never stop. Preflight waits 3 s for the
+  first sample and lists a blocker if it never arrives.
+* Lean is hard-clamped to 30°; the default `APPROACH_DEG` is 12°.
+
+Measured in `tests/test_control_law.py` §12, on a sim that models translation:
+with the target 20° **above** the nose, `aim` travels **−40.9 m** (away) while
+`approach` travels **+22.1 m** (towards) — and `approach` closes from above, below,
+left and right alike.
+
+**What this gives up:** pitch no longer frames the target vertically, so vertical
+framing is now altitude, i.e. the pilot's job. The lens has 48.8° of vertical view
+(±24°) of tolerance. Flying at or slightly above the target's height keeps it in
+frame best; well below is the one geometry that can still lose it out of the top.
+
 ### One preset, and why the gains are asymmetric
 
 `run.py` ships exactly one preset. The `--adaptive` / `--max` / `--fast` /

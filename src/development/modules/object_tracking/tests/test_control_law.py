@@ -515,6 +515,123 @@ for seed in (1, 7, 13, 29, 101):
 check("the pitch ceiling earns its keep: loosening it costs jitter robustness",
       loose_ok < 5, f"0.40 ceiling -> {loose_ok}/5 seeds vs 0.22 -> 5/5")
 
+print("\n=== 12. approach mode: forward whatever the target's elevation ===")
+
+# The field bug, in one sentence: the pilot flew BELOW the target, so the camera
+# had to look UP, so pitch leaned the airframe BACK, so it flew away.  On a free
+# multirotor pitch attitude IS direction of travel, so aiming and approaching are
+# opposite commands on one axis.  Approach mode takes pitch off aiming entirely.
+
+APPROACH_KW = dict(TUNED_KW, pitch_mode="approach", approach_deg=12.0,
+                   approach_kp=2.5, approach_thr_deadband=0.05)
+
+
+def fly(law_kw, tgt_az_deg, tgt_el_deg, throttle=1.0, seconds=6.0, dt=0.05,
+        lat=2, hfov=62.2, vfov=48.8):
+    """Kinematic sim WITH translation.
+
+    Adds what section 5's sim leaves out and what the field bug lives in: the
+    airframe's pitch attitude integrates the commanded pitch rate, and a leaned
+    multirotor accelerates along the direction it leans.  `fwd` is displacement
+    towards the target: positive = closing, negative = retreating.
+    """
+    L = ControlLaw(h_fov_deg=hfov, v_fov_deg=vfov, **law_kw)
+    psi = 0.0            # heading error integrator
+    theta = 0.0          # pitch attitude, positive NOSE-UP
+    vel = 0.0            # forward velocity, m/s
+    fwd = 0.0            # forward displacement, m
+    tgt_az, tgt_el = math.radians(tgt_az_deg), math.radians(tgt_el_deg)
+    tan_h = math.tan(math.radians(hfov) / 2)
+    tan_v = math.tan(math.radians(vfov) / 2)
+    pipe = [(0.0, 0.0)] * lat
+    leans = []
+    for _ in range(int(seconds / dt)):
+        az_rel = tgt_az - psi
+        # The camera is body-fixed, so leaning the airframe moves the target in
+        # frame.  This coupling is the whole reason aim mode misbehaves in flight.
+        el_rel = tgt_el - theta
+        if abs(az_rel) > math.radians(80) or abs(el_rel) > math.radians(80):
+            return None
+        ex = (math.tan(az_rel) / tan_h) * (FW / 2)
+        ey = -(math.tan(el_rel) / tan_v) * (FH / 2)
+        pipe.append((ex, ey))
+        mex, mey = pipe.pop(0)
+        c = L.compute(mex, mey, FW, FH, dt=dt,
+                      measured_pitch_rad=theta, throttle_frac=throttle)
+        psi += c["yaw_rate"] * dt
+        theta += c["pitch_rate"] * dt
+        # Nose-down (negative theta) accelerates forward.  9.81*tan(lean), lightly
+        # damped so velocity does not grow without bound in a 6 s window.
+        vel += (9.81 * math.tan(-theta) - 0.25 * vel) * dt
+        fwd += vel * dt
+        leans.append(math.degrees(theta))
+    return dict(fwd=fwd, lean_final=leans[-1], leans=leans,
+                az_final=math.degrees(tgt_az - psi))
+
+
+# -- THE regression.  Target above, below, left, right: always forward. ---------
+for name, (az, el) in (("target ABOVE (the field case)", (0.0, 20.0)),
+                       ("target BELOW", (0.0, -20.0)),
+                       ("target LEFT", (-25.0, 0.0)),
+                       ("target RIGHT", (25.0, 0.0)),
+                       ("target ABOVE and LEFT", (-20.0, 15.0))):
+    r = fly(APPROACH_KW, az, el)
+    check(f"approach: {name} -> moves FORWARD",
+          r is not None and r["fwd"] > 0.5,
+          "diverged" if r is None else f"{r['fwd']:+.1f} m in 6 s")
+
+# -- and prove the bug is real in aim mode, so this test means something --------
+r_aim = fly(dict(TUNED_KW, pitch_mode="aim"), 0.0, 20.0)
+check("aim mode with the target ABOVE really does RETREAT (the reported bug)",
+      r_aim is not None and r_aim["fwd"] < 0,
+      "diverged" if r_aim is None else f"{r_aim['fwd']:+.1f} m — flies backwards")
+
+# -- the lean is HELD, not integrated away.  This is what ACRO cannot do open-loop.
+r = fly(APPROACH_KW, 0.0, 20.0, seconds=8.0)
+check("approach: lean settles at the commanded nose-down angle",
+      r is not None and abs(r["lean_final"] - (-12.0)) < 2.0,
+      f"{r['lean_final']:+.1f} deg (target -12)")
+check("approach: lean never runs away past the clamp",
+      r is not None and min(r["leans"]) > -20.0,
+      f"most nose-down {min(r['leans']):+.1f} deg")
+
+# -- yaw must still do its job while pitch is busy approaching ------------------
+r = fly(APPROACH_KW, 30.0, 15.0, seconds=8.0)
+check("approach: yaw still centres the target horizontally",
+      r is not None and abs(r["az_final"]) < 3.0,
+      f"azimuth {r['az_final']:+.1f} deg")
+
+# -- throttle is the pilot's go/stop, and it must mean it ----------------------
+r_idle = fly(APPROACH_KW, 0.0, 20.0, throttle=0.0)
+check("approach: throttle at mid commands NO lean and no motion",
+      r_idle is not None and abs(r_idle["fwd"]) < 0.05
+      and abs(r_idle["lean_final"]) < 0.5,
+      f"{r_idle['fwd']:+.3f} m, lean {r_idle['lean_final']:+.2f} deg")
+r_half = fly(APPROACH_KW, 0.0, 20.0, throttle=0.5)
+check("approach: half throttle leans less than full throttle",
+      r_half is not None and r_idle is not None
+      and 0.0 < r_half["fwd"] < r["fwd"],
+      f"half {r_half['fwd']:+.1f} m")
+
+# -- and the two hard safety properties ---------------------------------------
+LA = ControlLaw(**APPROACH_KW)
+check("approach: a missing/stale attitude commands ZERO pitch, never a guess",
+      LA.approach_pitch_stick(None, 1.0) == 0.0)
+worst_up = max(LA.approach_pitch_stick(math.radians(d), 1.0)
+               for d in range(-12, 1))
+check("approach: never commands nose-up while at or above the target lean",
+      worst_up <= 1e-9, f"max positive stick {worst_up:+.4f}")
+for el in (-40, -20, 0, 20, 40):
+    c = LA.compute(0, -el * 8, FW, FH, dt=0.05, measured_pitch_rad=0.0,
+                   throttle_frac=1.0)
+    if c["pitch_stick"] > 0:
+        check(f"approach: elevation error {el} never yields nose-up", False,
+              f"{c['pitch_stick']:+.3f}")
+        break
+else:
+    check("approach: no elevation error anywhere yields nose-up", True,
+          "checked -40..+40 deg")
+
 print("\n" + "=" * 60)
 if fails:
     print(f"{len(fails)} FAILURE(S): " + ", ".join(fails))
