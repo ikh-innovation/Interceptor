@@ -316,6 +316,17 @@ class FcBackend:
     def close(self):
         pass
 
+    def in_rate_mode(self):
+        """True when a stick deflection commands a body RATE on this FC right
+        now — the only condition under which this control law is valid.
+
+        A backend answers for itself rather than the commander string-matching
+        `mode_name`, because only ArduPilot reports a live flight mode.  MSP and
+        the offline backend have no equivalent, so they must not be gated off by
+        a mode they never report.
+        """
+        return True
+
     def status(self):
         return f"{self.name} {self.mode_name} {'ARMED' if self.armed else 'DISARMED'}"
 
@@ -437,6 +448,14 @@ class ArduPilotAcro(FcBackend):
         self.mode_name = COPTER_MODES.get(hb.custom_mode, f"MODE{hb.custom_mode}")
         self.armed = bool(hb.base_mode
                           & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+
+    def in_rate_mode(self):
+        """ArduPilot reports its flight mode in every HEARTBEAT, and the rx
+        thread keeps `mode_name` current, so this tracks the pilot's mode switch
+        live.  HEARTBEAT arrives at 1 Hz, which bounds how fast we can notice a
+        switch — see AcroCommander's mode gate for why that is acceptable.
+        """
+        return self.mode_name in RATE_MODES
 
     # ── FC configuration read-back ────────────────────────────────────────────
     def _param(self, name, timeout=2.5):
@@ -1126,6 +1145,7 @@ class AcroCommander:
                  force_sysid=None,
                  log_dir=None,
                  require_armed=True,
+                 require_rate_mode=True,
                  verbose=True):
         self.conn = conn
         self.baud = baud
@@ -1139,6 +1159,7 @@ class AcroCommander:
         self.force_sysid = force_sysid
         self.log_dir = log_dir
         self.require_armed = bool(require_armed)
+        self.require_rate_mode = bool(require_rate_mode)
         self.verbose = verbose
 
         self.backend = None
@@ -1154,6 +1175,11 @@ class AcroCommander:
         self._t0 = perf_counter()
         self._warned_disarmed = False
         self._steering = False
+        # None = not yet observed.  Tracks the mode gate so each flip of the
+        # pilot's mode switch is announced exactly once, in both directions,
+        # however many times they toggle it.
+        self._mode_gate = None
+        self._rate_mode_ok = True
 
     # ── HUD/legacy compatibility surface ─────────────────────────────────────
     @property
@@ -1183,6 +1209,13 @@ class AcroCommander:
     @property
     def mode_name(self):
         return self.backend.mode_name if self.backend is not None else "?"
+
+    @property
+    def rate_mode_ok(self):
+        """False only when the mode gate is active AND the FC is not in a rate
+        mode — i.e. the pilot currently holds every channel.  The HUD reads this.
+        """
+        return bool(self._rate_mode_ok)
 
     @property
     def override_confirmed(self):
@@ -1217,12 +1250,23 @@ class AcroCommander:
               f"(roll + throttle + arming stay with the pilot)")
         print(f"send rate     : {self.send_hz:.0f} Hz   "
               f"no-target: {self.no_target}")
+        print("mode gate     : "
+              + ("ACRO only — the pilot's mode switch decides who steers; any "
+                 "other mode returns every channel to the pilot"
+                 if self.require_rate_mode else
+                 "OFF (REQUIRE_RATE_MODE=0) — steering is NOT gated on ACRO"))
 
         blockers = list(self.backend.blockers)
         if self.require_armed and not self.backend.armed:
             blockers.append("The FC is DISARMED — overrides are accepted but the "
                             "motors are off.  Arm from the transmitter in ACRO.")
-        if self.backend.mode_name in ANGLE_MODES:
+        if self.require_rate_mode and not self.backend.in_rate_mode():
+            blockers.append(
+                f"The FC is in {self.backend.mode_name}, not ACRO.  The pilot has "
+                "FULL control and the tracker will not touch the sticks.  It hands "
+                "yaw/pitch over by itself the moment the pilot switches to ACRO, "
+                "and takes them back the moment the pilot switches away.")
+        elif self.backend.mode_name in ANGLE_MODES:
             blockers.append(
                 f"The FC is in {self.backend.mode_name}, where a stick commands an "
                 "ANGLE, not a rate.  The loop still centres the target but the "
@@ -1283,7 +1327,17 @@ class AcroCommander:
 
             armed = self.backend.armed if self.backend else False
             have_target = off is not None and fresh
-            steer = bool(self.linked and have_target
+            # The pilot's mode switch is the master arbiter: the AI may steer
+            # only while the FC is in a rate mode (ACRO).  Flipping back to
+            # STABILIZE returns every channel to the pilot on the very next
+            # transmit cycle, and flipping to ACRO again re-engages — the gate is
+            # re-evaluated from scratch each cycle, so it toggles indefinitely.
+            rate_ok = (not self.require_rate_mode
+                       or self.backend is None
+                       or self.backend.in_rate_mode())
+            self._rate_mode_ok = rate_ok
+            self._announce_mode_gate(rate_ok)
+            steer = bool(self.linked and have_target and rate_ok
                          and (armed or not self.require_armed))
 
             if steer:
@@ -1313,10 +1367,40 @@ class AcroCommander:
             else:
                 next_t = perf_counter()          # fell behind, resync
 
+    def _announce_mode_gate(self, rate_ok):
+        """Print one line each time the pilot's mode switch changes who is in
+        charge.  Deliberately not a one-shot warning: the pilot is expected to
+        hand control back and forth repeatedly, and every handover should be
+        visible in the console and in the log.
+        """
+        if rate_ok == self._mode_gate:
+            return
+        first = self._mode_gate is None
+        self._mode_gate = rate_ok
+        if not self.linked:
+            return
+        mode = self.mode_name
+        if rate_ok and not self.require_rate_mode:
+            print(f"[FC][MODE] {mode} — mode gate is OFF "
+                  f"(REQUIRE_RATE_MODE=0), so a target lock drives yaw/pitch "
+                  f"regardless of the pilot's mode switch.", flush=True)
+        elif rate_ok:
+            print(f"[FC][MODE] {mode} — rate mode: AI STEERING ENGAGED "
+                  f"(a target lock will now drive yaw/pitch)", flush=True)
+        elif first:
+            print(f"[FC][MODE] {mode} — not a rate mode: the pilot has full "
+                  f"control.  Switch to ACRO to hand yaw/pitch to the tracker.",
+                  flush=True)
+        else:
+            print(f"[FC][MODE] {mode} — pilot left ACRO: FULL CONTROL RETURNED "
+                  f"TO THE PILOT, all channels released.", flush=True)
+
     def _status_text(self, cmd, off, steer):
         if off is None:
             return f"WASP idle {self.mode_name[:10]}"
-        tag = "DRV" if steer else ("ARM?" if not self.armed else "off")
+        tag = ("DRV" if steer
+               else "PILOT" if not self._rate_mode_ok
+               else "ARM?" if not self.armed else "off")
         return (f"WASP {tag} e{off[0]:+d},{off[1]:+d} "
                 f"y{cmd['yaw_stick']:+.2f} p{cmd['pitch_stick']:+.2f}")
 
@@ -1386,6 +1470,8 @@ class AcroCommander:
                     else "TX->FC")
         elif not is_yolo:
             dest = "held (skip frame)"
+        elif not self._rate_mode_ok:
+            dest = f"PILOT has control ({self.mode_name}, not ACRO)"
         elif not self.armed and self.require_armed:
             dest = "released (FC disarmed)"
         else:
@@ -1444,6 +1530,12 @@ def commander_from_env(log_dir=None, verbose=True):
         YAW_REVERSED / PITCH_REVERSED    set to 1 if an axis drives the wrong way.
         SEND_HZ         override stream rate.  Default 20.
         REQUIRE_ARMED   0 to drive the sticks even while disarmed (bench only).
+        REQUIRE_RATE_MODE
+                        1 (default) steers ONLY while the FC is in ACRO, so the
+                        pilot's mode switch is the handover control: STABILIZE (or
+                        any non-rate mode) = pilot has everything, ACRO = the
+                        tracker drives yaw/pitch.  Toggles both ways, any number of
+                        times.  0 disables the gate (the old behaviour).
     """
     law = ControlLaw(
         h_fov_deg=_env_f("CAM_HFOV_DEG", 62.2),
@@ -1474,5 +1566,6 @@ def commander_from_env(log_dir=None, verbose=True):
         force_sysid=int(sysid) if sysid else None,
         log_dir=log_dir,
         require_armed=_env_b("REQUIRE_ARMED", True),
+        require_rate_mode=_env_b("REQUIRE_RATE_MODE", True),
         verbose=verbose,
     )

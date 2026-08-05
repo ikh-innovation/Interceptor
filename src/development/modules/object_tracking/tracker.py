@@ -744,6 +744,7 @@ class DroneTracker:
             DRIVE   sticks sent AND the FC echoed them back (confirmed)
             TX      sticks sent, confirmation still pending
             REFUSED sticks sent but the FC is discarding them
+            PILOT   the FC is not in ACRO — the pilot holds every channel
             ARM?    a target is locked but the FC is disarmed
             IDLE    channels released to the pilot (no target)
             SIM     no flight controller attached
@@ -765,6 +766,10 @@ class DroneTracker:
             lamp, tag = self.C_WARN, "REFUSED"
         elif sent:
             lamp, tag = self.C_LOCK, ("DRIVE" if confirmed else "TX")
+        elif not getattr(self.ap, "rate_mode_ok", True):
+            # The pilot's mode switch is out of ACRO, so we are deliberately
+            # hands-off.  Distinct from IDLE (no target) and ARM? (disarmed).
+            lamp, tag = self.C_WARN, "PILOT"
         elif pos is not None and not self.ap.armed:
             lamp, tag = self.C_SEARCH, "ARM?"
         else:

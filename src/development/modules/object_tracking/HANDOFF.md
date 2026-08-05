@@ -85,6 +85,7 @@ and replaced by:
 | File | Role |
 |---|---|
 | `fc_control.py` | **NEW.** Control law + FC transports + transmit thread + safety gating + CSV log |
+| `run.py` | **NEW.** One-command launcher: picks the yolo-env interpreter, applies a gain preset (`--max` default, `--fast`, `--tuned`, `--gentle`), waits for the FC so it can be started before the drone is powered, then execs `run_pipeline.py --direct` |
 | `fc_check.py` | **NEW.** Bench diagnostic: identify firmware, report gating settings, prove an override is accepted, wiggle the sticks |
 | `run_pipeline.py` | **REWRITTEN.** Identifies firmware before anything claims the port, wires the right transport, verifies overrides, then runs the tracker |
 | `tracker.py` | **MODIFIED.** Old commander removed; builds `AcroCommander` from env; HUD and console line now report the truth |
@@ -152,7 +153,17 @@ applied, so matching on it would manufacture a false "confirmed".
 
 ### Safety model
 
-* Sticks are driven **only** while the FC is **armed** AND a target is locked.
+* Sticks are driven **only** while the FC is **in ACRO** AND **armed** AND a target
+  is locked. The pilot's mode switch is the handover control: in STABILIZE (or any
+  non-rate mode) the tracker holds nothing and the pilot has every channel; flipping
+  to ACRO engages the AI; flipping back releases within one transmit cycle. It
+  toggles indefinitely — the gate is re-evaluated every cycle, not latched. Governed
+  by `REQUIRE_RATE_MODE` (default `1`); each handover prints a `[FC][MODE]` line.
+  Detection latency is bounded by ArduPilot's 1 Hz `HEARTBEAT`, so a handback can
+  take up to ~1 s to be noticed; `RC_OVERRIDE_TIME` (3 s) is the FC-side backstop.
+  Only `ArduPilotAcro` reports a live mode — `FcBackend.in_rate_mode()` returns
+  `True` for the MSP and offline backends so they are not gated off by a mode they
+  never report.
 * Roll, throttle and arming are **never** touched.
 * Target goes stale after `target_timeout` = 0.5 s with no detection ⇒ release.
 * No target ⇒ `NO_TARGET_BEHAVIOR=release` (default): all channels back to the pilot.
@@ -228,6 +239,7 @@ and probe the port directly.
 | `DRIVE` | sticks sent **and** confirmed by the FC |
 | `TX` | sticks sent, confirmation still pending |
 | `REFUSED` | sticks sent but the FC is discarding them |
+| `PILOT` | FC is not in ACRO — the pilot holds every channel, by design |
 | `ARM?` | target locked, FC disarmed — nothing will move |
 | `IDLE` | no target: channels released to the pilot |
 | `SIM` | no FC attached |
@@ -296,6 +308,7 @@ One knob at a time, and read the CSV between changes.
 | `YAW_REVERSED` / `PITCH_REVERSED` | `0` | `1` if an axis drives the wrong way |
 | `SEND_HZ` | `20` | Stream rate, independent of detection FPS |
 | `REQUIRE_ARMED` | `1` | `0` drives sticks while disarmed (bench only) |
+| `REQUIRE_RATE_MODE` | `1` | Steer only in ACRO; the pilot's mode switch is the handover. `0` = ungated |
 | `NO_TARGET_BEHAVIOR` | `release` | `release` \| `hold` |
 
 Launcher flags: `--no-mp`, `--direct` (no router; removes it as a failure mode),
@@ -327,11 +340,32 @@ python3 tests/test_simulated_fc.py    # 43 checks
 * `test_simulated_fc.py` — case **A** default `SYSID_MYGCS=255`; **B** non-default
   `42` (proves it is read, not assumed); **C** *the regression*: sending from
   sysid 1 against `SYSID_MYGCS=255` must be refused **and reported**; **D**
-  `RC_OPTIONS=2` detected; **E** disarmed ⇒ sticks stay released.
+  `RC_OPTIONS=2` detected; **E** disarmed ⇒ sticks stay released; **F** *the mode
+  gate*: STABILIZE ⇒ nothing driven, ACRO ⇒ driven, back to STABILIZE ⇒ released,
+  ACRO again ⇒ driven again (proves the gate is not a one-shot latch); **G**
+  `REQUIRE_RATE_MODE=0` restores the ungated behaviour.
 * A separate check rendered 72 HUD/console permutations without exception.
 
-**Never verified against real hardware.** The demo flight is the first time this
-touches the actual FC.
+### Verified on real hardware 2026-08-04
+
+Bench session on the Jetson with the real TBS Lucid H7, **props off**, pilot armed in
+ACRO at mid throttle:
+
+* Firmware confirmed **ArduPilot Copter**; `SYSID_MYGCS=255`; overrides **ACCEPTED**.
+* Fixed on the board: `ACRO_TRAINER` 2 → **0**, `ACRO_RP_EXPO` 0.3 → **0** (the
+  control law's stick→rate map is linear and assumes no expo), `ACRO_Y_EXPO` 0.
+* Live run: **656/656 frames LOCK**, **619 `TX->FC (confirmed)`, 0 `REFUSED`**, and
+  **2260 direction checks with 0 wrong** on all four of right/left/above/below.
+  Physical yaw-right confirmed by eye.
+* On disarm mid-run the sticks released immediately.
+* At `KP 3.5/6.0`, `KD 0.15`: mean error 30 px, 37 % of frames centred, **3 stick
+  reversals in 78 s** (no oscillation), peak stick **0.16 yaw / 0.10 pitch** against
+  a `STICK_LIMIT` of 0.35 — i.e. large unused authority, so the gains can go higher.
+  Pitch is the weak axis because `ACRO_RP_RATE=360` makes stick = rate/360; raise
+  `KP_PITCH`, do **not** lower `ACRO_RP_RATE` (that changes the pilot's own feel).
+
+Still unverified: **behaviour with props on**, and the mode gate against the real
+1 Hz `HEARTBEAT` (simulated only, cases F/G).
 
 ---
 

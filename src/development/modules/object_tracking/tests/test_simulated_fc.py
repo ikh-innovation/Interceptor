@@ -16,6 +16,10 @@ copies override_value into radio_in).  That lets us prove, without hardware:
   B. it works for a NON-default SYSID_MYGCS too (read, not assumed)
   C. the old behaviour (source_system=1 vs SYSID_MYGCS=255) is refused
   D. RC_OPTIONS bit 1 (ignore overrides) is detected and reported
+  E. a disarmed FC is never driven
+  F. the mode gate: the pilot's STABILIZE<->ACRO switch hands control over and
+     takes it back, repeatedly
+  G. REQUIRE_RATE_MODE=0 restores the ungated behaviour
 """
 import sys
 from time import perf_counter, sleep
@@ -140,6 +144,106 @@ r = run_case("E. DISARMED -> sticks stay released (safety gate)", 14605,
              sysid_mygcs=255, armed=False, settle=3.0)
 if r:
     check("no override sent while disarmed", not r["applied"], str(r["applied"]))
+
+# ── F. the mode gate: the pilot's mode switch owns the handover ──────────────
+# The pilot flies in STABILIZE and flips to ACRO when the tracker should take
+# yaw/pitch.  Flipping back must return every channel immediately, and the pair
+# must survive being toggled repeatedly — a latch that only fires once would
+# leave the AI holding the sticks on the second handback.
+def run_mode_gate_case(port):
+    print("\n=== F. mode gate: STABILIZE <-> ACRO handover, repeated ===")
+    fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=0)   # STABILIZE
+    fc.start()
+    sleep(0.3)
+
+    law = ControlLaw(kp_yaw=2.0, kp_pitch=2.0, slew_per_s=1e9)
+    cmdr = AcroCommander(conn=f"udpin:127.0.0.1:{port}", transport="mavlink",
+                         law=law, send_hz=20.0, log_dir=None, verbose=False)
+    try:
+        cmdr.connect()
+    except Exception as e:
+        check("F: connect", False, str(e))
+        fc.shutdown()
+        return
+
+    check("gate is on by default (REQUIRE_RATE_MODE default)",
+          cmdr.require_rate_mode is True)
+
+    def drive(seconds):
+        """Hold a locked target off-centre so the ONLY thing gating the sticks
+        is the flight mode."""
+        t0 = perf_counter()
+        while perf_counter() - t0 < seconds:
+            c = cmdr.compute(+200, -80, "LOCK", 640, 640)
+            cmdr.update(c, (200, -80), have_face=True)
+            sleep(0.05)
+
+    results = []
+    for i, (mode, label) in enumerate([(0, "STABILIZE"), (1, "ACRO"),
+                                       (0, "STABILIZE"), (1, "ACRO"),
+                                       (0, "STABILIZE")]):
+        fc.mode = mode
+        fc.overrides.clear()          # only look at what happens AFTER the flip
+        drive(1.5)
+        applied = dict(fc.overrides)
+        results.append((label, applied, cmdr.rate_mode_ok))
+        print(f"    {i+1}. pilot switch -> {label:9s} "
+              f"FC applied={applied or '{}'}  rate_mode_ok={cmdr.rate_mode_ok}")
+
+    cmdr.close()
+    sleep(0.2)
+    fc.shutdown()
+
+    check("1st STABILIZE: AI drives NOTHING, pilot has every channel",
+          not results[0][1], str(results[0][1]))
+    check("1st STABILIZE: rate_mode_ok is False", results[0][2] is False)
+    check("switch to ACRO: AI takes yaw/pitch",
+          bool(results[1][1]), str(results[1][1]))
+    check("in ACRO the yaw override is right of trim (target right of centre)",
+          results[1][1].get(4, 0) > 1500, f"ch4={results[1][1].get(4)}")
+    check("1st ACRO: rate_mode_ok is True", results[1][2] is True)
+    check("switch BACK to STABILIZE: every channel released to the pilot",
+          not results[2][1], str(results[2][1]))
+    check("2nd ACRO: AI takes the sticks AGAIN (gate is not a one-shot latch)",
+          bool(results[3][1]), str(results[3][1]))
+    check("2nd STABILIZE: released AGAIN", not results[4][1], str(results[4][1]))
+
+
+run_mode_gate_case(14606)
+
+
+# ── G. gate disabled: REQUIRE_RATE_MODE=0 restores the ungated behaviour ─────
+def run_gate_off_case(port):
+    print("\n=== G. REQUIRE_RATE_MODE=0 -> steering is NOT gated on mode ===")
+    fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=0)   # STABILIZE
+    fc.start()
+    sleep(0.3)
+    law = ControlLaw(kp_yaw=2.0, kp_pitch=2.0, slew_per_s=1e9)
+    cmdr = AcroCommander(conn=f"udpin:127.0.0.1:{port}", transport="mavlink",
+                         law=law, send_hz=20.0, log_dir=None, verbose=False,
+                         require_rate_mode=False)
+    try:
+        cmdr.connect()
+    except Exception as e:
+        check("G: connect", False, str(e))
+        fc.shutdown()
+        return
+    t0 = perf_counter()
+    while perf_counter() - t0 < 2.0:
+        c = cmdr.compute(+200, -80, "LOCK", 640, 640)
+        cmdr.update(c, (200, -80), have_face=True)
+        sleep(0.05)
+    applied = dict(fc.overrides)
+    cmdr.close()
+    sleep(0.2)
+    fc.shutdown()
+    print(f"    mode=STABILIZE, gate off -> FC applied={applied or '{}'}")
+    check("with the gate off, STABILIZE still gets driven (old behaviour)",
+          bool(applied), str(applied))
+
+
+run_gate_off_case(14607)
+
 
 print("\n" + "=" * 62)
 if fails:
