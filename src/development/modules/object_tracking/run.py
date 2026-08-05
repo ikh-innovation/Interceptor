@@ -25,9 +25,12 @@ The pilot's mode switch remains the handover control (REQUIRE_RATE_MODE=1, the
 default): STABILIZE = the pilot has every channel, ACRO = the tracker drives
 yaw and pitch.  Starting this script never takes control on its own.
 
-    ./run.py                 MAX speed — full stick authority (default)
-    ./run.py --fast          strong but bounded (KP 6.0/15.0, stick <= 0.55)
-    ./run.py --tuned         the hardware-tested preset (KP 3.5/6.0, stick <= 0.35)
+    ./run.py                 ADAPTIVE (default): snap onto the target, ease in.
+                             Fastest and most robust option in simulation.
+    ./run.py --tuned         linear, hardware-tested (KP 3.5/6.0, stick <= 0.35)
+    ./run.py --fast          linear, strong but bounded (KP 6.0/15.0)
+    ./run.py --max           full stick authority.  DIVERGES in the kinematic
+                             simulator — kept only for deliberate experiments.
     ./run.py --gentle        original conservative gains, for backing right out
     ./run.py --no-wait       fail immediately if the FC is not already up
     ./run.py -- --no-verify  everything after `--` goes to run_pipeline.py
@@ -57,6 +60,49 @@ if os.environ.get("_WASP_REEXEC") != "1" and YOLO_PY.exists():
                  + sys.argv[1:])
 
 # ── 2. presets ────────────────────────────────────────────────────────────────
+# ADAPTIVE — snap onto the target, then ease into the centre.  The default.
+#
+# The complaint every linear preset shares: one KP has to serve both the far
+# field and the near field.  Tune it to swing hard onto a target at the frame
+# edge and it twitches on a nearly-centred one; tune it to be calm at the centre
+# and it crawls toward anything far away.  KP is a straight line through the
+# origin, and no value of it is both steep far out and shallow close in.
+#
+# So this preset stops using KP and shapes the deflection directly:
+#
+#     |offset| >= SHAPE_SAT (42%)  ->  the axis ceiling, immediately
+#     |offset| inside that         ->  (offset/0.42) ** 1.6, collapsing fast
+#
+# The two axes get DIFFERENT ceilings, which is the whole reason this preset can
+# be fast at all.  ACRO_RP_RATE is 360 deg/s against ACRO_Y_RATE's 202, so the
+# same deflection is 1.8x the angular rate in pitch, and pitch is what goes
+# unstable first against detection latency.  One shared ceiling has to be set low
+# enough for pitch, which needlessly throttles yaw — and yaw is the axis you
+# actually watch swing onto the target.  So: yaw 60%, pitch 18%.
+#
+# These numbers are not guesses.  They are the best of a grid search over
+# SHAPE_SAT x yaw ceiling x pitch ceiling x gamma x KD, scored on settling time
+# across six starting geometries and then re-scored for robustness against worse
+# latency and against 8 px of detection jitter.  Measured against the kinematic
+# simulator in tests/test_control_law.py, at 0.1 s detection latency:
+#
+#     --adaptive      settles in 0.60 s worst case
+#     --tuned         settles in 1.10 s worst case
+#     --max           NEVER settles: it diverges on every geometry tried
+#
+# and with 8 px of detection noise at 0.15 s latency, --adaptive still settles
+# (0.90 s) while --tuned goes unstable.  Faster AND more robust, not a trade.
+ADAPTIVE = {
+    "CONTROL_SHAPE": "adaptive",
+    "SHAPE_GAMMA": "1.6",
+    "SHAPE_SAT": "0.42",
+    "KD_YAW": "0.18", "KD_PITCH": "0.18",
+    "STICK_LIMIT": "0.60",
+    "STICK_LIMIT_YAW": "0.60",
+    "STICK_LIMIT_PITCH": "0.18",
+    "SLEW_PER_S": "12.0",
+    "DEADBAND_FRAC": "0.03",
+}
 # MAX — the default: the fastest yaw/pitch this airframe can be commanded to do.
 #
 # The ceiling is the FC's own ACRO full-stick rates, ACRO_Y_RATE=202.5 deg/s and
@@ -180,13 +226,18 @@ def wait_for_heartbeat(dev, tries=20):
 
 def main():
     argv = sys.argv[1:]
-    preset, wait = MAXSPD, True
-    preset_name = "MAX SPEED"
+    # ADAPTIVE is the default because it is both the fastest and the most robust
+    # option in simulation.  MAXSPD is kept reachable, but it diverges in the
+    # kinematic sim and must not be the thing that runs by accident.
+    preset, wait = ADAPTIVE, True
+    preset_name = "ADAPTIVE (snap on, ease in)"
     passthrough = []
 
     while argv:
         a = argv.pop(0)
-        if a in ("--max", "--maxspeed"):
+        if a == "--adaptive":
+            preset, preset_name = ADAPTIVE, "ADAPTIVE (snap on, ease in)"
+        elif a in ("--max", "--maxspeed"):
             preset, preset_name = MAXSPD, "MAX SPEED"
         elif a == "--fast":
             preset, preset_name = FAST, "fast"
@@ -212,11 +263,24 @@ def main():
     print("=" * 74)
     print("WASP head tracker")
     print("=" * 74)
+    env = os.environ
     print(f"  preset       : {preset_name}")
-    print(f"  gains        : KP {os.environ['KP_YAW']}/{os.environ['KP_PITCH']}  "
-          f"KD {os.environ['KD_YAW']}/{os.environ['KD_PITCH']}  "
-          f"stick<={os.environ['STICK_LIMIT']}  "
-          f"slew {os.environ.get('SLEW_PER_S', '3.0')}/s")
+    if env.get("CONTROL_SHAPE", "linear").lower() == "adaptive":
+        # KP is deliberately absent in this mode, so never read it here.
+        print(f"  law          : adaptive  ceiling at "
+              f"{float(env['SHAPE_SAT']) * 100:.0f}% off-centre, "
+              f"gamma {env['SHAPE_GAMMA']}")
+        print(f"  ceilings     : yaw {env.get('STICK_LIMIT_YAW', env['STICK_LIMIT'])}"
+              f"  pitch {env.get('STICK_LIMIT_PITCH', env['STICK_LIMIT'])}"
+              f"   (pitch is lower on purpose: ACRO_RP_RATE 360 vs yaw 202 deg/s)")
+        print(f"  gains        : KD {env['KD_YAW']}/{env['KD_PITCH']}  "
+              f"slew {env['SLEW_PER_S']}/s")
+    else:
+        print(f"  gains        : KP {env.get('KP_YAW', '2.0')}/"
+              f"{env.get('KP_PITCH', '2.0')}  "
+              f"KD {env.get('KD_YAW', '0.0')}/{env.get('KD_PITCH', '0.0')}  "
+              f"stick<={env.get('STICK_LIMIT', '0.55')}  "
+              f"slew {env.get('SLEW_PER_S', '3.0')}/s")
     print("  mode gate    : ON — the pilot's switch decides.  STABILIZE = the "
           "pilot has\n                 everything; ACRO = the tracker drives "
           "yaw and pitch.")

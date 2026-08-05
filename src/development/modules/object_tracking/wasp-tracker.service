@@ -1,0 +1,74 @@
+[Unit]
+Description=WASP head tracker (auto-start at Jetson power-up, --tuned preset)
+Documentation=file:///home/iknowhow/Documents/Interceptor-1/src/development/modules/object_tracking/HANDOFF.md
+
+# systemd USER service.  Autologin is enabled for iknowhow (/etc/gdm3/custom.conf
+# AutomaticLogin=iknowhow), so the graphical session — and therefore this unit —
+# comes up on its own at power-up with no keyboard.
+#
+# Install:   systemctl --user enable --now wasp-tracker.service
+# Watch:     journalctl --user -u wasp-tracker -f
+# Stop:      systemctl --user stop wasp-tracker      (releases every channel)
+# Disable:   systemctl --user disable wasp-tracker
+After=graphical-session.target
+PartOf=graphical-session.target
+# nvarguscamerasrc talks to the Argus daemon; without it the CSI camera fails to
+# open.  Wants, not Requires, so a slow daemon start retries rather than aborts.
+Wants=nvargus-daemon.service
+After=nvargus-daemon.service
+
+# Keep retrying indefinitely at boot instead of giving up after N fast failures:
+# the camera, the X session and the FC all come up on their own schedule.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/home/iknowhow/Documents/Interceptor-1/src/development/modules/object_tracking
+
+# X display of the autologin session — the cv2 HUD needs it.
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/run/user/1000/gdm/Xauthority
+
+# Nothing about the FC, the transmitter or the tuning is hardcoded here: run.py
+# applies the --tuned preset and run_pipeline.py reads the channel map, the
+# calibration, the ACRO full-stick rates and SYSID_MYGCS off the FC at connect.
+# The FC's by-id descriptor AND its ACM number both change across reboots, so the
+# port is discovered, never hardcoded.  Set FC_DEV only to override.
+
+# THE SAFETY MODEL, unchanged by auto-start:
+#   * REQUIRE_RATE_MODE=1 (default) — the tracker touches nothing unless the FC
+#     is in ACRO.  The pilot's mode switch is the on/off control for the AI.
+#   * REQUIRE_ARMED=1 (default) — nothing is driven while disarmed.
+#   * Roll, throttle and arming are never touched.
+#   * Target lost, service stopped, or any crash -> every channel released.
+# So this unit running at boot does not mean the AI has control at boot.  It
+# waits, idle, until the pilot deliberately selects ACRO.
+
+# Let udev, the X session and the Argus daemon settle.  run.py then waits for the
+# FC itself, so the drone may be powered up long after the Jetson.
+ExecStartPre=/bin/sleep 15
+
+# --adaptive: full ceiling beyond 42% off-centre so the swing onto target
+# starts hard, gamma-shaped collapse inside it so the last stretch into the
+# centre is gentle, and separate yaw/pitch ceilings because ACRO_RP_RATE is
+# 360 deg/s against ACRO_Y_RATE's 202.  Grid-searched and proven in
+# tests/test_control_law.py: settles in 0.60s worst case across six starting
+# geometries versus 1.10s for --tuned, and unlike --tuned it stays stable with
+# detection jitter.  Swap to --tuned if it ever misbehaves on hardware.
+ExecStart=/home/iknowhow/Documents/Interceptor-1/src/development/modules/object_tracking/run.py --adaptive
+
+# Boot failures are invisible without this: the user journal is not
+# persistent on this Jetson, so keep our own rolling log.
+StandardOutput=append:/home/iknowhow/wasp-logs/wasp-tracker.log
+StandardError=append:/home/iknowhow/wasp-logs/wasp-tracker.log
+
+Restart=always
+RestartSec=10
+TimeoutStopSec=25
+# KillMode defaults to control-group, so stopping this unit also kills the
+# tracker it exec'd.  SIGTERM first: the tracker's finally-block releases every
+# overridden channel back to the pilot before the link closes.
+KillSignal=SIGINT
+
+[Install]
+WantedBy=graphical-session.target

@@ -159,7 +159,19 @@ class ControlLaw:
                  max_yaw_rate=None,       # rad/s at full stick (FC ACRO_Y_RATE)
                  max_pitch_rate=None,     # rad/s at full stick (FC ACRO_RP_RATE)
                  invert_yaw=False,
-                 invert_pitch=False):
+                 invert_pitch=False,
+                 shape="linear",          # "linear" | "adaptive"
+                 shape_gamma=1.6,         # curve exponent, >1 = soft near centre
+                 shape_sat=0.30,          # |normalized offset| commanding full stick
+                 # Per-axis ceilings.  None = fall back to stick_limit.  These
+                 # exist because the two axes are NOT equivalent: ArduPilot's
+                 # ACRO_RP_RATE is 360 deg/s against ACRO_Y_RATE's 202, so the
+                 # same deflection is ~1.8x more angular rate in pitch.  Pitch is
+                 # therefore the axis that goes unstable first against detection
+                 # latency, and a single shared ceiling has to be set low enough
+                 # for pitch — throwing away yaw authority for no reason.
+                 stick_limit_yaw=None,
+                 stick_limit_pitch=None):
         self.h_fov = math.radians(float(h_fov_deg))
         self.v_fov = math.radians(float(v_fov_deg))
         self.kp_yaw = float(kp_yaw)
@@ -174,6 +186,15 @@ class ControlLaw:
         self.max_pitch_rate = float(max_pitch_rate or math.radians(360.0))
         self.invert_yaw = bool(invert_yaw)
         self.invert_pitch = bool(invert_pitch)
+        self.shape = "adaptive" if str(shape).lower() == "adaptive" else "linear"
+        self.shape_gamma = max(1e-3, float(shape_gamma))
+        self.shape_sat = float(_clamp(shape_sat, 1e-3, 1.0))
+        self.stick_limit_yaw = float(_clamp(
+            self.stick_limit if stick_limit_yaw is None else stick_limit_yaw,
+            0.0, 1.0))
+        self.stick_limit_pitch = float(_clamp(
+            self.stick_limit if stick_limit_pitch is None else stick_limit_pitch,
+            0.0, 1.0))
 
         self._tan_h = math.tan(self.h_fov / 2.0)
         self._tan_v = math.tan(self.v_fov / 2.0)
@@ -217,23 +238,47 @@ class ControlLaw:
             dax = day = 0.0
         self._ax_prev, self._ay_prev = ax, ay
 
-        # Target right of centre -> yaw RIGHT  (positive body yaw rate).
-        yaw_rate = self.kp_yaw * ax + self.kd_yaw * dax
-        # Target below centre -> nose DOWN.  Positive body pitch rate is nose UP
-        # (right-hand rule about body Y, which points right), hence the negation.
-        pitch_rate = -(self.kp_pitch * ay + self.kd_pitch * day)
+        if self.shape == "adaptive":
+            # Deflection is a SHAPED function of how far off-centre the box is,
+            # not a fixed multiple of it.  Beyond `shape_sat` of the half-frame
+            # the stick is pinned at the limit, so the airframe swings at its
+            # full ACRO rate the instant the target is properly off-boresight —
+            # that is the "turn immediately" half.  Inside `shape_sat` the
+            # exponent (>1) collapses the command far faster than a straight line
+            # would, so the last stretch into the centre is deliberately gentle —
+            # that is the "slow down as it approaches" half.  A linear law cannot
+            # do both: one KP has to serve the far field and the near field, and
+            # whichever you tune for, the other is wrong.
+            #
+            # Signs are taken from the SAME rule as the linear path: target right
+            # of centre -> positive yaw; target below centre -> nose down, i.e.
+            # negative pitch rate.  Only the magnitude curve differs.
+            yaw_stick = self._shape(nx) * self.stick_limit_yaw
+            pitch_stick = -self._shape(ny) * self.stick_limit_pitch
+            # KD stays live and is what stops the fast far-field swing from
+            # overshooting through the centre.  Converted into stick units,
+            # because in this mode the command is a deflection, not a rate.
+            yaw_stick += (self.kd_yaw * dax) / self.max_yaw_rate
+            pitch_stick += -(self.kd_pitch * day) / self.max_pitch_rate
+        else:
+            # Target right of centre -> yaw RIGHT  (positive body yaw rate).
+            yaw_rate = self.kp_yaw * ax + self.kd_yaw * dax
+            # Target below centre -> nose DOWN.  Positive body pitch rate is nose
+            # UP (right-hand rule about body Y, which points right), hence the
+            # negation.
+            pitch_rate = -(self.kp_pitch * ay + self.kd_pitch * day)
 
-        yaw_stick = yaw_rate / self.max_yaw_rate
-        pitch_stick = pitch_rate / self.max_pitch_rate
+            yaw_stick = yaw_rate / self.max_yaw_rate
+            pitch_stick = pitch_rate / self.max_pitch_rate
 
         if self.invert_yaw:
             yaw_stick = -yaw_stick
         if self.invert_pitch:
             pitch_stick = -pitch_stick
 
-        lim = self.stick_limit
-        yaw_stick = _clamp(yaw_stick, -lim, lim)
-        pitch_stick = _clamp(pitch_stick, -lim, lim)
+        yaw_stick = _clamp(yaw_stick, -self.stick_limit_yaw, self.stick_limit_yaw)
+        pitch_stick = _clamp(pitch_stick, -self.stick_limit_pitch,
+                             self.stick_limit_pitch)
 
         yaw_stick = self._slew(self._yaw_stick, yaw_stick, dt)
         pitch_stick = self._slew(self._pitch_stick, pitch_stick, dt)
@@ -256,6 +301,20 @@ class ControlLaw:
     # re-acquisition — a visible jerk on the gimbal.
     _NOMINAL_DT = 0.05
 
+    def _shape(self, n):
+        """Map a normalized offset to a signed magnitude in [-1, 1].
+
+        Monotonic, sign-preserving, zero at zero, and saturating at
+        |n| >= shape_sat.  gamma > 1 flattens the response near the centre;
+        gamma == 1 with shape_sat == 1 degenerates to the identity, so the
+        adaptive mode is a strict generalisation of a proportional stick map.
+        """
+        a = abs(n)
+        if a == 0.0:
+            return 0.0
+        m = min(1.0, a / self.shape_sat) ** self.shape_gamma
+        return math.copysign(m, n)
+
     def _slew(self, prev, target, dt):
         if self.slew_per_s <= 0.0:
             return target
@@ -272,15 +331,25 @@ class ControlLaw:
                     az_deg=0.0, el_deg=0.0)
 
     def describe(self):
+        if self.shape == "adaptive":
+            law = (f"ADAPTIVE gamma {self.shape_gamma:.2f}  "
+                   f"full stick at {self.shape_sat * 100:.0f}% off-centre  "
+                   f"(KP unused in this mode)  "
+                   f"KD {self.kd_yaw:.2f}/{self.kd_pitch:.2f}  ")
+        else:
+            law = (f"KP yaw/pitch {self.kp_yaw:.2f}/{self.kp_pitch:.2f}  "
+                   f"KD {self.kd_yaw:.2f}/{self.kd_pitch:.2f}  ")
         return (f"FOV {math.degrees(self.h_fov):.1f}x{math.degrees(self.v_fov):.1f} deg  "
-                f"KP yaw/pitch {self.kp_yaw:.2f}/{self.kp_pitch:.2f}  "
-                f"KD {self.kd_yaw:.2f}/{self.kd_pitch:.2f}  "
-                f"deadband {self.deadband_frac * 100:.1f}%  "
-                f"stick<={self.stick_limit * 100:.0f}%  "
-                f"slew {self.slew_per_s:.1f}/s  "
-                f"full-stick rate yaw/pitch "
-                f"{math.degrees(self.max_yaw_rate):.0f}/"
-                f"{math.degrees(self.max_pitch_rate):.0f} deg/s")
+                + law
+                + f"deadband {self.deadband_frac * 100:.1f}%  "
+                + (f"stick<={self.stick_limit_yaw * 100:.0f}%  "
+                   if self.stick_limit_yaw == self.stick_limit_pitch else
+                   f"stick<= yaw {self.stick_limit_yaw * 100:.0f}%"
+                   f"/pitch {self.stick_limit_pitch * 100:.0f}%  ")
+                + f"slew {self.slew_per_s:.1f}/s  "
+                + f"full-stick rate yaw/pitch "
+                + f"{math.degrees(self.max_yaw_rate):.0f}/"
+                + f"{math.degrees(self.max_pitch_rate):.0f} deg/s")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1527,6 +1596,16 @@ def commander_from_env(log_dir=None, verbose=True):
         STICK_LIMIT     max deflection, 0..1.  Default 0.55.
         DEADBAND_FRAC   centre deadband as a fraction of the half-frame.
         SLEW_PER_S      max stick change per second.
+        CONTROL_SHAPE   linear (default) | adaptive.  "adaptive" replaces the
+                        proportional stick map with a saturating power curve:
+                        full deflection beyond SHAPE_SAT off-centre so the turn
+                        starts hard, and a gamma-shaped collapse inside it so the
+                        approach to centre is soft.  KP_* are unused in this mode;
+                        KD_* still damp.
+        SHAPE_GAMMA     adaptive curve exponent.  Default 1.6.  Higher = softer
+                        near the centre, later commitment.
+        SHAPE_SAT       |normalized offset| at which adaptive commands full stick.
+                        Default 0.30 (30% of the half-frame).  Lower = snappier.
         YAW_REVERSED / PITCH_REVERSED    set to 1 if an axis drives the wrong way.
         SEND_HZ         override stream rate.  Default 20.
         REQUIRE_ARMED   0 to drive the sticks even while disarmed (bench only).
@@ -1549,6 +1628,11 @@ def commander_from_env(log_dir=None, verbose=True):
         slew_per_s=_env_f("SLEW_PER_S", 3.0),
         invert_yaw=_env_b("YAW_REVERSED", False),
         invert_pitch=_env_b("PITCH_REVERSED", False),
+        shape=os.environ.get("CONTROL_SHAPE", "linear"),
+        shape_gamma=_env_f("SHAPE_GAMMA", 1.6),
+        shape_sat=_env_f("SHAPE_SAT", 0.30),
+        stick_limit_yaw=(_env_f("STICK_LIMIT_YAW", None)),
+        stick_limit_pitch=(_env_f("STICK_LIMIT_PITCH", None)),
     )
     conn = os.environ.get("MAV_CONN", "udpin:127.0.0.1:14551")
     if conn.strip().lower() == "none":

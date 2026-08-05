@@ -77,11 +77,15 @@ print("\n=== 5. closed-loop convergence (kinematic sim) ===")
 
 
 def simulate(kp, seconds=6.0, dt=0.05, tgt_az_deg=25.0, tgt_el_deg=-15.0,
-             hfov=62.2, vfov=48.8, latency_steps=2):
+             hfov=62.2, vfov=48.8, latency_steps=2, kp_pitch=None,
+             stick_limit=0.55, slew=3.0, kd=0.0, deadband=0.03):
     """Camera boresight integrates the commanded body rates.  If the sign
     convention is right the pixel error must decay to inside the deadband."""
-    L = ControlLaw(h_fov_deg=hfov, v_fov_deg=vfov, kp_yaw=kp, kp_pitch=kp,
-                   deadband_frac=0.03, stick_limit=0.55, slew_per_s=3.0)
+    L = ControlLaw(h_fov_deg=hfov, v_fov_deg=vfov, kp_yaw=kp,
+                   kp_pitch=(kp if kp_pitch is None else kp_pitch),
+                   kd_yaw=kd, kd_pitch=kd,
+                   deadband_frac=deadband, stick_limit=stick_limit,
+                   slew_per_s=slew)
     psi = 0.0                     # heading (rad)
     theta = 0.0                   # pitch   (rad)
     tgt_az = math.radians(tgt_az_deg)
@@ -194,6 +198,193 @@ if csv:
           "yaw_stick" in rows[0] and "vz" not in rows[0], rows[0])
 cmdr.close()                                    # idempotent
 check("close() is idempotent", True)
+
+print("\n=== 10. adaptive law: snap on far, ease in near ===")
+
+# The preset shipped as `run.py --adaptive`, and the default.  Keep these in
+# lockstep with run.py's ADAPTIVE dict — the point of this section is that the
+# shipped numbers are the ones proven stable.
+AD = dict(shape="adaptive", shape_gamma=1.6, shape_sat=0.42,
+          kd_yaw=0.18, kd_pitch=0.18, stick_limit=0.60,
+          stick_limit_yaw=0.60, stick_limit_pitch=0.18,
+          slew_per_s=12.0, deadband_frac=0.03)
+YLIM, PLIM, SAT, GAMMA = 0.60, 0.18, 0.42, 1.6
+
+
+def ad_law(**over):
+    kw = dict(AD)
+    kw.update(over)
+    return ControlLaw(**kw)
+
+
+def stick_at(frac, axis="yaw"):
+    """Deflection commanded for a target `frac` of the half-frame off centre.
+    Slew history is reset each time so we read the law, not the ramp."""
+    L = ad_law()
+    px = frac * (FW / 2)
+    last = None
+    for _ in range(40):                       # let the slew limiter settle
+        c = L.compute(px if axis == "yaw" else 0.0,
+                      0.0 if axis == "yaw" else px, FW, FH, dt=0.05)
+        last = c
+    return last["yaw_stick"] if axis == "yaw" else last["pitch_stick"]
+
+
+# -- signs must match the linear law exactly; only the magnitude curve differs --
+L = ad_law()
+c = L.compute(+200, 0, FW, FH, dt=0.05)
+check("adaptive: target RIGHT -> yaw positive", c["yaw_stick"] > 0,
+      f"{c['yaw_stick']:+.3f}")
+L = ad_law()
+c = L.compute(-200, 0, FW, FH, dt=0.05)
+check("adaptive: target LEFT -> yaw negative", c["yaw_stick"] < 0,
+      f"{c['yaw_stick']:+.3f}")
+L = ad_law()
+c = L.compute(0, +200, FW, FH, dt=0.05)
+check("adaptive: target BELOW -> pitch negative (nose down)",
+      c["pitch_stick"] < 0, f"{c['pitch_stick']:+.3f}")
+L = ad_law()
+c = L.compute(0, -200, FW, FH, dt=0.05)
+check("adaptive: target ABOVE -> pitch positive (nose up)",
+      c["pitch_stick"] > 0, f"{c['pitch_stick']:+.3f}")
+
+# -- saturation.  SHAPE_SAT is measured on the offset AFTER the deadband rescale,
+#    so the raw offset that saturates is slightly larger than SHAPE_SAT itself. --
+raw_sat = SAT * (1.0 - 0.03) + 0.03
+s_sat = stick_at(raw_sat + 0.01)
+s75 = stick_at(0.75)
+s99 = stick_at(0.99)
+check(f"adaptive: yaw hits its ceiling by {(raw_sat + 0.01) * 100:.0f}% off-centre",
+      abs(s_sat - YLIM) < 1e-6, f"{s_sat:.3f} (ceiling {YLIM})")
+check("adaptive: still exactly the ceiling at 75% (saturated, not growing)",
+      abs(s75 - YLIM) < 1e-6, f"{s75:.3f}")
+check("adaptive: still exactly the ceiling at 99%", abs(s99 - YLIM) < 1e-6,
+      f"{s99:.3f}")
+check("adaptive: pitch has its OWN, lower ceiling",
+      abs(abs(stick_at(0.75, "pitch")) - PLIM) < 1e-6,
+      f"pitch {abs(stick_at(0.75, 'pitch')):.3f} vs yaw {s75:.3f}")
+
+# -- the near field must collapse, and follow the documented curve --------------
+s30, s20, s10, s05 = (stick_at(0.30), stick_at(0.20), stick_at(0.10),
+                      stick_at(0.05))
+check("adaptive: monotonic in offset (05 < 10 < 20 < 30)",
+      s05 < s10 < s20 < s30, f"{s05:.3f} {s10:.3f} {s20:.3f} {s30:.3f}")
+for frac, got in ((0.30, s30), (0.20, s20), (0.10, s10), (0.05, s05)):
+    # The deadband rescales the offset before shaping, so predict through it too.
+    n = (frac - 0.03) / (1.0 - 0.03)
+    want = min(1.0, n / SAT) ** GAMMA * YLIM
+    check(f"adaptive: yaw stick at {frac * 100:.0f}% off-centre matches the curve",
+          abs(got - want) < 0.02, f"got {got:.3f}, curve says {want:.3f}")
+
+# -- and it must actually be FASTER far out than the linear preset it replaces --
+LIN = ControlLaw(kp_yaw=3.5, kp_pitch=6.0, kd_yaw=0.15, kd_pitch=0.15,
+                 stick_limit=0.35, slew_per_s=3.0, deadband_frac=0.03)
+lin_last = None
+for _ in range(40):
+    lin_last = LIN.compute(0.40 * (FW / 2), 0, FW, FH, dt=0.05)
+check("adaptive beats the --tuned linear preset at 40% off-centre",
+      stick_at(0.40) > lin_last["yaw_stick"] * 1.5,
+      f"adaptive {stick_at(0.40):.3f} vs tuned {lin_last['yaw_stick']:.3f}")
+
+# -- reversal flags still work in this mode ------------------------------------
+LR = ad_law(invert_yaw=True)
+c = LR.compute(+200, 0, FW, FH, dt=0.05)
+check("adaptive: YAW_REVERSED flips the stick", c["yaw_stick"] < 0,
+      f"{c['yaw_stick']:+.3f}")
+check("adaptive: reported yaw_rate stays the PHYSICAL intent under inversion",
+      c["yaw_rate"] > 0, f"{math.degrees(c['yaw_rate']):+.1f} d/s")
+
+
+def simulate_adaptive(seconds=6.0, dt=0.05, tgt_az_deg=25.0, tgt_el_deg=-15.0,
+                      hfov=62.2, vfov=48.8, latency_steps=2):
+    """Same kinematic sim as section 5, driving the adaptive law.  A law that
+    snaps to full stick is exactly the kind that can limit-cycle, so convergence
+    here is not a formality."""
+    L = ad_law(h_fov_deg=hfov, v_fov_deg=vfov)
+    psi = theta = 0.0
+    tgt_az, tgt_el = math.radians(tgt_az_deg), math.radians(tgt_el_deg)
+    tan_h = math.tan(math.radians(hfov) / 2)
+    tan_v = math.tan(math.radians(vfov) / 2)
+    pipe = [(0.0, 0.0)] * latency_steps
+    hist = []
+    for _ in range(int(seconds / dt)):
+        az_rel, el_rel = tgt_az - psi, tgt_el - theta
+        if abs(az_rel) > math.radians(80) or abs(el_rel) > math.radians(80):
+            return None, "boresight ran away"
+        ex = (math.tan(az_rel) / tan_h) * (FW / 2)
+        ey = -(math.tan(el_rel) / tan_v) * (FH / 2)
+        pipe.append((ex, ey))
+        mex, mey = pipe.pop(0)
+        c = L.compute(mex, mey, FW, FH, dt=dt)
+        psi += c["yaw_rate"] * dt
+        theta += c["pitch_rate"] * dt
+        hist.append((math.degrees(az_rel), math.degrees(el_rel)))
+    return hist, None
+
+
+def settle_of(hist, tol=2.0, dt=0.05):
+    """Seconds until BOTH axes are inside tol and stay there.  None = never."""
+    if hist is None:
+        return None
+    for i, (a, e) in enumerate(hist):
+        if (abs(a) < tol and abs(e) < tol
+                and all(abs(x) < tol and abs(y) < tol for x, y in hist[i:])):
+            return i * dt
+    return None
+
+
+def crossings_of(hist):
+    return (sum(1 for i in range(1, len(hist)) if hist[i][0] * hist[i - 1][0] < 0)
+            + sum(1 for i in range(1, len(hist)) if hist[i][1] * hist[i - 1][1] < 0))
+
+
+# Six starting geometries, both signs on both axes.  A preset that only works
+# from one corner is not a preset.
+GEOMS = [(25.0, -15.0), (8.0, -5.0), (-30.0, 12.0),
+         (45.0, -25.0), (15.0, -30.0), (-10.0, 20.0)]
+
+worst_ad, worst_cross_ad, diverged = 0.0, 0, []
+for az, el in GEOMS:
+    h = simulate_adaptive(tgt_az_deg=az, tgt_el_deg=el)[0]
+    s = settle_of(h)
+    if s is None:
+        diverged.append((az, el))
+        continue
+    worst_ad = max(worst_ad, s)
+    worst_cross_ad = max(worst_cross_ad, crossings_of(h))
+
+check("adaptive: converges from every starting geometry", not diverged,
+      f"diverged at {diverged}" if diverged else f"worst {worst_ad:.2f}s")
+check("adaptive: does NOT limit-cycle on any geometry", worst_cross_ad <= 3,
+      f"max {worst_cross_ad} zero crossings")
+
+# The claim run.py makes in its own docstring, asserted here so it cannot rot.
+worst_lin = 0.0
+lin_diverged = False
+for az, el in GEOMS:
+    # The real --tuned preset, not section 5's looser stand-in.
+    h = simulate(3.5, kp_pitch=6.0, kd=0.15, stick_limit=0.35, slew=3.0,
+                 tgt_az_deg=az, tgt_el_deg=el)[0]
+    s = settle_of(h)
+    if s is None:
+        lin_diverged = True
+        break
+    worst_lin = max(worst_lin, s)
+check("adaptive settles faster than the --tuned linear preset",
+      lin_diverged or worst_ad < worst_lin,
+      f"adaptive {worst_ad:.2f}s vs tuned-linear "
+      + ("diverged" if lin_diverged else f"{worst_lin:.2f}s"))
+
+# The --max preset diverges.  That is WHY it is not the default, so lock it in:
+# if a future change ever makes it stable, this test should be revisited, not
+# silently left claiming something false.
+max_hist = simulate(12.0, tgt_az_deg=25.0, tgt_el_deg=-15.0,
+                    kp_pitch=30.0, stick_limit=1.0, slew=10.0, kd=0.4,
+                    deadband=0.04)[0]
+check("--max preset is confirmed unstable (documented, not the default)",
+      settle_of(max_hist) is None,
+      "diverges as documented" if settle_of(max_hist) is None
+      else f"NOW settles in {settle_of(max_hist):.2f}s — update run.py's docs")
 
 print("\n" + "=" * 60)
 if fails:
