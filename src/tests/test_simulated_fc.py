@@ -29,7 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pymavlink import mavutil
-from fc_control import AcroCommander, ControlLaw
+from fc_control import AcroCommander, ControlLaw, InterceptLaw
 
 fails = []
 
@@ -243,6 +243,127 @@ def run_gate_off_case(port):
 
 
 run_gate_off_case(14607)
+
+
+# ── H. the INTERCEPT path: ALT_HOLD, four channels, commit input ─────────────
+def run_intercept_case(port):
+    """The free-flight law end to end: gated on ALT_HOLD instead of ACRO, driving
+    all four channels, reading a commit channel it never writes."""
+    print("\n=== H. intercept law: ALT_HOLD gate + 4 channels + commit ===")
+    fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=0)   # STABILIZE
+    fc.start()
+    sleep(0.3)
+    fc.radio[6] = 2000                          # commit stick fully up
+    law = InterceptLaw(cam_tilt_deg=15.0, roll_pn_gain=45.0, slew_per_s=1e9,
+                       max_lean_deg=20.0, climb_gain=8.0)
+    cmdr = AcroCommander(conn=f"udpin:127.0.0.1:{port}", transport="mavlink",
+                         axes=("roll", "pitch", "yaw", "throttle"), law=law,
+                         send_hz=50.0, log_dir=None, verbose=False,
+                         steer_modes=frozenset({"ALT_HOLD"}),
+                         commit_chan=6, commit_abort_below=0.05)
+    try:
+        cmdr.connect()
+    except Exception as e:
+        check("H: connect", False, str(e))
+        fc.shutdown()
+        return
+
+    def drive(seconds):
+        t0 = perf_counter()
+        while perf_counter() - t0 < seconds:
+            c = cmdr.compute(+120, -60, "LOCK", 640, 640, bbox=(0, 0, 30, 30))
+            cmdr.update(c, (120, -60), have_face=True)
+            sleep(0.02)
+
+    # The FC read ANGLE_MAX / PILOT_Y_RATE / PILOT_SPEED_UP, not the ACRO rates.
+    check("H: angle-mode scaling was read off the FC",
+          abs(law.angle_max - __import__("math").radians(30.0)) < 1e-6
+          and abs(law.max_climb_mps - 2.5) < 1e-6,
+          f"ANGLE_MAX={__import__('math').degrees(law.angle_max):.0f} deg, "
+          f"climb<={law.max_climb_mps:.1f} m/s")
+
+    drive(1.5)
+    in_stab = dict(fc.overrides)
+    check("H: STABILIZE is NOT driven when the gate wants ALT_HOLD",
+          not in_stab, str(in_stab or "{}"))
+
+    fc.mode = 2                                  # pilot selects ALT_HOLD
+    sleep(1.2)
+    drive(2.0)
+    in_ah = dict(fc.overrides)
+    check("H: ALT_HOLD IS driven, on all four channels",
+          set(in_ah) == {1, 2, 3, 4}, f"channels {sorted(in_ah)}")
+    check("H: the FC confirmed the override echo", cmdr.override_confirmed is True,
+          f"confirmed={cmdr.override_confirmed}")
+    # Throttle is ch3, calibrated 1000..2000 with TRIM at 1002 (bottom of travel).
+    # A climb command must sit ABOVE mid, and never near trim.
+    check("H: throttle is driven around MID (1500), not around TRIM (1002)",
+          in_ah.get(3, 0) > 1500, f"ch3={in_ah.get(3)}")
+
+    # The commit stick is an input only: it must never be overridden.
+    check("H: the commit channel is never written", 6 not in in_ah,
+          f"channels {sorted(in_ah)}")
+
+    # Pull the commit stick down -> every channel released, without waiting for a
+    # mode change (the whole point of a channel we do not write).
+    fc.radio[6] = 1000
+    sleep(0.4)
+    drive(0.6)
+    after = dict(fc.overrides)
+    check("H: dropping the commit stick releases EVERY channel", not after,
+          str(after or "{}"))
+    check("H: ...and it is reported as a commit abort", cmdr._commit_aborted)
+
+    cmdr.close()
+    sleep(0.2)
+    fc.shutdown()
+
+
+run_intercept_case(14608)
+
+
+# ── I. no ATTITUDE: roll and throttle must go dead, not guess ────────────────
+def run_no_attitude_case(port):
+    print("\n=== I. no ATTITUDE -> roll + throttle command nothing ===")
+    fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=2, attitude=False)
+    fc.start()
+    sleep(0.3)
+    law = InterceptLaw(cam_tilt_deg=15.0, roll_pn_gain=45.0, slew_per_s=1e9)
+    cmdr = AcroCommander(conn=f"udpin:127.0.0.1:{port}", transport="mavlink",
+                         axes=("roll", "pitch", "yaw", "throttle"), law=law,
+                         send_hz=50.0, log_dir=None, verbose=False,
+                         steer_modes=frozenset({"ALT_HOLD"}))
+    try:
+        cmdr.connect()
+    except Exception as e:
+        check("I: connect", False, str(e))
+        fc.shutdown()
+        return
+    check("I: preflight names the missing ATTITUDE as a blocker",
+          any("ATTITUDE" in b for b in cmdr.backend.blockers)
+          or law.pitch_mode == "intercept")
+    t0 = perf_counter()
+    last = None
+    while perf_counter() - t0 < 1.5:
+        last = cmdr.compute(+120, -60, "LOCK", 640, 640, bbox=(0, 0, 30, 30))
+        cmdr.update(last, (120, -60), have_face=True)
+        sleep(0.02)
+    sleep(0.3)
+    applied = dict(fc.overrides)
+    cmdr.close()
+    sleep(0.2)
+    fc.shutdown()
+    check("I: roll and throttle are EXACTLY zero without attitude",
+          last["roll_stick"] == 0.0 and last["throttle_stick"] == 0.0,
+          f"roll={last['roll_stick']:+.4f} thr={last['throttle_stick']:+.4f}")
+    check("I: yaw and pitch still drive, so it aims and flies forward",
+          last["yaw_stick"] != 0.0 and last["pitch_stick"] < 0.0,
+          f"yaw={last['yaw_stick']:+.3f} pitch={last['pitch_stick']:+.3f}")
+    check("I: roll sits at TRIM on the wire (a centred stick, not a lean)",
+          applied.get(1) == 1500, f"ch1={applied.get(1)}")
+
+
+run_no_attitude_case(14609)
 
 
 print("\n" + "=" * 62)

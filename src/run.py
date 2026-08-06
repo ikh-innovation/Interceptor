@@ -29,12 +29,29 @@ Preflight stops on the first failure and names it, instead of letting a run look
 healthy while nothing reaches the FC — which is exactly how the previous version
 could stream setpoints into a void for a whole demo.
 
-The pilot's mode switch remains the handover control (REQUIRE_RATE_MODE=1, the
-default): STABILIZE = the pilot has every channel, ACRO = the tracker drives
-yaw and pitch.  Starting this script never takes control on its own.
+TWO PRESETS, because there are two different control problems:
 
-    ./run.py                 the tuned preset.  There is only one.
-    ./run.py --tuned         same thing; accepted so the systemd unit stays valid
+  --intercept  (DEFAULT)  free flight.  Proportional navigation on ALL FOUR
+               channels in ALT_HOLD: yaw aims the seeker, ROLL banks to turn the
+               velocity vector, pitch sets closing speed, THROTTLE closes the
+               vertical.  This is the one that chases a person running across a
+               field.
+  --gimbal     the bring-up rig.  yaw+pitch body rates in ACRO, nulling pixel
+               error on an airframe bolted to a gimbal that cannot translate.
+
+They are not retunes of each other.  On a gimbal, pointing the camera IS the job.
+In free flight, pointing the camera and moving the airframe are the same two
+actuators, so aiming and intercepting compete — which is why the gimbal preset
+tracked beautifully and then flew backwards in the air.
+
+The pilot's mode switch remains the handover control (REQUIRE_RATE_MODE=1, the
+default): STABILIZE = the pilot has every channel, ALT_HOLD (or ACRO on the
+gimbal preset) = the tracker drives.  Starting this script never takes control on
+its own.
+
+    ./run.py                 the intercept preset
+    ./run.py --gimbal        the gimbal preset
+    ./run.py --tuned         no-op; accepted so the systemd unit stays valid
     ./run.py --no-wait       fail immediately if the FC is not already up
     ./run.py --router        put MAVProxy in the path instead of going direct
     ./run.py --no-mp         skip Mission Planner (implied by the default direct)
@@ -42,7 +59,8 @@ yaw and pitch.  Starting this script never takes control on its own.
 
 Individual values still override, so a one-off experiment needs no new flag:
 
-    KP_YAW=6 STICK_LIMIT_YAW=0.8 ./run.py
+    ROLL_PN_GAIN=40 CAM_TILT_DEG=20 ./run.py
+    COMMIT_CHAN=6 ./run.py          # live speed dial AND a ~100 ms abort
 
 Environment overrides: FC_DEV, FC_BAUD, CAM_DEV, plus every control knob in
 fc_control.commander_from_env (KP_YAW, STICK_LIMIT, YAW_REVERSED, ...).
@@ -86,11 +104,17 @@ if os.environ.get("_WASP_REEXEC") != "1" and YOLO_PY.exists():
         os.execv(str(YOLO_PY), [str(YOLO_PY), str(Path(__file__).resolve())]
                  + sys.argv[1:])
 
-# ── 2. the preset ─────────────────────────────────────────────────────────────
-# TUNED is the only preset.  ADAPTIVE / MAX / FAST / GENTLE were removed after the
-# field flights: extra knobs meant the thing that actually flew was whichever flag
-# somebody last typed, which is the opposite of what a flight-control default is
-# for.  One preset, tuned as hard as the hardware allows, is the whole point.
+# ── 2. the presets ────────────────────────────────────────────────────────────
+# There are exactly TWO, and they are not variants of each other — they are two
+# different control problems (see the module docstring).  ADAPTIVE / MAX / FAST /
+# GENTLE were removed after the field flights: extra knobs meant the thing that
+# actually flew was whichever flag somebody last typed, which is the opposite of
+# what a flight-control default is for.  Nothing below reintroduces a dial that
+# changes what flies without changing what problem is being solved.
+#
+# ── the gimbal preset ─────────────────────────────────────────────────────────
+# For the bring-up rig: an airframe bolted to a gimbal, which can rotate but not
+# translate.  Pointing the camera IS the whole job there, and this does it well.
 #
 # Raised 2026-08-05 after the field test reported imprecise, sluggish movement.
 # The numbers come from a grid search over KP x per-axis ceiling x KD x slew,
@@ -152,7 +176,10 @@ if os.environ.get("_WASP_REEXEC") != "1" and YOLO_PY.exists():
 # above, below, left or right, the airframe yaws onto the target and flies FORWARD.
 # Vertical framing becomes altitude, which is the pilot's throttle — and the lens
 # has 48.8 deg of vertical view (+/-24 deg) of tolerance for it.
-TUNED = {
+GIMBAL = {
+    "CONTROL_LAW": "servo",
+    "CONTROL_AXES": "yaw,pitch",
+    "FC_STEER_MODES": "ACRO",
     "KP_YAW": "4.5", "KP_PITCH": "6.0",
     "KD_YAW": "0.10", "KD_PITCH": "0.10",
     "STICK_LIMIT": "0.65",
@@ -164,6 +191,76 @@ TUNED = {
     "APPROACH_DEG": "12.0",
     "APPROACH_KP": "2.5",
     "APPROACH_THR_DEADBAND": "0.05",
+}
+
+# ── the free-flight preset ────────────────────────────────────────────────────
+# INTERCEPT.  This is the one that chases a person running across a field, and it
+# is a different control problem from the gimbal, not a retune of it.
+#
+# The gimbal preset above points the camera. That IS the whole job when the
+# airframe cannot translate, and it worked. In free flight it does not intercept,
+# for reasons no gain value reaches:
+#
+#   * Pure pursuit — turn rate proportional to the CURRENT bearing error — lags a
+#     crossing target. Chasing someone cutting left and right it settles into a
+#     trailing tail-chase and never closes. The fix is PROPORTIONAL NAVIGATION:
+#     lateral acceleration proportional to the RATE the line of sight rotates,
+#     which holds the target at a constant bearing = a collision course.
+#   * Yaw rotates the camera; it does not move the airframe. A multirotor turns
+#     its VELOCITY vector by BANKING, and roll was never driven at all.
+#   * Nothing controlled the vertical. `aim` used pitch and flew backwards;
+#     `approach` correctly stopped using pitch and put nothing in its place. The
+#     only channel that changes altitude is THROTTLE.
+#
+# So all four channels are driven, each with one job:
+#
+#     yaw       keep the seeker on the target   (pursuit on azimuth)
+#     roll      lateral acceleration            (PN on the azimuth LOS rate)
+#     pitch     closing speed                   (nose-down lean x commit)
+#     throttle  vertical closure                (elevation error + LOS-rate lead)
+#
+# ALT_HOLD, not ACRO. In ALT_HOLD a roll/pitch stick IS a lean angle and the
+# throttle stick IS a climb rate, so the outer loop that ACRO needed just to hold
+# a lean disappears — and a centred throttle means HOLD ALTITUDE, which is what
+# makes it safe for this code to hold the throttle at all. It needs only the
+# barometer; there is no GPS on this airframe.
+#
+# ROLL_PN_GAIN is the knob for "it does not follow me when I cut left and right".
+# It is dimensionally an own-speed in m/s: set it to the true airspeed for a
+# coordinated turn, 2-3x for PN's lead. Up if it trails, down if it weaves.
+#
+# CLIMB_GAIN / CLIMB_LEAD are the knob for "it does not follow me when I am
+# higher or lower than it".
+#
+# CAM_TILT_DEG is NOT optional. At nose-down lean theta, a target at the
+# airframe's own altitude sits at +theta in frame, and the lens is only +/-24 deg
+# vertically — so a level-mounted camera loses the target out of the TOP of the
+# frame as soon as it flies fast. Tilt the mount UP by roughly the cruise lean
+# (the 15 deg here matches MAX_LEAN_DEG=20) and set this to the real angle.
+#
+# SEND_HZ is 50, not 20: at 20 Hz the stick is quantised to 50 ms, which is 10 deg
+# of attitude at 200 deg/s.
+INTERCEPT = {
+    "CONTROL_LAW": "intercept",
+    "CONTROL_AXES": "roll,pitch,yaw,throttle",
+    "FC_STEER_MODES": "ALT_HOLD",
+    "CAM_TILT_DEG": "15.0",
+    "KP_YAW": "4.5",
+    "ROLL_PN_GAIN": "45.0",
+    "MAX_BANK_DEG": "30.0",
+    "MAX_LEAN_DEG": "20.0",
+    "CLIMB_GAIN": "8.0",
+    "CLIMB_LEAD": "3.0",
+    "STICK_LIMIT": "0.90",
+    "SLEW_PER_S": "11.0",
+    "DEADBAND_FRAC": "0.02",
+    "LOS_TAU": "0.12",
+    "TARGET_WIDTH_M": "0.20",
+    "TERMINAL_BBOX_FRAC": "0.35",
+    "TERMINAL_RANGE_M": "2.5",
+    "TERMINAL_HOLD_S": "1.0",
+    "ENGAGE_MAX_S": "20.0",
+    "SEND_HZ": "50.0",
 }
 
 
@@ -405,28 +502,62 @@ def start_mission_planner():
 
 # ══════════════════════════════════════════════════════════════════════════════
 
-def banner():
+def banner(intercept):
     env = os.environ
     print("=" * 74)
-    print("WASP head tracker")
+    print("WASP head tracker — " + ("INTERCEPT (free flight)" if intercept
+                                    else "GIMBAL (visual servo)"))
     print("=" * 74)
-    print(f"  preset       : tuned  (raised 2026-08-05 after the field test)")
-    print(f"  gains        : KP {env['KP_YAW']}/{env['KP_PITCH']}  "
-          f"KD {env['KD_YAW']}/{env['KD_PITCH']}  slew {env['SLEW_PER_S']}/s")
-    print(f"  ceilings     : yaw {env['STICK_LIMIT_YAW']}  "
-          f"pitch {env['STICK_LIMIT_PITCH']}"
-          f"   (pitch lower on purpose: ACRO_RP_RATE 360 vs ACRO_Y_RATE 202 deg/s)")
-    print(f"  driven axes  : yaw, pitch.  Roll, throttle and arming stay with "
-          f"the pilot.")
-    print("  mode gate    : ON — the pilot's switch decides.  STABILIZE = the "
-          "pilot has\n                 everything; ACRO = the tracker drives "
-          "yaw and pitch.")
-    print("  handover     : automatic, both ways, as many times as you like.")
-    print("  stop         : Ctrl-C — releases every channel back to the pilot.")
-    print("-" * 74)
-    print("  THROTTLE: the pilot must hold MID throttle the whole time.  In ACRO")
-    print("  rotation comes from differential motor thrust, so at low throttle")
-    print("  even full stick barely turns the airframe.  No gain fixes that.")
+    if intercept:
+        print("  law          : proportional navigation, four channels, in ALT_HOLD")
+        print(f"  yaw          : seeker, KP {env['KP_YAW']}  "
+              f"(points the camera; does NOT move the airframe)")
+        print(f"  roll         : PN gain {env['ROLL_PN_GAIN']} m/s, bank <= "
+              f"{env['MAX_BANK_DEG']} deg   <-- the left/right chase")
+        print(f"  pitch        : lean <= {env['MAX_LEAN_DEG']} deg nose-down "
+              f"= closing speed")
+        print(f"  throttle     : climb {env['CLIMB_GAIN']} m/s/rad "
+              f"+{env['CLIMB_LEAD']} lead   <-- the higher/lower fix")
+        print(f"  camera tilt  : {env['CAM_TILT_DEG']} deg UP.  MUST match the "
+              f"real mount — at lean\n                 {env['MAX_LEAN_DEG']} deg a "
+              f"level target sits {env['MAX_LEAN_DEG']} deg high in a "
+              f"+/-24 deg lens.")
+        print(f"  stream       : {env['SEND_HZ']} Hz   latency: measured live, "
+              f"target extrapolated forward")
+        print("  mode gate    : ON — STABILIZE = the pilot has everything; "
+              "ALT_HOLD = AI drives\n                 all four sticks.")
+        commit = env.get("COMMIT_CHAN", "0")
+        if commit and commit != "0":
+            print(f"  commit       : ch{commit} scales the lean and is the fast "
+                  f"abort (~100 ms)")
+        else:
+            print("  commit       : NONE.  Lean is fixed while a target is "
+                  "locked, and the mode\n                 switch is the only "
+                  "abort (~1 s, HEARTBEAT rate).  Set COMMIT_CHAN.")
+        print(f"  engage limit : {env['ENGAGE_MAX_S']} s per engagement")
+        print("  stop         : Ctrl-C — releases every channel back to the pilot.")
+        print("-" * 74)
+        print("  NO GPS.  ALT_HOLD holds altitude on the BAROMETER only: it will")
+        print("  drift with the wind and has no idea where it is.  The terminal")
+        print("  phase FREEZES guidance and flies the trajectory it already had.")
+    else:
+        print(f"  preset       : gimbal  (raised 2026-08-05 after the field test)")
+        print(f"  gains        : KP {env['KP_YAW']}/{env['KP_PITCH']}  "
+              f"KD {env['KD_YAW']}/{env['KD_PITCH']}  slew {env['SLEW_PER_S']}/s")
+        print(f"  ceilings     : yaw {env['STICK_LIMIT_YAW']}  "
+              f"pitch {env['STICK_LIMIT_PITCH']}"
+              f"   (pitch lower on purpose: ACRO_RP_RATE 360 vs ACRO_Y_RATE 202)")
+        print(f"  driven axes  : yaw, pitch.  Roll, throttle and arming stay with "
+              f"the pilot.")
+        print("  mode gate    : ON — the pilot's switch decides.  STABILIZE = the "
+              "pilot has\n                 everything; ACRO = the tracker drives "
+              "yaw and pitch.")
+        print("  handover     : automatic, both ways, as many times as you like.")
+        print("  stop         : Ctrl-C — releases every channel back to the pilot.")
+        print("-" * 74)
+        print("  THROTTLE: the pilot must hold MID throttle the whole time.  In ACRO")
+        print("  rotation comes from differential motor thrust, so at low throttle")
+        print("  even full stick barely turns the airframe.  No gain fixes that.")
     print("=" * 74, flush=True)
 
 
@@ -438,6 +569,12 @@ def main():
     # --tuned is accepted and is a no-op: it is the only preset, and the systemd
     # unit passes it explicitly.  Keep it valid.
     ap.add_argument("--tuned", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--gimbal", action="store_true",
+                    help="the gimbal preset: yaw+pitch body rates in ACRO, for a "
+                         "rig that cannot translate.  The default is --intercept.")
+    ap.add_argument("--intercept", action="store_true",
+                    help="the free-flight preset (DEFAULT): proportional "
+                         "navigation on all four channels in ALT_HOLD.")
     ap.add_argument("--no-wait", action="store_true",
                     help="fail immediately if the FC is not already up")
     ap.add_argument("--router", action="store_true",
@@ -456,10 +593,19 @@ def main():
 
     direct = not args.router
 
-    for k, v in TUNED.items():
+    # Intercept is the default: the gimbal rig was the bring-up case, free flight
+    # is the job.  An explicit CONTROL_LAW in the environment still wins, so a
+    # one-off experiment needs no flag.
+    intercept = not args.gimbal
+    if os.environ.get("CONTROL_LAW", "").strip().lower() == "servo":
+        intercept = False
+    elif os.environ.get("CONTROL_LAW", "").strip().lower() == "intercept":
+        intercept = True
+
+    for k, v in (INTERCEPT if intercept else GIMBAL).items():
         os.environ.setdefault(k, v)
     os.environ.setdefault("DISPLAY", ":0")
-    banner()
+    banner(intercept)
 
     if not args.no_wait:
         dev = wait_for_fc_device()
@@ -536,11 +682,14 @@ def main():
                                     f"MODE{detail['custom_mode']}")
             ok(f"firmware: ArduPilot Copter   mode={mode}   "
                f"{'ARMED' if detail['armed'] else 'DISARMED'}")
-            if mode != "ACRO":
-                warn(f"the FC is in {mode}, not ACRO.  Switch the pilot's mode "
-                     "switch to ACRO —")
-                warn("that is the mode this tracker's rate control law is built "
-                     "for.")
+            want = os.environ.get("FC_STEER_MODES",
+                                  "ALT_HOLD" if intercept else "ACRO")
+            if mode not in {m.strip().upper() for m in want.split(",")}:
+                warn(f"the FC is in {mode}, not {want}.  Switch the pilot's mode "
+                     f"switch to {want} —")
+                warn("that is the mode this control law's sticks are defined in "
+                     + ("(lean angles + climb rate)." if intercept
+                        else "(body rates)."))
 
             if direct:
                 print("\n== 2) transport: MAVLink direct on the FC serial ==",

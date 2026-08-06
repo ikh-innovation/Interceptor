@@ -750,7 +750,10 @@ class DroneTracker:
             SIM     no flight controller attached
         """
         h, _ = frame.shape[:2]
-        pw, ph = 252, 130
+        # The intercept law drives four channels instead of two, so it needs two
+        # more gauge rows and the panel has to grow or the FC line collides.
+        intercept = bool(getattr(self.ap, "is_intercept", False))
+        pw, ph = 252, (170 if intercept else 130)
         x1 = 10
         y1 = h - 10 - ph
         x2, y2 = x1 + pw, y1 + ph
@@ -792,12 +795,31 @@ class DroneTracker:
         # unchanged, and it is the intent the operator needs to read.
         lim = max(1e-3, self.ap.law.stick_limit)
         bar_x, bar_w, bar_h = tx + 42, 110, 8
-        rows = (
-            ("YAW", cmd["yaw_rate"] / (lim * self.ap.max_yaw_rate),
-             f"{np.degrees(cmd['yaw_rate']):+04.0f}d/s"),
-            ("PIT", cmd["pitch_rate"] / (lim * self.ap.max_pitch_rate),
-             f"{np.degrees(cmd['pitch_rate']):+04.0f}d/s"),
-        )
+        if intercept:
+            # One row per driven channel, each showing the PHYSICAL quantity it
+            # commands rather than the stick, and each scaled by its own ceiling:
+            # bank and lean are angles, climb is a rate, yaw is a rate.
+            law = self.ap.law
+            max_bank = max(1e-3, np.degrees(law.max_bank))
+            max_lean = max(1e-3, np.degrees(law.max_lean))
+            max_climb = max(1e-3, law.max_climb_mps)
+            rows = (
+                ("YAW", cmd["yaw_rate"] / (lim * self.ap.max_yaw_rate),
+                 f"{np.degrees(cmd['yaw_rate']):+04.0f}d/s"),
+                ("BNK", cmd.get("bank_deg", 0.0) / max_bank,
+                 f"{cmd.get('bank_deg', 0.0):+05.1f}°"),
+                ("LEN", cmd.get("lean_deg", 0.0) / max_lean,
+                 f"{cmd.get('lean_deg', 0.0):+05.1f}°"),
+                ("CLB", cmd.get("climb_mps", 0.0) / max_climb,
+                 f"{cmd.get('climb_mps', 0.0):+04.1f}m/s"),
+            )
+        else:
+            rows = (
+                ("YAW", cmd["yaw_rate"] / (lim * self.ap.max_yaw_rate),
+                 f"{np.degrees(cmd['yaw_rate']):+04.0f}d/s"),
+                ("PIT", cmd["pitch_rate"] / (lim * self.ap.max_pitch_rate),
+                 f"{np.degrees(cmd['pitch_rate']):+04.0f}d/s"),
+            )
         for i, (label, frac, val) in enumerate(rows):
             y = y1 + 48 + i * 20
             self._text(frame, label, (tx, y + bar_h), 0.38, self.C_HUD, 1)
@@ -807,15 +829,31 @@ class DroneTracker:
         # FC truth: what mode it is really in and whether the motors are live.
         # With no link there is no arm state to report, so say that rather than
         # printing a stale flag next to "offline".
+        fc_y = y1 + (144 if intercept else 104)
         if self.ap.linked:
             head = f"FC {self.ap.mode_name}"
             arm_txt = "ARMED" if self.ap.armed else "DISARMED"
             arm_col = self.C_LOCK if self.ap.armed else self.C_WARN
         else:
             head, arm_txt, arm_col = "FC", "not connected", self.C_SEARCH
-        self._text(frame, head, (tx, y1 + 104), 0.36, self.C_HUD, 1)
+        self._text(frame, head, (tx, fc_y), 0.36, self.C_HUD, 1)
         (mw, _), _ = cv2.getTextSize(head, self._HUD_FONT, 0.36, 1)
-        self._text(frame, arm_txt, (tx + mw + 10, y1 + 104), 0.36, arm_col, 1)
+        self._text(frame, arm_txt, (tx + mw + 10, fc_y), 0.36, arm_col, 1)
+
+        if intercept:
+            # Range, latency and terminal state are the three things that decide
+            # whether an intercept run is healthy, and none of them is visible
+            # anywhere else in the HUD.
+            rng = cmd.get("range_m")
+            extra = (f"R {'--' if rng is None else f'{rng:.1f}m'}  "
+                     f"lat {cmd.get('latency_s', 0.0) * 1000:.0f}ms  "
+                     f"LOS{cmd.get('los_az_dps', 0.0):+.0f}d/s")
+            col = self.C_HUD
+            if cmd.get("terminal"):
+                extra, col = "TERMINAL — guidance frozen, flying it in", self.C_WARN
+            elif not cmd.get("have_att"):
+                extra, col = "NO ATTITUDE — roll+climb are ZERO", self.C_WARN
+            self._text(frame, extra, (tx, y1 + 124), 0.34, col, 1)
 
         self._text(frame, f"{self.ap.send_hz:.0f}Hz stream  (skip {self.skip_frames})",
                    (tx, y1 + ph - 8), 0.34, self.C_DIM, 1)
@@ -984,6 +1022,10 @@ class DroneTracker:
 
         while cap.isOpened():
             ret, frame_full = cap.read()
+            # Stamped the instant the frame lands, so the control law can measure
+            # its own end-to-end latency instead of assuming the frame interval.
+            # At intercept speed the difference is metres of stale geometry.
+            t_cap = perf_counter()
             if not ret or frame_full is None:
                 break
 
@@ -1022,8 +1064,12 @@ class DroneTracker:
             if is_yolo_frame:
                 if fused:
                     target_off = (fused[0] - cx_f, fused[1] - cy_f)
+                    # last_bbox and t_cap are ignored by the servo law and used by
+                    # the intercept law for the range estimate, the terminal
+                    # trigger and the latency measurement.
                     cmd = self.ap.compute(target_off[0], target_off[1],
-                                          self.state, self.fw, self.fh)
+                                          self.state, self.fw, self.fh,
+                                          bbox=self.last_bbox, capture_t=t_cap)
                 else:
                     cmd = self.ap.neutral_command()     # no target: centre + release
                 self.ap.update(cmd, target_off, have_face=bool(fused))
