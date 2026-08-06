@@ -71,6 +71,7 @@ the motors, so even a full-stick yaw command produces almost no torque.  No gain
 setting in here can compensate for a closed throttle.
 """
 import argparse
+import math
 import os
 import subprocess
 import sys
@@ -232,23 +233,28 @@ GIMBAL = {
 # CLIMB_GAIN / CLIMB_LEAD are the knob for "it does not follow me when I am
 # higher or lower than it".
 #
-# CAM_TILT_DEG is NOT optional. At nose-down lean theta, a target at the
-# airframe's own altitude sits at +theta in frame, and the lens is only +/-24 deg
-# vertically — so a level-mounted camera loses the target out of the TOP of the
-# frame as soon as it flies fast. Tilt the mount UP by roughly the cruise lean
-# (the 15 deg here matches MAX_LEAN_DEG=20) and set this to the real angle.
-#
 # SEND_HZ is 50, not 20: at 20 Hz the stick is quantised to 50 ms, which is 10 deg
 # of attitude at 200 deg/s.
+#
+# CAM_TILT_DEG, MAX_LEAN_DEG and ROLL_PN_GAIN are DERIVED, see below — they are not
+# three independent knobs and setting them independently is how you get a run that
+# looks tuned and cannot see the target.
 INTERCEPT = {
     "CONTROL_LAW": "intercept",
     "CONTROL_AXES": "roll,pitch,yaw,throttle",
     "FC_STEER_MODES": "ALT_HOLD",
-    "CAM_TILT_DEG": "15.0",
     "KP_YAW": "4.5",
+    # The pair below move TOGETHER: gain = 3 x cruise speed, and cruise speed
+    # follows the lean.  20 deg / 45 is what the closed-loop sim was scored at and
+    # the best of everything tried (100% of frames on target, and it closes).
+    # `pn_gain_for()` prints a warning if you change one and not the other.
+    "MAX_LEAN_DEG": "20.0",
     "ROLL_PN_GAIN": "45.0",
     "MAX_BANK_DEG": "30.0",
-    "MAX_LEAN_DEG": "20.0",
+    # Vertical gain left at the scored value on purpose: raising CLIMB_GAIN or
+    # PILOT_SPEED_UP changed NOTHING measurable in any geometry tried (the height
+    # error is absorbed long before the endgame), so there is nothing to buy here.
+    # Raise them only if the target genuinely outruns you vertically.
     "CLIMB_GAIN": "8.0",
     "CLIMB_LEAD": "3.0",
     "STICK_LIMIT": "0.90",
@@ -261,6 +267,67 @@ INTERCEPT = {
     "TERMINAL_HOLD_S": "1.0",
     "SEND_HZ": "50.0",
 }
+
+# Lens half-height, and how much of it to keep in reserve for pitch overshoot,
+# detection jitter and a target that is not exactly level.
+_LENS_HALF_V_DEG = 24.4
+_FRAME_MARGIN_DEG = 8.0
+# Ceiling on the lean regardless of what the optics would allow: 20 deg is what the
+# closed-loop sim was scored at, and past ~26 deg the seeker starts losing the
+# target for other reasons.
+_LEAN_CEILING_DEG = 20.0
+# Drag coefficient used ONLY to estimate terminal speed from the lean, so the turn
+# gain can be scaled to it. It is the sim's value for a ~15 m/s airframe, i.e. an
+# assumption, not a measurement. Measure the real cruise speed and set
+# ROLL_PN_GAIN = 3 x it explicitly when you know it.
+_DRAG_EST = 0.0159
+_PN_N = 3.0                    # proportional navigation constant, classical 3..5
+
+
+def geometry_check(tilt_deg, lean_deg):
+    """Can the seeker actually SEE a level target at this lean and this tilt?
+
+    Returns (ok, band_lo, band_hi, advice).
+
+    These are not independent knobs, and treating them as such is the most
+    expensive mistake available here:
+
+      * At nose-down lean `theta` a target at the airframe's OWN altitude appears
+        at `+theta` in a body-fixed camera. The lens is only +/-24.4 deg vertically,
+        so a LEVEL-mounted camera loses the target out of the TOP of the frame as
+        soon as it flies fast. Measured in the closed-loop sim: with no tilt, the
+        target is in frame at most 48% of the time and it NEVER closes, at any lean
+        from 8 to 20 deg. A level camera is a bench configuration, not a flying one.
+      * Tilting the camera UP buys that back, but spends DOWNWARD vision. At tilt 15
+        with the airframe launched 6 m above the target it is in frame 13% of the
+        time — effectively blind. Tilt 10 was the best of everything tried.
+      * The turn gain is an own-speed (`gain = N x airspeed`) and airspeed follows
+        the lean, so the two move together. Raise the lean alone and it trails.
+    """
+    lo = -_LENS_HALF_V_DEG + tilt_deg - lean_deg
+    hi = _LENS_HALF_V_DEG + tilt_deg - lean_deg
+    # A level target sits at 0 deg about the horizon. Keep margin above it for
+    # pitch overshoot, detection jitter and a target that is not exactly level.
+    ok = hi >= _FRAME_MARGIN_DEG
+    advice = ""
+    if not ok:
+        need = math.ceil(lean_deg + _FRAME_MARGIN_DEG - _LENS_HALF_V_DEG)
+        advice = (f"tilt the camera up to at least {max(0, need)} deg, "
+                  f"or drop MAX_LEAN_DEG to "
+                  f"{max(8.0, _LENS_HALF_V_DEG - _FRAME_MARGIN_DEG + tilt_deg):.0f}")
+    return ok, lo, hi, advice
+
+
+def pn_gain_for(lean_deg):
+    """The turn gain that matches a given lean, i.e. `N x estimated airspeed`.
+
+    Only an estimate: the drag figure is the sim's, for a ~15 m/s airframe. Measure
+    the real cruise speed and set ROLL_PN_GAIN = 3 x it once you know it. Printed
+    as advice rather than applied, because a derived number that has not been flown
+    should not quietly become the default.
+    """
+    v = math.sqrt(9.80665 * math.tan(math.radians(lean_deg)) / _DRAG_EST)
+    return _PN_N * v
 
 
 def resolve_fc_dev():
@@ -517,10 +584,29 @@ def banner(intercept):
               f"= closing speed")
         print(f"  throttle     : climb {env['CLIMB_GAIN']} m/s/rad "
               f"+{env['CLIMB_LEAD']} lead   <-- the higher/lower fix")
-        print(f"  camera tilt  : {env['CAM_TILT_DEG']} deg UP.  MUST match the "
-              f"real mount — at lean\n                 {env['MAX_LEAN_DEG']} deg a "
-              f"level target sits {env['MAX_LEAN_DEG']} deg high in a "
-              f"+/-24 deg lens.")
+        tilt = float(env["CAM_TILT_DEG"])
+        lean = float(env["MAX_LEAN_DEG"])
+        ok, lo, hi, advice = geometry_check(tilt, lean)
+        print(f"  camera tilt  : {tilt:.1f} deg UP  <-- must match the REAL mount")
+        print(f"  visible band : {lo:+.0f} .. {hi:+.0f} deg about the horizon at "
+              f"{lean:.0f} deg of lean;  "
+              f"{-_LENS_HALF_V_DEG + tilt:+.0f} .. {_LENS_HALF_V_DEG + tilt:+.0f} "
+              f"when level")
+        print(f"                 a level target sits at 0 deg — it must be INSIDE "
+              f"the band to be seen")
+        want = pn_gain_for(lean)
+        have = float(env["ROLL_PN_GAIN"])
+        if abs(have - want) > 0.20 * want:
+            print(f"  ! PN gain {have:.0f} does not match a {lean:.0f} deg lean "
+                  f"(~{want:.0f} = 3 x the estimated {want / _PN_N:.0f} m/s).")
+            print(f"  ! Too low trails a crossing target, too high weaves. "
+                  f"gain = 3 x cruise speed.")
+        if not ok:
+            print(f"  !! THE TARGET WILL LEAVE THE TOP OF THE FRAME at this lean: "
+                  f"only {hi:+.0f} deg")
+            print(f"  !! of headroom above a level target. {advice}.")
+            print("  !! With no tilt at all it was measured in frame <=48% of "
+                  "the time, never closing.")
         print(f"  stream       : {env['SEND_HZ']} Hz   latency: measured live, "
               f"target extrapolated forward")
         print("  mode gate    : ON — STABILIZE = the pilot has everything; "
@@ -608,6 +694,42 @@ def main():
 
     for k, v in (INTERCEPT if intercept else GIMBAL).items():
         os.environ.setdefault(k, v)
+
+    if intercept and "CAM_TILT_DEG" not in os.environ:
+        # NO DEFAULT, deliberately.  The camera's up-tilt is a HARDWARE FACT, and a
+        # value that disagrees with the real mount corrupts every elevation the law
+        # computes — the airframe then flies consistently high or low by exactly
+        # that error, and nothing in the log says why.  There is no safe number to
+        # guess here, so ask instead of guessing.
+        print("""
+[SETUP] CAM_TILT_DEG is not set, and there is no safe default for it.
+
+  It is how far the camera is physically tilted UP from the airframe's own
+  level, in degrees.  The control law adds it to every elevation it computes,
+  so a wrong value is not a tuning error — it makes the drone fly high or low
+  by exactly that many degrees, consistently, with no clue in the log.
+
+  Measure the mount, then:
+
+      CAM_TILT_DEG=<measured> ./run.py
+
+  Recommended if you are choosing the mount now:  CAM_TILT_DEG=10
+
+    tilt  0   the target leaves the TOP of the frame as soon as it flies fast.
+              In the closed-loop sim it is in frame at most 48% of the time and
+              NEVER closes, at any lean.  Bench configuration only.
+    tilt 10   best of everything tried: in frame 100% of the time on the flat
+              chase, and it closes.
+    tilt 15   as good on the easy cases, but launched 6 m above the target it is
+              in frame 13% of the time — effectively blind.  Tilting further
+              spends downward vision.
+
+  For the bench polarity check (props off), 0 is the honest value:
+
+      CAM_TILT_DEG=0 REQUIRE_ARMED=0 ./run.py --no-wait
+""", file=sys.stderr)
+        return 2
+
     os.environ.setdefault("DISPLAY", ":0")
     banner(intercept)
 

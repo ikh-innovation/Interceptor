@@ -26,6 +26,18 @@ WorkingDirectory=/home/iknowhow/Documents/Interceptor-1/src
 
 # X display of the autologin session — the cv2 HUD needs it.
 Environment=DISPLAY=:0
+
+# HOW FAR THE CAMERA IS TILTED UP, IN DEGREES.  This is a HARDWARE measurement and
+# run.py refuses to start the intercept law without it, on purpose: the control law
+# adds it to every elevation it computes, so a value that disagrees with the real
+# mount makes the airframe fly high or low by exactly that error, consistently, with
+# nothing in the log to say why.
+#
+# MEASURE THE MOUNT AND PUT THE REAL NUMBER HERE.  10 is the recommended mount
+# angle, not a safe default for a camera that has not been tilted.  With no tilt the
+# target leaves the TOP of the frame as soon as the airframe flies fast — measured in
+# frame at most 48% of the time, and it never closes.
+Environment=CAM_TILT_DEG=10
 Environment=XAUTHORITY=/run/user/1000/gdm/Xauthority
 
 # Nothing about the FC, the transmitter or the tuning is hardcoded here: run.py
