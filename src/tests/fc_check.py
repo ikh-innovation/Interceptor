@@ -24,14 +24,14 @@ It does four things:
 
 Typical session on the Jetson
 -----------------------------
-    # through the MAVProxy router that run_pipeline.py starts
-    python3 fc_check.py --verify
+    # through the MAVProxy router that `run.py --router` starts
+    python3 tests/fc_check.py --verify
 
     # straight at the FC's USB port (stop the router first, it owns the port)
-    python3 fc_check.py --connect /dev/ttyACM0 --verify
+    python3 tests/fc_check.py --connect /dev/ttyACM0 --verify
 
     # then, with the pilot armed in ACRO holding mid throttle, PROPS OFF:
-    python3 fc_check.py --wiggle 8 --yes
+    python3 tests/fc_check.py --wiggle 8 --yes
 """
 
 import argparse
@@ -42,7 +42,7 @@ import sys
 from pathlib import Path
 from time import perf_counter, sleep
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fc_control import (COPTER_MODES, MSP_FC_VARIANT, MSP_FC_VERSION, MSP_RC,
                         MSP_STATUS, _msp_frame)
 

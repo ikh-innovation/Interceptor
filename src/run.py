@@ -1,33 +1,56 @@
 #!/usr/bin/env python3
-"""
-Head-tracker bench pipeline launcher  (Jetson Orin)  — pure Python, no systemd.
+"""One-command launcher for the WASP head tracker.
 
-Brings the pipeline up in the only order that can work, and refuses to start
-YOLO if the drone could never be steered anyway:
+The single entry point.  Everything the tracker needs — interpreter, gains, FC
+discovery, firmware identification, transport, display — is decided here so that
+what flies is never a function of what somebody remembered to type.
 
-    1. Identify the flight controller's FIRMWARE, on its own serial port,
-       BEFORE anything claims the port.  ArduPilot and Betaflight need
-       completely different plumbing, so this decides everything below.
-    2. ArduPilot  ->  MAVLink router (MAVProxy: FC serial -> UDP 14550 for
-                      Mission Planner + 14551 for the tracker), then verify a
-                      real RC override is accepted by the FC.
+What it does, in order:
+
+  1. Re-execs itself under the yolo-env interpreter if it was started with a
+     python that has no ultralytics (the system python3 does not).
+  2. Applies the tuned gains as DEFAULTS — anything already set in the
+     environment wins, so `KP_YAW=6 ./run.py` still works.
+  3. WAITS for the flight controller to appear and answer a heartbeat, so this
+     can be started BEFORE the drone is powered up.  Ctrl-C while waiting exits
+     cleanly without ever touching the FC.
+  4. Identifies the flight controller's FIRMWARE, on its own serial port, BEFORE
+     anything claims the port.  ArduPilot and Betaflight need completely
+     different plumbing, so this decides everything below.
+       ArduPilot  ->  MAVLink.  Direct on the FC serial by default; --router puts
+                      MAVProxy in the path (UDP 14550 for Mission Planner, 14551
+                      for the tracker).  Then verify a real RC override is
+                      accepted by the FC.
        Betaflight ->  NO router (it cannot speak MSP) and no Mission Planner;
                       the tracker owns the serial port and talks MSP directly.
-    3. Mission Planner (mono)                            [skip with --no-mp]
-    4. tracker.py     (yolo-env)                         [foreground]
+  5. Runs tracker.py in the foreground.
 
-Preflight stops on the first failure and names it, instead of letting a run
-look healthy while nothing reaches the FC — which is exactly how the previous
-version could stream setpoints into a void for a whole demo.
+Preflight stops on the first failure and names it, instead of letting a run look
+healthy while nothing reaches the FC — which is exactly how the previous version
+could stream setpoints into a void for a whole demo.
 
-Run it:
-    /home/iknowhow/yolo-env/bin/python run_pipeline.py
-    python run_pipeline.py --no-mp        # router + tracker only
-    python run_pipeline.py --direct       # tracker owns the FC serial, no router
-    python run_pipeline.py --no-verify    # skip the override check
+The pilot's mode switch remains the handover control (REQUIRE_RATE_MODE=1, the
+default): STABILIZE = the pilot has every channel, ACRO = the tracker drives
+yaw and pitch.  Starting this script never takes control on its own.
+
+    ./run.py                 the tuned preset.  There is only one.
+    ./run.py --tuned         same thing; accepted so the systemd unit stays valid
+    ./run.py --no-wait       fail immediately if the FC is not already up
+    ./run.py --router        put MAVProxy in the path instead of going direct
+    ./run.py --no-mp         skip Mission Planner (implied by the default direct)
+    ./run.py --no-verify     skip the RC-override acceptance check
+
+Individual values still override, so a one-off experiment needs no new flag:
+
+    KP_YAW=6 STICK_LIMIT_YAW=0.8 ./run.py
 
 Environment overrides: FC_DEV, FC_BAUD, CAM_DEV, plus every control knob in
 fc_control.commander_from_env (KP_YAW, STICK_LIMIT, YAW_REVERSED, ...).
+
+The pilot must hold MID THROTTLE throughout.  In ACRO the attitude controller's
+authority scales with throttle: at idle the mixer has no headroom to differentiate
+the motors, so even a full-stick yaw command produces almost no torque.  No gain
+setting in here can compensate for a closed throttle.
 """
 import argparse
 import os
@@ -38,9 +61,12 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+# fc_check.py lives with the tests because that is what it is — a bench
+# diagnostic.  Preflight reuses its probes rather than owning a second copy of
+# the firmware-identification logic.
+sys.path.insert(0, str(HERE / "tests"))
 
-# ── paths / config ────────────────────────────────────────────────────────────
-HOME       = Path("/home/iknowhow")
+HOME       = Path.home()
 YOLO_PY    = HOME / "yolo-env/bin/python"
 TRACKER    = HERE / "tracker.py"
 MP_EXE     = HOME / "MissionPlanner/MissionPlanner.exe"
@@ -49,8 +75,99 @@ FT_DIR     = HOME / "face_tracker"                     # logs + mavproxy state
 LOG_DIR    = FT_DIR / "logs"
 STATE_DIR  = FT_DIR / "mavproxy-state"
 
+# ── 1. make sure we are on the interpreter that has ultralytics ───────────────
+# The system python3 has pymavlink but NOT ultralytics, so a plain `python3
+# run.py` would die deep inside the tracker instead of here.
+if os.environ.get("_WASP_REEXEC") != "1" and YOLO_PY.exists():
+    try:
+        import ultralytics                                   # noqa: F401
+    except ImportError:
+        os.environ["_WASP_REEXEC"] = "1"
+        os.execv(str(YOLO_PY), [str(YOLO_PY), str(Path(__file__).resolve())]
+                 + sys.argv[1:])
 
-def _resolve_fc_dev() -> str:
+# ── 2. the preset ─────────────────────────────────────────────────────────────
+# TUNED is the only preset.  ADAPTIVE / MAX / FAST / GENTLE were removed after the
+# field flights: extra knobs meant the thing that actually flew was whichever flag
+# somebody last typed, which is the opposite of what a flight-control default is
+# for.  One preset, tuned as hard as the hardware allows, is the whole point.
+#
+# Raised 2026-08-05 after the field test reported imprecise, sluggish movement.
+# The numbers come from a grid search over KP x per-axis ceiling x KD x slew,
+# scored on settling time across EIGHT starting geometries and then re-scored for
+# robustness at worse latency and against 8 px of detection jitter on five noise
+# seeds.  Against the previous values:
+#
+#                        settle @0.1s lat   @0.15s lat   stable w/ jitter
+#     previous tuned          1.10 s          1.05 s          3 of 5 seeds
+#     THIS                    0.50 s          0.90 s          5 of 5 seeds
+#
+# So it is both ~2x quicker onto the target and strictly more robust, not a trade.
+#
+# What changed, and why it is not symmetric:
+#
+#   YAW got the aggression.  Ceiling 0.35 -> 0.65 and slew 3 -> 11/s.  The slew
+#   limiter was a hidden brake: at 3/s the stick needed a third of a second just
+#   to reach its ceiling, so every turn began late.  That, more than KP, is what
+#   "not precise" felt like.  KP 3.5 -> 4.5.
+#
+#   PITCH got its ceiling LOWERED, 0.35 -> 0.22, and KP left at 6.0.  This is
+#   deliberate and it is the one place the field request cannot be honoured as
+#   asked.  ArduPilot is set to ACRO_RP_RATE=360 deg/s against ACRO_Y_RATE=202,
+#   so an identical deflection is 1.8x the angular rate in pitch.  Pitch is
+#   therefore the axis that goes unstable first against detection latency, and
+#   every configuration in the search that raised pitch authority started
+#   limit-cycling: it overshoots the target, corrects, overshoots back.  A pitch
+#   axis that hunts IS the imprecision, so more pitch gain would make the
+#   reported symptom worse, not better.
+#
+#   KD went DOWN, 0.15 -> 0.10.  The derivative term is computed from the
+#   detection position, so it amplifies detection jitter; less of it is what took
+#   the jitter robustness from 3/5 seeds to 5/5.
+#
+# If pitch needs to feel stronger, the lever is on the FC, not here: lowering
+# ACRO_RP_RATE toward yaw's 202 deg/s would let pitch use much more stick travel
+# for the same angular rate. That also changes how the pilot's own pitch stick
+# feels, so it is a decision for the pilot, not a default to change quietly.
+#
+# ROLL is not driven and is not in this preset.  Roll, throttle and arming stay
+# with the pilot by design; the tracker only ever touches yaw and pitch.
+#
+# PITCH_MODE=approach — the fix for "it flies backwards when I am above it".
+#
+# Off the gimbal, a multirotor's pitch attitude IS its direction of travel.  So
+# using pitch to aim the camera vertically and expecting forward flight are
+# opposite commands on one axis: with the target above the nose, aiming up meant
+# leaning back, and leaning back means flying away.  That is not a gain problem
+# and no tuning fixes it.
+#
+# In approach mode pitch stops looking at vertical pixel error entirely and instead
+# holds a nose-DOWN lean, scaled by how far the pilot has the throttle above mid.
+# Full throttle = maximum lean = come at me; throttle back to mid = level = stop.
+# The lean is held by closing a loop on the FC's own measured ATTITUDE (requested
+# at 20 Hz at connect — ArduPilot sends nothing unasked), because in ACRO a stick
+# is a rate and an open-loop nose-down command would just keep rotating.
+#
+# The target's vertical position in frame no longer affects pitch at all, so:
+# above, below, left or right, the airframe yaws onto the target and flies FORWARD.
+# Vertical framing becomes altitude, which is the pilot's throttle — and the lens
+# has 48.8 deg of vertical view (+/-24 deg) of tolerance for it.
+TUNED = {
+    "KP_YAW": "4.5", "KP_PITCH": "6.0",
+    "KD_YAW": "0.10", "KD_PITCH": "0.10",
+    "STICK_LIMIT": "0.65",
+    "STICK_LIMIT_YAW": "0.65",
+    "STICK_LIMIT_PITCH": "0.22",
+    "SLEW_PER_S": "11.0",
+    "DEADBAND_FRAC": "0.03",
+    "PITCH_MODE": "approach",
+    "APPROACH_DEG": "12.0",
+    "APPROACH_KP": "2.5",
+    "APPROACH_THR_DEADBAND": "0.05",
+}
+
+
+def resolve_fc_dev():
     """Locate the flight controller's serial interface.
 
     The board's by-id serial string is NOT stable across boots (observed
@@ -72,10 +189,10 @@ def _resolve_fc_dev() -> str:
     for dev in ("/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyUSB0"):
         if Path(dev).exists():
             return dev
-    return env or "/dev/ttyACM0"
+    return None
 
 
-FC_DEV   = _resolve_fc_dev()
+FC_DEV   = resolve_fc_dev() or "/dev/ttyACM0"
 FC_BAUD  = os.environ.get("FC_BAUD", "115200")        # nominal; USB CDC-ACM ignores it
 CAM_DEV  = os.environ.get("CAM_DEV", "/dev/video0")
 
@@ -93,6 +210,62 @@ def die(msg):
     sys.exit(1)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# WAITING FOR THE BOARD  (so this can start before the drone is powered)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def wait_for_fc_device(quiet=False):
+    """Block until the FC's serial interface exists.  Returns its path."""
+    dev = resolve_fc_dev()
+    if dev:
+        return dev
+    if not quiet:
+        print("[wait] no flight controller on USB yet.  Power up the drone "
+              "whenever you like — waiting.  (Ctrl-C to give up.)", flush=True)
+    dots = 0
+    while True:
+        time.sleep(1.0)
+        dev = resolve_fc_dev()
+        if dev:
+            print(f"\n[wait] flight controller appeared: {dev}", flush=True)
+            return dev
+        dots += 1
+        if dots % 5 == 0:
+            print(f"[wait] still nothing after {dots}s ...", flush=True)
+
+
+def wait_for_heartbeat(dev, tries=20):
+    """The device node appears as soon as USB enumerates, but ArduPilot needs a
+    moment more before it talks MAVLink.  Probe until it answers, then close the
+    port — preflight needs exclusive ownership of it.
+    """
+    from pymavlink import mavutil
+    for attempt in range(1, tries + 1):
+        m = None
+        try:
+            m = mavutil.mavlink_connection(dev, baud=115200)
+            hb = m.wait_heartbeat(timeout=3)
+            if hb is not None:
+                print(f"[wait] MAVLink heartbeat OK (system {hb.get_srcSystem()})",
+                      flush=True)
+                return True
+        except Exception as e:
+            if attempt == 1:
+                print(f"[wait] port not talking yet ({e.__class__.__name__}) — "
+                      f"retrying", flush=True)
+        finally:
+            if m is not None:
+                try:
+                    m.close()
+                except Exception:
+                    pass
+        if attempt % 5 == 0:
+            print(f"[wait] no heartbeat after {attempt} tries — is the FC "
+                  f"booted?  Still waiting.", flush=True)
+        time.sleep(1.0)
+    return False
+
+
 def router_running() -> bool:
     """True if a MAVProxy router is already up (reuse it, don't manage it)."""
     return subprocess.run(["pgrep", "-f", "mavproxy.py"],
@@ -108,7 +281,7 @@ def stop_router_or_die():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 1) FIRMWARE IDENTIFICATION  (before anything claims the port)
+# FIRMWARE IDENTIFICATION  (before anything claims the port)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def identify_firmware(dev, baud):
@@ -170,10 +343,10 @@ def verify_overrides(dev, baud, conn):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 2) ROUTER / MISSION PLANNER
+# ROUTER / MISSION PLANNER
 # ══════════════════════════════════════════════════════════════════════════════
 
-def wait_heartbeat(timeout=10) -> bool:
+def wait_router_heartbeat(timeout=10) -> bool:
     """Confirm the router is passing FC traffic by briefly binding tracker's port
     (udpin 14551) and waiting for an AUTOPILOT heartbeat, then releasing it.
 
@@ -221,7 +394,7 @@ def start_mission_planner():
                       stdout=subprocess.DEVNULL).returncode == 0:
         ok("Mission Planner already running")
         return
-    info("launching Mission Planner (mono) — connect it to UDP 14550 (see README)")
+    info("launching Mission Planner (mono) — connect it to UDP 14550")
     env = dict(os.environ, DISPLAY=os.environ.get("DISPLAY", ":0"))
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     with open(LOG_DIR / "missionplanner.log", "w") as log:
@@ -232,19 +405,75 @@ def start_mission_planner():
 
 # ══════════════════════════════════════════════════════════════════════════════
 
+def banner():
+    env = os.environ
+    print("=" * 74)
+    print("WASP head tracker")
+    print("=" * 74)
+    print(f"  preset       : tuned  (raised 2026-08-05 after the field test)")
+    print(f"  gains        : KP {env['KP_YAW']}/{env['KP_PITCH']}  "
+          f"KD {env['KD_YAW']}/{env['KD_PITCH']}  slew {env['SLEW_PER_S']}/s")
+    print(f"  ceilings     : yaw {env['STICK_LIMIT_YAW']}  "
+          f"pitch {env['STICK_LIMIT_PITCH']}"
+          f"   (pitch lower on purpose: ACRO_RP_RATE 360 vs ACRO_Y_RATE 202 deg/s)")
+    print(f"  driven axes  : yaw, pitch.  Roll, throttle and arming stay with "
+          f"the pilot.")
+    print("  mode gate    : ON — the pilot's switch decides.  STABILIZE = the "
+          "pilot has\n                 everything; ACRO = the tracker drives "
+          "yaw and pitch.")
+    print("  handover     : automatic, both ways, as many times as you like.")
+    print("  stop         : Ctrl-C — releases every channel back to the pilot.")
+    print("-" * 74)
+    print("  THROTTLE: the pilot must hold MID throttle the whole time.  In ACRO")
+    print("  rotation comes from differential motor thrust, so at low throttle")
+    print("  even full stick barely turns the airframe.  No gain fixes that.")
+    print("=" * 74, flush=True)
+
+
 def main():
+    global FC_DEV
+
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--no-mp", action="store_true", help="skip launching Mission Planner")
-    ap.add_argument("--direct", action="store_true",
-                    help="skip the router: the tracker owns the FC serial port. "
-                         "Removes the router as a failure mode, but Mission "
+    # --tuned is accepted and is a no-op: it is the only preset, and the systemd
+    # unit passes it explicitly.  Keep it valid.
+    ap.add_argument("--tuned", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--no-wait", action="store_true",
+                    help="fail immediately if the FC is not already up")
+    ap.add_argument("--router", action="store_true",
+                    help="put a MAVProxy router in the path.  The default is "
+                         "direct: the tracker owns the FC serial port, which "
+                         "removes the router as a failure mode, but then Mission "
                          "Planner cannot share the port.")
+    ap.add_argument("--no-mp", action="store_true",
+                    help="skip launching Mission Planner (only relevant with "
+                         "--router)")
     ap.add_argument("--no-verify", action="store_true",
                     help="skip the RC-override acceptance check")
-    args = ap.parse_args()
+    # `./run.py -- --no-verify` used to be the way to pass flags through to the
+    # old second stage.  There is no second stage now, so just drop the marker.
+    args = ap.parse_args([a for a in sys.argv[1:] if a != "--"])
 
-    print("== Head-tracker preflight ==", flush=True)
+    direct = not args.router
+
+    for k, v in TUNED.items():
+        os.environ.setdefault(k, v)
+    os.environ.setdefault("DISPLAY", ":0")
+    banner()
+
+    if not args.no_wait:
+        dev = wait_for_fc_device()
+        if not wait_for_heartbeat(dev):
+            print("\n[FAIL] the FC serial port is there but never answered "
+                  "MAVLink.\n       Check that nothing else owns it "
+                  "(pkill -f mavproxy.py) and try again.", file=sys.stderr)
+            return 1
+        os.environ.setdefault("FC_DEV", dev)
+        FC_DEV = dev
+        # Let the OS fully release the port we just probed before handing it on.
+        time.sleep(0.5)
+
+    print("\n== Head-tracker preflight ==", flush=True)
     if not Path(FC_DEV).exists():
         die(f"FC serial '{FC_DEV}' not found — is the flight controller plugged in?")
     ok(f"FC serial: {FC_DEV}")
@@ -268,7 +497,7 @@ def main():
             "port, and group\n"
             "                 membership (sudo usermod -aG dialout $USER, then "
             "re-login).\n"
-            "                 Full report:  python3 fc_check.py "
+            "                 Full report:  python3 tests/fc_check.py "
             f"--connect {FC_DEV}")
 
     env = dict(os.environ)
@@ -291,7 +520,7 @@ def main():
         save
 
     then assign "MSP RC OVERRIDE" to a spare aux switch in the Modes tab and
-    turn it ON.  Run  python3 fc_check.py  for the full report.
+    turn it ON.  Run  python3 tests/fc_check.py  for the full report.
 
     Strongly recommended instead: flash ArduPilot Copter (target
     TBS_LUCID_H7).  That gives parameter access, telemetry, Mission Planner
@@ -313,9 +542,9 @@ def main():
                 warn("that is the mode this tracker's rate control law is built "
                      "for.")
 
-            if args.direct:
-                print("\n== 2) transport: MAVLink direct on the FC serial "
-                      "(--direct) ==", flush=True)
+            if direct:
+                print("\n== 2) transport: MAVLink direct on the FC serial ==",
+                      flush=True)
                 info("no router: Mission Planner cannot share the port")
                 conn = FC_DEV
             else:
@@ -323,7 +552,7 @@ def main():
                       flush=True)
                 if not MAVPROXY.exists():
                     die(f"mavproxy.py missing: {MAVPROXY}  "
-                        "(or re-run with --direct)")
+                        "(or drop --router to go direct)")
                 router = start_router()
                 time.sleep(4)
                 if router.poll() is not None:
@@ -331,10 +560,10 @@ def main():
                 ok(f"router started (pid {router.pid})")
                 info("verifying the router is passing FC traffic "
                      "(autopilot heartbeat on 14551) ...")
-                if not wait_heartbeat(timeout=12):
+                if not wait_router_heartbeat(timeout=12):
                     die("no AUTOPILOT heartbeat via the router on 14551 — see "
                         f"{LOG_DIR / 'router.log'}\n"
-                        "                 Try --direct to cut the router out of "
+                        "                 Drop --router to cut the router out of "
                         "the path.")
                 ok("router is passing FC heartbeats")
                 conn = f"udpin:{UDP_TRACKER}"
@@ -357,7 +586,7 @@ def main():
                     ok("the FC accepts our RC overrides — the control transport "
                        "works")
 
-            if not args.no_mp and not args.direct:
+            if not args.no_mp and not direct:
                 print("\n== 4) Mission Planner ==", flush=True)
                 start_mission_planner()
 
@@ -381,7 +610,12 @@ def main():
                 router.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 router.kill()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        sys.exit(main() or 0)
+    except KeyboardInterrupt:
+        print("\n[abort] never connected to the FC — nothing was commanded.")
+        sys.exit(130)
