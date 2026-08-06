@@ -205,7 +205,9 @@ not good enough on its own, so:
   `COMMIT_ABORT_BELOW`, every channel is released). Without it the lean is fixed
   at `COMMIT_DEFAULT` whenever a target is locked and the mode switch is the only
   abort.
-* **`ENGAGE_MAX_S`** (default 20 s) caps one continuous engagement regardless.
+* **`ENGAGE_MAX_S`** can cap one continuous engagement, but is **0 (off) by
+  default**: the pilot is the abort, and a timer that drops the sticks
+  mid-engagement is its own surprise.
 
 **Why the pilot's throttle can no longer be the "go" command:** `throttle_frac()`
 reads the pilot's stick out of `RC_CHANNELS`, which is genuinely their input *only
@@ -358,7 +360,7 @@ Full docs and defaults live in `commander_from_env` and `_intercept_from_env`.
 **Intercept preset** (`run.py`, the default): `CAM_TILT_DEG 15, KP_YAW 4.5,
 ROLL_PN_GAIN 45, MAX_BANK_DEG 30, MAX_LEAN_DEG 20, CLIMB_GAIN 8, CLIMB_LEAD 3,
 STICK_LIMIT 0.90, SLEW_PER_S 11, DEADBAND_FRAC 0.02, LOS_TAU 0.12,
-TERMINAL_BBOX_FRAC 0.35, TERMINAL_RANGE_M 2.5, ENGAGE_MAX_S 20, SEND_HZ 50`
+TERMINAL_BBOX_FRAC 0.35, TERMINAL_RANGE_M 2.5, SEND_HZ 50`
 
 **Gimbal preset** (`run.py --gimbal`): `KP_YAW 4.5, KP_PITCH 6.0, KD 0.10,
 STICK_LIMIT_YAW 0.65, STICK_LIMIT_PITCH 0.22, SLEW_PER_S 11, PITCH_MODE approach,

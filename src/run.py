@@ -259,7 +259,6 @@ INTERCEPT = {
     "TERMINAL_BBOX_FRAC": "0.35",
     "TERMINAL_RANGE_M": "2.5",
     "TERMINAL_HOLD_S": "1.0",
-    "ENGAGE_MAX_S": "20.0",
     "SEND_HZ": "50.0",
 }
 
@@ -534,7 +533,12 @@ def banner(intercept):
             print("  commit       : NONE.  Lean is fixed while a target is "
                   "locked, and the mode\n                 switch is the only "
                   "abort (~1 s, HEARTBEAT rate).  Set COMMIT_CHAN.")
-        print(f"  engage limit : {env['ENGAGE_MAX_S']} s per engagement")
+        # No engagement timer by default: the pilot is the abort.  A timer that
+        # drops the sticks mid-engagement is its own surprise, and an experienced
+        # pilot watching the airframe stops it sooner and better than a constant.
+        lim = env.get("ENGAGE_MAX_S", "0")
+        print(f"  engage limit : {lim} s per engagement" if float(lim or 0) > 0
+              else "  engage limit : none — the pilot stops it")
         print("  stop         : Ctrl-C — releases every channel back to the pilot.")
         print("-" * 74)
         print("  NO GPS.  ALT_HOLD holds altitude on the BAROMETER only: it will")

@@ -1387,6 +1387,18 @@ class ArduPilotAcro(FcBackend):
         self.max_climb_mps = (up / 100.0) if up else 2.5
         dz = self._param("THR_DZ")
         self.thr_deadzone = int(dz) if dz is not None else 100
+        # The climb command is scaled by PILOT_SPEED_UP in BOTH directions.  On
+        # ArduPilot PILOT_SPEED_DN=0 means "use PILOT_SPEED_UP", so that is exact
+        # by default — but if they differ, descents are mis-scaled and the logged
+        # climb_mps overstates them.  Say so rather than quietly be wrong.
+        dn = self._param("PILOT_SPEED_DN")
+        if dn and abs(dn - (up or 250.0)) > 1.0:
+            self.blockers.append(
+                f"PILOT_SPEED_DN={dn:g} cm/s != PILOT_SPEED_UP={up or 250:g}. The "
+                "vertical channel scales by PILOT_SPEED_UP in both directions, so "
+                "descents will be mis-scaled and the logged climb_mps will "
+                "overstate them.  Set PILOT_SPEED_DN=0 to make it follow "
+                "PILOT_SPEED_UP.")
 
         for axis in self.axes:
             self.rc[axis] = self._read_axis(axis)
@@ -1573,6 +1585,12 @@ class ArduPilotAcro(FcBackend):
         """
         cfg = self.rc.get("throttle")
         if cfg is None:
+            return
+        if "throttle" in self.axes:
+            # We are overriding this channel, so RC_CHANNELS is reporting OUR
+            # value back (ArduPilot copies an active override into radio_in).
+            # Reading it would be a feedback loop dressed up as a pilot input, so
+            # leave `_throttle_frac` alone and let it stay obviously unusable.
             return
         chan = cfg["chan"]
         if not (1 <= chan <= 18):
@@ -2532,6 +2550,13 @@ class AcroCommander:
         if self.is_intercept:
             att = self.backend.attitude() if self.backend is not None else None
             commit = self.backend.commit() if self.backend is not None else None
+            if self.commit_chan and commit is None:
+                # A commit channel is configured but no RC frame carrying it has
+                # arrived yet.  Commit ZERO, not `commit_default` — otherwise there
+                # is a window at engagement where the pilot's commit stick is at
+                # idle and the airframe leans over at FULL commit anyway, which is
+                # the exact opposite of what wiring the channel was for.
+                commit = 0.0
             bw = bh = None
             if bbox is not None and len(bbox) >= 4:
                 bw, bh = bbox[2], bbox[3]
@@ -2610,7 +2635,7 @@ class AcroCommander:
                 self._warned_disarmed = True
                 print("[FC][WARN] target locked and the control loop is running, "
                       "but the FC is DISARMED — nothing will move until the pilot "
-                      "arms in ACRO.", flush=True)
+                      f"arms in {'/'.join(sorted(self.steer_modes))}.", flush=True)
 
             if self.linked and (now - self._last_stt) >= (1.0 / self.statustext_hz):
                 self._last_stt = now
@@ -2634,11 +2659,16 @@ class AcroCommander:
         stream at 10 Hz instead of waiting on the 1 Hz HEARTBEAT that the mode
         gate depends on.
         """
-        if not steer or self.commit_abort_below <= 0.0 or self.backend is None:
+        if not steer or self.backend is None:
             return steer
         c = self.backend.commit()
-        if c is None:                      # no commit channel wired / no frame yet
-            return steer
+        if c is None:
+            # No commit channel configured at all: nothing to gate on.  But if one
+            # IS configured and has not been received, refuse to steer rather than
+            # steer un-gated — an abort control we cannot read is not an abort.
+            return steer if not self.commit_chan else False
+        if self.commit_abort_below <= 0.0:
+            return steer                   # channel read, abort threshold disabled
         if c >= self.commit_abort_below:
             if self._commit_aborted:
                 self._commit_aborted = False
@@ -2696,19 +2726,22 @@ class AcroCommander:
         if not self.linked:
             return
         mode = self.mode_name
+        want = "/".join(sorted(self.steer_modes))
         if rate_ok and not self.require_rate_mode:
             print(f"[FC][MODE] {mode} — mode gate is OFF "
                   f"(REQUIRE_RATE_MODE=0), so a target lock drives yaw/pitch "
                   f"regardless of the pilot's mode switch.", flush=True)
         elif rate_ok:
-            print(f"[FC][MODE] {mode} — rate mode: AI STEERING ENGAGED "
-                  f"(a target lock will now drive yaw/pitch)", flush=True)
+            print(f"[FC][MODE] {mode} — AI STEERING ENGAGED (a target lock will "
+                  f"now drive {', '.join(self.axes)})", flush=True)
         elif first:
-            print(f"[FC][MODE] {mode} — not a rate mode: the pilot has full "
-                  f"control.  Switch to ACRO to hand yaw/pitch to the tracker.",
+            # Name the mode the gate actually wants.  Hardcoding "ACRO" here sent
+            # the pilot to the one mode where the intercept law does nothing.
+            print(f"[FC][MODE] {mode} — the pilot has full control.  Switch to "
+                  f"{want} to hand {', '.join(self.axes)} to the tracker.",
                   flush=True)
         else:
-            print(f"[FC][MODE] {mode} — pilot left ACRO: FULL CONTROL RETURNED "
+            print(f"[FC][MODE] {mode} — pilot left {want}: FULL CONTROL RETURNED "
                   f"TO THE PILOT, all channels released.", flush=True)
 
     def _status_text(self, cmd, off, steer):
@@ -3033,9 +3066,12 @@ def _intercept_from_env(log_dir=None, verbose=True):
         COMMIT_ABORT_BELOW
                         commit below this releases EVERY channel, not just the
                         lean. Default 0.05 when a commit channel is set, else off.
-        ENGAGE_MAX_S    hard cap on one continuous engagement, seconds. 0 = none.
-                        Default 20. Bounds the worst case while the AI holds all
-                        four sticks.
+        ENGAGE_MAX_S    hard cap on one continuous engagement, seconds.
+                        **Default 0 = OFF.** The pilot is the abort: an
+                        experienced one watching the airframe stops it sooner and
+                        more appropriately than a fixed timer, and a timer that
+                        drops the sticks mid-engagement is its own surprise. Set
+                        it to a number of seconds only for unattended testing.
 
         TARGET_WIDTH_M  assumed target width for the range estimate. Default 0.20
                         (a human head). Range feeds the terminal trigger and the
@@ -3130,6 +3166,6 @@ def _intercept_from_env(log_dir=None, verbose=True):
             if m.strip()),
         commit_chan=commit_chan,
         commit_abort_below=abort_below,
-        engage_max_s=_env_f("ENGAGE_MAX_S", 20.0),
+        engage_max_s=_env_f("ENGAGE_MAX_S", 0.0),
         verbose=verbose,
     )
