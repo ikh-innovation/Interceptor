@@ -1211,6 +1211,7 @@ class ArduPilotAcro(FcBackend):
         self._rx = None
         self._hb = None
         self._sent_pwm = {}           # chan -> last PWM we asked for
+        self._sent_hist = {}          # chan -> [(t, pwm)] over ECHO_HISTORY_S
         self._steer_since = None      # when we started steering (for the check)
         self._echo_warned = False
         self._t0 = perf_counter()
@@ -1224,6 +1225,7 @@ class ArduPilotAcro(FcBackend):
         # formed from pixels alone.
         self._yaw_rad = None
         self._attitude_t = None
+        self._att_hist = []          # [(t, roll, pitch, yaw, rs, ps, ys)]
         self._rollspeed = None
         self._pitchspeed = None
         self._yawspeed = None
@@ -1506,7 +1508,7 @@ class ArduPilotAcro(FcBackend):
         except Exception:
             pass
 
-    def _request_attitude_stream(self, hz=20.0):
+    def _request_attitude_stream(self, hz=50.0):
         """Ask for ATTITUDE.  Required by the approach controller: holding a fixed
         forward lean is an ATTITUDE problem, and ACRO gives us only a rate input,
         so the outer loop has to be closed on the FC's own measured pitch.
@@ -1550,16 +1552,32 @@ class ArduPilotAcro(FcBackend):
                 self._apply_pilot_throttle(msg)
                 self._apply_commit(msg)
             elif t == "ATTITUDE":
+                now = perf_counter()
                 with self._lock:
                     # MAVLink ATTITUDE.pitch is positive NOSE-UP.  The *speeds
                     # are body angular rates in rad/s.
                     self._pitch_rad = float(msg.pitch)
                     self._roll_rad = float(msg.roll)
-                    self._yaw_rad = float(msg.yaw)
                     self._rollspeed = float(msg.rollspeed)
                     self._pitchspeed = float(msg.pitchspeed)
                     self._yawspeed = float(msg.yawspeed)
-                    self._attitude_t = perf_counter()
+                    # Keep yaw UNWRAPPED as it accumulates, so the history can be
+                    # interpolated and differentiated without a 2*pi spike every
+                    # time the airframe passes through north.
+                    y = float(msg.yaw)
+                    if self._yaw_rad is not None:
+                        while y - self._yaw_rad > math.pi:
+                            y -= 2.0 * math.pi
+                        while y - self._yaw_rad < -math.pi:
+                            y += 2.0 * math.pi
+                    self._yaw_rad = y
+                    self._attitude_t = now
+                    self._att_hist.append((now, self._roll_rad, self._pitch_rad,
+                                           y, self._rollspeed, self._pitchspeed,
+                                           self._yawspeed))
+                    cut = now - self.ATT_HISTORY_S
+                    while self._att_hist and self._att_hist[0][0] < cut:
+                        self._att_hist.pop(0)
 
     def _hb_loop(self):
         """Announce ourselves as a GCS at 1 Hz.  Standard behaviour for anything
@@ -1627,24 +1645,53 @@ class ArduPilotAcro(FcBackend):
         with self._lock:
             return self._throttle_frac
 
-    def attitude(self, max_age=0.5):
+    # How much attitude history to keep, for aligning a sample to a video frame.
+    ATT_HISTORY_S = 1.5
+
+    def attitude(self, max_age=0.5, at_t=None):
         """Full attitude + body rates, or None if missing or stale.
 
         One accessor rather than five, so a caller can never end up mixing a
         fresh roll with a stale yaw rate.  Staleness is judged once, on the
         message timestamp, and returns None for the lot.
+
+        `at_t` asks for the attitude AS IT WAS at that perf_counter() instant,
+        interpolated from the history.  This matters more than it looks: the
+        intercept law's line-of-sight bearing is `yaw + azimuth_in_frame`, and the
+        azimuth comes from a video frame that is ~100 ms old while ATTITUDE
+        arrives on its own schedule.  Adding two numbers from different instants
+        injects a bearing error that varies with yaw ACCELERATION — measured at
+        roughly 10 deg/s of phantom LOS rate under hard yaw, which is the same
+        order as a real crossing target and would bank the airframe on nothing.
+        Aligning both terms to the frame's capture time removes it at the source.
         """
         with self._lock:
-            t = self._attitude_t
-            if t is None or self._pitch_rad is None:
-                return None
-            if (perf_counter() - t) > max_age:
-                return None
-            return dict(roll=self._roll_rad, pitch=self._pitch_rad,
-                        yaw=self._yaw_rad,
-                        rollspeed=self._rollspeed,
-                        pitchspeed=self._pitchspeed,
-                        yawspeed=self._yawspeed, age=perf_counter() - t)
+            hist = list(self._att_hist)
+            t_last = self._attitude_t
+        if not hist or t_last is None:
+            return None
+        if (perf_counter() - t_last) > max_age:
+            return None
+
+        if at_t is None or len(hist) == 1 or at_t >= hist[-1][0]:
+            t, r, p, y, rs, ps, ys = hist[-1]
+        elif at_t <= hist[0][0]:
+            t, r, p, y, rs, ps, ys = hist[0]
+        else:
+            # Linear interpolation between the two bracketing samples.  Yaw is
+            # stored already unwrapped, so this cannot straddle the +/-pi seam.
+            lo = hi = hist[-1]
+            for i in range(len(hist) - 1):
+                if hist[i][0] <= at_t <= hist[i + 1][0]:
+                    lo, hi = hist[i], hist[i + 1]
+                    break
+            span = hi[0] - lo[0]
+            f = 0.0 if span <= 0 else (at_t - lo[0]) / span
+            t = at_t
+            r, p, y, rs, ps, ys = (a + f * (b - a)
+                                   for a, b in zip(lo[1:], hi[1:]))
+        return dict(roll=r, pitch=p, yaw=y, rollspeed=rs, pitchspeed=ps,
+                    yawspeed=ys, age=perf_counter() - t)
 
     def commit(self):
         with self._lock:
@@ -1670,12 +1717,29 @@ class ArduPilotAcro(FcBackend):
         with self._lock:
             self._commit = _clamp((raw - lo) / (hi - lo), 0.0, 1.0)
 
+    # How far back a RC_CHANNELS report may lag our command stream and still
+    # count as an echo of it.  RC_CHANNELS arrives at ~10 Hz while we transmit at
+    # up to 50 Hz, so the frame we get back was very often generated against an
+    # older command than the latest one — especially mid-manoeuvre, when the
+    # commands are moving fast.  Comparing only against the LATEST sent value
+    # therefore reports REFUSED during a perfectly healthy engagement.
+    ECHO_HISTORY_S = 0.7
+    ECHO_TOL_US = 40
+
     def _check_echo(self, rc_msg):
         """Confirm the FC took our sticks: ArduPilot copies an active override
-        into radio_in, which is what RC_CHANNELS reports."""
+        into radio_in, which is what RC_CHANNELS reports.
+
+        Judged against every value sent in the last `ECHO_HISTORY_S`, not just the
+        most recent one — the question is "did the FC apply something we sent",
+        and the answer must not depend on two streams at different rates happening
+        to line up.
+        """
         with self._lock:
             steer_since = self._steer_since
             sent = dict(self._sent_pwm)
+            hist = {c: [pwm for _t, pwm in v]
+                    for c, v in self._sent_hist.items()}
         if steer_since is None or not sent:
             return
         held = perf_counter() - steer_since
@@ -1692,10 +1756,18 @@ class ArduPilotAcro(FcBackend):
         if not distinctive:
             return
 
+        # EVERY distinctive channel must match. A genuine refusal reports the
+        # pilot's own sticks on all of them, and those cannot all coincide with
+        # values we recently commanded.
         matched = True
-        for chan, pwm in distinctive.items():
+        for chan in distinctive:
             got = getattr(rc_msg, f"chan{chan}_raw", None)
-            if got is None or abs(int(got) - int(pwm)) > 25:
+            if got is None:
+                matched = False
+                break
+            candidates = hist.get(chan) or [distinctive[chan]]
+            if not any(abs(int(got) - int(p)) <= self.ECHO_TOL_US
+                       for p in candidates):
                 matched = False
                 break
 
@@ -1785,15 +1857,29 @@ class ArduPilotAcro(FcBackend):
             pwm = self._axis_pwm(axis, cmd.get(self._AXIS_FIELD[axis], 0.0))
             chans[cfg["chan"] - 1] = pwm
             sent[cfg["chan"]] = pwm
+        now = perf_counter()
         with self._lock:
             self._sent_pwm = sent
+            # Short rolling history per channel, so the echo check can match a
+            # lagging RC_CHANNELS frame against what we were sending when that
+            # frame was generated.
+            for ch, pwm in sent.items():
+                h = self._sent_hist.setdefault(ch, [])
+                h.append((now, pwm))
+                cut = now - self.ECHO_HISTORY_S
+                while h and h[0][0] < cut:
+                    h.pop(0)
+            for ch in list(self._sent_hist):
+                if ch not in sent:
+                    del self._sent_hist[ch]
             if self._steer_since is None:
-                self._steer_since = perf_counter()
+                self._steer_since = now
         return self._send_override(chans)
 
     def release(self):
         with self._lock:
             self._sent_pwm = {}
+            self._sent_hist = {}
             self._steer_since = None
         return self._send_override([0] * 8)
 
@@ -2548,7 +2634,10 @@ class AcroCommander:
             return self.law.neutral()
 
         if self.is_intercept:
-            att = self.backend.attitude() if self.backend is not None else None
+            # Aligned to the frame's capture time, so `yaw + azimuth` is one
+            # instant rather than two. See ArduPilotAcro.attitude().
+            att = (self.backend.attitude(at_t=capture_t)
+                   if self.backend is not None else None)
             commit = self.backend.commit() if self.backend is not None else None
             if self.commit_chan and commit is None:
                 # A commit channel is configured but no RC frame carrying it has

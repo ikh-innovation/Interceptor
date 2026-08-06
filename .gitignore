@@ -218,3 +218,6 @@ logs/
 # WASP tracker per-run outputs (videos, console logs, command CSVs)
 src/data/
 src/captures/
+
+# Generated PDF — regenerate from docs/wasp-explained-gr.html, do not commit
+*.pdf

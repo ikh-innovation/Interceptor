@@ -21,6 +21,7 @@ copies override_value into radio_in).  That lets us prove, without hardware:
      takes it back, repeatedly
   G. REQUIRE_RATE_MODE=0 restores the ungated behaviour
 """
+import math
 import sys
 from time import perf_counter, sleep
 
@@ -364,6 +365,62 @@ def run_no_attitude_case(port):
 
 
 run_no_attitude_case(14609)
+
+
+# ── J. attitude must be time-aligned to the video frame ──────────────────────
+def run_time_alignment_case(port):
+    """The line-of-sight bearing PN differentiates is `yaw + azimuth_in_frame`.
+    The azimuth comes from a video frame ~100 ms old; ATTITUDE arrives on its own
+    schedule. Adding two numbers from DIFFERENT instants injects a bearing error
+    that varies with yaw acceleration — and PN multiplies that by a large gain.
+
+    Measured before the fix, through this exact path: a nose swinging on a
+    CONSTANT target bearing produced 27 deg of phantom bank, pinned at the
+    ceiling. Aligning the attitude to the frame's capture time took it to 0.06.
+    """
+    print("\n=== J. attitude aligned to the frame -> no phantom bank ===")
+    fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=2)
+    fc.start()
+    sleep(0.3)
+    law = InterceptLaw(cam_tilt_deg=15.0, roll_pn_gain=45.0, slew_per_s=1e9,
+                       deadband_frac=0.0)
+    cmdr = AcroCommander(conn=f"udpin:127.0.0.1:{port}", transport="mavlink",
+                         axes=("roll", "pitch", "yaw", "throttle"), law=law,
+                         send_hz=50.0, log_dir=None, verbose=False,
+                         steer_modes=frozenset({"ALT_HOLD"}))
+    try:
+        cmdr.connect()
+    except Exception as e:
+        check("J: connect", False, str(e))
+        fc.shutdown()
+        return
+
+    half = math.tan(math.radians(62.2 / 2))
+    worst = 0.0
+    for k in range(60):
+        # Airframe yaws back and forth; the target stays on a FIXED world
+        # bearing, so the seeker's azimuth moves exactly opposite. lambda is
+        # constant, therefore PN must command nothing.
+        yaw = math.radians(6.0) * math.sin(k * 0.25)
+        fc.att.update(yaw=yaw, yawspeed=math.radians(90.0))
+        sleep(0.06)                        # let that ATTITUDE actually land
+        az_px = -(320.0) * math.tan(yaw) / half
+        cmd = cmdr.compute(az_px, 0, "LOCK", 640, 640, bbox=(0, 0, 30, 30),
+                           capture_t=perf_counter())
+        cmdr.update(cmd, (int(az_px), 0), have_face=True)
+        if k > 25:                         # past the LOS filter's settling time
+            worst = max(worst, abs(cmd["bank_deg"]))
+
+    cmdr.close()
+    sleep(0.2)
+    fc.shutdown()
+    # 1 deg of bank is ~0.002 g of lateral acceleration: physically nothing.
+    # The pre-fix value was 27 deg, i.e. the full ceiling.
+    check("J: a nose swinging on a constant bearing commands ~no bank",
+          worst < 1.0, f"worst {worst:.3f} deg (was 27.0 before time alignment)")
+
+
+run_time_alignment_case(14610)
 
 
 print("\n" + "=" * 62)

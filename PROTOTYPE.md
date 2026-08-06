@@ -112,6 +112,17 @@ With the single-signal form the seeker cannot drive PN for a structural reason
 rather than a tuned one: λ is a *world* bearing, so rotating the airframe does not
 change it. Only relative translation does.
 
+**And both halves of λ must come from the same instant.** `azimuth_in_frame` comes
+from a video frame ~100 ms old; `ATTITUDE` arrives on its own schedule. Adding two
+numbers from different times injects a bearing error that varies with yaw
+*acceleration*, and PN multiplies it by a large gain. Measured end to end against
+the simulated FC: a nose swinging on a **constant** target bearing produced **27°
+of phantom bank**, pinned at the ceiling. `ArduPilotAcro.attitude(at_t=…)` now
+interpolates the attitude history to the frame's capture time (yaw kept unwrapped
+so it can be interpolated at all), and the same test reads **0.06°**. ATTITUDE is
+requested at 50 Hz rather than 20 to keep the interpolation error small. Locked by
+`test_simulated_fc.py` case J.
+
 **Vertical.** `climb = CLIMB_GAIN * el_world + CLIMB_LEAD * λ̇_el`, commanded as an
 ALT_HOLD climb rate. Elevation is resolved into the **world** frame,
 `el_world = pitch + cam_tilt + el_camera`, so the command follows the target's real
@@ -326,15 +337,20 @@ decides whether any of it is stable — plot those two first.**
 6. **Do not restore "no target ⇒ fly forward at max speed".**
 7. **Do not compute the LOS rate as `d(az_body)/dt + yawspeed`.** It is
    algebraically right and dynamically unstable — see §3b. Differentiate the world
-   bearing as one signal.
-8. **Do not blend the aim term back into pitch in intercept mode.** Vertical
+   bearing as one signal, and take the attitude **at the frame's capture time**.
+8. **Do not judge the override echo against only the latest sent value.**
+   `RC_CHANNELS` arrives at ~10 Hz against a 50 Hz command stream, so mid-manoeuvre
+   the frame you get back was generated against an older command. Matching only the
+   newest one reports `REFUSED` during a healthy engagement — it did. Match against
+   the last `ECHO_HISTORY_S` of sent values.
+9. **Do not blend the aim term back into pitch in intercept mode.** Vertical
    framing is the throttle's job now.
-9. **`throttle_frac()` is meaningless once throttle is driven** (§4). Use
+10. **`throttle_frac()` is meaningless once throttle is driven** (§4). Use
    `commit()`.
-10. **Report the post-clamp, post-slew command**, not the raw law output. The HUD
+11. **Report the post-clamp, post-slew command**, not the raw law output. The HUD
     gauges, the CSV and the sim's plant all read these numbers.
-11. Run all three suites in `tests/` after any change to the control path.
-12. **Props off** for every bench test.
+12. Run all three suites in `tests/` after any change to the control path.
+13. **Props off** for every bench test.
 
 ---
 

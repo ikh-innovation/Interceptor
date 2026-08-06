@@ -733,3 +733,101 @@ check("stable to 150 ms of latency", all(v < 1.0 for _, v in ls),
 l200 = run(GAIN, evade, latency=0.200)["best"]
 check("200 ms degrades but does not diverge — latency is still the real wall",
       l200 < 3.0, f"200ms:{l200:.2f}m")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n=== 10. the HUD actually renders (it had never been executed) ===")
+# The flight panel gained two gauge rows, a status line and a taller panel for the
+# intercept law. None of that code had ever run: a KeyError in there would take
+# the tracker down mid-flight. It releases the sticks on the way out, so it is
+# safe — but the run is over. So render every state once and see.
+try:
+    import numpy as np
+    import cv2                                                   # noqa: F401
+    from tracker import DroneTracker
+except Exception as e:                                           # pragma: no cover
+    check(f"HUD smoke test skipped (no cv2/ultralytics: {e.__class__.__name__})",
+          True, "run this suite in yolo-env to cover the HUD")
+else:
+    class _FakeLaw:
+        stick_limit = 0.90
+        max_bank = math.radians(30.0)
+        max_lean = math.radians(20.0)
+        max_climb_mps = 2.5
+
+    class _FakeAp:
+        """The surface the HUD reads. Deliberately hand-written rather than a real
+        commander, so the test needs no FC and no threads."""
+        def __init__(self, intercept, linked=True, armed=True, conf=True,
+                     rate_ok=True):
+            self.is_intercept = intercept
+            self.law = _FakeLaw()
+            self.linked = linked
+            self.armed = armed
+            self.override_confirmed = conf
+            self.rate_mode_ok = rate_ok
+            self.mode_name = "ALT_HOLD" if intercept else "ACRO"
+            self.send_hz = 50.0
+            self.max_yaw_rate = math.radians(202.0)
+            self.max_pitch_rate = math.radians(360.0)
+
+    hud = DroneTracker.__new__(DroneTracker)
+    hud.skip_frames = 0
+    frame = np.zeros((640, 640, 3), np.uint8)
+
+    icmd = InterceptLaw(h_fov_deg=HFOV, v_fov_deg=VFOV, cam_tilt_deg=15.0).compute(
+        +120, -60, FW, FH, dt=0.05, bbox_w=30, bbox_h=30, att=att(yaw=0.2))
+    variants = {
+        "intercept, driving": dict(cmd=icmd, sent=True),
+        "intercept, terminal": dict(cmd=dict(icmd, terminal=True), sent=True),
+        "intercept, no attitude": dict(cmd=dict(icmd, have_att=False), sent=True),
+        "intercept, range unknown": dict(cmd=dict(icmd, range_m=None), sent=True),
+        "intercept, neutral/idle": dict(cmd=InterceptLaw().neutral(), sent=False),
+    }
+    rendered = 0
+    for name, v in variants.items():
+        for linked in (True, False):
+            for armed in (True, False):
+                for conf in (True, False, None):
+                    for rate_ok in (True, False):
+                        for pos in ((320, 300), None):
+                            ap = _FakeAp(True, linked, armed, conf, rate_ok)
+                            hud.ap = ap
+                            try:
+                                hud._draw_flightcmd(frame.copy(), v["cmd"], pos,
+                                                    320, 320, v["sent"],
+                                                    (0, 255, 0))
+                                rendered += 1
+                            except Exception as e:
+                                fails.append(f"HUD raised on {name}: "
+                                             f"{e.__class__.__name__}: {e}")
+    check(f"intercept HUD renders every state without raising ({rendered} "
+          f"permutations)", not any("HUD raised" in f for f in fails))
+
+    # The servo law's panel must keep working untouched.
+    scmd = __import__("fc_control").ControlLaw().compute(+120, -60, FW, FH, dt=0.05)
+    ok_servo = True
+    for linked in (True, False):
+        for sent in (True, False):
+            ap = _FakeAp(False, linked, True, True, True)
+            hud.ap = ap
+            try:
+                hud._draw_flightcmd(frame.copy(), scmd, (320, 300), 320, 320, sent,
+                                    (0, 255, 0))
+            except Exception as e:
+                ok_servo = False
+                fails.append(f"servo HUD raised: {e.__class__.__name__}: {e}")
+    check("the gimbal HUD panel still renders too", ok_servo)
+
+    # And the panel must fit inside the frame it is drawn on.
+    check("the taller intercept panel fits in a 640x640 frame", 170 + 20 < 640)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 62)
+if fails:
+    print(f"{len(fails)} CHECK(S) FAILED:")
+    for f in fails:
+        print(f"  - {f}")
+    sys.exit(1)
+print("ALL INTERCEPT CHECKS PASSED")
