@@ -1,5 +1,5 @@
 [Unit]
-Description=WASP head tracker (auto-start at Jetson power-up, --tuned preset)
+Description=WASP head tracker (auto-start at Jetson power-up, intercept law)
 
 # systemd USER service.  Autologin is enabled for iknowhow (/etc/gdm3/custom.conf
 # AutomaticLogin=iknowhow), so the graphical session — and therefore this unit —
@@ -24,21 +24,9 @@ StartLimitIntervalSec=0
 Type=simple
 WorkingDirectory=/home/iknowhow/Documents/Interceptor-1/src
 
-# X display of the autologin session — the cv2 HUD needs it.
-Environment=DISPLAY=:0
-
-# HOW FAR THE CAMERA IS TILTED UP, IN DEGREES.  This is a HARDWARE measurement and
-# run.py refuses to start the intercept law without it, on purpose: the control law
-# adds it to every elevation it computes, so a value that disagrees with the real
-# mount makes the airframe fly high or low by exactly that error, consistently, with
-# nothing in the log to say why.
-#
-# MEASURE THE MOUNT AND PUT THE REAL NUMBER HERE.  10 is the recommended mount
-# angle, not a safe default for a camera that has not been tilted.  With no tilt the
-# target leaves the TOP of the frame as soon as the airframe flies fast — measured in
-# frame at most 48% of the time, and it never closes.
-Environment=CAM_TILT_DEG=10
-Environment=XAUTHORITY=/run/user/1000/gdm/Xauthority
+# Every environment decision (camera tilt, commit channel, gains, offline
+# model cache, X display) lives in start-wasp.sh so there is exactly ONE
+# file to edit in the field and no second copy here to disagree with it.
 
 # Nothing about the FC, the transmitter or the tuning is hardcoded here: run.py
 # applies the tuned preset, then reads the channel map, the calibration, the
@@ -47,21 +35,25 @@ Environment=XAUTHORITY=/run/user/1000/gdm/Xauthority
 # port is discovered, never hardcoded.  Set FC_DEV only to override.
 
 # THE SAFETY MODEL, unchanged by auto-start:
-#   * REQUIRE_RATE_MODE=1 (default) — the tracker touches nothing unless the FC
-#     is in ACRO.  The pilot's mode switch is the on/off control for the AI.
+#   * Mode gate — the tracker touches nothing unless the FC reports a mode in
+#     FC_STEER_MODES (ALT_HOLD for the intercept law).  The pilot's mode switch
+#     IS the on/off control for the AI.
 #   * REQUIRE_ARMED=1 (default) — nothing is driven while disarmed.
-#   * Roll, throttle and arming are never touched.
+#   * The intercept law drives ROLL, PITCH, YAW and THROTTLE.  Only ARMING stays
+#     with the pilot.  (An earlier version of this comment claimed roll and
+#     throttle were never touched — that was the gimbal law, and it is false
+#     here.  In ALT_HOLD a centred throttle means HOLD ALTITUDE, which is the
+#     only reason it is safe for this code to hold the throttle at all.)
 #   * Target lost, service stopped, or any crash -> every channel released.
-# So this unit running at boot does not mean the AI has control at boot.  It
-# waits, idle, until the pilot deliberately selects ACRO.
+# So this unit running at boot does NOT mean the AI has control at boot.  It
+# waits, idle, until the pilot deliberately selects ALT_HOLD.
 
 # Let udev, the X session and the Argus daemon settle.  run.py then waits for the
 # FC itself, so the drone may be powered up long after the Jetson.
 ExecStartPre=/bin/sleep 15
 
-# --tuned is a no-op: run.py ships exactly one preset.  It stays on the command
-# line so the unit keeps working if a second preset is ever reintroduced.
-ExecStart=/home/iknowhow/Documents/Interceptor-1/src/run.py --tuned
+# The launcher is a plain bash script: edit it, not this unit.
+ExecStart=/home/iknowhow/Documents/Interceptor-1/src/start-wasp.sh
 
 # Boot failures are invisible without this: the user journal is not
 # persistent on this Jetson, so keep our own rolling log.
