@@ -695,31 +695,39 @@ def main():
     for k, v in (INTERCEPT if intercept else GIMBAL).items():
         os.environ.setdefault(k, v)
 
+    # HARDCODED at the operator's instruction during the 2026-08-26 bring-up: the
+    # mount is built at 10 deg and this is the ONE place that number lives, so the
+    # launcher, the systemd unit and a bare `./run.py` can no longer disagree about
+    # it.  IF THE MOUNT IS EVER CHANGED, CHANGE IT HERE.
+    #
+    # This block used to refuse to start, and the reasoning behind that refusal has
+    # NOT gone away: the tilt is a HARDWARE FACT, the law adds it to every elevation
+    # it computes, and a value that disagrees with the real mount makes the airframe
+    # fly high or low by exactly that error, consistently, with nothing in the log
+    # to say why.  So the number is still never applied SILENTLY — it is announced
+    # loudly below, every run, as an assumption rather than a measurement.
+    HARDCODED_CAM_TILT_DEG = "10"
+
     if intercept and "CAM_TILT_DEG" not in os.environ:
-        # NO DEFAULT, deliberately.  The camera's up-tilt is a HARDWARE FACT, and a
-        # value that disagrees with the real mount corrupts every elevation the law
-        # computes — the airframe then flies consistently high or low by exactly
-        # that error, and nothing in the log says why.  There is no safe number to
-        # guess here, so ask instead of guessing.
-        print("""
-[SETUP] CAM_TILT_DEG is not set, and there is no safe default for it.
+        os.environ["CAM_TILT_DEG"] = HARDCODED_CAM_TILT_DEG
+        print(f"""
+[SETUP] CAM_TILT_DEG was not set — using the HARDCODED {HARDCODED_CAM_TILT_DEG} deg.
 
-  It is how far the camera is physically tilted UP from the airframe's own
-  level, in degrees.  The control law adds it to every elevation it computes,
-  so a wrong value is not a tuning error — it makes the drone fly high or low
-  by exactly that many degrees, consistently, with no clue in the log.
+  This is an ASSUMPTION about the hardware, not a measurement.  Confirm it:
+  put the drone on the floor, stand 10 m in front of it, and check that your
+  HEAD falls in the CENTRE of the image.  If it does not, measure the real
+  angle and either export CAM_TILT_DEG=<measured> or edit
+  HARDCODED_CAM_TILT_DEG in run.py.
 
-  Measure the mount, then:
+  Overriding still works and still wins:  CAM_TILT_DEG=<measured> ./run.py
 
-      CAM_TILT_DEG=<measured> ./run.py
-
-  Recommended if you are choosing the mount now:  CAM_TILT_DEG=10
+  What was measured, for the record:
 
     tilt  0   the target leaves the TOP of the frame as soon as it flies fast.
               In the closed-loop sim it is in frame at most 48% of the time and
               NEVER closes, at any lean.  Bench configuration only.
     tilt 10   best of everything tried: in frame 100% of the time on the flat
-              chase, and it closes.
+              chase, and it closes.   <-- the hardcoded value
     tilt 15   as good on the easy cases, but launched 6 m above the target it is
               in frame 13% of the time — effectively blind.  Tilting further
               spends downward vision.
@@ -728,7 +736,6 @@ def main():
 
       CAM_TILT_DEG=0 REQUIRE_ARMED=0 ./run.py --no-wait
 """, file=sys.stderr)
-        return 2
 
     os.environ.setdefault("DISPLAY", ":0")
     banner(intercept)
