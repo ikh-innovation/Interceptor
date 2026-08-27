@@ -997,11 +997,6 @@ class DroneTracker:
         rec_on       = self.record_dir is not None
         pad          = max(1, int(round(self.record_pad_sec * src_fps)))
         pre_buf      = deque(maxlen=pad)
-        writer       = None
-        post_left    = 0
-        last_written = -1
-        n_windows    = 0
-        n_written    = 0
         fourcc       = None
         out_dir      = None
         out_path     = None            
@@ -1019,6 +1014,49 @@ class DroneTracker:
             cv2.resizeWindow(self._WIN, *self.display_size)
 
         period = self.skip_frames + 1
+
+        # The reel is only a playable mp4 once the writer is released — that is
+        # what writes the moov atom.  Ctrl-C is the NORMAL way this program
+        # ends, so releasing after the loop is not enough: the run that matters
+        # most (the one you stopped to go look at) is exactly the one that would
+        # be left as an unreadable stub.  Hence try/finally.
+        try:
+            self._loop(cap, src_fps, period, rec_on, pad, pre_buf, out_path,
+                       fourcc)
+        finally:
+            self._finish_recording()
+            cap.release()
+            if not self.headless:
+                cv2.destroyAllWindows()
+
+    def _finish_recording(self):
+        """Close the reel and report it.  Safe to call twice."""
+        writer = getattr(self, "_writer", None)
+        if writer is not None:
+            writer.release()
+            self._writer = None
+        if getattr(self, "_rec_on", False):
+            src_fps = getattr(self, "_rec_fps", 0.0) or 0.0
+            n_written = getattr(self, "_rec_frames", 0)
+            n_windows = getattr(self, "_rec_windows", 0)
+            secs = n_written / src_fps if src_fps else 0.0
+            where = getattr(self, "_rec_path", None)
+            print(f"[REC] done — {n_windows} detection window(s), {n_written} "
+                  f"frames (~{secs:.1f}s) -> {where}")
+            self._rec_on = False
+
+    def _loop(self, cap, src_fps, period, rec_on, pad, pre_buf, out_path,
+              fourcc):
+        # Recording state lives on self so _finish_recording() can close the
+        # reel from the finally block above, whatever ended the loop.
+        self._writer      = None
+        self._rec_on      = rec_on
+        self._rec_fps     = src_fps
+        self._rec_frames  = 0
+        self._rec_windows = 0
+        self._rec_path    = out_path.resolve() if out_path else None
+        last_written      = -1
+        post_left         = 0
 
         while cap.isOpened():
             ret, frame_full = cap.read()
@@ -1088,20 +1126,29 @@ class DroneTracker:
             # ── detection-gated recording ──────────────────────────────────────
             if rec_on:
                if post_left == 0:
-                   n_windows += 1
-                   if writer is None:
-                       writer = cv2.VideoWriter(
+                   self._rec_windows += 1
+                   if self._writer is None:
+                       self._writer = cv2.VideoWriter(
                            str(out_path), fourcc, src_fps,
                            (frame_disp.shape[1], frame_disp.shape[0]))
+                       if not self._writer.isOpened():
+                           # Say so once, here, rather than leaving a stub file
+                           # and a silent gap where the evidence should be.
+                           print(f"[REC][WARN] could not open {out_path} for "
+                                 "writing — this run will NOT be recorded.")
+                           self._rec_on = rec_on = False
                    for i, f in pre_buf:
                        if i > last_written:
-                           writer.write(f); last_written = i; n_written += 1
-                   print(f"[REC] window {n_windows} @ frame {self._frame_idx} "
+                           self._writer.write(f); last_written = i
+                           self._rec_frames += 1
+                   print(f"[REC] window {self._rec_windows} @ frame "
+                         f"{self._frame_idx} "
                          f"(~{self._frame_idx / src_fps:.1f}s)")
-               writer.write(frame_disp)
-               last_written = self._frame_idx; n_written += 1
-               post_left = pad
-               pre_buf.append((self._frame_idx, frame_disp.copy()))            
+               if rec_on:
+                   self._writer.write(frame_disp)
+                   last_written = self._frame_idx; self._rec_frames += 1
+                   post_left = pad
+                   pre_buf.append((self._frame_idx, frame_disp.copy()))
 
             # Print ONLY the real controller command steering the drone.
             print(self.ap.format_command(
@@ -1116,18 +1163,11 @@ class DroneTracker:
             if self.max_frames is not None and self._frame_idx >= self.max_frames:
                 break
 
+        # Releasing the channels, the reel, the camera and the window is the
+        # caller's finally block — reaching the end of the loop normally is only
+        # one of the ways out, and the others matter more.
         self.ap.close()        # releases every channel, then closes the link
-        if writer is not None:
-            writer.release()
-        cap.release()
-        if not self.headless:
-            cv2.destroyAllWindows()
 
-        if rec_on:
-            secs = n_written / src_fps
-            print(f"[REC] done — {n_windows} detection window(s), {n_written} frames "
-                  f"(~{secs:.1f}s) -> "
-                  f"{out_path.resolve() if out_path else out_dir.resolve()}")            
 
 def env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)

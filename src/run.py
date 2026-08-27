@@ -71,6 +71,8 @@ the motors, so even a full-stick yaw command produces almost no torque.  No gain
 setting in here can compensate for a closed throttle.
 """
 import argparse
+import importlib.util
+import json
 import math
 import os
 import subprocess
@@ -86,7 +88,38 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "tests"))
 
 HOME       = Path.home()
-YOLO_PY    = HOME / "yolo-env/bin/python"
+
+
+def _find_yolo_py() -> Path:
+    """The interpreter that has ultralytics AND a CUDA-enabled torch.
+
+    THE IN-PROJECT .venv COMES FIRST, and that ordering is the whole point.
+    The home-directory envs (~/yolo, ~/yolo-env) carry the PyPI *CPU* build of
+    torch: it imports, ultralytics runs, nothing errors — and yolov8x takes 3.3
+    SECONDS a frame.  The control loop still ticks at its 50 Hz on the last
+    detection, so the failure looks like a tracking problem, not a missing GPU.
+    Measured on this Jetson: 0.3 fps on CPU.  The reel and the CSV both look
+    plausible while the seeker is effectively blind.
+
+    So: explicit override, then the project venv, then the legacy home envs,
+    then whatever is running us if it already has ultralytics.
+    """
+    override = os.environ.get("WASP_YOLO_PY")
+    if override:
+        return Path(override).expanduser()
+    project_venv = HERE.parent / ".venv/bin/python"
+    if project_venv.exists():
+        return project_venv
+    for name in ("yolo-env", "yolo"):
+        cand = HOME / name / "bin/python"
+        if cand.exists():
+            return cand
+    if importlib.util.find_spec("ultralytics") is not None:
+        return Path(sys.executable)
+    return HOME / "yolo-env/bin/python"        # the historical default
+
+
+YOLO_PY    = _find_yolo_py()
 TRACKER    = HERE / "tracker.py"
 MP_EXE     = HOME / "MissionPlanner/MissionPlanner.exe"
 MAVPROXY   = HOME / ".local/bin/mavproxy.py"
@@ -371,6 +404,59 @@ def warn(m): print(f"  [warn] {m}", flush=True)
 def die(msg):
     print(f"\n[PREFLIGHT FAIL] {msg}", file=sys.stderr, flush=True)
     sys.exit(1)
+
+
+def check_detector_device():
+    """Warn — loudly — if the detector will run on the CPU.
+
+    This is the failure that does NOT announce itself.  With the PyPI CPU build
+    of torch everything imports, the tracker starts, the HUD draws, the control
+    loop holds its 50 Hz and the CSV fills up.  The only symptom is that the
+    detection never refreshes: the law flies a frozen target and the log looks
+    like a tracking problem.  Measured here: 3.3 s/frame, 0.3 fps, versus a
+    50 Hz loop.  Anything that reads 'cpu' below cannot chase a moving target.
+    """
+    probe = (
+        "import json,sys\n"
+        "try:\n"
+        "    import torch\n"
+        "    print(json.dumps({'ok':True,'cuda':torch.cuda.is_available(),\n"
+        "                      'ver':torch.__version__,\n"
+        "                      'dev':torch.cuda.get_device_name(0)\n"
+        "                             if torch.cuda.is_available() else 'cpu'}))\n"
+        "except Exception as e:\n"
+        "    print(json.dumps({'ok':False,'err':str(e)}))\n"
+    )
+    try:
+        out = subprocess.run([str(YOLO_PY), "-c", probe],
+                             capture_output=True, text=True, timeout=120)
+        report = json.loads(out.stdout.strip().splitlines()[-1])
+    except Exception as exc:
+        warn(f"could not probe the detector device ({exc}) — continuing.")
+        return
+
+    if not report.get("ok"):
+        warn(f"torch did not import in {YOLO_PY}: {report.get('err')}")
+        return
+
+    if report["cuda"]:
+        ok(f"detector:  CUDA on {report['dev']}  (torch {report['ver']})")
+        return
+
+    warn(f"DETECTOR IS ON THE CPU — torch {report['ver']} has no CUDA.")
+    warn("  yolov8x measures ~3.3 s per frame this way (0.3 fps) against a")
+    warn("  50 Hz control loop, so the law flies a FROZEN detection and the")
+    warn("  symptom looks like bad tracking, not a bad install.")
+    warn(f"  Interpreter: {YOLO_PY}")
+    warn("  Fix: install the JetPack CUDA wheel, e.g.")
+    warn("    <venv>/bin/pip install --no-deps --force-reinstall \\")
+    warn("      --index-url https://pypi.jetson-ai-lab.io/jp6/cu126 \\")
+    warn("      torch==2.8.0 torchvision==0.23.0")
+    if os.environ.get("ALLOW_CPU_DETECTOR") == "1":
+        warn("  ALLOW_CPU_DETECTOR=1 — continuing anyway.")
+        return
+    die("refusing to start a blind seeker.  Set ALLOW_CPU_DETECTOR=1 to "
+        "override\n                 (bench//HUD work only — NOT for flight).")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -764,6 +850,7 @@ def main():
     if not TRACKER.exists():
         die(f"tracker.py missing: {TRACKER}")
     ok(f"tracker:   {TRACKER}")
+    check_detector_device()
 
     # ── 1) which firmware? ────────────────────────────────────────────────────
     print("\n== 1) flight controller identification ==", flush=True)

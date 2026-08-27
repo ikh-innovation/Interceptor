@@ -47,6 +47,14 @@ export XAUTHORITY=/run/user/1000/gdm/Xauthority
 export HF_HUB_OFFLINE=1
 export HF_HUB_DISABLE_TELEMETRY=1
 
+# ULTRALYTICS ALSO REACHES FOR THE NETWORK, and HF_HUB_OFFLINE does not stop it.
+# On first load it decided a requirement was missing and ran pip at RUNTIME
+# ("requirements: AutoUpdate success") — on the bench that is a 7 s pause, in
+# the field it is a pip call with no route, inside the boot path, before the
+# first frame.  Off.  Missing packages are an install-time problem, and the
+# preflight is where they should surface.
+export YOLO_AUTOINSTALL=false
+
 # WAIT FOR THE CAMERA.  run.py's preflight exits if /dev/video0 is absent, and
 # on a cold boot the IMX219 CSI node enumerates on its own schedule — measured
 # LATER than this unit's 15 s ExecStartPre.  Without this wait the first few
