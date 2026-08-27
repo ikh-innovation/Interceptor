@@ -56,6 +56,21 @@ its own.
     ./run.py --router        put MAVProxy in the path instead of going direct
     ./run.py --no-mp         skip Mission Planner (implied by the default direct)
     ./run.py --no-verify     skip the RC-override acceptance check
+    ./run.py --stream-port N move the remote seeker view off port 8080
+    ./run.py --no-stream     do not serve the seeker view over WiFi
+
+THE SEEKER VIEW.  The Jetson has no screen in the field, so the annotated
+detection frame — boxes, HUD, stick command, the lot — is served as MJPEG over
+HTTP and watched from a phone or laptop on the same WiFi:
+
+    http://<jetson-ip>:8080/          the live view (any browser, no app)
+    http://<jetson-ip>:8080/snapshot.jpg   one frame, for a bug report
+
+It is ON by default; the banner prints the exact address before the FC wait, so
+the page can already be open when frames start.  It is a HUD and nothing else —
+there is no control on that page, and the pilot's transmitter remains the only
+abort.  Nothing is JPEG-encoded while nobody is watching, so leaving it on costs
+the flight computer nothing.
 
 Individual values still override, so a one-off experiment needs no new flag:
 
@@ -299,6 +314,24 @@ INTERCEPT = {
     "TERMINAL_RANGE_M": "2.5",
     "TERMINAL_HOLD_S": "1.0",
     "SEND_HZ": "50.0",
+}
+
+# The remote seeker view, ON by default and applied to BOTH presets — it is a
+# property of the airframe (a Jetson with no screen), not of the control law.
+#
+# Declared here rather than left to tracker.py's own fallbacks so the default
+# lives in the same file as every other decision, and so `--no-stream` /
+# STREAM=0 has exactly one thing to switch off.  tracker.py keeps matching
+# fallbacks for when it is run directly, without this launcher.
+#
+# It is safe to leave on with no network at all: the server binds on loopback,
+# the address probe fails closed, and nothing is JPEG-encoded until a viewer
+# actually connects.  See mjpeg_stream.py.
+SEEKER_VIEW = {
+    "STREAM": "1",
+    "STREAM_PORT": "8080",
+    "STREAM_QUALITY": "70",     # drop to ~50 on a weak link
+    "STREAM_FPS": "15",         # encode cap, independent of capture FPS
 }
 
 # Lens half-height, and how much of it to keep in reserve for pitch overshoot,
@@ -734,7 +767,43 @@ def banner(intercept):
         print("  THROTTLE: the pilot must hold MID throttle the whole time.  In ACRO")
         print("  rotation comes from differential motor thrust, so at low throttle")
         print("  even full stick barely turns the airframe.  No gain fixes that.")
+    _banner_seeker_view(env)
     print("=" * 74, flush=True)
+
+
+def _banner_seeker_view(env):
+    """Print where to point a phone to watch what the seeker sees.
+
+    Printed in the banner, before the FC wait, so the operator can already have
+    the page open on the other device by the time frames start.
+    """
+    # Same truthiness test as tracker.env_bool, so the banner can never claim a
+    # stream the tracker is not going to serve.
+    if env.get("STREAM", "1").strip().lower() not in ("1", "true", "yes", "on"):
+        print("-" * 74)
+        print("  seeker view  : OFF (STREAM=%s).  Nothing to watch remotely."
+              % env.get("STREAM", ""))
+        return
+    port = env.get("STREAM_PORT", "8080")
+    try:
+        # Deferred: this pulls in cv2, which only exists under the yolo-env
+        # interpreter we re-exec into.  The launcher must not need it to
+        # print a banner.
+        from mjpeg_stream import local_ips
+        addrs = local_ips()
+    except Exception:
+        addrs = []
+    print("-" * 74)
+    if addrs:
+        for ip in addrs:
+            print(f"  seeker view  : http://{ip}:{port}/   <-- open on the "
+                  f"phone / laptop")
+    else:
+        print(f"  seeker view  : http://<jetson-ip>:{port}/   "
+              f"(`hostname -I` for the address)")
+    print("                 same WiFi as the Jetson.  It is the live HUD, not a "
+          "control\n                 surface — the pilot's transmitter is still "
+          "the only abort.")
 
 
 def main():
@@ -763,6 +832,13 @@ def main():
                          "--router)")
     ap.add_argument("--no-verify", action="store_true",
                     help="skip the RC-override acceptance check")
+    ap.add_argument("--stream-port", type=int, metavar="N",
+                    help="port for the remote seeker view (default 8080).  The "
+                         "annotated detection frame is served as MJPEG over "
+                         "HTTP; open http://<jetson-ip>:N/ in a browser on any "
+                         "device on the same WiFi.")
+    ap.add_argument("--no-stream", action="store_true",
+                    help="do not serve the seeker view over WiFi at all")
     # `./run.py -- --no-verify` used to be the way to pass flags through to the
     # old second stage.  There is no second stage now, so just drop the marker.
     args = ap.parse_args([a for a in sys.argv[1:] if a != "--"])
@@ -779,6 +855,10 @@ def main():
         intercept = True
 
     for k, v in (INTERCEPT if intercept else GIMBAL).items():
+        os.environ.setdefault(k, v)
+
+    # Not preset-specific: the seeker view is wanted on the gimbal rig too.
+    for k, v in SEEKER_VIEW.items():
         os.environ.setdefault(k, v)
 
     # HARDCODED at the operator's instruction during the 2026-08-26 bring-up: the
@@ -822,6 +902,15 @@ def main():
 
       CAM_TILT_DEG=0 REQUIRE_ARMED=0 ./run.py --no-wait
 """, file=sys.stderr)
+
+    # The seeker view over WiFi.  The flags are a friendlier face on the same
+    # STREAM / STREAM_PORT the tracker reads; unlike the gain defaults these
+    # are set, not setdefault, because a flag the operator typed on the field
+    # must beat whatever the systemd unit put in the environment.
+    if args.no_stream:
+        os.environ["STREAM"] = "0"
+    if args.stream_port:
+        os.environ["STREAM_PORT"] = str(args.stream_port)
 
     os.environ.setdefault("DISPLAY", ":0")
     banner(intercept)
