@@ -150,6 +150,8 @@ CAM_TILT_DEG=10 COMMIT_CHAN=6 ./run.py
 
 Βάλε **τη γωνία που μέτρησες** στο βήμα 1, όχι το 10. Θα τυπώσει τη ζώνη ορατότητας — αν βγάλει προειδοποίηση με `!!`, σταμάτα.
 
+**Για να βλέπεις τι βλέπει η κάμερα, από το κινητό σου:** στην αρχή θα τυπώσει μια γραμμή `seeker view : http://192.168.x.x:8080/`. Σύνδεσε το κινητό στο **ίδιο WiFi** με το Jetson και άνοιξε αυτή τη διεύθυνση στον browser. Δεν χρειάζεται καμία εφαρμογή. Είναι **μόνο για να βλέπεις** — δεν υπάρχει κανένα κουμπί εκεί μέσα, και ο πιλότος με το τηλεχειριστήριο παραμένει ο μόνος τρόπος να σταματήσει.
+
 ### Βήμα 5 — Πες στον πιλότο να σηκώσει το drone **κανονικά, σε STABILIZE**
 Τίποτα ασυνήθιστο. Το πρόγραμμα **δεν αγγίζει τίποτα** σε αυτό το σημείο.
 
@@ -229,6 +231,40 @@ CAM_TILT_DEG=<measured> COMMIT_CHAN=6 ./run.py        # intercept, the default
 
 `run.py` re-execs into the right interpreter, applies the preset as **defaults** (anything already in the environment wins), discovers the FC serial port (the by-id descriptor *and* the ACM number both change across reboots — never hardcode it; `FC_DEV` overrides), reads firmware ID / channel map / calibration / `SYSID_MYGCS` / `ANGLE_MAX` / `PILOT_SPEED_UP` / `THR_DZ` off the FC, runs preflight, then launches the tracker.
 
+### 6a. Watching the seeker from a phone — the detection window over WiFi
+
+The Orin Nano flies with no screen, so the annotated detection frame — boxes, HUD, the stick command, everything `cv2.imshow` would have drawn — is **also served over HTTP as MJPEG**. Any browser on the same WiFi opens it. No app, no VLC, no GStreamer on the viewing device.
+
+```
+http://<jetson-ip>:8080/               the live seeker view
+http://<jetson-ip>:8080/snapshot.jpg   one frame, for a bug report
+```
+
+`run.py` prints the exact address in the banner **before** it waits for the FC, so the page can already be open on the phone when the first frame lands. `hostname -I` on the Jetson gives the address if you need it by hand.
+
+It is **on by default**, and it costs the flight computer nothing while nobody is watching — `publish()` returns without even copying the frame until a viewer connects. When one does, a separate daemon thread encodes at `STREAM_FPS` (15, half the capture rate), latest-frame-wins. A phone on a weak signal skips frames; it can never slow the detection loop or the 20 Hz command stream.
+
+| Knob | Default | What it does |
+|---|---|---|
+| `./run.py --no-stream` / `STREAM=0` | on | serve nothing |
+| `./run.py --stream-port N` / `STREAM_PORT` | 8080 | move it off 8080 |
+| `STREAM_QUALITY` | 70 | JPEG quality; drop to ~50 on a weak link |
+| `STREAM_FPS` | 15 | encode cap, independent of capture FPS |
+
+Prove the network path before a flight, with no camera and no FC:
+
+```bash
+cd src && python3 mjpeg_stream.py     # test pattern on :8080
+```
+
+Three things to know before trusting it:
+
+* **The page is a HUD, not a control surface.** There is nothing to click. The pilot's transmitter is still the only abort, and the mode switch is still the only handover.
+* **It is unauthenticated and bound on all interfaces.** That is right for a closed field WiFi or the Jetson's own hotspot, and wrong for anything else. `--no-stream` on a network you do not own.
+* **Do not use it to fly.** It is a spotter's view of what the seeker thinks, with WiFi latency on top of the pipeline latency. `latency_s` in the CSV is the number that matters for control; the stream's own delay is not in it and never affects it.
+
+If you ever need lower latency than MJPEG gives — a real FPV feed rather than a HUD — that is a GStreamer `udpsink` off the camera, a separate path from this one, and it does not carry the annotations.
+
 ### Files
 
 | Path | Role |
@@ -236,6 +272,7 @@ CAM_TILT_DEG=<measured> COMMIT_CHAN=6 ./run.py        # intercept, the default
 | [src/run.py](src/run.py) | The only entry point. Presets, geometry check, FC discovery, preflight, banner. |
 | [src/fc_control.py](src/fc_control.py) | Both control laws, MAVLink/MSP transports, the TX thread, safety gates, CSV logging. |
 | [src/tracker.py](src/tracker.py) | Capture, detection, tracking, HUD. Stamps `t_cap` right after `cap.read()`. |
+| [src/mjpeg_stream.py](src/mjpeg_stream.py) | The seeker view over WiFi (§6a). Standalone: run it directly for a test pattern. |
 | [src/tests/](src/tests/) | The four suites plus `fake_fc.py` and `fc_check.py`. |
 | [src/wasp-tracker.service](src/wasp-tracker.service) | systemd **user** unit for auto-start on the Jetson. |
 
