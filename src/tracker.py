@@ -1010,15 +1010,9 @@ class DroneTracker:
             out_dir = Path(self.record_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            # One numbered reel per flight.  Reserved now, created on the first
-            # detection — see next_recording_path().
-            out_path = next_recording_path(out_dir)
-            print(f"[REC] this flight -> {out_path.resolve()}  | fps={src_fps:.2f}  "
-                  f"pad={pad}f (~{self.record_pad_sec:.1f}s each side)")
-            # The reel is numbered but the log and the command CSV are stamped, so
-            # print the pairing once or there is no way back from a reel to its
-            # telemetry.
-            print(f"[REC] this flight's log/CSV stamp: {self.run_stamp}")
+            out_path = out_dir / f"{self.run_stamp}.mp4"   # new file per run
+            print(f"[REC] reel -> {out_path.resolve()}  | fps={src_fps:.2f}  "
+                  f"pad={pad}f (~{self.record_pad_sec:.1f}s each side)")            
 
         if not self.headless:
             cv2.namedWindow(self._WIN, cv2.WINDOW_NORMAL)
@@ -1026,123 +1020,114 @@ class DroneTracker:
 
         period = self.skip_frames + 1
 
-        # try/finally, NOT plain fall-through.  The teardown below used to sit
-        # after the loop, so a KeyboardInterrupt (which is how this process is
-        # always stopped: systemd sends SIGINT, and the operator presses Ctrl-C)
-        # skipped writer.release() and the mp4 was left with no moov atom —
-        # i.e. EVERY flight recording was unplayable.  It also skipped
-        # self.ap.close(), which is what releases the RC channels back to the
-        # pilot.  Both must happen on every exit path, including a crash.
-        try:
-            while cap.isOpened():
-                ret, frame_full = cap.read()
-                # Stamped the instant the frame lands, so the control law can measure
-                # its own end-to-end latency instead of assuming the frame interval.
-                # At intercept speed the difference is metres of stale geometry.
-                t_cap = perf_counter()
-                if not ret or frame_full is None:
-                    break
+        while cap.isOpened():
+            ret, frame_full = cap.read()
+            # Stamped the instant the frame lands, so the control law can measure
+            # its own end-to-end latency instead of assuming the frame interval.
+            # At intercept speed the difference is metres of stale geometry.
+            t_cap = perf_counter()
+            if not ret or frame_full is None:
+                break
 
-                frame_full           = np.ascontiguousarray(frame_full)
-                self.full_h, self.full_w = frame_full.shape[:2]
+            frame_full           = np.ascontiguousarray(frame_full)
+            self.full_h, self.full_w = frame_full.shape[:2]
 
-                frame_disp = cv2.resize(frame_full, self.display_size)
-                frame_disp = np.ascontiguousarray(frame_disp)
-                cx_f, cy_f = self.fw // 2, self.fh // 2
+            frame_disp = cv2.resize(frame_full, self.display_size)
+            frame_disp = np.ascontiguousarray(frame_disp)
+            cx_f, cy_f = self.fw // 2, self.fh // 2
 
-                self._frame_idx += 1
-                is_yolo_frame = (self._frame_idx % period == 0)
+            self._frame_idx += 1
+            is_yolo_frame = (self._frame_idx % period == 0)
 
-                if is_yolo_frame:
-                    fused, _, _, roi, _ = self._process(frame_full, frame_disp)
+            if is_yolo_frame:
+                fused, _, _, roi, _ = self._process(frame_full, frame_disp)
+            else:
+                self.sky_mask = self.sky.mask(frame_disp) if self.use_sky_mask else None
+                fused = self.kalman.predict() if self.kalman.initialized else None
+                roi   = None
+                if fused:
+                    self.pos   = fused
+                    self.layer = "KF-SKIP"
+
+            # ── STEERING COMMAND ─────────────────────────────────────────────
+            # Each detection frame recomputes the stick command that centres the
+            # target; the commander's tx thread streams the latest one to the FC
+            # at a FIXED rate (SEND_HZ, default 20 Hz) independent of the
+            # detection FPS, so a slow YOLO frame never starves the FC and skip
+            # frames do not create gaps in the stream.
+            #   • target in view (LOCK/PREDICT) → yaw + pitch rates null the
+            #     pixel offset, so the airframe rotates onto the target.
+            #   • no target (SEARCH)            → sticks released to the pilot.
+            # The sticks are driven ONLY while the FC is armed and a target is
+            # locked; every other instant the channels go back to the pilot.
+            target_off = None
+            if is_yolo_frame:
+                if fused:
+                    target_off = (fused[0] - cx_f, fused[1] - cy_f)
+                    # last_bbox and t_cap are ignored by the servo law and used by
+                    # the intercept law for the range estimate, the terminal
+                    # trigger and the latency measurement.
+                    cmd = self.ap.compute(target_off[0], target_off[1],
+                                          self.state, self.fw, self.fh,
+                                          bbox=self.last_bbox, capture_t=t_cap)
                 else:
-                    self.sky_mask = self.sky.mask(frame_disp) if self.use_sky_mask else None
-                    fused = self.kalman.predict() if self.kalman.initialized else None
-                    roi   = None
-                    if fused:
-                        self.pos   = fused
-                        self.layer = "KF-SKIP"
+                    cmd = self.ap.neutral_command()     # no target: centre + release
+                self.ap.update(cmd, target_off, have_face=bool(fused))
+                self._last_cmd = cmd
+            else:
+                cmd = self._last_cmd               # HUD display only
+                if fused:
+                    target_off = (fused[0] - cx_f, fused[1] - cy_f)
 
-                # ── STEERING COMMAND ─────────────────────────────────────────────
-                # Each detection frame recomputes the stick command that centres the
-                # target; the commander's tx thread streams the latest one to the FC
-                # at a FIXED rate (SEND_HZ, default 20 Hz) independent of the
-                # detection FPS, so a slow YOLO frame never starves the FC and skip
-                # frames do not create gaps in the stream.
-                #   • target in view (LOCK/PREDICT) → yaw + pitch rates null the
-                #     pixel offset, so the airframe rotates onto the target.
-                #   • no target (SEARCH)            → sticks released to the pilot.
-                # The sticks are driven ONLY while the FC is armed and a target is
-                # locked; every other instant the channels go back to the pilot.
-                target_off = None
-                if is_yolo_frame:
-                    if fused:
-                        target_off = (fused[0] - cx_f, fused[1] - cy_f)
-                        # last_bbox and t_cap are ignored by the servo law and used by
-                        # the intercept law for the range estimate, the terminal
-                        # trigger and the latency measurement.
-                        cmd = self.ap.compute(target_off[0], target_off[1],
-                                              self.state, self.fw, self.fh,
-                                              bbox=self.last_bbox, capture_t=t_cap)
-                    else:
-                        cmd = self.ap.neutral_command()     # no target: centre + release
-                    self.ap.update(cmd, target_off, have_face=bool(fused))
-                    self._last_cmd = cmd
-                else:
-                    cmd = self._last_cmd               # HUD display only
-                    if fused:
-                        target_off = (fused[0] - cx_f, fused[1] - cy_f)
+            # The commander's own live flag — true only when stick values are
+            # really going out AND the FC is armed to act on them.
+            actually_sent = self.ap.steering
 
-                # The commander's own live flag — true only when stick values are
-                # really going out AND the FC is armed to act on them.
-                actually_sent = self.ap.steering
-
-                self._draw(frame_disp, frame_full, fused, roi, cmd, actually_sent)
+            self._draw(frame_disp, frame_full, fused, roi, cmd, actually_sent)
           
-                # ── detection-gated recording ──────────────────────────────────────
-                if rec_on:
-                   if post_left == 0:
-                       n_windows += 1
-                       if writer is None:
-                           writer = cv2.VideoWriter(
-                               str(out_path), fourcc, src_fps,
-                               (frame_disp.shape[1], frame_disp.shape[0]))
-                       for i, f in pre_buf:
-                           if i > last_written:
-                               writer.write(f); last_written = i; n_written += 1
-                       print(f"[REC] window {n_windows} @ frame {self._frame_idx} "
-                             f"(~{self._frame_idx / src_fps:.1f}s)")
-                   writer.write(frame_disp)
-                   last_written = self._frame_idx; n_written += 1
-                   post_left = pad
-                   pre_buf.append((self._frame_idx, frame_disp.copy()))            
+            # ── detection-gated recording ──────────────────────────────────────
+            if rec_on:
+               if post_left == 0:
+                   n_windows += 1
+                   if writer is None:
+                       writer = cv2.VideoWriter(
+                           str(out_path), fourcc, src_fps,
+                           (frame_disp.shape[1], frame_disp.shape[0]))
+                   for i, f in pre_buf:
+                       if i > last_written:
+                           writer.write(f); last_written = i; n_written += 1
+                   print(f"[REC] window {n_windows} @ frame {self._frame_idx} "
+                         f"(~{self._frame_idx / src_fps:.1f}s)")
+               writer.write(frame_disp)
+               last_written = self._frame_idx; n_written += 1
+               post_left = pad
+               pre_buf.append((self._frame_idx, frame_disp.copy()))            
 
-                # Print ONLY the real controller command steering the drone.
-                print(self.ap.format_command(
-                    self.state, cmd, target_off, actually_sent,
-                    live=self.ap.linked, is_yolo=is_yolo_frame))
+            # Print ONLY the real controller command steering the drone.
+            print(self.ap.format_command(
+                self.state, cmd, target_off, actually_sent,
+                live=self.ap.linked, is_yolo=is_yolo_frame))
 
-                if not self.headless:
-                    cv2.imshow(self._WIN, frame_disp)
-                    if cv2.waitKey(1) & 0xFF == ord("q"):
-                        break
-
-                if self.max_frames is not None and self._frame_idx >= self.max_frames:
+            if not self.headless:
+                cv2.imshow(self._WIN, frame_disp)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
 
-        finally:
-            self.ap.close()        # releases every channel, then closes the link
-            if writer is not None:
-                writer.release()
-            cap.release()
-            if not self.headless:
-                cv2.destroyAllWindows()
+            if self.max_frames is not None and self._frame_idx >= self.max_frames:
+                break
 
-            if rec_on:
-                secs = n_written / src_fps
-                print(f"[REC] done — {n_windows} detection window(s), {n_written} frames "
-                      f"(~{secs:.1f}s) -> "
-                      f"{out_path.resolve() if out_path else out_dir.resolve()}")            
+        self.ap.close()        # releases every channel, then closes the link
+        if writer is not None:
+            writer.release()
+        cap.release()
+        if not self.headless:
+            cv2.destroyAllWindows()
+
+        if rec_on:
+            secs = n_written / src_fps
+            print(f"[REC] done — {n_windows} detection window(s), {n_written} frames "
+                  f"(~{secs:.1f}s) -> "
+                  f"{out_path.resolve() if out_path else out_dir.resolve()}")            
 
 def env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
@@ -1255,39 +1240,6 @@ def make_pipeline(cfg: CameraConfig) -> str:
 # to tracker.py, so they survive across runs regardless of the launch cwd.
 _DATA_DIR = Path(__file__).resolve().parent / "data"
 
-# Every flight's reel lands here, numbered 1.mp4, 2.mp4, ...  It sits at the REPO
-# ROOT (not under src/) because these are field artefacts, not build output, and
-# it is gitignored — the reels are large and are evidence of a specific flight,
-# not source.
-FIELD_RECORDINGS_DIR = Path(__file__).resolve().parent.parent / "field_demo_recordings"
-
-
-def next_recording_path(out_dir) -> Path:
-    """The next free <N>.mp4 in `out_dir`, starting at 1.
-
-    Numbered rather than timestamped because the operator asks for "the third
-    flight", not for 20260826_141133.  The number is chosen from what is already
-    on disk, so it survives reboots and never overwrites an existing reel.
-
-    It counts up from the HIGHEST number present and never reuses a free one, so
-    the numbers always run in flight order.  Filling a gap would mean that
-    deleting a bad reel silently hands its number to a later flight, and "2.mp4"
-    would no longer be the second flight.  A deleted reel leaves a visible hole
-    instead, which is the honest outcome for a flight record.
-
-    Only the NAME is reserved here — the file itself is created lazily, on the
-    first detection.  A run that never sees a target therefore leaves no reel and
-    does not consume a number, which is what makes this safe under the systemd
-    unit's restart loop: a crash-looping tracker cannot fill the directory with
-    empty files.
-    """
-    out_dir = Path(out_dir)
-    highest = 0
-    for f in out_dir.glob("*.mp4"):
-        if f.stem.isdigit():                    # int(), never a string sort:
-            highest = max(highest, int(f.stem))  # "10" sorts before "9"
-    return out_dir / f"{highest + 1}.mp4"
-
 
 class _Tee:
     """Duplicate a stream to the console AND a log file (line-buffered), so the
@@ -1351,7 +1303,7 @@ if __name__ == "__main__":
         skip_frames  = 0,
         show_sky     = False,
         use_sky_mask = False,      # detect on the full frame, not just the sky region
-        record_dir      = str(FIELD_RECORDINGS_DIR),  # 1.mp4, 2.mp4, ... land here
+        record_dir      = str(_DATA_DIR),   # <stamp>.mp4 lands here
         record_pad_sec  = 5.0,
         log_dir         = str(_DATA_DIR),   # commands_<stamp>.csv lands here
         run_stamp       = RUN_STAMP,        # share the run timestamp

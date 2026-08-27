@@ -221,8 +221,3 @@ src/data/
 src/captures/
 
 # Generated PDF — regenerate from docs/wasp-explained-gr.html, do not commit
-
-# ── Field artefacts ──────────────────────────────────────────────────────────
-# One numbered reel per flight (1.mp4, 2.mp4, ...) written by tracker.py.  These
-# are large, and they are evidence of a specific flight rather than source.
-field_demo_recordings/
