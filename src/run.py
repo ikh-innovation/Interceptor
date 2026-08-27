@@ -957,6 +957,7 @@ def main():
 
     env = dict(os.environ)
     router = None                      # the router process WE started (else None)
+    tracker_rc = 0                     # what we hand back to systemd
 
     try:
         if fw == "betaflight":
@@ -1056,7 +1057,24 @@ def main():
         info("pilot, then this launcher stops the router it started.")
         # Foreground: Ctrl-C reaches tracker (same process group); it exits
         # cleanly, then the finally block stops the router we started.
-        subprocess.run([str(YOLO_PY), str(TRACKER)], cwd=str(HERE), env=env)
+        # The tracker's exit status is OURS to return.  systemd restarts this
+        # unit on failure only, so swallowing a crash here would turn a dead
+        # tracker into a "clean exit" and the service would stay down in the
+        # field.  Conversely, q / Ctrl-C exit 0 and must NOT be restarted.
+        rc = subprocess.run([str(YOLO_PY), str(TRACKER)],
+                            cwd=str(HERE), env=env).returncode
+        # subprocess reports a child killed BY A SIGNAL as a NEGATIVE number,
+        # and sys.exit(-2) does not mean "2" — it wraps to 254.  That is not a
+        # detail: systemd reads 254 as a failure and Restart=on-failure brings
+        # the window straight back, which is the exact loop this is meant to
+        # end.  Ctrl-C (SIGINT) and SIGTERM are how a person stops this on
+        # purpose, so they are a clean stop; any other signal really is a crash
+        # and keeps the conventional 128+N so the log says which one.
+        if rc < 0:
+            sig = -rc
+            tracker_rc = 0 if sig in (2, 15) else 128 + sig
+        else:
+            tracker_rc = rc
 
     except KeyboardInterrupt:
         pass
@@ -1068,7 +1086,7 @@ def main():
                 router.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 router.kill()
-    return 0
+    return tracker_rc
 
 
 if __name__ == "__main__":

@@ -60,8 +60,21 @@ ExecStart=/home/iknowhow/Documents/Interceptor-1/src/start-wasp.sh
 StandardOutput=append:/home/iknowhow/wasp-logs/wasp-tracker.log
 StandardError=append:/home/iknowhow/wasp-logs/wasp-tracker.log
 
-Restart=always
+# on-failure, NOT always.  'q' in the HUD window (and Ctrl-C) is a DELIBERATE
+# stop: the operator closed the seeker view and expects it to stay closed.  With
+# Restart=always systemd read that clean exit as something to repair and brought
+# the window back ~10 s later, forever — you could not turn it off without
+# stopping the unit.  On-failure keeps the property that actually matters at
+# boot: the camera, the X session and the FC come up on their own schedule, and
+# a preflight that dies because one of them is not ready yet still retries here.
+# run.py returns the tracker's own exit status, so "failure" means what it says.
+Restart=on-failure
 RestartSec=10
+
+# SIGINT is what KillSignal sends on `systemctl stop`, and Python reports it as
+# 130.  A stop never triggers a restart, but naming it a success keeps the unit
+# from being logged as failed every time it is stopped by hand.
+SuccessExitStatus=130
 TimeoutStopSec=25
 # KillMode defaults to control-group, so stopping this unit also kills the
 # tracker it exec'd.  SIGTERM first: the tracker's finally-block releases every
