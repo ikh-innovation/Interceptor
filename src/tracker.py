@@ -77,6 +77,7 @@ from huggingface_hub import hf_hub_download
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fc_control import AcroCommander, ControlLaw, commander_from_env
+from mjpeg_stream import MJPEGServer
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -299,6 +300,15 @@ class DroneTracker:
         run_stamp      = None,   # shared per-run timestamp (video/log/csv share it)
         headless       = False,
         max_frames     = None,
+        # ── remote seeker view (MJPEG over WiFi) ──────────────────────────────
+        # The Jetson has no screen in the field, so the annotated frame that
+        # would have gone to cv2.imshow is also served over HTTP.  Any phone or
+        # laptop on the same WiFi opens http://<jetson-ip>:<stream_port>/ .
+        # None disables it entirely; see mjpeg_stream.py for the cost model
+        # (nothing is encoded unless somebody is watching).
+        stream_port    = None,
+        stream_quality = 70,     # JPEG quality 1-100
+        stream_fps     = 15.0,   # encode cap, independent of capture FPS
         # Flight-control link.  Pass a ready-made AcroCommander, or leave it None
         # and one is built from the environment (see fc_control.commander_from_env
         # for every knob: MAV_CONN, FC_TRANSPORT, CONTROL_AXES, KP_*, CAM_*FOV_DEG,
@@ -332,6 +342,10 @@ class DroneTracker:
         self.run_stamp = run_stamp or datetime.now().strftime("%Y%m%d_%H%M%S")
         self.headless     = headless
         self.max_frames   = max_frames
+        self.stream_port    = int(stream_port) if stream_port else None
+        self.stream_quality = int(stream_quality)
+        self.stream_fps     = float(stream_fps)
+        self.stream         = None      # MJPEGServer, created in _run()
 
         self.kalman  = KalmanTracker()
         self.ap      = commander or commander_from_env(
@@ -983,6 +997,9 @@ class DroneTracker:
             self._run()
         finally:
             self.ap.close()
+            if self.stream is not None:
+                self.stream.stop()      # also covers Ctrl-C and a mid-run raise
+                self.stream = None
 
     def _run(self):
         # Identify the firmware, read the FC's own RC map/rates, and print every
@@ -1008,6 +1025,21 @@ class DroneTracker:
             out_path = out_dir / f"{self.run_stamp}.mp4"   # new file per run
             print(f"[REC] reel -> {out_path.resolve()}  | fps={src_fps:.2f}  "
                   f"pad={pad}f (~{self.record_pad_sec:.1f}s each side)")            
+
+        # ── remote seeker view ─────────────────────────────────────────────────
+        # Independent of `headless`: on the Jetson there is no local window at
+        # all, and the stream is the ONLY way anyone sees what the seeker sees.
+        # A failure to bind must never take the flight down with it, so this is
+        # best-effort and the tracker runs on without it.
+        if self.stream_port:
+            try:
+                self.stream = MJPEGServer(port=self.stream_port,
+                                          quality=self.stream_quality,
+                                          fps=self.stream_fps).start()
+            except OSError as exc:
+                print(f"[STREAM] disabled — cannot bind port "
+                      f"{self.stream_port}: {exc}")
+                self.stream = None
 
         if not self.headless:
             cv2.namedWindow(self._WIN, cv2.WINDOW_NORMAL)
@@ -1122,7 +1154,13 @@ class DroneTracker:
             actually_sent = self.ap.steering
 
             self._draw(frame_disp, frame_full, fused, roi, cmd, actually_sent)
-          
+
+            # Same fully annotated frame the local window would show, pushed to
+            # whoever is watching over WiFi.  One memcpy, no encode, no socket
+            # work on this thread — see mjpeg_stream.publish().
+            if self.stream is not None:
+                self.stream.publish(frame_disp)
+
             # ── detection-gated recording ──────────────────────────────────────
             if rec_on:
                if post_left == 0:
@@ -1173,7 +1211,7 @@ def env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
         return default
-    return value.lower() in ("1", "true", "yes", "on")
+    return value.strip().lower() in ("1", "true", "yes", "on")
 
 
 @dataclass
@@ -1348,6 +1386,14 @@ if __name__ == "__main__":
         log_dir         = str(_DATA_DIR),   # commands_<stamp>.csv lands here
         run_stamp       = RUN_STAMP,        # share the run timestamp
         headless     = os.environ.get("TRACKER_HEADLESS") == "1",
+        # Remote seeker view over WiFi.  ON by default because the Jetson flies
+        # without a screen and this is the only way to see the HUD; STREAM=0
+        # turns it off, STREAM_PORT moves it off 8080.
+        #   phone / laptop on the same WiFi -> http://<jetson-ip>:8080/
+        stream_port    = (int(os.environ.get("STREAM_PORT", "8080"))
+                          if env_bool("STREAM", True) else None),
+        stream_quality = int(os.environ.get("STREAM_QUALITY", "70")),
+        stream_fps     = float(os.environ.get("STREAM_FPS", "15")),
         # The flight-control link is configured entirely from the environment —
         # see fc_control.commander_from_env for the full list.  The defaults are
         # the deployed ones: talk to the FC through the local MAVProxy router on
