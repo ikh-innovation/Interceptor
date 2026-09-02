@@ -321,13 +321,38 @@ class DroneTracker:
         # (this model exposes e.g. {0: 'person', 1: 'face'}).
         names = self.model.names
         names = names if isinstance(names, dict) else dict(enumerate(names))
-        self.face_class = next(
-            (i for i, n in names.items() if "face" in str(n).lower()), None)
-        if self.face_class is None:
-            raise RuntimeError(
-                f"No 'face' class in model labels {names} — cannot detect faces.")
-        print(f"[MODEL] face-only detection: class {self.face_class} "
-              f"('{names[self.face_class]}'), max 1 object")
+        # ONE class is tracked, whatever the model calls it.  The head model
+        # exposes {0: 'person', 1: 'face'} and we want the face; the sky model
+        # is single-class and calls it '0'.  Demanding a literal "face" label
+        # made the second one impossible to load at all, so: an explicit
+        # TARGET_CLASS wins, else a face-like label, else the only class there
+        # is.  Anything ambiguous is an error that names the options rather
+        # than a silent guess about what we are shooting at.
+        want = os.environ.get("TARGET_CLASS")
+        if want is not None and want != "":
+            match = None
+            if want.isdigit() and int(want) in names:
+                match = int(want)
+            else:
+                match = next((i for i, n in names.items()
+                              if str(n).lower() == want.lower()), None)
+            if match is None:
+                raise RuntimeError(
+                    f"TARGET_CLASS={want!r} is not in this model's labels "
+                    f"{names}.")
+            self.target_class = match
+        else:
+            self.target_class = next(
+                (i for i, n in names.items() if "face" in str(n).lower()), None)
+            if self.target_class is None and len(names) == 1:
+                self.target_class = next(iter(names))
+            if self.target_class is None:
+                raise RuntimeError(
+                    f"Cannot tell which class to track in {names}. "
+                    "Set TARGET_CLASS to the index or the label.")
+        print(f"[MODEL] single-class detection: class {self.target_class} "
+              f"('{names[self.target_class]}') of {dict(names)}, max 1 object")
+        print(f"[MODEL] weights: {model_path}")
         self.camera_pipeline = camera_pipeline
         self.camera_fps      = float(camera_fps)        
         self.conf_thresh  = conf_thresh
@@ -419,8 +444,8 @@ class DroneTracker:
         if enhance:
             crop = self._enhance(crop)
 
-        # classes=[face] → face detections only; max_det=1 → a single object.
-        res = self.model(crop, imgsz=imgsz, classes=[self.face_class],
+        # one class only; max_det=1 → a single object.
+        res = self.model(crop, imgsz=imgsz, classes=[self.target_class],
                          max_det=1, verbose=False)
         if not res or not res[0].boxes:
             return None
@@ -1365,11 +1390,25 @@ if __name__ == "__main__":
 
     cam_cfg = CameraConfig()
     CAP_PIPELINE = make_pipeline(cam_cfg)
-    model_pth = hf_hub_download(
-        repo_id="iitolstykh/YOLO-Face-Person-Detector",
-        filename="yolov8x_person_face.pt",
-        repo_type="model"
-    )
+    # WASP_MODEL points at a local .pt and skips HuggingFace entirely — that is
+    # how sky mode loads its own weights (runs/detect/v0/weights/best.pt), which
+    # are not on the Hub at all.  Unset, we fall back to the face detector.
+    # Checked here rather than at first inference: a missing weights file in the
+    # field should stop the run at startup with the path in the message, not
+    # three minutes later inside a detect call.
+    _model_env = os.environ.get("WASP_MODEL", "").strip()
+    if _model_env:
+        model_pth = str(Path(_model_env).expanduser().resolve())
+        if not Path(model_pth).is_file():
+            print(f"[MODEL] WASP_MODEL is set but there is no file at "
+                  f"{model_pth}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        model_pth = hf_hub_download(
+            repo_id="iitolstykh/YOLO-Face-Person-Detector",
+            filename="yolov8x_person_face.pt",
+            repo_type="model"
+        )
 
     DroneTracker(
         #model_path   = "./runs/detect/v0/weights/best.pt",

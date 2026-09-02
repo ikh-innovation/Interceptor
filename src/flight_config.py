@@ -81,6 +81,9 @@ MODES = {
         "max_lean_deg": 12,
         "roll_pn_gain": 35,
         "band": "-26 .. +22 deg at 12 deg lean  (sees the ground)",
+        # None = the HuggingFace face/person detector, pulled from the cache.
+        "model": None,
+        "target_class": "",            # "" = auto (the 'face' class)
         "note": "Scored and flown.  Closes on a level target.",
     },
     "sky": {
@@ -90,9 +93,14 @@ MODES = {
         "max_lean_deg": 12,
         "roll_pn_gain": 35,
         "band": "-6 .. +42 deg at 12 deg lean  (BLIND BELOW THE HORIZON)",
+        # The sky weights are LOCAL — trained here, not on the Hub.  Relative to
+        # the repo root, resolved to an absolute path below, because tracker.py
+        # runs with its cwd in src/ and a relative path would miss by one level.
+        "model": "runs/detect/v0/weights/best.pt",
+        # That model is single-class and calls its class '0', not 'face'.
+        "target_class": "",            # "" = auto: the only class there is
         "note": ("Sim: closes to ~35 deg elevation.  Nothing closes above ~45 "
-                 "deg in any configuration.  The DETECTOR still looks for "
-                 "'face' only — a bare drone produces NO detection at all."),
+                 "deg in any configuration."),
     },
 }
 
@@ -131,6 +139,17 @@ def resolve():
         cfg["roll_pn_gain"] = float(ROLL_PN_GAIN)
     cfg["mode"] = MODE
     cfg["commit_chan"] = int(COMMIT_CHAN)
+
+    # A mode that names its own weights must actually have them.  Better to say
+    # so here, with the path, than to let the run reach the field and die.
+    if cfg.get("model"):
+        from pathlib import Path
+        p = (Path(__file__).resolve().parent.parent / cfg["model"]).resolve()
+        if not p.is_file():
+            raise ConfigError(
+                f"MODE is {MODE!r}, whose weights are {cfg['model']},\n"
+                f"  but there is no file at {p}.")
+        cfg["model"] = str(p)
     return cfg
 
 
@@ -145,6 +164,10 @@ def as_shell(cfg):
         f"MAX_LEAN_DEG={cfg['max_lean_deg']}",
         f"ROLL_PN_GAIN={cfg['roll_pn_gain']}",
         f"COMMIT_CHAN={cfg['commit_chan']}",
+        # Empty is meaningful: it tells tracker.py to fall back to the Hub
+        # model / auto class rather than inheriting a stale export.
+        f"WASP_MODEL={cfg.get('model') or ''}",
+        f"TARGET_CLASS={cfg.get('target_class') or ''}",
     ])
 
 
@@ -170,4 +193,5 @@ if __name__ == "__main__":
         print(f"  lean / gain   : {cfg['max_lean_deg']} deg / "
               f"{cfg['roll_pn_gain']}")
         print(f"  commit chan   : {cfg['commit_chan']}")
+        print(f"  weights       : {cfg.get('model') or 'HuggingFace face detector (cached)'}")
         print(f"  note          : {cfg['note']}")
