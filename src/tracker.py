@@ -792,7 +792,7 @@ class DroneTracker:
         # The intercept law drives four channels instead of two, so it needs two
         # more gauge rows and the panel has to grow or the FC line collides.
         intercept = bool(getattr(self.ap, "is_intercept", False))
-        pw, ph = 252, (170 if intercept else 130)
+        pw, ph = 252, (188 if intercept else 130)
         x1 = 10
         y1 = h - 10 - ph
         x2, y2 = x1 + pw, y1 + ph
@@ -894,8 +894,41 @@ class DroneTracker:
                 extra, col = "NO ATTITUDE — roll+climb are ZERO", self.C_WARN
             self._text(frame, extra, (tx, y1 + 124), 0.34, col, 1)
 
+        if intercept:
+            # The operator's sensitivity slider, read back out of the law and
+            # drawn into the frame the slider's own page is watching.  This is
+            # the loop that confirms a remote change actually landed.
+            sens = cmd.get("sens")
+            if sens is not None:
+                s_txt = (f"SENS {sens:.2f}  gain {cmd.get('pn_gain_eff', 0.0):.0f}"
+                         f"  cap {cmd.get('bank_cap_deg', 0.0):.1f}°"
+                         f"  fill {cmd.get('fill_frac', 0.0) * 100:.1f}%")
+                s_col = self.C_WARN if sens > 0.5 else self.C_HUD
+                self._text(frame, s_txt, (tx, y1 + 162), 0.34, s_col, 1)
+
         self._text(frame, f"{self.ap.send_hz:.0f}Hz stream  (skip {self.skip_frames})",
                    (tx, y1 + ph - 8), 0.34, self.C_DIM, 1)
+
+    # ── operator sensitivity, exposed to the HUD page ────────────────────────────
+
+    def _law_with_sens(self):
+        """The active law, but only if it is one that HAS a sensitivity.
+
+        Resolved on every call rather than captured once: the stream binds
+        before the commander is built, and a non-intercept law has no schedule
+        at all.  Returning None makes /sens answer 503 instead of inventing a
+        number.
+        """
+        law = getattr(getattr(self, "ap", None), "law", None)
+        return law if hasattr(law, "sens_state") else None
+
+    def _sens_get(self):
+        law = self._law_with_sens()
+        return None if law is None else law.sens_state()
+
+    def _sens_set(self, v):
+        law = self._law_with_sens()
+        return None if law is None else law.set_sens(v)
 
     # ── master draw ──────────────────────────────────────────────────────────────
 
@@ -1060,7 +1093,9 @@ class DroneTracker:
             try:
                 self.stream = MJPEGServer(port=self.stream_port,
                                           quality=self.stream_quality,
-                                          fps=self.stream_fps).start()
+                                          fps=self.stream_fps,
+                                          sens_get=self._sens_get,
+                                          sens_set=self._sens_set).start()
             except OSError as exc:
                 print(f"[STREAM] disabled — cannot bind port "
                       f"{self.stream_port}: {exc}")

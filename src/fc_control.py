@@ -631,6 +631,15 @@ class InterceptLaw:
                  # Equal to the real airspeed = coordinated turn; 2-3x = PN lead.
                  roll_pn_gain=45.0,
                  max_bank_deg=30.0,
+                 # ── roll: range-scheduled authority.  See _schedule(). ───────
+                 bank_far_deg=None,       # far-field bank ceiling; None = max_bank
+                 sched_lo_frac=0.02,      # bbox fill fraction that counts as far
+                 sched_hi_frac=0.35,      # ...and as close (= terminal_bbox_frac)
+                 pn_near_mult=1.0,        # gain multiplier once close; 1 = off
+                 sens=0.5,                # operator sensitivity 0..1 (0.5 = x1)
+                 sens_max_mult=2.0,       # gain multiplier at sens = 1.0
+                 lock_ramp_s=0.0,         # ramp the bank ceiling in after lock
+                 fill_tau=0.30,           # low-pass on the fill fraction
                  # ── pitch: closing speed ─────────────────────────────────────
                  max_lean_deg=20.0,       # nose-down lean at full commit
                  commit_default=1.0,      # commit when no commit channel is wired
@@ -674,6 +683,17 @@ class InterceptLaw:
         self.kp_yaw = float(kp_yaw)
         self.roll_pn_gain = max(0.0, float(roll_pn_gain))
         self.max_bank = math.radians(_clamp(float(max_bank_deg), 0.0, 45.0))
+        # The far-field ceiling can only ever be TIGHTER than the hard one, and
+        # defaults TO it, which makes the whole schedule a no-op.
+        self.bank_far = self.max_bank if bank_far_deg is None else min(
+            math.radians(_clamp(float(bank_far_deg), 0.0, 45.0)), self.max_bank)
+        self.sched_lo_frac = max(0.0, float(sched_lo_frac))
+        self.sched_hi_frac = max(self.sched_lo_frac + 1e-3, float(sched_hi_frac))
+        self.pn_near_mult = max(1.0, float(pn_near_mult))
+        self.sens = _clamp(float(sens), 0.0, 1.0)
+        self.sens_max_mult = max(1.0, float(sens_max_mult))
+        self.lock_ramp_s = max(0.0, float(lock_ramp_s))
+        self.fill_tau = max(1e-3, float(fill_tau))
         # Hard ceiling on the lean, independent of any gain: a multirotor at
         # 30 deg is accelerating at ~0.58 g.
         self.max_lean = math.radians(_clamp(float(max_lean_deg), 0.0, 35.0))
@@ -730,6 +750,13 @@ class InterceptLaw:
         self._terminal_since = None
         self._terminal_cmd = None
         self._range_m = None
+        # Schedule state.  _gain_eff / _bank_cap are what the loop ACTUALLY
+        # used on the last frame, and what the HUD reads back.
+        self._fill = 0.0
+        self._lock_t = None
+        self._ramp = 0.25
+        self._gain_eff = self.roll_pn_gain
+        self._bank_cap = self.bank_far
 
     # ── geometry ──────────────────────────────────────────────────────────────
     def _de_rotate(self, ex, ey, roll):
@@ -784,6 +811,112 @@ class InterceptLaw:
         f_px = (fw / 2.0) / self._tan_h
         return f_px * self.target_width_m / float(bbox_w)
 
+    # ── operator sensitivity, and the range schedule it trims ─────────────────
+    def set_sens(self, v):
+        """Set operator sensitivity, 0..1.  Returns the value actually held.
+
+        Called from the HUD's HTTP thread while the control loop is running, so
+        it does exactly one clamped float store and touches nothing else.  The
+        loop picks it up on its next frame; there is no handshake to get wrong.
+        """
+        try:
+            v = _clamp(float(v), 0.0, 1.0)
+        except (TypeError, ValueError):
+            return self.sens
+        self.sens = v
+        return v
+
+    def sens_state(self):
+        """What the law is ACTUALLY flying, for the HUD read-back.
+
+        Read off the live attributes the loop just used, never recomputed here,
+        so the operator's slider is confirmed against the control loop instead
+        of against the UI's own optimism.
+        """
+        # Recomputed from the CURRENT slider position against the last measured
+        # fill, so a change shows up immediately even in SEARCH.  Under LOCK it
+        # agrees with what the loop just flew: same inputs, same function.
+        gain, cap, ramp = self._schedule_values(self._fill, self._lock_t,
+                                                self.sens)
+        return dict(sens=self.sens,
+                    gain_floor=self.roll_pn_gain,
+                    gain_eff=gain,
+                    bank_cap_deg=math.degrees(cap),
+                    bank_far_deg=math.degrees(self.bank_far),
+                    max_bank_deg=math.degrees(self.max_bank),
+                    fill_frac=self._fill,
+                    lock_ramp=ramp,
+                    locked=self._lock_t is not None)
+
+    def _schedule(self):
+        """Range-scheduled turn authority.  Sets _gain_eff and _bank_cap.
+
+        WHY THE GAIN ONLY EVER GOES UP.  tests/test_intercept.py section 9
+        measured this law LOSING a hard zigzag outright at roll_pn_gain=25 — no
+        hit, target in frame 37% of the time — and intercepting at 45.  The
+        configured gain is therefore a FLOOR, not a number to scale down: a
+        de-sensitised PN law does not fly gently, it fails to track.
+
+        So "calm while the target is far" is bought from the BANK CEILING,
+        which caps how much authority the law may spend without touching how
+        well it follows.  Two independent knobs::
+
+            gain   x1 .. x pn_near_mult   as the target fills the frame, and
+                   x1 .. x sens_max_mult  from the slider ABOVE 0.5.  >= floor.
+            bank   bank_far .. max_bank   as the target fills the frame,
+                   trimmed by the slider BELOW 0.5, and by the lock ramp.
+
+        Note this law is ALREADY range-aware without any of it: it is PN on the
+        LOS *rate*, and lambda_dot ~ V_perp / R, so a distant target commands
+        little by construction.  Scheduling the gain on range as well would
+        double-count R and roll the far-field response off as 1/R^2.  This
+        schedules AUTHORITY, which is the part that is not already handled.
+
+        The schedule reads the bbox FILL FRACTION, not range in metres.
+        `range_m` needs an assumed `target_width_m`, which in sky mode is still
+        the placeholder marked MEASURE IT — so every range is wrong by whatever
+        factor the real airframe differs, and its own docstring says it is too
+        rough for the loop gain.  The fill fraction is the raw measurement.
+        """
+        self._gain_eff, self._bank_cap, self._ramp = self._schedule_values(
+            self._fill, self._lock_t, self.sens)
+
+    def _schedule_values(self, fill, lock_t, sens):
+        """The schedule as a PURE function -> (gain, bank_cap_rad, ramp).
+
+        Pure on purpose: sens_state() calls it from the HUD's HTTP thread to
+        show what the slider WOULD fly while the seeker is still in SEARCH and
+        compute() is not running.  Mutating law state from that thread would
+        race the control loop, so nothing here writes to self.
+        """
+        lo, hi = self.sched_lo_frac, self.sched_hi_frac
+        s = _clamp((fill - lo) / max(1e-6, hi - lo), 0.0, 1.0)
+
+        # Above neutral the slider ADDS gain; below neutral it takes away BANK.
+        # It can never reduce the gain below the floor — see the docstring.
+        sens_gain = 1.0 + max(0.0, sens - 0.5) * 2.0 * (self.sens_max_mult - 1.0)
+        sens_bank = min(1.0, 0.5 + sens)
+
+        # The acquisition transient.  A step into the rate_tau differentiator at
+        # first lock, plus the phantom LOS rate hard yaw slaving injects
+        # (~10 deg/s — see the class docstring, and the full-bank limit cycle it
+        # produced in test_intercept section 9), together command a large bank
+        # on nothing.  Ramp the CEILING in rather than trusting the first frames.
+        if self.lock_ramp_s > 0.0:
+            # An unset clock means "no lock has been timed yet", which is the
+            # instant the transient is worst — so it reads as freshly locked and
+            # gets the FLOOR of the ramp.  compute() always sets it first, so
+            # this is the defensive branch, and it must fail toward less
+            # authority rather than more.
+            t = 0.0 if lock_t is None else lock_t
+            ramp = 0.25 + 0.75 * _clamp(t / self.lock_ramp_s, 0.0, 1.0)
+        else:
+            ramp = 1.0
+
+        gain = self.roll_pn_gain * (1.0 + s * (self.pn_near_mult - 1.0)) * sens_gain
+        bank = self.bank_far + s * (self.max_bank - self.bank_far)
+        return gain, _clamp(bank * sens_bank * ramp, 0.0, self.max_bank), ramp
+
     # ── the law ───────────────────────────────────────────────────────────────
     def compute(self, err_x, err_y, fw, fh, dt=None, bbox_w=None, bbox_h=None,
                 att=None, commit=None, capture_age=None):
@@ -825,6 +958,15 @@ class InterceptLaw:
         else:
             closing = 0.0
 
+        # Fill fraction drives the schedule, low-passed: the bbox width jitters
+        # frame to frame, and a jittering gain is a gain-modulation noise source
+        # in its own right.  _lock_t counts from the first frame after neutral().
+        fill = (float(bbox_w) / float(fw)) if (bbox_w and fw) else 0.0
+        a = dt / (self.fill_tau + dt) if dt > 1e-6 else 1.0
+        self._fill += a * (fill - self._fill)
+        self._lock_t = dt if self._lock_t is None else self._lock_t + max(0.0, dt)
+        self._schedule()
+
         # ── 2. LOS rates, each from ONE world-referenced signal ──────────────
         # See the class docstring: splitting these into "filtered pixel rate plus
         # instantaneous body rate" is algebraically identical and dynamically
@@ -864,8 +1006,9 @@ class InterceptLaw:
         # Zero without a measured heading: the world LOS bearing cannot be formed
         # from pixels alone, and the body-frame rate is not a substitute — the
         # seeker holds it near zero by construction.
-        a_lat = 0.0 if yaw is None else self.roll_pn_gain * los_az
-        bank = _clamp(math.atan2(a_lat, 9.80665), -self.max_bank, self.max_bank)
+        a_lat = 0.0 if yaw is None else self._gain_eff * los_az
+        bank = _clamp(math.atan2(a_lat, 9.80665),
+                      -self._bank_cap, self._bank_cap)
         roll_stick = bank / self.angle_max
 
         # ── 7. PITCH — closing speed, nose DOWN ──────────────────────────────
@@ -940,6 +1083,11 @@ class InterceptLaw:
             commit=cmt,
             have_att=bool(have_att),
             terminal=False,
+            # The schedule, as flown on THIS frame — the HUD's read-back.
+            sens=self.sens,
+            pn_gain_eff=self._gain_eff,
+            bank_cap_deg=math.degrees(self._bank_cap),
+            fill_frac=self._fill,
         )
 
         # ── 10. terminal commit ──────────────────────────────────────────────
@@ -1027,14 +1175,26 @@ class InterceptLaw:
         self._t_prev = None
         self._terminal_since = None
         self._terminal_cmd = None
+        # The next acquisition re-earns its bank ceiling from the ramp; it does
+        # not inherit the authority the last one had built up.
+        self._fill = 0.0
+        self._lock_t = None
+        self._ramp = 0.25
+        self._gain_eff = self.roll_pn_gain
+        self._bank_cap = self.bank_far
         for k in self._sticks:
             self._sticks[k] = 0.0
+        # What the CURRENT slider position would fly on the next acquisition, so
+        # the HUD keeps confirming changes made while nothing is locked.
+        _n_gain, _n_cap, _ = self._schedule_values(0.0, None, self.sens)
         return dict(yaw_stick=0.0, roll_stick=0.0, pitch_stick=0.0,
                     throttle_stick=0.0, yaw_rate=0.0, pitch_rate=0.0,
                     az_deg=0.0, el_deg=0.0, el_cam_deg=0.0, bank_deg=0.0,
                     lean_deg=0.0, climb_mps=0.0, los_az_dps=0.0, los_el_dps=0.0,
                     range_m=None, closing_mps=0.0, latency_s=0.0, commit=0.0,
-                    have_att=False, terminal=False)
+                    have_att=False, terminal=False, sens=self.sens,
+                    pn_gain_eff=_n_gain,
+                    bank_cap_deg=math.degrees(_n_cap), fill_frac=0.0)
 
     def describe(self):
         return (
@@ -1044,6 +1204,15 @@ class InterceptLaw:
             f"                yaw=SEEKER KP {self.kp_yaw:.2f}  "
             f"roll=PN gain {self.roll_pn_gain:.0f} m/s, bank<="
             f"{math.degrees(self.max_bank):.0f} deg\n"
+            f"                schedule: bank ceiling "
+            f"{math.degrees(self.bank_far):.0f}->"
+            f"{math.degrees(self.max_bank):.0f} deg and gain x1.0->"
+            f"x{self.pn_near_mult:.1f} as the bbox fills "
+            f"{self.sched_lo_frac * 100:.0f}->{self.sched_hi_frac * 100:.0f}% "
+            f"of the frame\n"
+            f"                SENS {self.sens:.2f} (0.5 = x1; below trims BANK "
+            f"only, gain floor {self.roll_pn_gain:.0f} m/s is never crossed)  "
+            f"lock ramp {self.lock_ramp_s:.1f}s\n"
             f"                pitch=LEAN {math.degrees(self.max_lean):.0f} deg "
             f"nose-down x commit  "
             f"throttle=CLIMB {self.climb_gain:.1f} m/s/rad "
@@ -3137,6 +3306,34 @@ def _intercept_from_env(log_dir=None, verbose=True):
                         left and right".
         MAX_BANK_DEG    ceiling on commanded bank. Default 30. The FC's ANGLE_MAX
                         clamps it again, so raise both to go harder.
+        BANK_FAR_DEG    ceiling on commanded bank while the target is still FAR,
+                        i.e. at SCHED_LO_FRAC. Default UNSET = same as
+                        MAX_BANK_DEG, i.e. the schedule is a NO-OP unless a mode
+                        asks for it. This is the "do not
+                        throw the airframe around at acquisition" knob, and it is
+                        the RIGHT one for that job: it caps authority without
+                        touching ROLL_PN_GAIN, which section 9 measured losing a
+                        hard zigzag outright when it was lowered to 25.
+        SCHED_LO_FRAC   bbox width / frame width treated as "far". Default 0.02.
+        SCHED_HI_FRAC   ...and as "close". Default 0.35, the terminal trigger.
+        PN_NEAR_MULT    gain multiplier at SCHED_HI_FRAC. Default 1.4. Only ever
+                        >= 1: the schedule ADDS authority as the target closes,
+                        it never subtracts from the configured gain.
+        SENS_DEFAULT    operator sensitivity 0..1 at startup, live on the HUD
+                        slider. Default 0.5 = neutral. flight_config sets 0.2 for
+                        SKY, deliberately calm while the target is far.
+                        MEASURED: 0.2 with BANK_FAR_DEG=12 caps the bank below
+                        what a close-range zigzag needs, and section 9 stops
+                        hitting. That is why this is per-mode, not global.
+                        0.5 = exactly the configured gain with the full
+                        schedule; BELOW 0.5 trims the bank ceiling only, ABOVE
+                        0.5 multiplies the gain up to SENS_MAX_MULT.
+        SENS_MAX_MULT   gain multiplier at sensitivity 1.0. Default 2.0.
+        LOCK_RAMP_S     seconds to ramp the bank ceiling in after acquisition,
+                        from 25% to 100%. Default 0 = off. Suppresses the step into
+                        the LOS-rate differentiator and the phantom LOS rate
+                        that hard yaw slaving injects at first lock.
+        FILL_TAU        low-pass on the fill fraction, seconds. Default 0.3.
         MAX_LEAN_DEG    nose-down lean at full commit = closing speed.
                         Default 20. Hard-clamped to 35.
         CLIMB_GAIN      m/s of climb per rad of elevation error. Default 8.
@@ -3202,6 +3399,14 @@ def _intercept_from_env(log_dir=None, verbose=True):
         kp_yaw=_env_f("KP_YAW", 4.5),
         roll_pn_gain=_env_f("ROLL_PN_GAIN", 45.0),
         max_bank_deg=_env_f("MAX_BANK_DEG", 30.0),
+        bank_far_deg=_env_f("BANK_FAR_DEG", None),
+        sched_lo_frac=_env_f("SCHED_LO_FRAC", 0.02),
+        sched_hi_frac=_env_f("SCHED_HI_FRAC", 0.35),
+        pn_near_mult=_env_f("PN_NEAR_MULT", 1.0),
+        sens=_env_f("SENS_DEFAULT", 0.5),
+        sens_max_mult=_env_f("SENS_MAX_MULT", 2.0),
+        lock_ramp_s=_env_f("LOCK_RAMP_S", 0.0),
+        fill_tau=_env_f("FILL_TAU", 0.30),
         max_lean_deg=_env_f("MAX_LEAN_DEG", 20.0),
         commit_default=_env_f("COMMIT_DEFAULT", 1.0),
         climb_gain=_env_f("CLIMB_GAIN", 8.0),

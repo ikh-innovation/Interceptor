@@ -32,8 +32,8 @@ touching the mount is meant to be loud, not silent.
 #    assigning a variable twice.  Comment one out properly.)
 # ═════════════════════════════════════════════════════════════════════════════
 
-MODE = "human"        # head tracking — needs the mount at 10 deg
-# MODE = "sky"        # drone in the sky — needs the mount at 30 deg
+# MODE = "human"          # head tracking — needs the mount at 10 deg
+MODE = "sky"        # drone in the sky — needs the mount at 30 deg
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -42,7 +42,7 @@ MODE = "human"        # head tracking — needs the mount at 10 deg
 #    Change the mount FIRST, then change this number, then change MODE.
 # ═════════════════════════════════════════════════════════════════════════════
 
-MOUNT_TILT_DEG = 10
+MOUNT_TILT_DEG = 30
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -84,6 +84,16 @@ MODES = {
         # None = the HuggingFace face/person detector, pulled from the cache.
         "model": None,
         "target_class": "",            # "" = auto (the 'face' class)
+        # NO range schedule here.  This is the scored scenario, and section 9 of
+        # tests/test_intercept.py stops hitting the close-range zigzag the
+        # moment the far-field bank ceiling is tightened: a human face fills so
+        # little of the frame that the schedule reads "far" for the whole
+        # engagement and never hands the authority back.  Bit-for-bit the
+        # behaviour that was measured.
+        "bank_far_deg": None,
+        "sens_default": 0.5,
+        "pn_near_mult": 1.0,
+        "lock_ramp_s": 0.0,
         "note": "Scored and flown.  Closes on a level target.",
     },
     "sky": {
@@ -99,6 +109,20 @@ MODES = {
         "model": "runs/detect/v0/weights/best.pt",
         # That model is single-class and calls its class '0', not 'face'.
         "target_class": "",            # "" = auto: the only class there is
+        # THE RANGE SCHEDULE, and it is on only here.  A drone in the sky is
+        # acquired at long range, where the LOS rate is mostly bbox jitter and
+        # the seeker's own yaw slaving injects a phantom rate of the same order
+        # (see fc_control.InterceptLaw's docstring).  Reacting hard to that
+        # throws the airframe around on nothing.
+        #
+        # Note WHAT is scheduled: the BANK CEILING, not the turn gain.  Gain 25
+        # was measured losing a hard zigzag outright, so ROLL_PN_GAIN is a floor
+        # the schedule may only ever add to — never a number to scale down.
+        # Authority is the part that is safe to hold back early.
+        "bank_far_deg": 12,        # ...opening to MAX_BANK_DEG as it closes
+        "sens_default": 0.2,       # calm at acquisition; 0.5 = the plain gain
+        "pn_near_mult": 1.4,       # and 40% more gain once it fills the frame
+        "lock_ramp_s": 0.5,        # ignore the first-lock differentiator spike
         "note": ("Sim: closes to ~35 deg elevation.  Nothing closes above ~45 "
                  "deg in any configuration."),
     },
@@ -164,6 +188,12 @@ def as_shell(cfg):
         f"MAX_LEAN_DEG={cfg['max_lean_deg']}",
         f"ROLL_PN_GAIN={cfg['roll_pn_gain']}",
         f"COMMIT_CHAN={cfg['commit_chan']}",
+        # The range schedule.  Empty BANK_FAR_DEG means "same as MAX_BANK_DEG",
+        # which is how a mode says it does not want the schedule at all.
+        f"BANK_FAR_DEG={'' if cfg.get('bank_far_deg') is None else cfg['bank_far_deg']}",
+        f"SENS_DEFAULT={cfg.get('sens_default', 0.5)}",
+        f"PN_NEAR_MULT={cfg.get('pn_near_mult', 1.0)}",
+        f"LOCK_RAMP_S={cfg.get('lock_ramp_s', 0.0)}",
         # Empty is meaningful: it tells tracker.py to fall back to the Hub
         # model / auto class rather than inheriting a stale export.
         f"WASP_MODEL={cfg.get('model') or ''}",
@@ -193,5 +223,13 @@ if __name__ == "__main__":
         print(f"  lean / gain   : {cfg['max_lean_deg']} deg / "
               f"{cfg['roll_pn_gain']}")
         print(f"  commit chan   : {cfg['commit_chan']}")
+        if cfg.get("bank_far_deg") is None:
+            print(f"  turn schedule : OFF — bank fixed at MAX_BANK_DEG")
+        else:
+            print(f"  turn schedule : bank {cfg['bank_far_deg']} deg far -> "
+                  f"MAX_BANK_DEG near, gain x1 -> x{cfg['pn_near_mult']}")
+            print(f"  sensitivity   : {cfg['sens_default']} at start "
+                  f"(live on the HUD slider)  lock ramp "
+                  f"{cfg['lock_ramp_s']}s")
         print(f"  weights       : {cfg.get('model') or 'HuggingFace face detector (cached)'}")
         print(f"  note          : {cfg['note']}")

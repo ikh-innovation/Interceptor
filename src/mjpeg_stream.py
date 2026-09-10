@@ -42,7 +42,9 @@ from __future__ import annotations
 
 import socket
 import threading
+import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 from time import perf_counter, sleep
 
 import cv2
@@ -58,13 +60,48 @@ _PAGE = b"""<!doctype html>
             font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
   .wrap{height:100%;display:flex;flex-direction:column;align-items:center;
         justify-content:center;gap:8px;padding:8px;box-sizing:border-box}
-  img{max-width:100%;max-height:calc(100% - 28px);object-fit:contain;
+  img{max-width:100%;max-height:calc(100% - 132px);object-fit:contain;
       border:1px solid #21262d;border-radius:4px;background:#000}
-  .bar{display:flex;gap:14px;align-items:center}
+  .bar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;
+       justify-content:center}
   a{color:#58a6ff;text-decoration:none}
+  .panel{width:min(560px,100%);border:1px solid #21262d;border-radius:4px;
+         padding:8px 10px;box-sizing:border-box;background:#0e1117}
+  .row{display:flex;align-items:center;gap:10px}
+  input[type=range]{flex:1;min-width:120px;accent-color:#58a6ff}
+  .val{color:#e6edf3;font-weight:700;min-width:3.2em;text-align:right}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));
+        gap:2px 10px;margin-top:6px}
+  .k{color:#6e7681}
+  .v{color:#e6edf3}
+  .ok{color:#3fb950}
+  .warn{color:#d29922}
+  .err{color:#f85149}
+  .hint{color:#6e7681;margin-top:4px;font-size:11px}
 </style></head>
 <body><div class="wrap">
   <img id="v" src="/stream.mjpg" alt="seeker view">
+
+  <div class="panel">
+    <div class="row">
+      <span>SENSITIVITY</span>
+      <input id="s" type="range" min="0" max="1" step="0.01" value="0.2">
+      <span class="val" id="sv">--</span>
+      <span id="st" class="hint">reading...</span>
+    </div>
+    <div class="grid">
+      <div><span class="k">law sens </span><span class="v" id="d_sens">--</span></div>
+      <div><span class="k">gain </span><span class="v" id="d_gain">--</span></div>
+      <div><span class="k">floor </span><span class="v" id="d_floor">--</span></div>
+      <div><span class="k">bank cap </span><span class="v" id="d_bank">--</span></div>
+      <div><span class="k">bbox fill </span><span class="v" id="d_fill">--</span></div>
+      <div><span class="k">lock ramp </span><span class="v" id="d_ramp">--</span></div>
+    </div>
+    <div class="hint">0.50 = configured gain. Below 0.50 trims the BANK CEILING
+      only - the turn gain never goes under its floor. Above 0.50 multiplies the
+      gain. Values shown are read back out of the running control law.</div>
+  </div>
+
   <div class="bar"><span>WASP seeker &mdash; live</span>
     <a href="/snapshot.jpg" target="_blank">snapshot</a>
     <a href="/stream.mjpg">raw stream</a></div>
@@ -76,6 +113,67 @@ _PAGE = b"""<!doctype html>
   v.onerror = function () {
     setTimeout(function () { v.src = '/stream.mjpg?t=' + Date.now(); }, 1000);
   };
+
+  var sl = document.getElementById('s'), sv = document.getElementById('sv'),
+      st = document.getElementById('st');
+  var dragging = false, pending = null, inflight = false;
+
+  function fmt(x, n) { return (x === undefined || x === null) ? '--' : x.toFixed(n); }
+
+  // Paint ONLY from the server's reply.  The slider's own position is never
+  // treated as truth: if the law clamped or refused a value, the read-back is
+  // what the operator sees, so the display cannot drift from the control loop.
+  function paint(j) {
+    document.getElementById('d_sens').textContent  = fmt(j.sens, 2);
+    document.getElementById('d_gain').textContent  = fmt(j.gain_eff, 1) + ' m/s';
+    document.getElementById('d_floor').textContent = fmt(j.gain_floor, 0) + ' m/s';
+    document.getElementById('d_bank').textContent  = fmt(j.bank_cap_deg, 1) + ' deg';
+    document.getElementById('d_fill').textContent  = fmt(j.fill_frac * 100, 1) + '%';
+    document.getElementById('d_ramp').textContent  = fmt(j.lock_ramp * 100, 0) + '%';
+    sv.textContent = fmt(j.sens, 2);
+    if (!dragging) sl.value = j.sens;
+    // Confirmation is the round trip: the number came back OUT of the law.
+    if (j.applied) {
+      var t = new Date().toLocaleTimeString();
+      var agree = Math.abs(j.sens - parseFloat(sl.value)) < 0.02;
+      st.className = agree ? 'ok' : 'warn';
+      st.textContent = (agree ? 'applied ' : 'law clamped to ' + fmt(j.sens, 2) + ' ')
+                     + t;
+    } else if (st.className !== 'ok' && st.className !== 'warn') {
+      st.className = 'hint'; st.textContent = 'live';
+    }
+  }
+
+  function req(url) {
+    if (inflight) { pending = url; return; }
+    inflight = true;
+    fetch(url, {cache: 'no-store'}).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (j) {
+      paint(j);
+    }).catch(function (e) {
+      st.className = 'err'; st.textContent = 'no law: ' + e.message;
+    }).then(function () {
+      inflight = false;
+      if (pending) { var u = pending; pending = null; req(u); }
+    });
+  }
+
+  // Coalesce the drag: one request at a time, newest wins.  A range input fires
+  // continuously, and queueing every tick would flood the flight computer.
+  sl.addEventListener('input', function () {
+    dragging = true;
+    sv.textContent = parseFloat(sl.value).toFixed(2);
+    st.className = 'hint'; st.textContent = 'sending...';
+    req('/sens?v=' + sl.value);
+  });
+  sl.addEventListener('change', function () { dragging = false; });
+
+  req('/sens');                       // adopt the law's startup value
+  setInterval(function () {           // keep gain / fill / ramp live
+    if (!dragging) req('/sens');
+  }, 500);
 </script>
 </body></html>
 """
@@ -93,7 +191,14 @@ class MJPEGServer:
     """
 
     def __init__(self, port: int = 8080, quality: int = 70,
-                 fps: float = 15.0, host: str = "0.0.0.0"):
+                 fps: float = 15.0, host: str = "0.0.0.0",
+                 sens_get=None, sens_set=None):
+        # sens_get() -> dict of what the control law is ACTUALLY flying.
+        # sens_set(v) -> applies it and returns the value the law kept.
+        # Both are None when no law is wired, and the slider then 503s rather
+        # than pretending to have changed something.
+        self.sens_get = sens_get
+        self.sens_set = sens_set
         self.port    = int(port)
         self.host    = host
         self.quality = max(1, min(100, int(quality)))
@@ -129,8 +234,51 @@ class MJPEGServer:
                     self._send_stream()
                 elif path in ("/snapshot.jpg", "/snapshot"):
                     self._send_snapshot()
+                elif path == "/sens":
+                    self._sens()
                 else:
                     self.send_error(404)
+
+            def _sens(self):
+                """Read, and optionally set, the law's sensitivity.
+
+                GET /sens          -> what the law is flying right now
+                GET /sens?v=0.63   -> set it, then report the SAME read-back
+
+                The reply is always read back out of the law AFTER the write, so
+                the page can only ever display a value the control loop actually
+                holds.  A slider that echoed its own position would confirm
+                nothing.
+                """
+                if server.sens_get is None:
+                    self.send_error(503, "no control law wired")
+                    return
+                q = parse_qs(urlparse(self.path).query)
+                applied = False
+                if "v" in q and server.sens_set is not None:
+                    try:
+                        server.sens_set(float(q["v"][0]))
+                        applied = True
+                    except (TypeError, ValueError):
+                        self.send_error(400, "v must be a number 0..1")
+                        return
+                try:
+                    live = server.sens_get()
+                except Exception as exc:                    # never kill the flight
+                    self.send_error(503, f"law unavailable: {exc}")
+                    return
+                if live is None:                # not an intercept law
+                    self.send_error(503, "law has no sensitivity")
+                    return
+                state = dict(live)
+                state["applied"] = applied
+                body = json.dumps(state).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
 
             def _send_page(self):
                 self.send_response(200)
