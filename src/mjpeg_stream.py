@@ -53,127 +53,162 @@ _BOUNDARY = "waspframe"
 
 _PAGE = b"""<!doctype html>
 <html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>WASP seeker</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>WASP</title>
 <style>
-  html,body{margin:0;height:100%;background:#0b0d10;color:#8b949e;
-            font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
-  .wrap{height:100%;display:flex;flex-direction:column;align-items:center;
-        justify-content:center;gap:8px;padding:8px;box-sizing:border-box}
-  img{max-width:100%;max-height:calc(100% - 132px);object-fit:contain;
-      border:1px solid #21262d;border-radius:4px;background:#000}
-  .bar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;
-       justify-content:center}
-  a{color:#58a6ff;text-decoration:none}
-  .panel{width:min(560px,100%);border:1px solid #21262d;border-radius:4px;
-         padding:8px 10px;box-sizing:border-box;background:#0e1117}
-  .row{display:flex;align-items:center;gap:10px}
-  input[type=range]{flex:1;min-width:120px;accent-color:#58a6ff}
-  .val{color:#e6edf3;font-weight:700;min-width:3.2em;text-align:right}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));
-        gap:2px 10px;margin-top:6px}
-  .k{color:#6e7681}
-  .v{color:#e6edf3}
-  .ok{color:#3fb950}
-  .warn{color:#d29922}
-  .err{color:#f85149}
-  .hint{color:#6e7681;margin-top:4px;font-size:11px}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:#000;color:#b8b8b8;
+            font:12px/1.35 ui-monospace,Menlo,Consolas,monospace;
+            -webkit-text-size-adjust:100%}
+  .wrap{height:100%;display:flex;flex-direction:column}
+  .strip{display:flex;gap:0;border-bottom:1px solid #2a2a2a;flex:0 0 auto}
+  .strip div{flex:1;padding:5px 6px;border-right:1px solid #2a2a2a;
+             white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .strip div:last-child{border-right:0}
+  .k{color:#666}
+  .v{color:#e8e8e8}
+  .vid{flex:1 1 auto;min-height:0;display:flex;align-items:center;
+       justify-content:center;background:#000}
+  img{max-width:100%;max-height:100%;object-fit:contain;display:block}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(88px,1fr));
+        border-top:1px solid #2a2a2a;flex:0 0 auto}
+  .grid div{padding:4px 6px;border-right:1px solid #1c1c1c;
+            border-bottom:1px solid #1c1c1c;white-space:nowrap}
+  .ctl{flex:0 0 auto;border-top:1px solid #2a2a2a}
+  .row{display:flex;align-items:stretch}
+  .lbl{flex:0 0 62px;padding:9px 6px;color:#666;border-right:1px solid #2a2a2a}
+  button{flex:1;min-width:0;background:#000;color:#8a8a8a;border:0;
+         font-size:11px;
+         border-right:1px solid #2a2a2a;padding:11px 4px;
+         font:inherit;letter-spacing:.08em;cursor:pointer}
+  button:last-child{border-right:0}
+  button.on{background:#e8e8e8;color:#000}
+  button:disabled{color:#3a3a3a}
+  .msg{padding:4px 6px;color:#666;border-top:1px solid #2a2a2a;
+       height:20px;overflow:hidden}
 </style></head>
 <body><div class="wrap">
-  <img id="v" src="/stream.mjpg" alt="seeker view">
 
-  <div class="panel">
-    <div class="row">
-      <span>SENSITIVITY</span>
-      <input id="s" type="range" min="0" max="1" step="0.01" value="0.2">
-      <span class="val" id="sv">--</span>
-      <span id="st" class="hint">reading...</span>
-    </div>
-    <div class="grid">
-      <div><span class="k">law sens </span><span class="v" id="d_sens">--</span></div>
-      <div><span class="k">gain </span><span class="v" id="d_gain">--</span></div>
-      <div><span class="k">floor </span><span class="v" id="d_floor">--</span></div>
-      <div><span class="k">bank cap </span><span class="v" id="d_bank">--</span></div>
-      <div><span class="k">bbox fill </span><span class="v" id="d_fill">--</span></div>
-      <div><span class="k">lock ramp </span><span class="v" id="d_ramp">--</span></div>
-    </div>
-    <div class="hint">0.50 = configured gain. Below 0.50 trims the BANK CEILING
-      only - the turn gain never goes under its floor. Above 0.50 multiplies the
-      gain. Values shown are read back out of the running control law.</div>
+  <div class="strip">
+    <div><span class="k">STATE </span><span class="v" id="s_state">--</span></div>
+    <div><span class="k">TGT </span><span class="v" id="s_target">--</span></div>
+    <div><span class="k">FC </span><span class="v" id="s_fc">--</span></div>
+    <div><span class="k">ARM </span><span class="v" id="s_arm">--</span></div>
+    <div><span class="k">DRV </span><span class="v" id="s_drv">--</span></div>
   </div>
 
-  <div class="bar"><span>WASP seeker &mdash; live</span>
-    <a href="/snapshot.jpg" target="_blank">snapshot</a>
-    <a href="/stream.mjpg">raw stream</a></div>
+  <div class="vid"><img id="v" src="/stream.mjpg" alt=""></div>
+
+  <div class="grid">
+    <div><span class="k">RNG </span><span class="v" id="d_range">--</span></div>
+    <div><span class="k">AZ </span><span class="v" id="d_az">--</span></div>
+    <div><span class="k">EL </span><span class="v" id="d_el">--</span></div>
+    <div><span class="k">BANK </span><span class="v" id="d_bank">--</span></div>
+    <div><span class="k">LEAN </span><span class="v" id="d_lean">--</span></div>
+    <div><span class="k">CLIMB </span><span class="v" id="d_climb">--</span></div>
+    <div><span class="k">GAIN </span><span class="v" id="d_gain">--</span></div>
+    <div><span class="k">CAP </span><span class="v" id="d_cap">--</span></div>
+    <div><span class="k">CONF </span><span class="v" id="d_conf">--</span></div>
+    <div><span class="k">FPS </span><span class="v" id="d_fps">--</span></div>
+    <div><span class="k">LAT </span><span class="v" id="d_lat">--</span></div>
+    <div><span class="k">REJ </span><span class="v" id="d_gated">--</span></div>
+    <div><span class="k">VMAX </span><span class="v" id="d_vlim">--</span></div>
+    <div><span class="k">VDN </span><span class="v" id="d_vdn">--</span></div>
+    <div><span class="k">LEAN* </span><span class="v" id="d_leanmax">--</span></div>
+    <div><span class="k">SLEW </span><span class="v" id="d_slew">--</span></div>
+    <div><span class="k">TAU </span><span class="v" id="d_tau">--</span></div>
+    <div><span class="k">DBAND </span><span class="v" id="d_dband">--</span></div>
+  </div>
+
+  <div class="ctl">
+    <div class="row"><div class="lbl">SPEED</div>
+      <button data-k="speed" data-v="SLOW">SLOW</button>
+      <button data-k="speed" data-v="MEDIUM">MEDIUM</button>
+      <button data-k="speed" data-v="FAST">FAST</button>
+      <button data-k="speed" data-v="ULTRA">ULTRA</button></div>
+    <div class="row"><div class="lbl">STEER</div>
+      <button data-k="sens" data-v="SENSITIVE">SENSITIVE</button>
+      <button data-k="sens" data-v="STANDARD">STANDARD</button>
+      <button data-k="sens" data-v="HARSH">HARSH</button></div>
+    <div class="row"><div class="lbl">STAB</div>
+      <button data-k="stab" data-v="ON">ON</button>
+      <button data-k="stab" data-v="OFF">OFF</button></div>
+    <div class="row"><div class="lbl">TARGET</div>
+      <button data-k="target" data-v="HUMAN">HUMAN</button>
+      <button data-k="target" data-v="DRONE">DRONE</button></div>
+  </div>
+  <div class="msg" id="msg">connecting</div>
 </div>
 <script>
-  // A dropped WiFi packet ends the multipart response and the <img> just stops.
-  // Re-arm the src so the operator does not have to reload the page by hand.
   var v = document.getElementById('v');
   v.onerror = function () {
     setTimeout(function () { v.src = '/stream.mjpg?t=' + Date.now(); }, 1000);
   };
+  function T(id, s) { document.getElementById(id).textContent = s; }
+  function n(x, d, u) { return (x === null || x === undefined)
+                        ? '--' : x.toFixed(d) + (u || ''); }
 
-  var sl = document.getElementById('s'), sv = document.getElementById('sv'),
-      st = document.getElementById('st');
-  var dragging = false, pending = null, inflight = false;
-
-  function fmt(x, n) { return (x === undefined || x === null) ? '--' : x.toFixed(n); }
-
-  // Paint ONLY from the server's reply.  The slider's own position is never
-  // treated as truth: if the law clamped or refused a value, the read-back is
-  // what the operator sees, so the display cannot drift from the control loop.
+  // Every button state is painted from the SERVER's reply, never from the
+  // click. If the tracker refused or clamped a command, the dashboard shows
+  // what the control loop actually holds.
   function paint(j) {
-    document.getElementById('d_sens').textContent  = fmt(j.sens, 2);
-    document.getElementById('d_gain').textContent  = fmt(j.gain_eff, 1) + ' m/s';
-    document.getElementById('d_floor').textContent = fmt(j.gain_floor, 0) + ' m/s';
-    document.getElementById('d_bank').textContent  = fmt(j.bank_cap_deg, 1) + ' deg';
-    document.getElementById('d_fill').textContent  = fmt(j.fill_frac * 100, 1) + '%';
-    document.getElementById('d_ramp').textContent  = fmt(j.lock_ramp * 100, 0) + '%';
-    sv.textContent = fmt(j.sens, 2);
-    if (!dragging) sl.value = j.sens;
-    // Confirmation is the round trip: the number came back OUT of the law.
-    if (j.applied) {
-      var t = new Date().toLocaleTimeString();
-      var agree = Math.abs(j.sens - parseFloat(sl.value)) < 0.02;
-      st.className = agree ? 'ok' : 'warn';
-      st.textContent = (agree ? 'applied ' : 'law clamped to ' + fmt(j.sens, 2) + ' ')
-                     + t;
-    } else if (st.className !== 'ok' && st.className !== 'warn') {
-      st.className = 'hint'; st.textContent = 'live';
+    T('s_state', j.state || '--');
+    T('s_target', j.target || '--');
+    T('s_fc', j.fc_mode || (j.linked ? '--' : 'NO LINK'));
+    T('s_arm', j.armed ? 'ARMED' : 'SAFE');
+    T('s_drv', j.steering ? 'DRIVE' : 'PILOT');
+    T('d_range', n(j.range_m, 1, 'm'));
+    T('d_az', n(j.az_deg, 1)); T('d_el', n(j.el_deg, 1));
+    T('d_bank', n(j.bank_deg, 1)); T('d_lean', n(j.lean_deg, 1));
+    T('d_climb', n(j.climb_mps, 2));
+    T('d_gain', n(j.pn_gain_eff, 0)); T('d_cap', n(j.bank_cap_deg, 1));
+    T('d_conf', j.conf === null || j.conf === undefined
+                ? '--' : Math.round(j.conf * 100) + '%');
+    T('d_fps', n(j.fps, 1));
+    T('d_lat', j.latency_s === null || j.latency_s === undefined
+               ? '--' : Math.round(j.latency_s * 1000) + 'ms');
+    T('d_gated', j.gated === undefined ? '--' : String(j.gated));
+    T('d_vlim', n(j.climb_limit, 1, 'm/s'));
+    T('d_vdn', n(j.descent_limit, 1, 'm/s'));
+    T('d_leanmax', n(j.max_lean_deg, 0));
+    T('d_slew', n(j.slew_per_s, 1, '/s'));
+    T('d_tau', n(j.rate_tau, 2, 's'));
+    T('d_dband', n(j.deadband_pct, 1, '%'));
+    var btns = document.querySelectorAll('button');
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i], k = b.getAttribute('data-k'), val = b.getAttribute('data-v');
+      var cur = (k === 'sens') ? j.sens_mode
+              : (k === 'speed') ? j.speed_mode
+              : (k === 'stab')  ? j.stab : j.target;
+      if (cur === val) b.classList.add('on'); else b.classList.remove('on');
     }
   }
 
-  function req(url) {
-    if (inflight) { pending = url; return; }
-    inflight = true;
+  var busy = false;
+  function req(url, note) {
+    if (busy) return;
+    busy = true;
     fetch(url, {cache: 'no-store'}).then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     }).then(function (j) {
       paint(j);
+      if (note) T('msg', note + ' applied ' + new Date().toLocaleTimeString());
     }).catch(function (e) {
-      st.className = 'err'; st.textContent = 'no law: ' + e.message;
-    }).then(function () {
-      inflight = false;
-      if (pending) { var u = pending; pending = null; req(u); }
-    });
+      T('msg', 'link error: ' + e.message);
+    }).then(function () { busy = false; });
   }
 
-  // Coalesce the drag: one request at a time, newest wins.  A range input fires
-  // continuously, and queueing every tick would flood the flight computer.
-  sl.addEventListener('input', function () {
-    dragging = true;
-    sv.textContent = parseFloat(sl.value).toFixed(2);
-    st.className = 'hint'; st.textContent = 'sending...';
-    req('/sens?v=' + sl.value);
+  document.addEventListener('click', function (ev) {
+    var b = ev.target.closest ? ev.target.closest('button') : null;
+    if (!b) return;
+    var k = b.getAttribute('data-k'), val = b.getAttribute('data-v');
+    T('msg', 'sending ' + k + '=' + val);
+    req('/cmd?' + k + '=' + encodeURIComponent(val), k + '=' + val);
   });
-  sl.addEventListener('change', function () { dragging = false; });
 
-  req('/sens');                       // adopt the law's startup value
-  setInterval(function () {           // keep gain / fill / ramp live
-    if (!dragging) req('/sens');
-  }, 500);
+  req('/state');
+  setInterval(function () { req('/state'); }, 500);
 </script>
 </body></html>
 """
@@ -192,13 +227,13 @@ class MJPEGServer:
 
     def __init__(self, port: int = 8080, quality: int = 70,
                  fps: float = 15.0, host: str = "0.0.0.0",
-                 sens_get=None, sens_set=None):
-        # sens_get() -> dict of what the control law is ACTUALLY flying.
-        # sens_set(v) -> applies it and returns the value the law kept.
-        # Both are None when no law is wired, and the slider then 503s rather
-        # than pretending to have changed something.
-        self.sens_get = sens_get
-        self.sens_set = sens_set
+                 state_get=None, command=None):
+        # state_get()      -> dict of what the tracker is ACTUALLY doing.
+        # command(k, v)    -> applies an operator command, returns nothing.
+        # Both are None when nothing is wired, and the dashboard then 503s
+        # rather than pretending to have changed something.
+        self.state_get = state_get
+        self.command = command
         self.port    = int(port)
         self.host    = host
         self.quality = max(1, min(100, int(quality)))
@@ -234,51 +269,65 @@ class MJPEGServer:
                     self._send_stream()
                 elif path in ("/snapshot.jpg", "/snapshot"):
                     self._send_snapshot()
-                elif path == "/sens":
-                    self._sens()
+                elif path in ("/state", "/sens"):
+                    self._state()
+                elif path == "/cmd":
+                    self._cmd()
                 else:
                     self.send_error(404)
 
-            def _sens(self):
-                """Read, and optionally set, the law's sensitivity.
-
-                GET /sens          -> what the law is flying right now
-                GET /sens?v=0.63   -> set it, then report the SAME read-back
-
-                The reply is always read back out of the law AFTER the write, so
-                the page can only ever display a value the control loop actually
-                holds.  A slider that echoed its own position would confirm
-                nothing.
-                """
-                if server.sens_get is None:
-                    self.send_error(503, "no control law wired")
-                    return
-                q = parse_qs(urlparse(self.path).query)
-                applied = False
-                if "v" in q and server.sens_set is not None:
-                    try:
-                        server.sens_set(float(q["v"][0]))
-                        applied = True
-                    except (TypeError, ValueError):
-                        self.send_error(400, "v must be a number 0..1")
-                        return
-                try:
-                    live = server.sens_get()
-                except Exception as exc:                    # never kill the flight
-                    self.send_error(503, f"law unavailable: {exc}")
-                    return
-                if live is None:                # not an intercept law
-                    self.send_error(503, "law has no sensitivity")
-                    return
-                state = dict(live)
-                state["applied"] = applied
-                body = json.dumps(state).encode()
-                self.send_response(200)
+            def _json(self, obj, code=200):
+                body = json.dumps(obj).encode()
+                self.send_response(code)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(body)
+
+            def _read_state(self):
+                if server.state_get is None:
+                    return None
+                try:
+                    return server.state_get()
+                except Exception:            # never take the flight down
+                    return None
+
+            def _state(self):
+                """What the tracker is doing right now, read off the live loop."""
+                st = self._read_state()
+                if st is None:
+                    self.send_error(503, "no tracker wired")
+                    return
+                self._json(st)
+
+            def _cmd(self):
+                """Apply an operator command, then report the resulting state.
+
+                GET /cmd?sens=STANDARD
+                GET /cmd?target=DRONE
+
+                The reply is the state read back AFTER the command, so the
+                dashboard can only ever display what the control loop actually
+                holds.  A button that lit up on its own click would confirm
+                nothing.
+                """
+                if server.command is None:
+                    self.send_error(503, "no tracker wired")
+                    return
+                q = parse_qs(urlparse(self.path).query)
+                applied = []
+                for key in ("speed", "sens", "stab", "target"):
+                    if key in q:
+                        try:
+                            server.command(key, q[key][0])
+                            applied.append(key)
+                        except Exception as exc:
+                            self.send_error(400, f"{key}: {exc}")
+                            return
+                st = self._read_state() or {}
+                st["applied"] = applied
+                self._json(st)
 
             def _send_page(self):
                 self.send_response(200)
@@ -450,6 +499,36 @@ def local_ips():
     interface the phone on the same WiFi will come in on.
     """
     ips = []
+
+    # FIRST, enumerate the interfaces directly.  The route probe below only
+    # finds an address if one of its hardcoded destinations is routable, so on
+    # a field network with no internet and a gateway that is not 192.168.1.1 or
+    # 10.0.0.1 it found NOTHING and the banner printed a literal
+    # "http://<jetson-ip>:8080/" — which is what happened on 2026-09-10 after
+    # the Jetson moved to a different WiFi.  Asking the kernel what addresses
+    # are actually configured cannot fail that way.
+    try:
+        import array
+        import fcntl
+        import struct
+        SIOCGIFADDR = 0x8915
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            for _idx, name in socket.if_nameindex():
+                try:
+                    packed = fcntl.ioctl(
+                        s.fileno(), SIOCGIFADDR,
+                        struct.pack("256s", name.encode()[:15]))
+                    ip = socket.inet_ntoa(packed[20:24])
+                except OSError:
+                    continue
+                if ip and not ip.startswith("127.") and ip not in ips:
+                    ips.append(ip)
+        finally:
+            s.close()
+    except Exception:
+        pass                      # fall through to the route probe
+
     for probe in ("8.8.8.8", "192.168.1.1", "10.0.0.1"):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:

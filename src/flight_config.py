@@ -90,8 +90,13 @@ MODES = {
         # little of the frame that the schedule reads "far" for the whole
         # engagement and never hands the authority back.  Bit-for-bit the
         # behaviour that was measured.
+        "climb_gain": 8,
+        "stick_limit_throttle": 0.90,
+        "lean_el_guard": 0.0,
         "bank_far_deg": None,
         "sens_default": 0.5,
+        "sens_mode": "STANDARD",
+        "speed_mode": "SLOW",
         "pn_near_mult": 1.0,
         "lock_ramp_s": 0.0,
         "note": "Scored and flown.  Closes on a level target.",
@@ -102,7 +107,9 @@ MODES = {
         "target_width_m": 0.30,        # placeholder: ~7-inch quad. MEASURE IT.
         "max_lean_deg": 12,
         "roll_pn_gain": 35,
-        "band": "-6 .. +42 deg at 12 deg lean  (BLIND BELOW THE HORIZON)",
+        "band": ("-6 .. +42 deg near level; full 20 deg lean would drop it to "
+                 "-14 .. +34, which LEAN_EL_GUARD prevents while the "
+                 "target is high.  BLIND BELOW THE HORIZON."),
         # The sky weights are LOCAL — trained here, not on the Hub.  Relative to
         # the repo root, resolved to an absolute path below, because tracker.py
         # runs with its cwd in src/ and a relative path would miss by one level.
@@ -119,8 +126,40 @@ MODES = {
         # was measured losing a hard zigzag outright, so ROLL_PN_GAIN is a floor
         # the schedule may only ever add to — never a number to scale down.
         # Authority is the part that is safe to hold back early.
+        # ── SPEED.  Measured from flight 20260909_110654 (3233 engaged frames):
+        #   climb commanded  mean 1.11 m/s, max 3.97, and NOT ONE frame above
+        #                    4 m/s — against a 6.0 m/s ceiling the FC was
+        #                    already configured to give (PILOT_SPEED_UP=600).
+        #                    Throttle stick averaged 0.26 of 0.90 available.
+        #   lean commanded   pinned at the 12 deg limit for 85% of frames.
+        #
+        # So the airframe was not slow because it was working hard — it was slow
+        # because it was barely asking.  climb = CLIMB_GAIN * elevation_error,
+        # and at the observed median error of 10 deg (0.178 rad) a gain of 8
+        # requests 1.4 m/s.  That is the 1.11 m/s in the log, exactly.
+        #
+        # SCENARIO.md's rule is CLIMB_GAIN ~= ceiling / 0.31, so 6.0 m/s wants
+        # ~19.  THIS is the knob that makes it climb, and climbing is what
+        # closes the range on a target above you.
+        "climb_gain": 19,
+        "stick_limit_throttle": 1.0,   # was 0.90 = a 10% ceiling for nothing
+        # Lean is the forward-speed channel and it WAS saturated, so it does
+        # need raising.  But raising it alone would have blinded the seeker:
+        # the visible band is (tilt - lean) +/- 24.4, so lean 20 drops the top
+        # edge from 42 to 34 deg while the measured elevation p95 was 38.9.
+        # lean_el_guard hands the lean back to the seeker near the top of the
+        # frame, which makes the higher ceiling safe to carry.
+        "max_lean_deg": 20,
+        "lean_el_guard": 0.55,
+        # PN gain tracks airspeed (gain ~= 3 x cruise).  At 20 deg of lean this
+        # airframe settles near 15 m/s, so 45 — the documented default — not 35.
+        "roll_pn_gain": 45,
         "bank_far_deg": 12,        # ...opening to MAX_BANK_DEG as it closes
-        "sens_default": 0.2,       # calm at acquisition; 0.5 = the plain gain
+        "sens_default": 0.5,       # STANDARD on the dashboard = the plain gain
+        "sens_mode": "STANDARD",
+        # MEDIUM at power-up: FAST is one tap away on the phone, but a
+        # 20 m/s climb should be a decision someone makes, not a default.
+        "speed_mode": "MEDIUM",
         "pn_near_mult": 1.4,       # and 40% more gain once it fills the frame
         "lock_ramp_s": 0.5,        # ignore the first-lock differentiator spike
         "note": ("Sim: closes to ~35 deg elevation.  Nothing closes above ~45 "
@@ -194,6 +233,18 @@ def as_shell(cfg):
         f"SENS_DEFAULT={cfg.get('sens_default', 0.5)}",
         f"PN_NEAR_MULT={cfg.get('pn_near_mult', 1.0)}",
         f"LOCK_RAMP_S={cfg.get('lock_ramp_s', 0.0)}",
+        f"CLIMB_GAIN={cfg.get('climb_gain', 8)}",
+        f"STICK_LIMIT_THROTTLE={cfg.get('stick_limit_throttle', 0.90)}",
+        f"LEAN_EL_GUARD={cfg.get('lean_el_guard', 0.0)}",
+        # The dashboard's named steering modes and the two target widths, so
+        # switching target type in the air also switches the range scale.
+        f"SENS_MODE={cfg.get('sens_mode', 'STANDARD')}",
+        # The dashboard SPEED profile owns climb_gain and max_lean at run
+        # time, so CLIMB_GAIN / MAX_LEAN_DEG above are only the values the
+        # law is built with before the profile is applied at startup.
+        f"SPEED_MODE={cfg.get('speed_mode', 'MEDIUM')}",
+        f"TARGET_WIDTH_HUMAN={MODES['human']['target_width_m']}",
+        f"TARGET_WIDTH_DRONE={TARGET_WIDTH_M if TARGET_WIDTH_M is not None else MODES['sky']['target_width_m']}",
         # Empty is meaningful: it tells tracker.py to fall back to the Hub
         # model / auto class rather than inheriting a stale export.
         f"WASP_MODEL={cfg.get('model') or ''}",
@@ -222,6 +273,10 @@ if __name__ == "__main__":
         print(f"  target width  : {cfg['target_width_m']} m")
         print(f"  lean / gain   : {cfg['max_lean_deg']} deg / "
               f"{cfg['roll_pn_gain']}")
+        print(f"  climb         : gain {cfg.get('climb_gain', 8)} m/s/rad, "
+              f"stick <= {cfg.get('stick_limit_throttle', 0.9) * 100:.0f}%"
+              + (f"   lean eases above {cfg['lean_el_guard'] * 100:.0f}% "
+                 f"of the half-frame" if cfg.get('lean_el_guard') else ""))
         print(f"  commit chan   : {cfg['commit_chan']}")
         if cfg.get("bank_far_deg") is None:
             print(f"  turn schedule : OFF — bank fixed at MAX_BANK_DEG")

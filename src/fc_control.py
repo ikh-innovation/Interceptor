@@ -642,6 +642,9 @@ class InterceptLaw:
                  fill_tau=0.30,           # low-pass on the fill fraction
                  # ── pitch: closing speed ─────────────────────────────────────
                  max_lean_deg=20.0,       # nose-down lean at full commit
+                 # Back the lean off when the target is near the TOP of the
+                 # frame.  0 = off.  See _lean_el_gate().
+                 lean_el_guard=0.0,
                  commit_default=1.0,      # commit when no commit channel is wired
                  # ── throttle: vertical closure ───────────────────────────────
                  climb_gain=8.0,          # m/s of climb per rad of elevation error
@@ -676,6 +679,8 @@ class InterceptLaw:
                  max_yaw_rate=None,       # rad/s at full yaw stick
                  angle_max=None,          # rad of lean at full roll/pitch stick
                  max_climb_mps=2.5,       # m/s at full throttle stick
+                 max_descent_mps=None,    # m/s at full DOWN stick; None = same
+                 climb_limit_mps=None,    # software cap under the FC ceiling
                  max_pitch_rate=None):    # ACRO compatibility only
         self.h_fov = math.radians(float(h_fov_deg))
         self.v_fov = math.radians(float(v_fov_deg))
@@ -697,6 +702,7 @@ class InterceptLaw:
         # Hard ceiling on the lean, independent of any gain: a multirotor at
         # 30 deg is accelerating at ~0.58 g.
         self.max_lean = math.radians(_clamp(float(max_lean_deg), 0.0, 35.0))
+        self.lean_el_guard = _clamp(float(lean_el_guard), 0.0, 1.0)
         self.commit_default = _clamp(float(commit_default), 0.0, 1.0)
         self.climb_gain = float(climb_gain)
         self.climb_lead = float(climb_lead)
@@ -730,6 +736,21 @@ class InterceptLaw:
         self.max_yaw_rate = float(max_yaw_rate or math.radians(202.5))
         self.angle_max = float(angle_max or math.radians(30.0))
         self.max_climb_mps = max(0.1, float(max_climb_mps))
+        # ArduPilot scales UP by PILOT_SPEED_UP and DOWN by PILOT_SPEED_DN, and
+        # they need not match.  Scaling both by the climb ceiling — as this used
+        # to — under-commands every descent by the ratio between them and makes
+        # the logged climb_mps overstate it.  Keeping them separate is what lets
+        # the climb ceiling be raised hard for an interceptor while the DESCENT
+        # stays slow, which matters: a multirotor descending fast settles into
+        # its own downwash and loses thrust unpredictably.
+        self.max_descent_mps = (self.max_climb_mps if max_descent_mps is None
+                                else max(0.1, float(max_descent_mps)))
+        # The FC's PILOT_SPEED_UP is set once, to the maximum the board takes.
+        # This is the SOFTWARE cap under it, so the operator's SPEED profile can
+        # be changed in the air without writing flight-controller parameters
+        # mid-flight — which is not something to do over WiFi from a phone.
+        self.climb_limit_mps = (None if climb_limit_mps is None
+                                else max(0.1, float(climb_limit_mps)))
         self.max_pitch_rate = float(max_pitch_rate or math.radians(360.0))
 
         self._tan_h = math.tan(self.h_fov / 2.0)
@@ -847,6 +868,114 @@ class InterceptLaw:
                     fill_frac=self._fill,
                     lock_ramp=ramp,
                     locked=self._lock_t is not None)
+
+    def set_speed(self, climb_limit_mps=None, climb_gain=None,
+                  max_lean_deg=None):
+        """Apply an operator SPEED profile.  Called from the HUD's HTTP thread.
+
+        Three plain float stores, no allocation and no reconfiguration, so the
+        control loop picks them up on its next frame with nothing half-applied.
+
+        The FC's own ceiling (PILOT_SPEED_UP) is deliberately NOT touched:
+        writing flight-controller parameters from a phone mid-flight is not a
+        thing to do.  It is set once, to the maximum the board accepts, and
+        every profile caps itself in software underneath it.
+        """
+        if climb_limit_mps is not None:
+            self.climb_limit_mps = max(0.1, float(climb_limit_mps))
+        if climb_gain is not None:
+            self.climb_gain = max(0.0, float(climb_gain))
+        if max_lean_deg is not None:
+            self.max_lean = math.radians(_clamp(float(max_lean_deg), 0.0, 35.0))
+        return self.speed_state()
+
+    def set_stability(self, slew_per_s=None, rate_tau=None,
+                      deadband_frac=None):
+        """The STABILISER: how much the sticks are allowed to twitch.
+
+        Three knobs, all of which trade responsiveness for steadiness:
+
+          slew_per_s     ceiling on how fast a stick may move.  Caps the
+                         airframe's jerk, so a single bad frame cannot throw it.
+          rate_tau       time constant of the LOS-rate differentiator.  Longer
+                         smooths the signal the roll channel banks on.
+          deadband_frac  angular deadband as a fraction of the half-FOV.
+                         Inside it the command is EXACTLY zero, so pointing
+                         noise cannot make the airframe wander while it sits
+                         there tracking.  This is the one that stops the drift.
+
+        MEASURED, flight 20260909_110654: |los_az| averaged 21 deg/s with 19% of
+        frames above 30, and the commanded bank changed by up to 27.8 deg inside
+        a single frame.  A faster SPEED profile makes each of those degrees cost
+        more metres, which is why the profiles widen the deadband as they get
+        faster rather than leaving it at the one value.
+        """
+        if slew_per_s is not None:
+            self.slew_per_s = max(0.0, float(slew_per_s))
+        if deadband_frac is not None:
+            self.deadband_frac = _clamp(float(deadband_frac), 0.0, 0.5)
+        if rate_tau is not None:
+            self.rate_tau = max(1e-3, float(rate_tau))
+            # The live filters have to be retuned too, or the new tau only
+            # applies to filters created after this call — i.e. never.
+            for _f in (self._az_rate, self._el_rate, self._az_body_rate,
+                       self._range_rate):
+                _f.tau = self.rate_tau
+        return self.stability_state()
+
+    def stability_state(self):
+        return dict(slew_per_s=self.slew_per_s,
+                    rate_tau=self.rate_tau,
+                    deadband_frac=self.deadband_frac)
+
+    def speed_state(self):
+        return dict(
+            climb_limit=(self.max_climb_mps if self.climb_limit_mps is None
+                         else min(self.max_climb_mps, self.climb_limit_mps)),
+            climb_ceiling=self.max_climb_mps,
+            descent_limit=self.max_descent_mps,
+            climb_gain=self.climb_gain,
+            max_lean_deg=math.degrees(self.max_lean))
+
+    def _lean_el_gate(self, el_cam):
+        """Lean less when the target is near the TOP of the frame.  1 = free.
+
+        WHY THIS EXISTS.  Nose-down lean is the closing-speed channel, but the
+        camera is bolted to the body: leaning down rotates the whole visible
+        band DOWN by the same angle.  The band is
+
+            (cam_tilt - lean) +/- v_fov/2
+
+        so at cam_tilt 30 and v_fov 48.8 the top edge is 54.4 - lean degrees.
+        Leaning 12 puts it at 42; leaning 20 puts it at 34.
+
+        MEASURED, flight 20260909_110654: the target's world elevation had a p95
+        of 38.9 deg and a max of 51.3.  So simply raising MAX_LEAN_DEG to 20 for
+        more speed would have pushed the target out of the TOP of the frame for
+        more than 5% of the engagement — and precisely during the fast closing
+        phase, which is when the lean is highest and the tracking matters most.
+        Going faster would have made it blind.
+
+        The fix is not a lower lean ceiling, it is a lean that yields to the
+        seeker: full lean while the target sits comfortably inside the frame,
+        easing off as it approaches the top edge.  Climbing then raises the
+        airframe, the elevation angle falls, and the lean is handed straight
+        back.  That is also the right physical priority — for a target ABOVE
+        you, closing the height gap is what shortens the range.
+        """
+        if self.lean_el_guard <= 0.0 or el_cam is None:
+            return 1.0
+        half_v = self.v_fov / 2.0
+        if half_v <= 1e-6:
+            return 1.0
+        # Start easing at `lean_el_guard` of the way up the half-frame, fully
+        # off at the edge.  Only the TOP matters: a target below the boresight
+        # is made MORE visible by leaning, not less.
+        frac = _clamp(el_cam / half_v, -1.0, 1.0)
+        lo = self.lean_el_guard
+        if frac <= lo:
+            return 1.0
+        return _clamp(1.0 - (frac - lo) / max(1e-6, 1.0 - lo), 0.0, 1.0)
 
     def _schedule(self):
         """Range-scheduled turn authority.  Sets _gain_eff and _bank_cap.
@@ -1017,7 +1146,9 @@ class InterceptLaw:
         # first, accelerate as the bearing closes. cos() falls to zero at 90 deg
         # off-boresight and is clamped so it can never command reverse.
         aim_gate = max(0.0, math.cos(az))
-        lean = -self.max_lean * cmt * aim_gate          # negative = nose down
+        # ...and do not lean the target out of the top of the frame either.
+        el_gate = self._lean_el_gate(el_cam)
+        lean = -self.max_lean * cmt * aim_gate * el_gate   # negative = nose down
         pitch_stick = lean / self.angle_max
 
         # ── 8. THROTTLE — vertical closure ───────────────────────────────────
@@ -1028,7 +1159,13 @@ class InterceptLaw:
             climb = 0.0
         else:
             climb = self.climb_gain * el_eff + self.climb_lead * los_el
-        thr_stick = climb / self.max_climb_mps
+        _lim_up = (self.max_climb_mps if self.climb_limit_mps is None
+                   else min(self.max_climb_mps, self.climb_limit_mps))
+        climb = _clamp(climb, -self.max_descent_mps, _lim_up)
+        # Each direction by its own ceiling.
+        _thr_scale = (self.max_climb_mps if climb >= 0.0
+                      else self.max_descent_mps)
+        thr_stick = climb / _thr_scale
 
         # ── 9. polarity, ceilings, slew ──────────────────────────────────────
         if self.invert_yaw:
@@ -1074,7 +1211,8 @@ class InterceptLaw:
             el_cam_deg=math.degrees(el_cam),
             bank_deg=math.degrees(out_roll * self.angle_max),
             lean_deg=math.degrees(out_pitch * self.angle_max),
-            climb_mps=out_thr * self.max_climb_mps,
+            climb_mps=out_thr * (self.max_climb_mps if out_thr >= 0.0
+                                 else self.max_descent_mps),
             los_az_dps=math.degrees(los_az),
             los_el_dps=math.degrees(los_el),
             range_m=rng,
@@ -1085,6 +1223,7 @@ class InterceptLaw:
             terminal=False,
             # The schedule, as flown on THIS frame — the HUD's read-back.
             sens=self.sens,
+            lean_el_gate=el_gate,
             pn_gain_eff=self._gain_eff,
             bank_cap_deg=math.degrees(self._bank_cap),
             fill_frac=self._fill,
@@ -1562,14 +1701,12 @@ class ArduPilotAcro(FcBackend):
         # ArduPilot PILOT_SPEED_DN=0 means "use PILOT_SPEED_UP", so that is exact
         # by default — but if they differ, descents are mis-scaled and the logged
         # climb_mps overstates them.  Say so rather than quietly be wrong.
+        # PILOT_SPEED_DN=0 means "use PILOT_SPEED_UP" on ArduPilot.  Anything
+        # else is honoured as its own ceiling rather than reported as a blocker:
+        # the law now scales each direction separately, so an asymmetric pair is
+        # a legitimate setup (fast up, slow down) and not a mis-scale.
         dn = self._param("PILOT_SPEED_DN")
-        if dn and abs(dn - (up or 250.0)) > 1.0:
-            self.blockers.append(
-                f"PILOT_SPEED_DN={dn:g} cm/s != PILOT_SPEED_UP={up or 250:g}. The "
-                "vertical channel scales by PILOT_SPEED_UP in both directions, so "
-                "descents will be mis-scaled and the logged climb_mps will "
-                "overstate them.  Set PILOT_SPEED_DN=0 to make it follow "
-                "PILOT_SPEED_UP.")
+        self.max_descent_mps = (dn / 100.0) if dn else self.max_climb_mps
 
         for axis in self.axes:
             self.rc[axis] = self._read_axis(axis)
@@ -2647,6 +2784,13 @@ class AcroCommander:
                 self.law.max_yaw_rate = self.backend.pilot_yaw_rate
                 self.law.angle_max = self.backend.angle_max
                 self.law.max_climb_mps = self.backend.max_climb_mps
+                # PILOT_SPEED_DN is its own ceiling; without this the law scales
+                # descents by the CLIMB ceiling and, with the two now
+                # deliberately asymmetric (20 up / 4 down), that is a factor of
+                # five wrong in the direction that matters for safety.
+                _dn = getattr(self.backend, "max_descent_mps", None)
+                if _dn:
+                    self.law.max_descent_mps = _dn
                 self.law.max_pitch_rate = self.backend.acro_rp_rate
             else:
                 self.law.max_yaw_rate = self.backend.acro_yaw_rate
@@ -3050,7 +3194,12 @@ class AcroCommander:
             # marks where the loop stopped looking.
             cols += (",roll_stick,throttle_stick,el_cam_deg,bank_deg,lean_deg,"
                      "climb_mps,los_az_dps,los_el_dps,range_m,closing_mps,"
-                     "latency_s,commit,have_att,terminal")
+                     "latency_s,commit,have_att,terminal,"
+                     # The schedule, so the next flight can be diagnosed the
+                     # way 20260909 had to be reconstructed from the raw
+                     # channels: without these, "why did it bank there" is
+                     # guesswork.
+                     "sens,pn_gain_eff,bank_cap_deg,fill_frac,lean_el_gate")
         self._log_fh.write(cols + "\n")
         print(f"[FC] control log -> {self.log_path}", flush=True)
 
@@ -3083,7 +3232,12 @@ class AcroCommander:
                         f",{cmd.get('latency_s', 0.0):.4f}"
                         f",{cmd.get('commit', 0.0):.2f}"
                         f",{int(bool(cmd.get('have_att')))}"
-                        f",{int(bool(cmd.get('terminal')))}")
+                        f",{int(bool(cmd.get('terminal')))}"
+                        f",{cmd.get('sens', 0.0):.2f}"
+                        f",{cmd.get('pn_gain_eff', 0.0):.1f}"
+                        f",{cmd.get('bank_cap_deg', 0.0):.2f}"
+                        f",{cmd.get('fill_frac', 0.0):.5f}"
+                        f",{cmd.get('lean_el_gate', 1.0):.3f}")
             self._log_fh.write(row + "\n")
         except Exception:
             pass
@@ -3408,6 +3562,7 @@ def _intercept_from_env(log_dir=None, verbose=True):
         lock_ramp_s=_env_f("LOCK_RAMP_S", 0.0),
         fill_tau=_env_f("FILL_TAU", 0.30),
         max_lean_deg=_env_f("MAX_LEAN_DEG", 20.0),
+        lean_el_guard=_env_f("LEAN_EL_GUARD", 0.0),
         commit_default=_env_f("COMMIT_DEFAULT", 1.0),
         climb_gain=_env_f("CLIMB_GAIN", 8.0),
         climb_lead=_env_f("CLIMB_LEAD", 3.0),
