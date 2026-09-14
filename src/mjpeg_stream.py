@@ -113,26 +113,15 @@ _PAGE = b"""<!doctype html>
     <div><span class="k">LAT </span><span class="v" id="d_lat">--</span></div>
     <div><span class="k">REJ </span><span class="v" id="d_gated">--</span></div>
     <div><span class="k">VMAX </span><span class="v" id="d_vlim">--</span></div>
-    <div><span class="k">VDN </span><span class="v" id="d_vdn">--</span></div>
     <div><span class="k">LEAN* </span><span class="v" id="d_leanmax">--</span></div>
-    <div><span class="k">SLEW </span><span class="v" id="d_slew">--</span></div>
-    <div><span class="k">TAU </span><span class="v" id="d_tau">--</span></div>
-    <div><span class="k">DBAND </span><span class="v" id="d_dband">--</span></div>
+    <div><span class="k">VFWD </span><span class="v" id="d_vfwd">--</span></div>
   </div>
 
   <div class="ctl">
-    <div class="row"><div class="lbl">SPEED</div>
-      <button data-k="speed" data-v="SLOW">SLOW</button>
-      <button data-k="speed" data-v="MEDIUM">MEDIUM</button>
-      <button data-k="speed" data-v="FAST">FAST</button>
-      <button data-k="speed" data-v="ULTRA">ULTRA</button></div>
-    <div class="row"><div class="lbl">STEER</div>
-      <button data-k="sens" data-v="SENSITIVE">SENSITIVE</button>
-      <button data-k="sens" data-v="STANDARD">STANDARD</button>
-      <button data-k="sens" data-v="HARSH">HARSH</button></div>
-    <div class="row"><div class="lbl">STAB</div>
-      <button data-k="stab" data-v="ON">ON</button>
-      <button data-k="stab" data-v="OFF">OFF</button></div>
+    <div class="row"><div class="lbl">MODE</div>
+      <button data-k="mode" data-v="SLOW">SLOW</button>
+      <button data-k="mode" data-v="MEDIUM">MEDIUM</button>
+      <button data-k="mode" data-v="FAST">FAST</button></div>
     <div class="row"><div class="lbl">TARGET</div>
       <button data-k="target" data-v="HUMAN">HUMAN</button>
       <button data-k="target" data-v="DRONE">DRONE</button></div>
@@ -169,17 +158,12 @@ _PAGE = b"""<!doctype html>
                ? '--' : Math.round(j.latency_s * 1000) + 'ms');
     T('d_gated', j.gated === undefined ? '--' : String(j.gated));
     T('d_vlim', n(j.climb_limit, 1, 'm/s'));
-    T('d_vdn', n(j.descent_limit, 1, 'm/s'));
     T('d_leanmax', n(j.max_lean_deg, 0));
-    T('d_slew', n(j.slew_per_s, 1, '/s'));
-    T('d_tau', n(j.rate_tau, 2, 's'));
-    T('d_dband', n(j.deadband_pct, 1, '%'));
+    T('d_vfwd', n(j.v_fwd_mps, 1, 'm/s'));
     var btns = document.querySelectorAll('button');
     for (var i = 0; i < btns.length; i++) {
       var b = btns[i], k = b.getAttribute('data-k'), val = b.getAttribute('data-v');
-      var cur = (k === 'sens') ? j.sens_mode
-              : (k === 'speed') ? j.speed_mode
-              : (k === 'stab')  ? j.stab : j.target;
+      var cur = (k === 'mode') ? j.mode : j.target;
       if (cur === val) b.classList.add('on'); else b.classList.remove('on');
     }
   }
@@ -317,7 +301,7 @@ class MJPEGServer:
                     return
                 q = parse_qs(urlparse(self.path).query)
                 applied = []
-                for key in ("speed", "sens", "stab", "target"):
+                for key in ("mode", "speed", "sens", "target"):
                     if key in q:
                         try:
                             server.command(key, q[key][0])

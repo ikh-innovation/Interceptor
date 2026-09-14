@@ -51,6 +51,15 @@ echo "[boot] visible band ${WASP_MODE_BAND}"
 export DISPLAY=:0
 export XAUTHORITY=/run/user/1000/gdm/Xauthority
 
+# HEADLESS IN THE FIELD.  The local cv2 window has a 'q' shortcut that quits the
+# tracker, and quitting is a CLEAN exit, which Restart=on-failure deliberately
+# does not undo — so one stray keypress at the Jetson takes the seeker down and
+# leaves it down.  Observed repeatedly on 2026-09-14.  The phone dashboard now
+# shows everything the window did, so the window is pure risk during a flight;
+# it also costs ~1.8 ms/frame of the 33 ms budget.
+#   TRACKER_HEADLESS=0 ./start-wasp.sh    brings the local window back for bench work
+export TRACKER_HEADLESS=${TRACKER_HEADLESS:-1}
+
 # THE FIELD HAS NO WIFI.  The detector is pulled from the HuggingFace cache;
 # without this, huggingface_hub can stall on a DNS/HTTP timeout at every boot.
 # Verified: the cached model loads with HF_HUB_OFFLINE=1.

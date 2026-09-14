@@ -644,7 +644,15 @@ class InterceptLaw:
                  max_lean_deg=20.0,       # nose-down lean at full commit
                  # Back the lean off when the target is near the TOP of the
                  # frame.  0 = off.  See _lean_el_gate().
-                 lean_el_guard=0.0,
+                 lean_el_guard=0.0,        # legacy top-only guard; 0 = off
+                 # Fly the VELOCITY VECTOR along the line of sight instead of
+                 # driving climb straight off the elevation error.  See
+                 # _climb_command().  0/False keeps the old behaviour.
+                 climb_los=False,
+                 edge_guard=0.0,           # ease off near ANY frame edge
+                 cruise_mps=15.0,          # forward speed at cruise_lean_deg
+                 cruise_lean_deg=20.0,
+                 climb_trim=6.0,           # corrective gain in LOS mode
                  commit_default=1.0,      # commit when no commit channel is wired
                  # ── throttle: vertical closure ───────────────────────────────
                  climb_gain=8.0,          # m/s of climb per rad of elevation error
@@ -703,6 +711,15 @@ class InterceptLaw:
         # 30 deg is accelerating at ~0.58 g.
         self.max_lean = math.radians(_clamp(float(max_lean_deg), 0.0, 35.0))
         self.lean_el_guard = _clamp(float(lean_el_guard), 0.0, 1.0)
+        self.climb_los = bool(climb_los)
+        self.edge_guard = _clamp(float(edge_guard), 0.0, 1.0)
+        self.climb_trim = max(0.0, float(climb_trim))
+        # Drag constant of the airframe, from one measured pair: it settles at
+        # cruise_mps with cruise_lean_deg of lean.  v_dot = g*tan(lean) - k*v^2.
+        _cl = math.radians(_clamp(float(cruise_lean_deg), 1.0, 45.0))
+        self.drag_k = (9.80665 * math.tan(_cl)
+                       / max(1.0, float(cruise_mps) ** 2))
+        self._v_fwd = 0.0
         self.commit_default = _clamp(float(commit_default), 0.0, 1.0)
         self.climb_gain = float(climb_gain)
         self.climb_lead = float(climb_lead)
@@ -937,6 +954,85 @@ class InterceptLaw:
             climb_gain=self.climb_gain,
             max_lean_deg=math.degrees(self.max_lean))
 
+    def _frame_edge_gate(self, el_cam, az):
+        """Ease off the throttle-for-speed near ANY frame edge.  1 = free.
+
+        The old guard only watched the TOP of the frame, on the theory that
+        nose-down lean tips a high target out of it.  Flight 20260914 showed the
+        opposite failure: the airframe out-climbed the target, the target went
+        BELOW the boresight, and el_cam sat pinned at -24.4 deg — the bottom
+        edge — for 5% of the engagement.  Meanwhile the top-only guard had cut
+        the forward lean to 14%, starving exactly the axis that would have
+        fixed the geometry.
+
+        So the gate is symmetric now, and it watches both axes: whichever edge
+        the target is closest to is the one that decides how much speed the
+        airframe may carry.  Slowing down is how you re-centre, which is what
+        the operator asked for — and because climb is slaved to forward speed
+        in LOS mode, slowing down pulls the climb back too, in proportion.
+        """
+        if self.edge_guard <= 0.0:
+            return 1.0
+        worst = 0.0
+        for ang, half in ((el_cam, self.v_fov / 2.0), (az, self.h_fov / 2.0)):
+            if ang is None or half <= 1e-6:
+                continue
+            worst = max(worst, abs(_clamp(ang / half, -1.0, 1.0)))
+        lo = self.edge_guard
+        if worst <= lo:
+            return 1.0
+        return _clamp(1.0 - (worst - lo) / max(1e-6, 1.0 - lo), 0.0, 1.0)
+
+    def _climb_command(self, el_world, el_eff, los_el, lean, dt):
+        """Vertical command.  Two laws, selected by `climb_los`.
+
+        ERROR MODE (the old one): climb = gain * elevation_error.  Flight
+        20260914 measured what that does with a gain sized to a big ceiling —
+        the throttle stick saturated at BOTH ends (p05 -1.00, p95 +1.00), climb
+        sat above 11 m/s for 46% of the engagement, and the airframe arrived
+        ABOVE the target: world elevation went negative on 17% of frames and
+        below the -6 deg edge of the visible band on 9%.  At that point the
+        target is under the nose, the camera cannot see below the horizon, and
+        the lock is gone.  The law had no idea how fast it was going forward, so
+        it had no way to know that climbing that hard was too steep.
+
+        LOS MODE: match the FLIGHT PATH ANGLE to the line of sight.
+
+            climb = v_forward * tan(elevation)  +  trim*error + lead*rate
+
+        The first term is the whole trade-off in one line.  Going up and going
+        forward stop being independent: climb is whatever keeps the velocity
+        vector pointing AT the target, so a faster mode gets a proportionally
+        faster climb and never a steeper one.  When the airframe is level with
+        the target the term is zero by construction rather than by a gain
+        fighting its own overshoot, and the trim/lead terms only clean up what
+        the geometry estimate misses.
+
+        Forward speed is not measured — there is no GPS — so it is integrated
+        from the commanded lean through the airframe's own drag model,
+        v_dot = g*tan(lean) - k*v^2, which is self-limiting at the cruise speed
+        the constant was fitted to.  Starting from rest it reads low, which is
+        correct: early in the run there IS no forward speed to match, so the
+        law should not be climbing hard yet.
+        """
+        # Forward-speed estimate, whatever the mode, so it is available to log.
+        if dt and dt > 1e-6:
+            a = 9.80665 * math.tan(min(abs(lean), math.radians(45.0)))
+            self._v_fwd = max(0.0, self._v_fwd
+                              + (a - self.drag_k * self._v_fwd ** 2) * dt)
+
+        if el_world is None:
+            return 0.0
+        if not self.climb_los:
+            return self.climb_gain * el_eff + self.climb_lead * los_el
+
+        # tan() runs away near the vertical, and nothing closes above ~45 deg
+        # anyway, so the geometry term is clamped well before it blows up.
+        el_c = _clamp(el_world, math.radians(-50.0), math.radians(50.0))
+        return (self._v_fwd * math.tan(el_c)
+                + self.climb_trim * el_eff
+                + self.climb_lead * los_el)
+
     def _lean_el_gate(self, el_cam):
         """Lean less when the target is near the TOP of the frame.  1 = free.
 
@@ -1146,8 +1242,9 @@ class InterceptLaw:
         # first, accelerate as the bearing closes. cos() falls to zero at 90 deg
         # off-boresight and is clamped so it can never command reverse.
         aim_gate = max(0.0, math.cos(az))
-        # ...and do not lean the target out of the top of the frame either.
-        el_gate = self._lean_el_gate(el_cam)
+        # ...and give speed back to the seeker whenever the target is drifting
+        # toward an edge, whichever edge that is.
+        el_gate = self._lean_el_gate(el_cam) * self._frame_edge_gate(el_cam, az)
         lean = -self.max_lean * cmt * aim_gate * el_gate   # negative = nose down
         pitch_stick = lean / self.angle_max
 
@@ -1155,10 +1252,7 @@ class InterceptLaw:
         # A missing attitude commands ZERO climb, never a guess: without measured
         # pitch we cannot tell a target above us from a nose-down attitude, and
         # the two want opposite corrections.
-        if el_lead is None:
-            climb = 0.0
-        else:
-            climb = self.climb_gain * el_eff + self.climb_lead * los_el
+        climb = self._climb_command(el_lead, el_eff, los_el, lean, dt)
         _lim_up = (self.max_climb_mps if self.climb_limit_mps is None
                    else min(self.max_climb_mps, self.climb_limit_mps))
         climb = _clamp(climb, -self.max_descent_mps, _lim_up)
@@ -1224,6 +1318,7 @@ class InterceptLaw:
             # The schedule, as flown on THIS frame — the HUD's read-back.
             sens=self.sens,
             lean_el_gate=el_gate,
+            v_fwd_mps=self._v_fwd,
             pn_gain_eff=self._gain_eff,
             bank_cap_deg=math.degrees(self._bank_cap),
             fill_frac=self._fill,
@@ -1321,6 +1416,9 @@ class InterceptLaw:
         self._ramp = 0.25
         self._gain_eff = self.roll_pn_gain
         self._bank_cap = self.bank_far
+        # The airframe really is still moving, but the next acquisition must not
+        # inherit a speed estimate built from a lean it is no longer holding.
+        self._v_fwd = 0.0
         for k in self._sticks:
             self._sticks[k] = 0.0
         # What the CURRENT slider position would fly on the next acquisition, so
@@ -3563,6 +3661,11 @@ def _intercept_from_env(log_dir=None, verbose=True):
         fill_tau=_env_f("FILL_TAU", 0.30),
         max_lean_deg=_env_f("MAX_LEAN_DEG", 20.0),
         lean_el_guard=_env_f("LEAN_EL_GUARD", 0.0),
+        climb_los=_env_b("CLIMB_LOS", False),
+        edge_guard=_env_f("EDGE_GUARD", 0.0),
+        cruise_mps=_env_f("CRUISE_MPS", 15.0),
+        cruise_lean_deg=_env_f("CRUISE_LEAN_DEG", 20.0),
+        climb_trim=_env_f("CLIMB_TRIM", 6.0),
         commit_default=_env_f("COMMIT_DEFAULT", 1.0),
         climb_gain=_env_f("CLIMB_GAIN", 8.0),
         climb_lead=_env_f("CLIMB_LEAD", 3.0),

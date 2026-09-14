@@ -93,6 +93,9 @@ MODES = {
         "climb_gain": 8,
         "stick_limit_throttle": 0.90,
         "lean_el_guard": 0.0,
+        # Human mode keeps the measured behaviour: no LOS climb, no guard.
+        "climb_los": False,
+        "edge_guard": 0.0,
         "bank_far_deg": None,
         "sens_default": 0.5,
         "sens_mode": "STANDARD",
@@ -108,8 +111,8 @@ MODES = {
         "max_lean_deg": 12,
         "roll_pn_gain": 35,
         "band": ("-6 .. +42 deg near level; full 20 deg lean would drop it to "
-                 "-14 .. +34, which LEAN_EL_GUARD prevents while the "
-                 "target is high.  BLIND BELOW THE HORIZON."),
+                 "-14 .. +34.  EDGE_GUARD gives speed back to the seeker "
+                 "whenever the target nears ANY edge.  BLIND BELOW THE HORIZON."),
         # The sky weights are LOCAL — trained here, not on the Hub.  Relative to
         # the repo root, resolved to an absolute path below, because tracker.py
         # runs with its cwd in src/ and a relative path would miss by one level.
@@ -150,7 +153,23 @@ MODES = {
         # lean_el_guard hands the lean back to the seeker near the top of the
         # frame, which makes the higher ceiling safe to carry.
         "max_lean_deg": 20,
-        "lean_el_guard": 0.55,
+        # THE CLIMB/FORWARD TRADE-OFF.  Flight 20260914 measured the old law
+        # climbing bang-bang (throttle stick saturated at BOTH ends) and
+        # arriving ABOVE the target: world elevation went negative on 17% of
+        # frames and below the -6 deg edge of the visible band on 9%, at which
+        # point the target is under the nose and sky mode cannot see it.
+        # CLIMB_LOS points the velocity vector AT the target instead:
+        # climb = forward_speed * tan(elevation).  In sim that takes FAST from
+        # 55% of the run above the target (35% out of band) to 2% / 0%, at the
+        # same intercept time.
+        "climb_los": True,
+        "climb_trim": 6,
+        "cruise_mps": 15,          # what this airframe settles at, 20 deg lean
+        # Symmetric frame-edge guard REPLACES the old top-only lean_el_guard,
+        # which the same flight showed cutting forward lean to 14% while the
+        # target was actually escaping out of the BOTTOM.
+        "edge_guard": 0.55,
+        "lean_el_guard": 0.0,
         # PN gain tracks airspeed (gain ~= 3 x cruise).  At 20 deg of lean this
         # airframe settles near 15 m/s, so 45 — the documented default — not 35.
         "roll_pn_gain": 45,
@@ -238,11 +257,14 @@ def as_shell(cfg):
         f"LEAN_EL_GUARD={cfg.get('lean_el_guard', 0.0)}",
         # The dashboard's named steering modes and the two target widths, so
         # switching target type in the air also switches the range scale.
-        f"SENS_MODE={cfg.get('sens_mode', 'STANDARD')}",
+        f"WASP_MODE_SPEED={cfg.get('speed_mode', 'MEDIUM')}",
+        f"CLIMB_LOS={1 if cfg.get('climb_los') else 0}",
+        f"EDGE_GUARD={cfg.get('edge_guard', 0.0)}",
+        f"CRUISE_MPS={cfg.get('cruise_mps', 15)}",
+        f"CLIMB_TRIM={cfg.get('climb_trim', 6)}",
         # The dashboard SPEED profile owns climb_gain and max_lean at run
         # time, so CLIMB_GAIN / MAX_LEAN_DEG above are only the values the
         # law is built with before the profile is applied at startup.
-        f"SPEED_MODE={cfg.get('speed_mode', 'MEDIUM')}",
         f"TARGET_WIDTH_HUMAN={MODES['human']['target_width_m']}",
         f"TARGET_WIDTH_DRONE={TARGET_WIDTH_M if TARGET_WIDTH_M is not None else MODES['sky']['target_width_m']}",
         # Empty is meaningful: it tells tracker.py to fall back to the Hub

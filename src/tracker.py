@@ -431,9 +431,7 @@ class DroneTracker:
         self.gated_total     = 0
         self.gate_note       = ""
         self._t_last_frame   = None
-        self.sens_mode       = os.environ.get("SENS_MODE", "STANDARD").upper()
-        self.speed_mode      = os.environ.get("SPEED_MODE", "MEDIUM").upper()
-        self.stab_on         = os.environ.get("STAB", "1") != "0"
+        self.mode_name       = os.environ.get("WASP_MODE_SPEED", "MEDIUM").upper()
         self.target_kind     = os.environ.get("TARGET_KIND", "DRONE").upper()
         self._pending_kind   = None
         self.model_path      = model_path
@@ -468,8 +466,7 @@ class DroneTracker:
                 pass
         # The named mode is the operator-facing control; push it into the law
         # now so the banner and the dashboard agree from the first frame.
-        self.set_sens_mode(self.sens_mode)
-        self.set_speed_mode(self.speed_mode)
+        self.set_mode(self.mode_name)
         self.MISS_TO_SEARCH  = 20
         self.MIN_ROI_HALF    = 50
 
@@ -543,95 +540,56 @@ class DroneTracker:
     # law's 0..1 sensitivity: below 0.5 trims the BANK CEILING only, above it
     # multiplies the turn gain.  The gain floor is never crossed in either
     # direction — see InterceptLaw._schedule_values.
-    SENS_MODES = {"SENSITIVE": 0.20, "STANDARD": 0.50, "HARSH": 0.85}
-
-    # How hard it chases, as three settings.  climb_limit is a SOFTWARE cap
-    # under the FC's PILOT_SPEED_UP (set once to the board maximum, 20 m/s);
-    # climb_gain is sized by SCENARIO.md's rule, ceiling / 0.31, so each profile
-    # can actually reach its own ceiling instead of asking for a fraction of it;
-    # lean is the forward-speed channel, protected by LEAN_EL_GUARD so the extra
-    # nose-down does not tip the target out of the top of the frame.
+    # ONE control.  SPEED, STEER and STABILISER were three separate toggles and
+    # in the field that is three things to get wrong while a drone is closing.
+    # A mode now sets all of it: how fast it flies, how hard it turns, and how
+    # much the sticks are allowed to twitch.
     #
-    #   SLOW    what flew on 20260909 — 6 m/s, and it used only 1.1 of that
-    #   MEDIUM  12 m/s
-    #   FAST    20 m/s, the maximum this flight controller accepts, backed by a
-    #           measured hover throttle of 0.169 (~11:1 thrust-to-weight)
-    #   SLOW    what flew on 20260909 — 6 m/s, and it used only 1.1 of that
-    #   MEDIUM  12 m/s
-    #   FAST    20 m/s
-    #   ULTRA   25 m/s = the FC ceiling, which is ABOVE anything this airframe
-    #           will sustain against drag.  The vertical controller therefore
-    #           just holds full throttle whenever climb is wanted, which IS the
-    #           physical maximum.  Raising the number further changes nothing
-    #           real — the FC accepts 50 m/s quite happily and the drone still
-    #           climbs exactly as fast as its thrust and drag allow.
+    #   climb_limit  ceiling under the FC's PILOT_SPEED_UP (set once to 25 m/s)
+    #   max_lean     the forward-speed channel
+    #   sens         steering authority, 0..1 (0.5 = the configured turn gain)
+    #   slew/tau/deadband   the stabiliser
     #
-    # Each profile also carries its own STABILISER (slew / tau / deadband).
-    # Faster profiles get a faster slew so they can use the speed, and a WIDER
-    # deadband so they do not chase pointing noise while they are doing it —
-    # every degree of spurious bank costs more metres the faster it is going.
-    SPEED_MODES = {
-        "SLOW":   dict(climb_limit_mps=6.0,  climb_gain=19.0, max_lean_deg=12.0,
-                       slew_per_s=8.0,  rate_tau=0.18, deadband_frac=0.030),
-        "MEDIUM": dict(climb_limit_mps=12.0, climb_gain=39.0, max_lean_deg=16.0,
-                       slew_per_s=11.0, rate_tau=0.15, deadband_frac=0.035),
-        "FAST":   dict(climb_limit_mps=20.0, climb_gain=65.0, max_lean_deg=20.0,
-                       slew_per_s=14.0, rate_tau=0.13, deadband_frac=0.040),
-        "ULTRA":  dict(climb_limit_mps=25.0, climb_gain=81.0, max_lean_deg=22.0,
-                       slew_per_s=16.0, rate_tau=0.12, deadband_frac=0.045),
+    # Climb is NOT in here as a gain any more.  With CLIMB_LOS the vertical
+    # command is v_forward * tan(elevation), so picking a faster mode buys a
+    # proportionally faster climb and never a steeper one — which is the whole
+    # point.  The ceiling is only a cap for the corrective term.
+    MODES = {
+        "SLOW":   dict(climb_limit_mps=8.0,  max_lean_deg=12.0, sens=0.35,
+                       slew_per_s=8.0,  rate_tau=0.18, deadband_frac=0.030,
+                       climb_trim=5.0),
+        "MEDIUM": dict(climb_limit_mps=14.0, max_lean_deg=16.0, sens=0.50,
+                       slew_per_s=11.0, rate_tau=0.15, deadband_frac=0.035,
+                       climb_trim=6.0),
+        "FAST":   dict(climb_limit_mps=25.0, max_lean_deg=22.0, sens=0.65,
+                       slew_per_s=14.0, rate_tau=0.13, deadband_frac=0.040,
+                       climb_trim=8.0),
     }
-    _SPEED_KEYS = ("climb_limit_mps", "climb_gain", "max_lean_deg")
+    _SPEED_KEYS = ("climb_limit_mps", "max_lean_deg")
     _STAB_KEYS  = ("slew_per_s", "rate_tau", "deadband_frac")
 
-    # STABILISER OFF falls back to the law's own measured defaults — the values
-    # every check in tests/ was tuned and passed against.  So "OFF" is not
-    # "unstabilised", it is "the behaviour before the per-speed stabiliser
-    # existed", which is the honest thing for an A/B switch in the field.
-    STAB_OFF = dict(slew_per_s=11.0, rate_tau=0.12, deadband_frac=0.02)
-
-    def set_speed_mode(self, name):
-        """Apply one of SPEED_MODES by name.  Returns the name actually set."""
+    def set_mode(self, name):
+        """Apply one of MODES by name.  Returns the name actually set."""
         key = str(name).strip().upper()
-        if key not in self.SPEED_MODES:
-            return self.speed_mode
+        if key not in self.MODES:
+            return self.mode_name
         law = getattr(getattr(self, "ap", None), "law", None)
-        prof = self.SPEED_MODES[key]
+        prof = self.MODES[key]
         if hasattr(law, "set_speed"):
             law.set_speed(**{k: prof[k] for k in self._SPEED_KEYS})
-        self.speed_mode = key
-        self._apply_stability()      # the stabiliser follows the speed profile
-        return key
-
-    def _apply_stability(self):
-        """Push the stabiliser values for the CURRENT speed mode, or the
-        law's defaults when the operator has switched it off."""
-        law = getattr(getattr(self, "ap", None), "law", None)
-        if not hasattr(law, "set_stability"):
-            return
-        if self.stab_on:
-            prof = self.SPEED_MODES[self.speed_mode]
+        if hasattr(law, "set_stability"):
             law.set_stability(**{k: prof[k] for k in self._STAB_KEYS})
-        else:
-            law.set_stability(**self.STAB_OFF)
-
-    def set_stab(self, on):
-        """Turn the stabiliser on or off.  Returns the state actually held."""
-        if isinstance(on, str):
-            on = on.strip().upper() in ("ON", "1", "TRUE", "YES")
-        self.stab_on = bool(on)
-        self._apply_stability()
-        return self.stab_on
-
-    def set_sens_mode(self, name):
-        """Apply one of SENS_MODES by name.  Returns the name actually set."""
-        key = str(name).strip().upper()
-        if key not in self.SENS_MODES:
-            return self.sens_mode
-        law = getattr(getattr(self, "ap", None), "law", None)
         if hasattr(law, "set_sens"):
-            law.set_sens(self.SENS_MODES[key])
-        self.sens_mode = key
+            law.set_sens(prof["sens"])
+        if law is not None and hasattr(law, "climb_trim"):
+            law.climb_trim = float(prof["climb_trim"])
+        self.mode_name = key
         return key
+
+
+
+
+
 
     def request_target_kind(self, kind):
         """Ask for HUMAN or DRONE tracking.  Applied by the CONTROL LOOP.
@@ -702,9 +660,7 @@ class DroneTracker:
         out = dict(
             state=self.state, layer=self.layer,
             conf=(None if self.conf is None else round(self.conf, 3)),
-            target=self.target_kind, sens_mode=self.sens_mode,
-            speed_mode=self.speed_mode,
-            stab=("ON" if self.stab_on else "OFF"),
+            target=self.target_kind, mode=self.mode_name,
             gated=self.gated_total, gate_note=self.gate_note,
             prof=self.prof_ms,
             fps=round(self._ui_fps, 1),
@@ -717,7 +673,8 @@ class DroneTracker:
                       ("climb_mps", 2), ("az_deg", 1), ("el_deg", 1),
                       ("los_az_dps", 1), ("latency_s", 3),
                       ("pn_gain_eff", 1), ("bank_cap_deg", 1),
-                      ("fill_frac", 4), ("lean_el_gate", 2)):
+                      ("fill_frac", 4), ("lean_el_gate", 2),
+                      ("v_fwd_mps", 1)):
             v = cmd.get(k)
             out[k] = None if v is None else round(float(v), dp)
         # The schedule comes STRAIGHT off the law, not from the last frame.
@@ -1363,12 +1320,10 @@ class DroneTracker:
         the steering mode is a single clamped float store into the law, and the
         target switch only raises a flag for the loop to act on between frames.
         """
-        if key == "sens":
-            self.set_sens_mode(value)
-        elif key == "speed":
-            self.set_speed_mode(value)
-        elif key == "stab":
-            self.set_stab(value)
+        if key in ("mode", "speed", "sens"):
+            # "speed"/"sens" kept as aliases so an old bookmarked dashboard
+            # still drives the one control instead of silently doing nothing.
+            self.set_mode(value)
         elif key == "target":
             self.request_target_kind(value)
         else:
