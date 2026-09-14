@@ -684,9 +684,13 @@ class InterceptLaw:
                  invert_roll=False,
                  invert_throttle=False,
                  # ── filled in from the FC at connect ─────────────────────────
-                 max_yaw_rate=None,       # rad/s at full yaw stick
+                 max_yaw_rate=None,       # rad/s at full yaw stick (ALT_HOLD)
                  angle_max=None,          # rad of lean at full roll/pitch stick
                  max_climb_mps=2.5,       # m/s at full throttle stick
+                 # ── ACRO (rate-mode) operation.  See compute(rate_mode=...). ──
+                 acro_rp_rate=None,       # rad/s at full roll/pitch stick (ACRO)
+                 acro_yaw_rate=None,      # rad/s at full yaw stick (ACRO)
+                 att_kp=6.0,              # rad/s of rate per rad of angle error
                  max_descent_mps=None,    # m/s at full DOWN stick; None = same
                  climb_limit_mps=None,    # software cap under the FC ceiling
                  max_pitch_rate=None):    # ACRO compatibility only
@@ -753,6 +757,12 @@ class InterceptLaw:
         self.max_yaw_rate = float(max_yaw_rate or math.radians(202.5))
         self.angle_max = float(angle_max or math.radians(30.0))
         self.max_climb_mps = max(0.1, float(max_climb_mps))
+        # ACRO-side scales.  None until connect() reads them from the FC; a
+        # missing one means "this airframe has never told us its ACRO rate",
+        # and rate_mode falls back to 0 command rather than dividing by None.
+        self.acro_rp_rate = float(acro_rp_rate) if acro_rp_rate else None
+        self.acro_yaw_rate = float(acro_yaw_rate) if acro_yaw_rate else None
+        self.att_kp = max(0.0, float(att_kp))
         # ArduPilot scales UP by PILOT_SPEED_UP and DOWN by PILOT_SPEED_DN, and
         # they need not match.  Scaling both by the climb ceiling — as this used
         # to — under-commands every descent by the ratio between them and makes
@@ -1033,6 +1043,36 @@ class InterceptLaw:
                 + self.climb_trim * el_eff
                 + self.climb_lead * los_el)
 
+    def _angle_to_stick(self, target_rad, measured_rad, rate_mode):
+        """One physical ANGLE target -> one stick, for either flight mode.
+
+        ALT_HOLD: the FC's own attitude controller holds whatever angle the
+        stick names, at up to ~400 Hz onboard.  The stick IS the angle,
+        normalised by angle_max — nothing else to do.
+
+        ACRO: there is no onboard attitude hold at all.  This law still only
+        ever DECIDES an angle (the bank/lean that proportional navigation and
+        the closing-speed law want), so an outer P loop here converts that
+        angle into the RATE that would reach it, `att_kp` rad/s per rad of
+        error, clamped to the airframe's ACRO_RP_RATE and normalised the same
+        way.  This is exactly what the FC's own attitude controller does
+        internally in ALT_HOLD — the difference is this copy runs over a
+        20-30 Hz link with 50-100 ms of latency instead of onboard at 400 Hz,
+        so treat ACRO as the LOWER-bandwidth of the two modes, not a faster
+        one, and do not expect it to reject a gust as well as ALT_HOLD does.
+
+        Without a measured angle (no ATTITUDE yet) or without a known
+        ACRO_RP_RATE, the honest answer is "cannot compute a rate safely",
+        so this returns 0 rather than guessing.
+        """
+        if not rate_mode:
+            return target_rad / self.angle_max
+        if measured_rad is None or not self.acro_rp_rate:
+            return 0.0
+        rate_cmd = _clamp(self.att_kp * (target_rad - measured_rad),
+                          -self.acro_rp_rate, self.acro_rp_rate)
+        return rate_cmd / self.acro_rp_rate
+
     def _lean_el_gate(self, el_cam):
         """Lean less when the target is near the TOP of the frame.  1 = free.
 
@@ -1144,8 +1184,17 @@ class InterceptLaw:
 
     # ── the law ───────────────────────────────────────────────────────────────
     def compute(self, err_x, err_y, fw, fh, dt=None, bbox_w=None, bbox_h=None,
-                att=None, commit=None, capture_age=None):
+                att=None, commit=None, capture_age=None, rate_mode=False):
         """Pixel offset -> four stick deflections.
+
+        rate_mode    False (default) = ALT_HOLD: roll/pitch sticks are ANGLES,
+                     normalised by `angle_max`.  True = ACRO: the FC has no
+                     attitude hold at all, so the same physical bank/lean
+                     TARGET this law always computes is instead reached by an
+                     outer P loop against the MEASURED attitude, output as a
+                     body-RATE stick normalised by `acro_rp_rate`.  Throttle is
+                     forced to 0 in this mode — see the class docstring's ACRO
+                     section for why the AI never commands raw ACRO thrust.
 
         err_x/err_y  bbox centre minus frame centre, DISPLAY pixels.
                      err_x > 0 target right, err_y > 0 target below.
@@ -1225,7 +1274,13 @@ class InterceptLaw:
                                self.deadband_frac) * half_v
 
         # ── 5. YAW — keep the seeker on the target ───────────────────────────
-        yaw_stick = (self.kp_yaw * az_eff) / self.max_yaw_rate
+        # Always a rate law in both modes; only the SCALE that turns it into a
+        # -1..1 stick differs, because ArduPilot's yaw stick is rad/s in BOTH
+        # ALT_HOLD and ACRO but the two flight modes size that rate from
+        # different parameters (PILOT_Y_RATE vs ACRO_Y_RATE).
+        _yaw_scale = ((self.acro_yaw_rate or self.max_yaw_rate) if rate_mode
+                      else self.max_yaw_rate)
+        yaw_stick = (self.kp_yaw * az_eff) / _yaw_scale
 
         # ── 6. ROLL — proportional navigation ────────────────────────────────
         # Zero without a measured heading: the world LOS bearing cannot be formed
@@ -1234,7 +1289,7 @@ class InterceptLaw:
         a_lat = 0.0 if yaw is None else self._gain_eff * los_az
         bank = _clamp(math.atan2(a_lat, 9.80665),
                       -self._bank_cap, self._bank_cap)
-        roll_stick = bank / self.angle_max
+        roll_stick = self._angle_to_stick(bank, roll, rate_mode)
 
         # ── 7. PITCH — closing speed, nose DOWN ──────────────────────────────
         cmt = self.commit_default if commit is None else _clamp(commit, 0.0, 1.0)
@@ -1246,7 +1301,7 @@ class InterceptLaw:
         # toward an edge, whichever edge that is.
         el_gate = self._lean_el_gate(el_cam) * self._frame_edge_gate(el_cam, az)
         lean = -self.max_lean * cmt * aim_gate * el_gate   # negative = nose down
-        pitch_stick = lean / self.angle_max
+        pitch_stick = self._angle_to_stick(lean, pitch, rate_mode)
 
         # ── 8. THROTTLE — vertical closure ───────────────────────────────────
         # A missing attitude commands ZERO climb, never a guess: without measured
@@ -1260,6 +1315,14 @@ class InterceptLaw:
         _thr_scale = (self.max_climb_mps if climb >= 0.0
                       else self.max_descent_mps)
         thr_stick = climb / _thr_scale
+        # ACRO has no altitude hold: a throttle stick there is raw thrust, not a
+        # climb rate, and this law has no idea what thrust setting that would
+        # even mean.  Command exactly 0 and rely on the backend-level guard
+        # (ArduPilotAcro.steer) to leave the channel with the pilot entirely —
+        # this is belt AND braces, not either/or.
+        if rate_mode:
+            thr_stick = 0.0
+            climb = 0.0
 
         # ── 9. polarity, ceilings, slew ──────────────────────────────────────
         if self.invert_yaw:
@@ -1303,8 +1366,23 @@ class InterceptLaw:
             az_deg=math.degrees(az),
             el_deg=math.degrees(el_world) if el_world is not None else 0.0,
             el_cam_deg=math.degrees(el_cam),
-            bank_deg=math.degrees(out_roll * self.angle_max),
-            lean_deg=math.degrees(out_pitch * self.angle_max),
+            # ALT_HOLD: derive back out of the STICK, after the ceiling and
+            # slew limiter — the physical angle that will actually be flown,
+            # which is what the closed-loop sim's plant is driven by and what
+            # the HUD/CSV need.  (Multiplying by angle_max here is only valid
+            # in this mode — see the ACRO branch.)
+            # ACRO: the stick is a RATE, not an angle, so "stick * angle_max"
+            # is a unit error there.  Report the pre-saturation ANGLE TARGET
+            # instead (bank/lean, step 6/7) — an approximation (it does not
+            # reflect the outer rate loop's own slew), acceptable because nothing
+            # feeds this back into control; it is HUD/CSV only.
+            # RATE mode: `bank`/`lean` (step 6/7) never read invert_* at all,
+            # so reporting them directly is invert-INDEPENDENT by construction
+            # -- matching the ALT_HOLD invariant exactly, not a special case.
+            bank_deg=math.degrees(out_roll * self.angle_max if not rate_mode
+                                  else bank),
+            lean_deg=math.degrees(out_pitch * self.angle_max if not rate_mode
+                                  else lean),
             climb_mps=out_thr * (self.max_climb_mps if out_thr >= 0.0
                                  else self.max_descent_mps),
             los_az_dps=math.degrees(los_az),
@@ -1315,6 +1393,7 @@ class InterceptLaw:
             commit=cmt,
             have_att=bool(have_att),
             terminal=False,
+            rate_mode=bool(rate_mode),
             # The schedule, as flown on THIS frame — the HUD's read-back.
             sens=self.sens,
             lean_el_gate=el_gate,
@@ -1429,8 +1508,8 @@ class InterceptLaw:
                     az_deg=0.0, el_deg=0.0, el_cam_deg=0.0, bank_deg=0.0,
                     lean_deg=0.0, climb_mps=0.0, los_az_dps=0.0, los_el_dps=0.0,
                     range_m=None, closing_mps=0.0, latency_s=0.0, commit=0.0,
-                    have_att=False, terminal=False, sens=self.sens,
-                    pn_gain_eff=_n_gain,
+                    have_att=False, terminal=False, rate_mode=False,
+                    sens=self.sens, pn_gain_eff=_n_gain,
                     bank_cap_deg=math.degrees(_n_cap), fill_frac=0.0)
 
     def describe(self):
@@ -1464,7 +1543,14 @@ class InterceptLaw:
             f"{self.terminal_bbox_frac * 100:.0f}% of frame or range<="
             f"{self.terminal_range_m:.1f} m, hold {self.terminal_hold_s:.1f}s  "
             f"full stick: yaw {math.degrees(self.max_yaw_rate):.0f} deg/s, "
-            f"lean {math.degrees(self.angle_max):.0f} deg")
+            f"lean {math.degrees(self.angle_max):.0f} deg\n"
+            f"                ACRO: "
+            + (f"rate law armed (ATT_KP {self.att_kp:.1f}, ACRO_RP_RATE "
+               f"{math.degrees(self.acro_rp_rate):.0f} deg/s) — same bank/lean "
+               f"target, reached by an outer rate loop instead of the FC's "
+               f"onboard angle hold; throttle stays with the pilot"
+               if self.acro_rp_rate else
+               "not connected yet — scales arrive from the FC at connect()"))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2255,6 +2341,17 @@ class ArduPilotAcro(FcBackend):
         chans = [0] * 8               # 0 = "no override", pilot keeps the channel
         sent = {}
         for axis in self.axes:
+            if axis == "throttle" and self.mode_name not in ANGLE_MODES:
+                # A stick-normalised throttle override only means "climb rate"
+                # in an ANGLE mode, where _throttle_pwm's 0 -> mid PWM is HOLD
+                # ALTITUDE under the FC's own barometer loop.  In ACRO the same
+                # mid PWM is an arbitrary raw thrust setting with nothing
+                # underneath it holding anything — so regardless of what axes
+                # were configured, throttle is left with the pilot the instant
+                # the FC is not in an angle mode.  This is the belt to
+                # InterceptLaw's own brace (it already zeroes the climb command
+                # in rate_mode); either one alone would already make this safe.
+                continue
             cfg = self.rc.get(axis)
             if not cfg or not 1 <= cfg["chan"] <= 8:
                 continue
@@ -2879,9 +2976,14 @@ class AcroCommander:
         # needs ANGLE_MAX, PILOT_Y_RATE and PILOT_SPEED_UP.
         if isinstance(self.backend, ArduPilotAcro):
             if self.is_intercept:
-                self.law.max_yaw_rate = self.backend.pilot_yaw_rate
-                self.law.angle_max = self.backend.angle_max
-                self.law.max_climb_mps = self.backend.max_climb_mps
+                # BOTH scale sets, always — not "whichever mode we start in".
+                # steer_modes can legally contain ALT_HOLD *and* ACRO together
+                # (dual mode), and which one is live can change on every
+                # HEARTBEAT as the pilot flips the transmitter switch, so the
+                # law needs both ready rather than picking one at connect time.
+                self.law.max_yaw_rate = self.backend.pilot_yaw_rate      # ALT_HOLD
+                self.law.angle_max = self.backend.angle_max             # ALT_HOLD
+                self.law.max_climb_mps = self.backend.max_climb_mps     # ALT_HOLD
                 # PILOT_SPEED_DN is its own ceiling; without this the law scales
                 # descents by the CLIMB ceiling and, with the two now
                 # deliberately asymmetric (20 up / 4 down), that is a factor of
@@ -2889,7 +2991,8 @@ class AcroCommander:
                 _dn = getattr(self.backend, "max_descent_mps", None)
                 if _dn:
                     self.law.max_descent_mps = _dn
-                self.law.max_pitch_rate = self.backend.acro_rp_rate
+                self.law.acro_rp_rate = self.backend.acro_rp_rate        # ACRO
+                self.law.acro_yaw_rate = self.backend.acro_yaw_rate      # ACRO
             else:
                 self.law.max_yaw_rate = self.backend.acro_yaw_rate
                 self.law.max_pitch_rate = self.backend.acro_rp_rate
@@ -3012,6 +3115,15 @@ class AcroCommander:
             print("ATTITUDE.  The terminal phase freezes the sticks and flies the")
             print("trajectory it already had, so whatever is in front of it gets hit.")
             print("PROPS OFF on the bench.")
+            if "ACRO" in self.steer_modes:
+                print("-" * 74)
+                print("DUAL MODE: this same guidance also flies in ACRO — the pilot's")
+                print("transmitter switch decides which, cycle to cycle.  In ACRO the")
+                print("SAME bank/lean target is reached by an outer rate loop instead of")
+                print("the FC's onboard angle hold, so expect LOWER bandwidth against a")
+                print("gust than ALT_HOLD, not higher.  Throttle stays with the pilot in")
+                print("ACRO regardless of CONTROL_AXES: there is no altitude hold there")
+                print("for a stick-normalised override to mean anything.")
         else:
             print("REMINDER: in ACRO the attitude controller's authority scales with")
             print("throttle.  At idle throttle the mixer has no headroom and yaw/pitch")
@@ -3061,8 +3173,14 @@ class AcroCommander:
             if bbox is not None and len(bbox) >= 4:
                 bw, bh = bbox[2], bbox[3]
             age = None if capture_t is None else max(0.0, perf_counter() - capture_t)
+            # Which physical law applies is decided by the FC's CURRENT mode,
+            # re-checked every call — the pilot's transmitter switch is the
+            # only thing that ever flips this, same as the steering gate itself.
+            rate_mode = bool(self.backend is not None
+                             and self.backend.mode_name in RATE_MODES)
             return self.law.compute(err_x, err_y, fw, fh, bbox_w=bw, bbox_h=bh,
-                                    att=att, commit=commit, capture_age=age)
+                                    att=att, commit=commit, capture_age=age,
+                                    rate_mode=rate_mode)
 
         pitch_rad = throttle = None
         if self.backend is not None:
@@ -3643,6 +3761,20 @@ def _intercept_from_env(log_dir=None, verbose=True):
                         attitude at 200 deg/s.
         CONTROL_AXES    default roll,pitch,yaw,throttle — all four.
         FC_STEER_MODES  flight modes in which the AI may steer. Default ALT_HOLD.
+                        Set to "ALT_HOLD,ACRO" (comma-separated, either order) to
+                        arm BOTH: the pilot's own transmitter mode switch then
+                        decides which one is live, cycle to cycle — no separate
+                        control needed. See ATT_KP for what changes in ACRO.
+        ATT_KP          rad/s of ACRO rate per rad of bank/lean angle ERROR.
+                        Default 6.0. Only used in ACRO. ALT_HOLD needs no such
+                        gain: the FC's own attitude controller holds the
+                        commanded angle onboard, at up to ~400 Hz. ACRO has none,
+                        so this is an outer P loop, closing the SAME loop over a
+                        20-30 Hz link with 50-100 ms latency instead — expect
+                        LOWER bandwidth than ALT_HOLD, not higher, and less
+                        rejection of a gust. Throttle is never driven in ACRO
+                        (there is no altitude hold to lend it meaning); the pilot
+                        always keeps it.
     """
     law = InterceptLaw(
         h_fov_deg=_env_f("CAM_HFOV_DEG", 62.2),
@@ -3687,6 +3819,7 @@ def _intercept_from_env(log_dir=None, verbose=True):
         invert_pitch=_env_b("PITCH_REVERSED", False),
         invert_roll=_env_b("ROLL_REVERSED", False),
         invert_throttle=_env_b("THROTTLE_REVERSED", False),
+        att_kp=_env_f("ATT_KP", 6.0),
     )
     conn = os.environ.get("MAV_CONN", "udpin:127.0.0.1:14551")
     if conn.strip().lower() == "none":

@@ -173,7 +173,15 @@ MODES = {
         # PN gain tracks airspeed (gain ~= 3 x cruise).  At 20 deg of lean this
         # airframe settles near 15 m/s, so 45 — the documented default — not 35.
         "roll_pn_gain": 45,
-        "bank_far_deg": 12,        # ...opening to MAX_BANK_DEG as it closes
+        # WIND.  Measured in sim (tests/test_acro_dual.py, section 6): a
+        # stationary target 20 m out / 10 m up, 12 m/s crosswind.  At the old
+        # bank_far=12 the airframe MISSES (3.05 m, 16% in frame) because the
+        # "calm at acquisition" ceiling is still binding when the wind-induced
+        # LOS rate needs more authority than that.  At bank_far=24 it HITS
+        # cleanly (0.56 m, 100% in frame) — same still-air result either way
+        # (0.60 m), so this costs nothing when there is no wind.  Field flights
+        # are not indoors: raised for that reason, not for a faster acquisition.
+        "bank_far_deg": 24,        # ...opening to MAX_BANK_DEG as it closes
         "sens_default": 0.5,       # STANDARD on the dashboard = the plain gain
         "sens_mode": "STANDARD",
         # MEDIUM at power-up: FAST is one tap away on the phone, but a
@@ -183,6 +191,15 @@ MODES = {
         "lock_ramp_s": 0.5,        # ignore the first-lock differentiator spike
         "note": ("Sim: closes to ~35 deg elevation.  Nothing closes above ~45 "
                  "deg in any configuration."),
+        # BOTH flight modes drive the SAME guidance law.  ALT_HOLD commands
+        # angles onto the FC's own ~400 Hz attitude controller; ACRO has none,
+        # so an outer P loop (ATT_KP) reaches the same bank/lean target as a
+        # RATE, over a much slower link — expect ACRO to reject a gust WORSE,
+        # not better, than ALT_HOLD.  Throttle never moves in ACRO (see
+        # ArduPilotAcro.steer): the pilot always keeps it there.  Whichever one
+        # the pilot's transmitter is actually in decides, cycle to cycle — no
+        # separate switch to remember.
+        "steer_modes": "ALT_HOLD,ACRO",
     },
 }
 
@@ -262,6 +279,9 @@ def as_shell(cfg):
         f"EDGE_GUARD={cfg.get('edge_guard', 0.0)}",
         f"CRUISE_MPS={cfg.get('cruise_mps', 15)}",
         f"CLIMB_TRIM={cfg.get('climb_trim', 6)}",
+        # ALT_HOLD only unless a mode explicitly asks for both — the pilot's
+        # transmitter mode switch is what actually arbitrates between them.
+        f"FC_STEER_MODES={cfg.get('steer_modes', 'ALT_HOLD')}",
         # The dashboard SPEED profile owns climb_gain and max_lean at run
         # time, so CLIMB_GAIN / MAX_LEAN_DEG above are only the values the
         # law is built with before the profile is applied at startup.
@@ -298,8 +318,16 @@ if __name__ == "__main__":
         print(f"  climb         : gain {cfg.get('climb_gain', 8)} m/s/rad, "
               f"stick <= {cfg.get('stick_limit_throttle', 0.9) * 100:.0f}%"
               + (f"   lean eases above {cfg['lean_el_guard'] * 100:.0f}% "
-                 f"of the half-frame" if cfg.get('lean_el_guard') else ""))
+                 f"of the half-frame" if cfg.get('lean_el_guard') else "")
+              + ("   CLIMB_LOS (v_forward * tan(elevation))"
+                 if cfg.get('climb_los') else ""))
+        if cfg.get('edge_guard'):
+            print(f"  edge guard    : speed eases back above "
+                  f"{cfg['edge_guard'] * 100:.0f}% toward ANY frame edge")
         print(f"  commit chan   : {cfg['commit_chan']}")
+        print(f"  FC mode gate  : {cfg.get('steer_modes', 'ALT_HOLD')}"
+              + ("  — pilot's transmitter switch decides which control law runs"
+                 if ',' in cfg.get('steer_modes', '') else ""))
         if cfg.get("bank_far_deg") is None:
             print(f"  turn schedule : OFF — bank fixed at MAX_BANK_DEG")
         else:
