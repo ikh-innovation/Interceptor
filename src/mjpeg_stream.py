@@ -51,71 +51,68 @@ import cv2
 
 _BOUNDARY = "waspframe"
 
-_PAGE = b"""<!doctype html>
+_PAGE = """<!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <title>WASP</title>
 <style>
   *{box-sizing:border-box}
-  html,body{margin:0;height:100%;background:#000;color:#b8b8b8;
-            font:12px/1.35 ui-monospace,Menlo,Consolas,monospace;
-            -webkit-text-size-adjust:100%}
+  html,body{margin:0;height:100%;background:#000;color:#e8e8e8;
+            font:16px/1.4 ui-monospace,Menlo,Consolas,monospace;
+            -webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
   .wrap{height:100%;display:flex;flex-direction:column}
-  .strip{display:flex;gap:0;border-bottom:1px solid #2a2a2a;flex:0 0 auto}
-  .strip div{flex:1;padding:5px 6px;border-right:1px solid #2a2a2a;
-             white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .strip div:last-child{border-right:0}
-  .k{color:#666}
-  .v{color:#e8e8e8}
+
+  /* ── big mode banner: which control law is live, right now ── */
+  .banner{flex:0 0 auto;padding:14px 16px 10px;text-align:center;
+          border-bottom:2px solid #333}
+  .banner .name{font-size:clamp(30px,10vw,54px);font-weight:700;
+                letter-spacing:.04em;line-height:1.05}
+  .banner .name.dim{color:#666}
+  .banner .sub{display:flex;justify-content:center;gap:14px;margin-top:6px;
+               font-size:clamp(13px,3.6vw,17px);color:#999}
+  .banner .sub b{color:#e8e8e8;font-weight:700}
+  .banner .sub b.warn{color:#e8e8e8;text-decoration:underline}
+
+  /* ── Greek how-to-use-this-mode box, swapped by JS to match fc_mode ── */
+  .howto{flex:0 0 auto;padding:10px 16px;background:#0c0c0c;
+         border-bottom:2px solid #333;font-size:clamp(14px,4vw,18px);
+         line-height:1.5}
+  .howto b{color:#fff}
+  .howto .abort{color:#fff;font-weight:700}
+
   .vid{flex:1 1 auto;min-height:0;display:flex;align-items:center;
        justify-content:center;background:#000}
   img{max-width:100%;max-height:100%;object-fit:contain;display:block}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(88px,1fr));
-        border-top:1px solid #2a2a2a;flex:0 0 auto}
-  .grid div{padding:4px 6px;border-right:1px solid #1c1c1c;
-            border-bottom:1px solid #1c1c1c;white-space:nowrap}
-  .ctl{flex:0 0 auto;border-top:1px solid #2a2a2a}
+
+  .ctl{flex:0 0 auto;border-top:2px solid #333}
   .row{display:flex;align-items:stretch}
-  .lbl{flex:0 0 62px;padding:9px 6px;color:#666;border-right:1px solid #2a2a2a}
-  button{flex:1;min-width:0;background:#000;color:#8a8a8a;border:0;
-         font-size:11px;
-         border-right:1px solid #2a2a2a;padding:11px 4px;
-         font:inherit;letter-spacing:.08em;cursor:pointer}
+  .row + .row{border-top:1px solid #222}
+  .lbl{flex:0 0 92px;padding:14px 8px;color:#888;font-size:clamp(13px,3.6vw,16px);
+       font-weight:700;letter-spacing:.05em;border-right:1px solid #333;
+       display:flex;align-items:center}
+  button{flex:1;min-width:0;background:#000;color:#999;border:0;
+         font-size:clamp(14px,4vw,19px);font-weight:700;
+         border-right:1px solid #333;padding:16px 4px;
+         font-family:inherit;letter-spacing:.06em;cursor:pointer}
   button:last-child{border-right:0}
-  button.on{background:#e8e8e8;color:#000}
-  button:disabled{color:#3a3a3a}
-  .msg{padding:4px 6px;color:#666;border-top:1px solid #2a2a2a;
-       height:20px;overflow:hidden}
+  button.on{background:#f0f0f0;color:#000}
+  .msg{padding:6px 10px;color:#666;border-top:1px solid #333;
+       font-size:13px;height:24px;overflow:hidden;text-align:center}
 </style></head>
 <body><div class="wrap">
 
-  <div class="strip">
-    <div><span class="k">STATE </span><span class="v" id="s_state">--</span></div>
-    <div><span class="k">TGT </span><span class="v" id="s_target">--</span></div>
-    <div><span class="k">FC </span><span class="v" id="s_fc">--</span></div>
-    <div><span class="k">ARM </span><span class="v" id="s_arm">--</span></div>
-    <div><span class="k">DRV </span><span class="v" id="s_drv">--</span></div>
+  <div class="banner">
+    <div class="name" id="b_name">--</div>
+    <div class="sub">
+      <span id="b_arm"><b>--</b></span>
+      <span id="b_drv"><b>--</b></span>
+      <span id="b_lock"><b>--</b></span>
+    </div>
   </div>
+
+  <div class="howto" id="howto">...</div>
 
   <div class="vid"><img id="v" src="/stream.mjpg" alt=""></div>
-
-  <div class="grid">
-    <div><span class="k">RNG </span><span class="v" id="d_range">--</span></div>
-    <div><span class="k">AZ </span><span class="v" id="d_az">--</span></div>
-    <div><span class="k">EL </span><span class="v" id="d_el">--</span></div>
-    <div><span class="k">BANK </span><span class="v" id="d_bank">--</span></div>
-    <div><span class="k">LEAN </span><span class="v" id="d_lean">--</span></div>
-    <div><span class="k">CLIMB </span><span class="v" id="d_climb">--</span></div>
-    <div><span class="k">GAIN </span><span class="v" id="d_gain">--</span></div>
-    <div><span class="k">CAP </span><span class="v" id="d_cap">--</span></div>
-    <div><span class="k">CONF </span><span class="v" id="d_conf">--</span></div>
-    <div><span class="k">FPS </span><span class="v" id="d_fps">--</span></div>
-    <div><span class="k">LAT </span><span class="v" id="d_lat">--</span></div>
-    <div><span class="k">REJ </span><span class="v" id="d_gated">--</span></div>
-    <div><span class="k">VMAX </span><span class="v" id="d_vlim">--</span></div>
-    <div><span class="k">LEAN* </span><span class="v" id="d_leanmax">--</span></div>
-    <div><span class="k">VFWD </span><span class="v" id="d_vfwd">--</span></div>
-  </div>
 
   <div class="ctl">
     <div class="row"><div class="lbl">MODE</div>
@@ -134,32 +131,52 @@ _PAGE = b"""<!doctype html>
     setTimeout(function () { v.src = '/stream.mjpg?t=' + Date.now(); }, 1000);
   };
   function T(id, s) { document.getElementById(id).textContent = s; }
-  function n(x, d, u) { return (x === null || x === undefined)
-                        ? '--' : x.toFixed(d) + (u || ''); }
+  function H(id, s) { document.getElementById(id).innerHTML = s; }
 
-  // Every button state is painted from the SERVER's reply, never from the
-  // click. If the tracker refused or clamped a command, the dashboard shows
-  // what the control loop actually holds.
+  // Greek, one block per FC mode, re-picked every poll from j.fc_mode -- so it
+  // always matches whatever the pilot's transmitter is ACTUALLY doing right
+  // now, never a guess made when the page loaded.
+  var HOWTO = {
+    ALT_HOLD:
+      '<b>ALT_HOLD:</b> γκάζι στο ΚΕΝΤΡΟ (50%) πριν γυρίσεις εδώ - αυτό κρατάει ' +
+      'το ύψος. Μόλις κλειδώσει στόχος το AI οδηγεί ΟΛΑ τα κανάλια (roll / ' +
+      'pitch / yaw / γκάζι). <span class="abort">ΔΙΑΚΟΠΗ: γύρνα σε STABILIZE.</span>',
+    ACRO:
+      '<b>ACRO:</b> το ΓΚΑΖΙ το κρατάς ΕΣΥ πάντα - το AI ΔΕΝ το αγγίζει ποτέ. ' +
+      'Κράτα το γύρω στο μέσο ή παραπάνω, αλλιώς οι εντολές roll/pitch/yaw δεν ' +
+      'έχουν αρκετή ισχύ στροφής. Το AI οδηγεί μόνο roll / pitch / yaw. ' +
+      '<span class="abort">ΔΙΑΚΟΠΗ: γύρνα σε STABILIZE.</span>',
+    OTHER:
+      'Ο ΧΕΙΡΙΣΤΗΣ έχει τον πλήρη έλεγχο (<b id="howto_mode">--</b>). Για ' +
+      'αυτόνομη λειτουργία γύρνα το mode switch του χειριστηρίου σε ' +
+      '<b>ALT_HOLD</b> ή <b>ACRO</b>.',
+    NOLINK:
+      'Χωρίς σύνδεση με τον πιλότο αυτόματου (FC). Έλεγξε το καλώδιο / USB.'
+  };
+
+  // Every button and every word on the banner is painted from the SERVER's
+  // reply, never from the click or from a timer -- if the tracker refused or
+  // clamped a command, or the pilot flipped the switch, the phone shows what
+  // is ACTUALLY true right now.
   function paint(j) {
-    T('s_state', j.state || '--');
-    T('s_target', j.target || '--');
-    T('s_fc', j.fc_mode || (j.linked ? '--' : 'NO LINK'));
-    T('s_arm', j.armed ? 'ARMED' : 'SAFE');
-    T('s_drv', j.steering ? 'DRIVE' : 'PILOT');
-    T('d_range', n(j.range_m, 1, 'm'));
-    T('d_az', n(j.az_deg, 1)); T('d_el', n(j.el_deg, 1));
-    T('d_bank', n(j.bank_deg, 1)); T('d_lean', n(j.lean_deg, 1));
-    T('d_climb', n(j.climb_mps, 2));
-    T('d_gain', n(j.pn_gain_eff, 0)); T('d_cap', n(j.bank_cap_deg, 1));
-    T('d_conf', j.conf === null || j.conf === undefined
-                ? '--' : Math.round(j.conf * 100) + '%');
-    T('d_fps', n(j.fps, 1));
-    T('d_lat', j.latency_s === null || j.latency_s === undefined
-               ? '--' : Math.round(j.latency_s * 1000) + 'ms');
-    T('d_gated', j.gated === undefined ? '--' : String(j.gated));
-    T('d_vlim', n(j.climb_limit, 1, 'm/s'));
-    T('d_leanmax', n(j.max_lean_deg, 0));
-    T('d_vfwd', n(j.v_fwd_mps, 1, 'm/s'));
+    if (!j.linked) {
+      T('b_name', 'NO LINK'); document.getElementById('b_name').className = 'name dim';
+      H('howto', HOWTO.NOLINK);
+    } else {
+      var mode = j.fc_mode || '?';
+      var known = (mode === 'ALT_HOLD' || mode === 'ACRO');
+      T('b_name', mode);
+      document.getElementById('b_name').className = 'name' + (known ? '' : ' dim');
+      var block = known ? HOWTO[mode] : HOWTO.OTHER;
+      H('howto', block);
+      if (!known) T('howto_mode', mode);
+    }
+    H('b_arm', j.armed ? '<b>ΟΠΛΙΣΜΕΝΟ</b>' : '<b>ΑΣΦΑΛΕΙΑ</b>');
+    H('b_drv', j.steering ? '<b class="warn">AI ΟΔΗΓΕΙ</b>' : '<b>ΧΕΙΡΙΣΤΗΣ</b>');
+    H('b_lock', j.state === 'LOCK' ? '<b>ΣΤΟΧΟΣ ΚΛΕΙΔΩΜΕΝΟΣ</b>'
+              : j.state === 'PREDICT' ? '<b>ΣΤΟΧΟΣ (PREDICT)</b>'
+              : '<b>ΑΝΑΖΗΤΗΣΗ</b>');
+
     var btns = document.querySelectorAll('button');
     for (var i = 0; i < btns.length; i++) {
       var b = btns[i], k = b.getAttribute('data-k'), val = b.getAttribute('data-v');
@@ -177,7 +194,7 @@ _PAGE = b"""<!doctype html>
       return r.json();
     }).then(function (j) {
       paint(j);
-      if (note) T('msg', note + ' applied ' + new Date().toLocaleTimeString());
+      if (note) T('msg', note + ' — ' + new Date().toLocaleTimeString());
     }).catch(function (e) {
       T('msg', 'link error: ' + e.message);
     }).then(function () { busy = false; });
@@ -195,7 +212,7 @@ _PAGE = b"""<!doctype html>
   setInterval(function () { req('/state'); }, 500);
 </script>
 </body></html>
-"""
+""".encode("utf-8")
 
 
 class MJPEGServer:
