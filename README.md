@@ -189,7 +189,7 @@ CAM_TILT_DEG=10 MAX_LEAN_DEG=12 ROLL_PN_GAIN=35 COMMIT_CHAN=6 ./run.py
 
 ## 5. What is verified, and what is not
 
-### Verified — 4 suites, 243 checks, 0 failures
+### Verified — 6 suites, 285 checks, 0 failures
 
 ```bash
 cd src
@@ -197,6 +197,8 @@ python3 tests/test_control_law.py      # 76 — the gimbal law, test-locked
 python3 tests/test_intercept.py        # 79 — the intercept law + closed-loop sim
 python3 tests/test_simulated_fc.py     # 66 — MAVLink against a fake FC
 python3 tests/test_field_sequence.py   # 22 — TODAY'S engagement, shipped config
+python3 tests/test_schedule.py         # 23 — range schedule + operator sensitivity
+python3 tests/test_acro_dual.py        # 19 — ACRO rate translation + wind rejection
 ```
 
 `test_field_sequence.py` walks the exact sequence of §4 on the shipped preset and asserts the three requested behaviours **by name**:
@@ -209,6 +211,37 @@ python3 tests/test_field_sequence.py   # 22 — TODAY'S engagement, shipped conf
 
 Plus every abort path in both directions.
 
+### What two real flights changed
+
+Both flights flew. Neither hit. The logs said why, and both fixes came out of
+measured numbers rather than a guess:
+
+| Flight | What the log showed | Fix |
+|---|---|---|
+| `20260909_110654` | climb commanded **mean 1.11 m/s, never above 4**, against a 6 m/s ceiling the FC already had. Lean pinned at its 12° limit for **85%** of frames. | Gains sized to the ceiling (`ceiling/0.31`); FC `PILOT_SPEED_UP` 600 → 2500 |
+| | bbox centre jumping **73–99 px at p99**, up to 501 px on a 640 px frame — while the camera itself moved only 0.31°/frame. Not vibration: the detector. | Track gate rejects the physically impossible (2.4–4.4% of frames) |
+| `20260914_111228` | throttle stick saturated at **both** ends; world elevation went **negative on 17%** of frames and below the visible band on 9% — it climbed straight over the target and lost it underneath. | `CLIMB_LOS`: climb = `v_forward × tan(elevation)` |
+
+### The demo scenario, simulated end to end
+
+Own drone 2 m and stationary; enemy from 50 m at 10 m height doing 10 m/s at us.
+72 combinations — approach angle 0/10/20°, four winds, three speed modes, both
+flight modes. **FAST intercepts in all of them, 0.52–0.63 m**, target in frame
+96–100%. Approach angle barely matters; a *headwind* is the hard case, not a
+crosswind.
+
+ACRO matches ALT_HOLD **only with a perfect thumb on the throttle**, because in
+ACRO the AI never touches it:
+
+| ACRO, pilot model | SLOW | MEDIUM | FAST |
+|---|---|---|---|
+| perfect | 0.90 | 0.64 | 0.52 |
+| realistic (0.6 s behind) | 2.27 | 1.96 | 1.50 |
+| fixed 5 m/s climb | 5.48 | 6.45 | 6.11 |
+| **ALT_HOLD, for comparison** | 0.86 | 0.60 | **0.60** |
+
+**Fly ALT_HOLD + FAST.** ACRO is there to compare, not to demo.
+
 ### NOT verified — read before flying
 
 **Nothing in the intercept path has ever run on real hardware.** Every number above is simulation. A test is not a flight.
@@ -218,6 +251,27 @@ The single highest risk is **roll and throttle polarity on the actual airframe**
 Second weak spot: ~8 px of detection jitter on a hard zigzag gives a miss distance spread of **0.57–3.13 m** across random seeds. It is not deterministic.
 
 ---
+
+## 5b. The phone — this is the operator surface now
+
+`http://<jetson-ip>:8080/` on the same WiFi. The console prints the address at
+every boot; it enumerates real interfaces, so it is right on any network.
+
+Shaped like an app: a bottom nav (`TEST` / `ΤΑΧΥΤΗΤΑ` / `ΣΤΟΧΟΣ`) and a header
+whose **colour is the flight mode** — black when the pilot has every channel,
+**blue in ALT_HOLD, orange in ACRO**. The video overlay uses the same three
+colours for the target ring, so the app and the picture can never disagree.
+
+| Control | Options | Sets |
+|---|---|---|
+| ΤΑΧΥΤΗΤΑ | SLOW / MEDIUM / FAST | climb ceiling, lean, turn gain and stick damping, together |
+| ΣΤΟΧΟΣ | HUMAN / DRONE | swaps the detector between frames (both load at startup) |
+| TEST | forces a mode's look | bench check only; never reaches the tracker |
+
+**ALT_HOLD ↔ ACRO is deliberately NOT on the phone.** That gate is the interlock
+that stops the AI touching the sticks; putting it on an unauthenticated page on
+the field WiFi would remove the property it exists to provide. The pilot's own
+mode switch decides, and the header reports it.
 
 ## 6. Running it
 

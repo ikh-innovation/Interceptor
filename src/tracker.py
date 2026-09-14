@@ -259,6 +259,13 @@ class DroneTracker:
     C_WARN    = ( 70,  70, 240)   # red (lost / rejected)
     C_INK     = ( 22,  26,  22)   # translucent panel fill
     _ACCENT   = {"SEARCH": C_SEARCH, "LOCK": C_LOCK, "PREDICT": C_PREDICT}
+
+    # The SAME three colours the phone dashboard paints its header with, so the
+    # video and the app never disagree about which law is flying.  OpenCV is
+    # BGR, so these are the #1e6fd9 / #e07b1f of the dashboard, reversed.
+    C_ALT     = (217, 111,  30)   # ALT_HOLD  blue
+    C_ACRO    = ( 31, 123, 224)   # ACRO      orange
+    C_PILOT   = (190, 200, 195)   # neither: the pilot has every channel
     _HUD_FONT = cv2.FONT_HERSHEY_DUPLEX
 
     # ── zoom-inset (picture-in-picture) ─────────────────────────────────────────
@@ -1034,27 +1041,31 @@ class DroneTracker:
 
     # ── HUD panels ───────────────────────────────────────────────────────────────
 
+    def mode_color(self):
+        """The flight mode's colour, identical to the phone dashboard's header.
+
+        The video and the app must never disagree about which law is flying, so
+        both read the same three states off the same source and paint the same
+        three colours: blue ALT_HOLD, orange ACRO, neutral when the pilot has
+        every channel.
+        """
+        m = getattr(getattr(self, "ap", None), "mode_name", None)
+        if m == "ALT_HOLD":
+            return self.C_ALT
+        if m == "ACRO":
+            return self.C_ACRO
+        return self.C_PILOT
+
     def _draw_header(self, frame, accent):
+        """A single bar in the flight-mode colour, and nothing else.
+
+        The name of the product, the name of the company and the word SEARCH
+        were three things on screen that never once changed what the operator
+        should do.  The phone carries the state in words; the video carries it
+        as a colour you can read at a glance without reading at all.
+        """
         w = frame.shape[1]
-        self._panel(frame, (0, 0), (w, 30), self.C_INK, 0.45)
-        cv2.line(frame, (0, 30), (w, 30), accent, 1, cv2.LINE_AA)
-
-        title = "WASP  //  SKY-TRACK"
-        self._text(frame, title, (12, 21), 0.5, self.C_HUD, 1)
-
-        (tw, _), _ = cv2.getTextSize(title, self._HUD_FONT, 0.5, 1)
-        self._text(frame, "IKH - DEFENSE LABS", (12 + tw + 20, 21),
-                   0.5, self.C_DIM, 1)
-
-        (sw, _), _ = cv2.getTextSize(self.state, self._HUD_FONT, 0.5, 1)
-        x0 = w - sw - 30
-        cv2.circle(frame, (x0 - 2, 15), 5, accent, -1, cv2.LINE_AA)
-        self._text(frame, self.state, (x0 + 10, 21), 0.5, accent, 1)
-
-        if self.conf is not None and self.state == "LOCK":
-            ctxt = f"CONF {self.conf * 100:.0f}%"
-            (cw, _), _ = cv2.getTextSize(ctxt, self._HUD_FONT, 0.5, 1)
-            self._text(frame, ctxt, (x0 - cw - 18, 21), 0.5, accent, 1)
+        cv2.rectangle(frame, (0, 0), (w, 4), self.mode_color(), -1)
 
     # ── flight-command panel ─────────────────────────────────────────────────────
 
@@ -1340,7 +1351,7 @@ class DroneTracker:
             self._draw_sky(frame, accent)
 
         self._draw_frame_ticks(frame, self.C_DIM)
-        self._reticle(frame, cx_f, cy_f, self.C_HUD)
+        self._reticle(frame, cx_f, cy_f, self.mode_color())
 
         if roi and self.state == "PREDICT":
             self._corner_box(frame, roi[0], roi[1], roi[2], roi[3], self.C_DIM, 10, 1)
@@ -1348,7 +1359,7 @@ class DroneTracker:
         if pos:
             px, py = int(pos[0]), int(pos[1])
 
-            self._dashed(frame, (cx_f, cy_f), (px, py), accent, thick=1)
+            self._dashed(frame, (cx_f, cy_f), (px, py), self.mode_color(), thick=1)
 
             if self.state == "PREDICT":
                 sx, sy = self.kalman.pos_sigma()
@@ -1356,11 +1367,27 @@ class DroneTracker:
                             (max(12, int(sx * 3)), max(12, int(sy * 3))),
                             0, 0, 360, self.C_PREDICT, 1, cv2.LINE_AA)
 
+            # A RING in the flight-mode colour, sized to the target: a box says
+            # "here is a detection", a ring says "this is the thing I am flying
+            # at", and at 640 px a circle survives being small far better than
+            # four corner brackets do.
             bw, bh = (self.last_bbox[2], self.last_bbox[3]) if self.last_bbox else (20, 20)
-            half   = max(16, max(bw, bh) // 2 + 8)
-            self._corner_box(frame, px - half, py - half, px + half, py + half,
-                             accent, length=min(16, half // 2), thick=2)
-            cv2.circle(frame, (px, py), 2, accent, -1, cv2.LINE_AA)
+            rad = int(max(14, max(bw, bh) * 0.62 + 6))
+            mc = self.mode_color()
+            if self.state == "PREDICT":
+                # Coasting on the filter: broken ring, so "I am guessing" is
+                # visible without a word for it.
+                for a0 in range(0, 360, 40):
+                    cv2.ellipse(frame, (px, py), (rad, rad), 0, a0, a0 + 22,
+                                mc, 2, cv2.LINE_AA)
+            else:
+                cv2.circle(frame, (px, py), rad, mc, 2, cv2.LINE_AA)
+                # four short ticks on the ring -- a sight, not a rectangle
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    cv2.line(frame, (px + dx * (rad - 5), py + dy * (rad - 5)),
+                             (px + dx * (rad + 6), py + dy * (rad + 6)),
+                             mc, 2, cv2.LINE_AA)
+            cv2.circle(frame, (px, py), 2, mc, -1, cv2.LINE_AA)
 
             vx, vy = self.kalman.velocity()
             if np.hypot(vx, vy) > 0.5:
@@ -1371,7 +1398,8 @@ class DroneTracker:
         self._draw_header(frame, accent)
         self._draw_flightcmd(frame, cmd, pos, cx_f, cy_f, sent, accent)
 
-        self._draw_inset(frame, frame_full, pos)
+        # (the zoom inset is deliberately not drawn: it covered a corner of the
+        #  very image the operator is trying to read)
         
         
     # ──────────────────────────────────────────────────────────────────────────
