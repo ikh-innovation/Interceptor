@@ -62,9 +62,16 @@ _PAGE = """<!doctype html>
             -webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
   .wrap{height:100%;display:flex;flex-direction:column}
 
-  /* ── big mode banner: which control law is live, right now ── */
+  /* ── big mode banner: which control law is live, right now ──
+     The BACKGROUND COLOUR is the signal: at arm's length in sunlight you read
+     a colour long before you read a word.  Black = the pilot has it, blue =
+     ALT_HOLD, orange = ACRO. */
   .banner{flex:0 0 auto;padding:14px 16px 10px;text-align:center;
-          border-bottom:2px solid #333}
+          border-bottom:2px solid #333;transition:background .15s linear}
+  .banner.m_stab{background:#000;border-bottom-color:#333}
+  .banner.m_alt {background:#0d3a7a;border-bottom-color:#1e6fd9}
+  .banner.m_acro{background:#8a4409;border-bottom-color:#e07b1f}
+  .banner.m_alt .sub,.banner.m_acro .sub{color:#e8e8e8}
   .banner .name{font-size:clamp(30px,10vw,54px);font-weight:700;
                 letter-spacing:.04em;line-height:1.05}
   .banner .name.dim{color:#666}
@@ -98,10 +105,15 @@ _PAGE = """<!doctype html>
   button.on{background:#f0f0f0;color:#000}
   .msg{padding:6px 10px;color:#666;border-top:1px solid #333;
        font-size:13px;height:24px;overflow:hidden;text-align:center}
+  /* TEMPORARY: preview the three looks without needing the FC in that mode. */
+  .test{display:flex;border-top:1px solid #333}
+  .test button{flex:1;padding:10px 4px;font-size:12px;color:#777;
+               background:#000;border-right:1px solid #333}
+  .test button.on{background:#444;color:#fff}
 </style></head>
 <body><div class="wrap">
 
-  <div class="banner">
+  <div class="banner m_stab" id="banner">
     <div class="name" id="b_name">--</div>
     <div class="sub">
       <span id="b_arm"><b>--</b></span>
@@ -124,6 +136,12 @@ _PAGE = """<!doctype html>
       <button data-k="target" data-v="DRONE">DRONE</button></div>
   </div>
   <div class="msg" id="msg">connecting</div>
+  <div class="test">
+    <button data-pv="">LIVE</button>
+    <button data-pv="STABILIZE">test: STABILIZE</button>
+    <button data-pv="ALT_HOLD">test: ALT_HOLD</button>
+    <button data-pv="ACRO">test: ACRO</button>
+  </div>
 </div>
 <script>
   var v = document.getElementById('v');
@@ -158,15 +176,34 @@ _PAGE = """<!doctype html>
   // reply, never from the click or from a timer -- if the tracker refused or
   // clamped a command, or the pilot flipped the switch, the phone shows what
   // is ACTUALLY true right now.
+  // TEMPORARY preview: force the banner to render a mode the FC is not in, so
+  // the three looks can be checked on the bench.  Never touches the tracker --
+  // it only changes what THIS page draws, and LIVE clears it.
+  var PREVIEW = '';
+
+  function theme(mode) {
+    var b = document.getElementById('banner');
+    b.className = 'banner ' + (mode === 'ALT_HOLD' ? 'm_alt'
+                             : mode === 'ACRO' ? 'm_acro' : 'm_stab');
+  }
+
   function paint(j) {
+    if (PREVIEW) {
+      var pj = {linked: true, fc_mode: PREVIEW, armed: j.armed,
+                steering: (PREVIEW !== 'STABILIZE') && j.steering,
+                state: j.state, mode: j.mode, target: j.target};
+      j = pj;
+    }
     if (!j.linked) {
       T('b_name', 'NO LINK'); document.getElementById('b_name').className = 'name dim';
+      theme('');
       H('howto', HOWTO.NOLINK);
     } else {
       var mode = j.fc_mode || '?';
       var known = (mode === 'ALT_HOLD' || mode === 'ACRO');
       T('b_name', mode);
       document.getElementById('b_name').className = 'name' + (known ? '' : ' dim');
+      theme(mode);
       var block = known ? HOWTO[mode] : HOWTO.OTHER;
       H('howto', block);
       if (!known) T('howto_mode', mode);
@@ -203,6 +240,17 @@ _PAGE = """<!doctype html>
   document.addEventListener('click', function (ev) {
     var b = ev.target.closest ? ev.target.closest('button') : null;
     if (!b) return;
+    if (b.hasAttribute('data-pv')) {          // TEMPORARY preview buttons
+      PREVIEW = b.getAttribute('data-pv');
+      var tb = document.querySelectorAll('.test button');
+      for (var q = 0; q < tb.length; q++) {
+        tb[q].classList.toggle('on', tb[q] === b);
+      }
+      T('msg', PREVIEW ? ('ΔΟΚΙΜΗ: ' + PREVIEW + ' (δεν αλλάζει τίποτα στο drone)')
+                       : 'LIVE');
+      req('/state');
+      return;
+    }
     var k = b.getAttribute('data-k'), val = b.getAttribute('data-v');
     T('msg', 'sending ' + k + '=' + val);
     req('/cmd?' + k + '=' + encodeURIComponent(val), k + '=' + val);
