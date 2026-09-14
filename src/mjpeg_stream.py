@@ -53,94 +53,85 @@ _BOUNDARY = "waspframe"
 
 _PAGE = """<!doctype html>
 <html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
 <title>WASP</title>
 <style>
-  *{box-sizing:border-box}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;height:100%;background:#000;color:#e8e8e8;
-            font:16px/1.4 ui-monospace,Menlo,Consolas,monospace;
-            -webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
-  .wrap{height:100%;display:flex;flex-direction:column}
+            font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
+                 ui-sans-serif,system-ui,sans-serif;
+            -webkit-text-size-adjust:100%;overflow:hidden}
+  .app{height:100%;display:flex;flex-direction:column}
 
-  /* ── big mode banner: which control law is live, right now ──
-     The BACKGROUND COLOUR is the signal: at arm's length in sunlight you read
-     a colour long before you read a word.  Black = the pilot has it, blue =
-     ALT_HOLD, orange = ACRO. */
-  .banner{flex:0 0 auto;padding:14px 16px 10px;text-align:center;
-          border-bottom:2px solid #333;transition:background .15s linear}
-  .banner.m_stab{background:#000;border-bottom-color:#333}
-  .banner.m_alt {background:#0d3a7a;border-bottom-color:#1e6fd9}
-  .banner.m_acro{background:#8a4409;border-bottom-color:#e07b1f}
-  .banner.m_alt .sub,.banner.m_acro .sub{color:#e8e8e8}
-  .banner .name{font-size:clamp(30px,10vw,54px);font-weight:700;
-                letter-spacing:.04em;line-height:1.05}
-  .banner .name.dim{color:#666}
-  .banner .sub{display:flex;justify-content:center;gap:14px;margin-top:6px;
-               font-size:clamp(13px,3.6vw,17px);color:#999}
-  .banner .sub b{color:#e8e8e8;font-weight:700}
-  .banner .sub b.warn{color:#e8e8e8;text-decoration:underline}
-
-  /* ── Greek how-to-use-this-mode box, swapped by JS to match fc_mode ── */
-  .howto{flex:0 0 auto;padding:10px 16px;background:#0c0c0c;
-         border-bottom:2px solid #333;font-size:clamp(14px,4vw,18px);
-         line-height:1.5}
-  .howto b{color:#fff}
-  .howto .abort{color:#fff;font-weight:700}
+  /* ── header: the colour IS the message.  Black = pilot has it,
+       blue = ALT_HOLD, orange = ACRO.  Readable across a field. ── */
+  .hdr{flex:0 0 auto;padding:16px 18px 14px;transition:background .18s linear}
+  .hdr.m_stab{background:#101010}
+  .hdr.m_alt {background:#0d3a7a}
+  .hdr.m_acro{background:#8a4409}
+  .hdr .title{font-size:clamp(28px,9vw,46px);font-weight:800;letter-spacing:-.01em;
+              line-height:1.05}
+  .hdr .desc{margin-top:5px;font-size:clamp(13px,3.8vw,16px);color:#cfd6e0;
+             line-height:1.35}
+  .hdr.m_stab .desc{color:#9a9a9a}
+  .chips{display:flex;gap:7px;margin-top:11px;flex-wrap:wrap}
+  .chip{font-size:clamp(11px,3.1vw,13px);font-weight:700;letter-spacing:.04em;
+        padding:5px 10px;border-radius:999px;background:rgba(255,255,255,.14);
+        color:#fff;white-space:nowrap}
+  .chip.hot{background:#fff;color:#000}
 
   .vid{flex:1 1 auto;min-height:0;display:flex;align-items:center;
        justify-content:center;background:#000}
   img{max-width:100%;max-height:100%;object-fit:contain;display:block}
 
-  .ctl{flex:0 0 auto;border-top:2px solid #333}
-  .row{display:flex;align-items:stretch}
-  .row + .row{border-top:1px solid #222}
-  .lbl{flex:0 0 92px;padding:14px 8px;color:#888;font-size:clamp(13px,3.6vw,16px);
-       font-weight:700;letter-spacing:.05em;border-right:1px solid #333;
-       display:flex;align-items:center}
-  button{flex:1;min-width:0;background:#000;color:#999;border:0;
-         font-size:clamp(14px,4vw,19px);font-weight:700;
-         border-right:1px solid #333;padding:16px 4px;
-         font-family:inherit;letter-spacing:.06em;cursor:pointer}
-  button:last-child{border-right:0}
-  button.on{background:#f0f0f0;color:#000}
-  .msg{padding:6px 10px;color:#666;border-top:1px solid #333;
-       font-size:13px;height:24px;overflow:hidden;text-align:center}
-  /* TEMPORARY: preview the three looks without needing the FC in that mode. */
-  .test{display:flex;border-top:1px solid #333}
-  .test button{flex:1;padding:10px 4px;font-size:12px;color:#777;
-               background:#000;border-right:1px solid #333}
-  .test button.on{background:#444;color:#fff}
-</style></head>
-<body><div class="wrap">
+  /* ── the panel the active tab shows ── */
+  .panel{flex:0 0 auto;background:#0b0b0b;border-top:1px solid #242424}
+  .panel .plabel{padding:9px 16px 0;font-size:12px;font-weight:700;
+                 letter-spacing:.1em;color:#6d6d6d}
+  .opts{display:flex;gap:8px;padding:9px 12px 12px}
+  .opts button{flex:1;min-width:0;padding:15px 6px;border:1px solid #2e2e2e;
+               border-radius:12px;background:#151515;color:#a8a8a8;
+               font:inherit;font-size:clamp(12px,3.5vw,15px);font-weight:700;
+               letter-spacing:.03em}
+  .opts button.on{background:#f2f2f2;color:#000;border-color:#f2f2f2}
 
-  <div class="banner m_stab" id="banner">
-    <div class="name" id="b_name">--</div>
-    <div class="sub">
-      <span id="b_arm"><b>--</b></span>
-      <span id="b_drv"><b>--</b></span>
-      <span id="b_lock"><b>--</b></span>
+  /* ── bottom nav, app style ── */
+  .nav{flex:0 0 auto;display:flex;background:#0b0b0b;border-top:1px solid #242424;
+       padding-bottom:env(safe-area-inset-bottom)}
+  .nav button{flex:1;padding:11px 4px 13px;background:none;border:0;
+              color:#6d6d6d;font:inherit;font-size:11px;font-weight:700;
+              letter-spacing:.07em}
+  .nav button .ic{display:block;font-size:19px;line-height:1.1;margin-bottom:3px;
+                  font-weight:400}
+  .nav button.on{color:#fff}
+  .msg{flex:0 0 auto;padding:5px 12px;font-size:11px;color:#5e5e5e;
+       text-align:center;background:#0b0b0b;height:22px;overflow:hidden}
+</style></head>
+<body><div class="app">
+
+  <div class="hdr m_stab" id="hdr">
+    <div class="title" id="h_title">--</div>
+    <div class="desc" id="h_desc">σύνδεση...</div>
+    <div class="chips">
+      <span class="chip" id="c_arm">--</span>
+      <span class="chip" id="c_drv">--</span>
+      <span class="chip" id="c_lock">--</span>
     </div>
   </div>
 
-  <div class="howto" id="howto">...</div>
-
   <div class="vid"><img id="v" src="/stream.mjpg" alt=""></div>
 
-  <div class="ctl">
-    <div class="row"><div class="lbl">MODE</div>
-      <button data-k="mode" data-v="SLOW">SLOW</button>
-      <button data-k="mode" data-v="MEDIUM">MEDIUM</button>
-      <button data-k="mode" data-v="FAST">FAST</button></div>
-    <div class="row"><div class="lbl">TARGET</div>
-      <button data-k="target" data-v="HUMAN">HUMAN</button>
-      <button data-k="target" data-v="DRONE">DRONE</button></div>
+  <div class="panel">
+    <div class="plabel" id="p_label">ΤΑΧΥΤΗΤΑ</div>
+    <div class="opts" id="p_opts"></div>
   </div>
+
   <div class="msg" id="msg">connecting</div>
-  <div class="test">
-    <button data-pv="">LIVE</button>
-    <button data-pv="STABILIZE">test: STABILIZE</button>
-    <button data-pv="ALT_HOLD">test: ALT_HOLD</button>
-    <button data-pv="ACRO">test: ACRO</button>
+
+  <div class="nav">
+    <button data-tab="test"><span class="ic">&#9680;</span>TEST</button>
+    <button data-tab="speed" class="on"><span class="ic">&#9654;</span>ΤΑΧΥΤΗΤΑ</button>
+    <button data-tab="target"><span class="ic">&#9678;</span>ΣΤΟΧΟΣ</button>
   </div>
 </div>
 <script>
@@ -149,77 +140,85 @@ _PAGE = """<!doctype html>
     setTimeout(function () { v.src = '/stream.mjpg?t=' + Date.now(); }, 1000);
   };
   function T(id, s) { document.getElementById(id).textContent = s; }
-  function H(id, s) { document.getElementById(id).innerHTML = s; }
 
-  // Greek, one block per FC mode, re-picked every poll from j.fc_mode -- so it
-  // always matches whatever the pilot's transmitter is ACTUALLY doing right
-  // now, never a guess made when the page loaded.
-  var HOWTO = {
-    ALT_HOLD:
-      '<b>ALT_HOLD:</b> γκάζι στο ΚΕΝΤΡΟ (50%) πριν γυρίσεις εδώ - αυτό κρατάει ' +
-      'το ύψος. Μόλις κλειδώσει στόχος το AI οδηγεί ΟΛΑ τα κανάλια (roll / ' +
-      'pitch / yaw / γκάζι). <span class="abort">ΔΙΑΚΟΠΗ: γύρνα σε STABILIZE.</span>',
-    ACRO:
-      '<b>ACRO:</b> το ΓΚΑΖΙ το κρατάς ΕΣΥ πάντα - το AI ΔΕΝ το αγγίζει ποτέ. ' +
-      'Κράτα το γύρω στο μέσο ή παραπάνω, αλλιώς οι εντολές roll/pitch/yaw δεν ' +
-      'έχουν αρκετή ισχύ στροφής. Το AI οδηγεί μόνο roll / pitch / yaw. ' +
-      '<span class="abort">ΔΙΑΚΟΠΗ: γύρνα σε STABILIZE.</span>',
-    OTHER:
-      'Ο ΧΕΙΡΙΣΤΗΣ έχει τον πλήρη έλεγχο (<b id="howto_mode">--</b>). Για ' +
-      'αυτόνομη λειτουργία γύρνα το mode switch του χειριστηρίου σε ' +
-      '<b>ALT_HOLD</b> ή <b>ACRO</b>.',
-    NOLINK:
-      'Χωρίς σύνδεση με τον πιλότο αυτόματου (FC). Έλεγξε το καλώδιο / USB.'
+  // Title + one line.  Not a manual -- the pilot has the manual; this is the
+  // reminder you can read at arm's length while something is in the air.
+  var MODES = {
+    ALT_HOLD: {t: 'ALT_HOLD', d: 'Το AI οδηγεί και το γκάζι. Κέντρο γκαζιού = κράτημα ύψους.'},
+    ACRO:     {t: 'ACRO',     d: 'Το γκάζι το κρατάς ΕΣΥ. Το AI οδηγεί μόνο roll / pitch / yaw.'},
+    _pilot:   {t: null,       d: 'Ο χειριστής έχει τον πλήρη έλεγχο.'},
+    _nolink:  {t: 'NO LINK',  d: 'Καμία σύνδεση με τον FC.'}
   };
 
-  // Every button and every word on the banner is painted from the SERVER's
-  // reply, never from the click or from a timer -- if the tracker refused or
-  // clamped a command, or the pilot flipped the switch, the phone shows what
-  // is ACTUALLY true right now.
-  // TEMPORARY preview: force the banner to render a mode the FC is not in, so
-  // the three looks can be checked on the bench.  Never touches the tracker --
-  // it only changes what THIS page draws, and LIVE clears it.
+  // TEMPORARY-ish: forces the header to draw a mode the FC is not in, so the
+  // three looks can be checked on the bench.  Only changes what THIS page
+  // draws -- it never reaches the tracker.  LIVE clears it.
   var PREVIEW = '';
+  var TAB = 'speed';
 
-  function theme(mode) {
-    var b = document.getElementById('banner');
-    b.className = 'banner ' + (mode === 'ALT_HOLD' ? 'm_alt'
-                             : mode === 'ACRO' ? 'm_acro' : 'm_stab');
+  var TABS = {
+    test:   {label: 'ΔΟΚΙΜΗ ΟΘΟΝΩΝ', key: 'pv',
+             opts: [['', 'LIVE'], ['STABILIZE', 'STABILIZE'],
+                    ['ALT_HOLD', 'ALT_HOLD'], ['ACRO', 'ACRO']]},
+    speed:  {label: 'ΤΑΧΥΤΗΤΑ', key: 'mode',
+             opts: [['SLOW', 'SLOW'], ['MEDIUM', 'MEDIUM'], ['FAST', 'FAST']]},
+    target: {label: 'ΣΤΟΧΟΣ', key: 'target',
+             opts: [['HUMAN', 'HUMAN'], ['DRONE', 'DRONE']]}
+  };
+
+  var LAST = {};
+
+  function drawPanel() {
+    var t = TABS[TAB];
+    T('p_label', t.label);
+    var box = document.getElementById('p_opts');
+    box.innerHTML = '';
+    for (var i = 0; i < t.opts.length; i++) {
+      var b = document.createElement('button');
+      b.textContent = t.opts[i][1];
+      b.setAttribute('data-k', t.key);
+      b.setAttribute('data-v', t.opts[i][0]);
+      box.appendChild(b);
+    }
+    markPanel();
   }
 
-  function paint(j) {
-    if (PREVIEW) {
-      var pj = {linked: true, fc_mode: PREVIEW, armed: j.armed,
-                steering: (PREVIEW !== 'STABILIZE') && j.steering,
-                state: j.state, mode: j.mode, target: j.target};
-      j = pj;
+  function markPanel() {
+    var t = TABS[TAB];
+    var cur = (t.key === 'pv') ? PREVIEW
+            : (t.key === 'mode') ? LAST.mode : LAST.target;
+    var bs = document.querySelectorAll('#p_opts button');
+    for (var i = 0; i < bs.length; i++) {
+      bs[i].classList.toggle('on', bs[i].getAttribute('data-v') === (cur || ''));
     }
-    if (!j.linked) {
-      T('b_name', 'NO LINK'); document.getElementById('b_name').className = 'name dim';
-      theme('');
-      H('howto', HOWTO.NOLINK);
-    } else {
-      var mode = j.fc_mode || '?';
-      var known = (mode === 'ALT_HOLD' || mode === 'ACRO');
-      T('b_name', mode);
-      document.getElementById('b_name').className = 'name' + (known ? '' : ' dim');
-      theme(mode);
-      var block = known ? HOWTO[mode] : HOWTO.OTHER;
-      H('howto', block);
-      if (!known) T('howto_mode', mode);
-    }
-    H('b_arm', j.armed ? '<b>ΟΠΛΙΣΜΕΝΟ</b>' : '<b>ΑΣΦΑΛΕΙΑ</b>');
-    H('b_drv', j.steering ? '<b class="warn">AI ΟΔΗΓΕΙ</b>' : '<b>ΧΕΙΡΙΣΤΗΣ</b>');
-    H('b_lock', j.state === 'LOCK' ? '<b>ΣΤΟΧΟΣ ΚΛΕΙΔΩΜΕΝΟΣ</b>'
-              : j.state === 'PREDICT' ? '<b>ΣΤΟΧΟΣ (PREDICT)</b>'
-              : '<b>ΑΝΑΖΗΤΗΣΗ</b>');
+  }
 
-    var btns = document.querySelectorAll('button');
-    for (var i = 0; i < btns.length; i++) {
-      var b = btns[i], k = b.getAttribute('data-k'), val = b.getAttribute('data-v');
-      var cur = (k === 'mode') ? j.mode : j.target;
-      if (cur === val) b.classList.add('on'); else b.classList.remove('on');
-    }
+  // Painted from the SERVER's reply, never from the click -- if the tracker
+  // refused a command, or the pilot flipped the switch, this shows what is
+  // actually true.
+  function paint(j) {
+    LAST = j;
+    var linked = j.linked, mode = j.fc_mode || '?';
+    var armed = j.armed, steering = j.steering, state = j.state;
+    if (PREVIEW) { linked = true; mode = PREVIEW;
+                   steering = (PREVIEW !== 'STABILIZE') && steering; }
+
+    var spec = !linked ? MODES._nolink : (MODES[mode] || MODES._pilot);
+    T('h_title', spec.t || mode);
+    T('h_desc', spec.d);
+    document.getElementById('hdr').className = 'hdr ' +
+      (linked && mode === 'ALT_HOLD' ? 'm_alt'
+       : linked && mode === 'ACRO' ? 'm_acro' : 'm_stab');
+
+    T('c_arm', armed ? 'ΟΠΛΙΣΜΕΝΟ' : 'ΑΣΦΑΛΕΙΑ');
+    document.getElementById('c_arm').className = 'chip' + (armed ? ' hot' : '');
+    T('c_drv', steering ? 'AI ΟΔΗΓΕΙ' : 'ΧΕΙΡΙΣΤΗΣ');
+    document.getElementById('c_drv').className = 'chip' + (steering ? ' hot' : '');
+    T('c_lock', state === 'LOCK' ? 'ΚΛΕΙΔΩΜΕΝΟΣ'
+              : state === 'PREDICT' ? 'PREDICT' : 'ΑΝΑΖΗΤΗΣΗ');
+    document.getElementById('c_lock').className =
+      'chip' + (state === 'LOCK' ? ' hot' : '');
+    markPanel();
   }
 
   var busy = false;
@@ -231,7 +230,7 @@ _PAGE = """<!doctype html>
       return r.json();
     }).then(function (j) {
       paint(j);
-      if (note) T('msg', note + ' — ' + new Date().toLocaleTimeString());
+      if (note) T('msg', note + ' \u2014 ' + new Date().toLocaleTimeString());
     }).catch(function (e) {
       T('msg', 'link error: ' + e.message);
     }).then(function () { busy = false; });
@@ -240,22 +239,25 @@ _PAGE = """<!doctype html>
   document.addEventListener('click', function (ev) {
     var b = ev.target.closest ? ev.target.closest('button') : null;
     if (!b) return;
-    if (b.hasAttribute('data-pv')) {          // TEMPORARY preview buttons
-      PREVIEW = b.getAttribute('data-pv');
-      var tb = document.querySelectorAll('.test button');
-      for (var q = 0; q < tb.length; q++) {
-        tb[q].classList.toggle('on', tb[q] === b);
-      }
-      T('msg', PREVIEW ? ('ΔΟΚΙΜΗ: ' + PREVIEW + ' (δεν αλλάζει τίποτα στο drone)')
-                       : 'LIVE');
-      req('/state');
+    if (b.hasAttribute('data-tab')) {
+      TAB = b.getAttribute('data-tab');
+      var nb = document.querySelectorAll('.nav button');
+      for (var i = 0; i < nb.length; i++) nb[i].classList.toggle('on', nb[i] === b);
+      drawPanel();
       return;
     }
     var k = b.getAttribute('data-k'), val = b.getAttribute('data-v');
+    if (k === 'pv') {
+      PREVIEW = val;
+      T('msg', val ? ('ΔΟΚΙΜΗ: ' + val + ' (δεν αλλάζει τίποτα στο drone)') : 'LIVE');
+      req('/state');
+      return;
+    }
     T('msg', 'sending ' + k + '=' + val);
     req('/cmd?' + k + '=' + encodeURIComponent(val), k + '=' + val);
   });
 
+  drawPanel();
   req('/state');
   setInterval(function () { req('/state'); }, 500);
 </script>
