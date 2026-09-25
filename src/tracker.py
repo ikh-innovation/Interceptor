@@ -75,6 +75,12 @@ from collections import deque
 from pathlib import Path
 from time import perf_counter, sleep
 from datetime import datetime
+# NEVER let ultralytics pip-install at runtime.  Loading the TensorRT engine
+# made it silently downgrade numpy 1.24.4 -> 1.23.5 in this venv on
+# 2026-09-25 (TensorRT 8.5's bindings use np.bool, gone in numpy 1.24, so 1.23.5
+# is in fact what the engine needs -- and is now installed).  In the field
+# there is no internet: an install attempt at startup is a hang, not a fix.
+os.environ.setdefault("YOLO_AUTOINSTALL", "false")
 from ultralytics import YOLO
 from dataclasses import dataclass
 from huggingface_hub import hf_hub_download
@@ -2122,6 +2128,10 @@ if __name__ == "__main__":
         if _eng.is_file() and _eng.stat().st_mtime >= Path(model_pth).stat().st_mtime:
             try:
                 _probe = YOLO(str(_eng), task="detect")
+                # An engine model has no .names until its first inference
+                # (ultralytics 8.4): without this warm-up the probe raised and
+                # the tracker ALWAYS fell back to the .pt, silently.
+                _probe.predict(np.zeros((640, 640, 3), np.uint8), verbose=False)
                 if len(_probe.names) > 100:
                     # No embedded metadata: the class map is a placeholder
                     # ("class0".."class998"), so target-class resolution would be
