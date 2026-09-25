@@ -92,9 +92,15 @@ try:
           f"{M.phase} {fc.overrides}")
     check("a ▲ press is refused while the pilot has it",
           M.request_hold("up", "p", perf_counter()) != "")
+    fc.vfr.update(alt=0.2)                                        # on the ground
     fc.mode = 2                                                   # ALT_HOLD
     sleep(0.6)
-    check("ALT_HOLD + armed: HOVER, still nothing overridden",
+    check("armed in ALT_HOLD but ON THE GROUND: still PILOT (no phone takeoff)",
+          M.phase == "PILOT" and "ground" in c._mission_why and not fc.overrides,
+          f"{M.phase} / {c._mission_why}")
+    fc.vfr.update(alt=2.0)                                        # took off
+    sleep(0.6)
+    check("ALT_HOLD + armed + airborne: HOVER, still nothing overridden",
           M.phase == "HOVER" and not fc.overrides, f"{M.phase} {fc.overrides}")
     st = c.mission_state()
     check("instruments: height 2.0 m and vibration read off the FC",

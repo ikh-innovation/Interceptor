@@ -1733,6 +1733,9 @@ class ArduPilotAcro(FcBackend):
         # clip0, clip1, clip2), m/s^2 and cumulative clipping counts.
         self._vfr = None
         self._vibe = None
+        # EXTENDED_SYS_STATE.landed_state: 1 on ground, 2 in air, 3 taking
+        # off, 4 landing (verified on this FC: 1 on the bench).  (t, state)
+        self._landed = None
         # Height is VFR_HUD.alt minus the alt captured when the FC ARMS.  With no
         # GPS the FC's own relative_alt is not trustworthy (measured 1.28 m on
         # the bench), while VFR_HUD.alt read -0.01 m on the ground, so until an
@@ -1787,6 +1790,7 @@ class ArduPilotAcro(FcBackend):
         self._request_attitude_stream()
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_VFR_HUD, 10.0)
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_VIBRATION, 10.0)
+        self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE, 5.0)
 
         self._stop.clear()
         self._rx = threading.Thread(target=self._rx_loop, daemon=True)
@@ -2090,6 +2094,9 @@ class ArduPilotAcro(FcBackend):
                 with self._lock:
                     self._vfr = (perf_counter(), float(msg.alt),
                                  float(msg.climb), float(msg.heading))
+            elif t == "EXTENDED_SYS_STATE":
+                with self._lock:
+                    self._landed = (perf_counter(), int(msg.landed_state))
             elif t == "VIBRATION":
                 with self._lock:
                     self._vibe = (perf_counter(), float(msg.vibration_x),
@@ -2354,6 +2361,20 @@ class ArduPilotAcro(FcBackend):
         if v is None or (perf_counter() - v[0]) > max_age:
             return None
         return (v[1] - (ref or 0.0), v[2], v[3])
+
+    AIRBORNE_MIN_M = 0.7          # fallback when the FC sends no landed state
+
+    def airborne(self, max_age=2.0):
+        """(in_air, how_we_know).  The FC's own landed state when it sends it;
+        otherwise height above the arming point >= AIRBORNE_MIN_M."""
+        with self._lock:
+            ls = self._landed
+        if ls is not None and (perf_counter() - ls[0]) <= max_age and ls[1]:
+            return ls[1] in (2, 3, 4), "FC landed state"
+        h = self.height()
+        if h is None:
+            return False, "no height"
+        return h[0] >= self.AIRBORNE_MIN_M, "height"
 
     def vibration(self, max_age=1.0):
         """dict(x, y, z, clip) in m/s^2 and total clipping count, or None."""
@@ -3083,7 +3104,8 @@ class AcroCommander:
                  mission=False,
                  mission_min_conf=0.20,
                  mission_ceiling_m=30.0,
-                 mission_floor_m=0.5):
+                 mission_floor_m=0.5,
+                 mission_require_airborne=True):
         self.conn = conn
         # The Hover -> Scout -> Engage app (mission.py).  Off = the original
         # auto-engage behaviour, which the existing test suites pin down.
@@ -3092,6 +3114,7 @@ class AcroCommander:
         self._mission_cfg = dict(min_conf=float(mission_min_conf),
                                  ceiling_m=float(mission_ceiling_m),
                                  floor_m=float(mission_floor_m))
+        self.mission_require_airborne = bool(mission_require_airborne)
         self._mission_out = {}
         self._mission_why = ""
         self._det_t = None
@@ -3605,6 +3628,12 @@ class AcroCommander:
             return False, "disarmed"
         if b.mode_name != "ALT_HOLD":
             return False, f"FC in {b.mode_name}, not ALT_HOLD"
+        # The pilot takes off in ALT_HOLD, so armed + ALT_HOLD is already true
+        # ON THE GROUND.  Without this, ▲ on the phone would be a takeoff.
+        if self.mission_require_airborne and hasattr(b, "airborne"):
+            air, how = b.airborne()
+            if not air:
+                return False, f"on the ground ({how})"
         if self.commit_chan:
             c = b.commit()
             if c is None:
@@ -4340,5 +4369,7 @@ def _intercept_from_env(log_dir=None, verbose=True):
         mission_min_conf=_env_f("ENGAGE_MIN_CONF", 0.20),
         mission_ceiling_m=_env_f("MISSION_CEILING_M", 30.0),
         mission_floor_m=_env_f("MISSION_FLOOR_M", 0.5),
+        # 0 only for the props-OFF bench check, where the drone never flies.
+        mission_require_airborne=_env_b("MISSION_REQUIRE_AIRBORNE", True),
         verbose=verbose,
     )

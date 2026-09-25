@@ -1,8 +1,9 @@
 """
 mission.py  -  Hover -> Scout -> Engage, the manual-assist interceptor
 ======================================================================
-The pilot flies the drone up in STABILIZE, switches to ALT_HOLD and hovers at
-1-2 m with the throttle stick CENTRED.  From there the phone drives it:
+The pilot arms and takes off in ALT_HOLD (STABILIZE is not used at all) and
+hovers at 1-2 m with the throttle stick CENTRED.  Nothing is accepted until the
+FC reports the drone IN THE AIR.  From there the phone drives it:
 
     HOVER     the Jetson sends nothing; the pilot's sticks are live.
     CLIMB     while ▲ is HELD: throttle channel only, a slow steady climb.
@@ -12,7 +13,8 @@ The pilot flies the drone up in STABILIZE, switches to ALT_HOLD and hovers at
               altitude held.  The detector cannot steer yet.
     AI        the existing InterceptLaw (proportional navigation), blended in.
     STOP      a SOFT stop: everything eased back to level, then released.
-    PILOT     not armed / not ALT_HOLD / no link: nothing is ever driven.
+    PILOT     not armed / not ALT_HOLD / on the ground / no link: nothing is
+              ever driven.
 
 This module is pure logic.  Time is passed in, the flight controller is
 reached through a small `mapper` (physical units <-> PWM), and the only
