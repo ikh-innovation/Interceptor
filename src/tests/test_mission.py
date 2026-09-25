@@ -305,6 +305,25 @@ check("AI loses the target: STOP, then HOVER", q.m.phase in ("STOP", "HOVER"))
 q.run_until(1.1)
 check("...released", q.out == {} and q.m.phase == "HOVER")
 
+q = push_rig()
+q.run_until(1.52)
+see(q, 0.5)
+q.step()
+for _ in range(60):                         # blend done, AI flying, target in view
+    see(q, 0.5)
+    q.step()
+TERM = {"pwm": {"roll": 1520, "pitch": 1250, "yaw": 1500, "throttle": 1560},
+        "terminal": True}
+q.ctx.update(ai_cmd=TERM, ai_t=q.t, det_t=q.t, det_conf=0.6)
+q.step()
+q.ctx.update(ai_cmd=None, ai_t=None)       # the target fills the frame: lost
+q.run_until(1.0)
+check("TERMINAL commit: detection lost in the last metre -> keeps flying the "
+      "frozen command (no soft stop before the touch)",
+      q.m.phase == "AI" and q.out.get("pitch") == 1250, f"{q.m.phase} {q.out}")
+q.run_until(0.4)
+check("...for 1.2 s at most, then the soft stop", q.m.phase in ("STOP", "HOVER"))
+
 print("=== A9. ABORT and the mode switch, from EVERY phase ===")
 
 

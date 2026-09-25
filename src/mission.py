@@ -146,6 +146,10 @@ class Mission:
     STEP_KP = 2.5             # deg/s of yaw rate per deg of step error
     STEP_ACCEL = 60.0         # deg/s^2: how fast a step's yaw rate may change
     TARGET_FRESH_S = 0.50     # an AI command older than this = target lost
+    # In the last metre the target fills the frame and the detector drops out;
+    # the law FREEZES the sticks there and flies through ("terminal commit",
+    # held 1 s).  Soft-stopping on that loss would abort the touch itself.
+    TERMINAL_GRACE_S = 1.20
     DET_FRESH_S = 0.25        # a handover detection must be this recent
 
     def __init__(self, mapper, min_conf=0.20, ceiling_m=30.0, floor_m=0.5,
@@ -185,6 +189,7 @@ class Mission:
         self._stop_from = None              # {axis: pwm} at soft-stop start
         self._stop_t = None
         self._last_out = {}
+        self._terminal = None
         self._t_last = None
         self.last_handover = None           # (conf, t_in_push)
 
@@ -276,6 +281,7 @@ class Mission:
         self._push_t = None
         self._blend_from = self._blend_t = None
         self._stop_from = self._stop_t = None
+        self._terminal = None
         self._last_out = {}
 
     def _pilot_value(self, axis):
@@ -483,7 +489,13 @@ class Mission:
     # ── AI ─────────────────────────────────────────────────────────────────
     def _ai_cycle(self, now, ctx):
         cmd, ai_t = ctx.get("ai_cmd"), ctx.get("ai_t")
-        if not cmd or ai_t is None or (now - ai_t) > self.TARGET_FRESH_S:
+        if cmd and cmd.get("terminal"):
+            self._terminal = (dict(cmd), now)
+        stale = not cmd or ai_t is None or (now - ai_t) > self.TARGET_FRESH_S
+        if stale and self._terminal is not None \
+                and (now - self._terminal[1]) <= self.TERMINAL_GRACE_S:
+            cmd = self._terminal[0]           # keep flying the frozen command
+        elif stale:
             self._note("target lost: soft stop back to level", now)
             return self._start_stop(now)
         out = self.mapper.ai_pwm(cmd)

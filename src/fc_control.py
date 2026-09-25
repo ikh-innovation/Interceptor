@@ -1915,6 +1915,16 @@ class ArduPilotAcro(FcBackend):
         # a legitimate setup (fast up, slow down) and not a mis-scale.
         dn = self._param("PILOT_SPEED_DN")
         self.max_descent_mps = (dn / 100.0) if dn else self.max_climb_mps
+        # ALT_HOLD's own vertical limits: the mission's stop distance uses them.
+        acc = self._param("PILOT_ACCEL_Z")               # cm/s^2
+        self.accel_z = (acc / 100.0) if acc else 2.5
+        jz = self._param("PSC_JERK_Z")                   # m/s^3
+        self.jerk_z = jz if jz else 5.0
+        # Read for the operator's checklist only (see mission_checklist()).
+        for _p in ("RC_OVERRIDE_TIME", "ATC_INPUT_TC", "ATC_ACCEL_R_MAX",
+                   "ATC_ACCEL_P_MAX", "LOG_BACKEND_TYPE", "LOG_BITMASK",
+                   "INS_LOG_BAT_MASK", "FS_GCS_ENABLE"):
+            self._param(_p)
 
         for axis in self.axes:
             self.rc[axis] = self._read_axis(axis)
@@ -3069,8 +3079,25 @@ class AcroCommander:
                  steer_modes=None,
                  commit_chan=0,
                  commit_abort_below=0.0,
-                 engage_max_s=0.0):
+                 engage_max_s=0.0,
+                 mission=False,
+                 mission_min_conf=0.20,
+                 mission_ceiling_m=30.0,
+                 mission_floor_m=0.5):
         self.conn = conn
+        # The Hover -> Scout -> Engage app (mission.py).  Off = the original
+        # auto-engage behaviour, which the existing test suites pin down.
+        self.mission_enabled = bool(mission)
+        self.mission = None
+        self._mission_cfg = dict(min_conf=float(mission_min_conf),
+                                 ceiling_m=float(mission_ceiling_m),
+                                 floor_m=float(mission_floor_m))
+        self._mission_out = {}
+        self._mission_why = ""
+        self._det_t = None
+        self._det_conf = None
+        self._det_bbox = None
+        self._cap_age = None
         self.baud = baud
         self.transport = transport
         self.axes = tuple(axes)
@@ -3344,6 +3371,8 @@ class AcroCommander:
             print("for the airframe to actually rotate.  PROPS OFF on the bench.")
         print("=" * 74 + "\n", flush=True)
 
+        if self.mission_enabled:
+            self._build_mission()
         self._open_log()
         self._stop.clear()
         self._tx = threading.Thread(target=self._tx_loop, daemon=True)
@@ -3391,6 +3420,7 @@ class AcroCommander:
             # only thing that ever flips this, same as the steering gate itself.
             rate_mode = bool(self.backend is not None
                              and self.backend.mode_name in RATE_MODES)
+            self._cap_age = age
             return self.law.compute(err_x, err_y, fw, fh, bbox_w=bw, bbox_h=bh,
                                     att=att, commit=commit, capture_age=age,
                                     rate_mode=rate_mode)
@@ -3410,15 +3440,24 @@ class AcroCommander:
     def search_command(self):
         return self.law.neutral()
 
-    def update(self, cmd, target_off, have_face):
+    def update(self, cmd, target_off, have_face, detected=None, conf=None,
+               bbox=None):
         """Publish the latest command for the tx thread.  Returns True when the
-        sticks are actually being driven right now."""
+        sticks are actually being driven right now.
+
+        `detected` = the DETECTOR fired on this frame and the detection passed
+        the sky gate and the track gate (not a Kalman coast).  `conf` is its
+        confidence.  The mission's PUSH -> AI handover needs both."""
         now = perf_counter()
         with self._lock:
             self._cmd = dict(cmd)
             self._target_off = target_off
             if have_face:
                 self._last_target_t = now
+            if detected:
+                self._det_t = now
+                self._det_conf = None if conf is None else float(conf)
+                self._det_bbox = bbox
         return self._steering
 
     # ── fixed-rate transmit ──────────────────────────────────────────────────
@@ -3427,6 +3466,15 @@ class AcroCommander:
         next_t = perf_counter()
         while not self._stop.is_set():
             now = perf_counter()
+            if self.mission is not None:
+                self._mission_tx(now)
+                next_t += period
+                dt = next_t - perf_counter()
+                if dt > 0:
+                    self._stop.wait(dt)
+                else:
+                    next_t = perf_counter()
+                continue
             with self._lock:
                 cmd = dict(self._cmd)
                 off = self._target_off
@@ -3480,6 +3528,182 @@ class AcroCommander:
                 self._stop.wait(dt)
             else:
                 next_t = perf_counter()          # fell behind, resync
+
+    # ── mission: Hover -> Scout -> Engage (mission.py) ──────────────────────
+    def _build_mission(self):
+        import mission as _mission_mod
+        b = self.backend
+        self.mission = _mission_mod.Mission(
+            self, min_conf=self._mission_cfg["min_conf"],
+            ceiling_m=self._mission_cfg["ceiling_m"],
+            floor_m=self._mission_cfg["floor_m"],
+            accel_z=getattr(b, "accel_z", 2.5) or 2.5,
+            jerk_z=getattr(b, "jerk_z", 5.0) or 5.0,
+            log=lambda m: print(m, flush=True))
+        print("-" * 74)
+        print("MISSION APP  : Hover -> Scout -> Engage, driven from the phone.")
+        print("               Nothing moves unless ARMED + ALT_HOLD + a button"
+              " on the phone.")
+        print(f"               handover conf >= {self.mission.min_conf:.2f}, "
+              f"ceiling {self.mission.ceiling_m:.0f} m, floor "
+              f"{self.mission.floor_m:.1f} m above the arming point")
+        for line in self.mission_checklist():
+            print("  FC " + line)
+        print("-" * 74, flush=True)
+
+    # The mapper the mission flies through: physical units <-> PWM, on the
+    # exact inverse of ArduPilot's decode, with the law's polarity flags.
+    _INVERT = {"roll": "invert_roll", "pitch": "invert_pitch",
+               "yaw": "invert_yaw", "throttle": "invert_throttle"}
+
+    def _scale(self, axis, v):
+        b = self.backend
+        if axis == "throttle":
+            up = b.max_climb_mps or 2.5
+            dn = getattr(b, "max_descent_mps", None) or up
+            return v / up if v >= 0.0 else v / dn
+        if axis in ("roll", "pitch"):
+            return math.radians(v) / (b.angle_max or math.radians(30.0))
+        return math.radians(v) / (b.pilot_yaw_rate or math.radians(202.5))
+
+    def phys_to_pwm(self, axis, v):
+        """throttle: climb m/s (+ up).  pitch: lean deg (- = nose DOWN).
+        roll: bank deg (+ = right).  yaw: rate deg/s (+ = right)."""
+        n = self._scale(axis, float(v))
+        if getattr(self.law, self._INVERT[axis], False):
+            n = -n
+        return self.backend._exact_pwm(axis, n)
+
+    def pwm_to_phys(self, axis, pwm):
+        n = self.backend._exact_norm(axis, pwm)
+        if getattr(self.law, self._INVERT[axis], False):
+            n = -n
+        b = self.backend
+        if axis == "throttle":
+            up = b.max_climb_mps or 2.5
+            dn = getattr(b, "max_descent_mps", None) or up
+            return n * (up if n >= 0.0 else dn)
+        if axis in ("roll", "pitch"):
+            return math.degrees(n * (b.angle_max or math.radians(30.0)))
+        return math.degrees(n * (b.pilot_yaw_rate or math.radians(202.5)))
+
+    def pilot_pwm(self, axis):
+        f = getattr(self.backend, "pilot_pwm", None)
+        return f(axis) if f else None
+
+    def ai_pwm(self, cmd):
+        return self.backend.ai_pwm(cmd)
+
+    def _mission_gate(self):
+        b = self.backend
+        if not self.linked:
+            return False, "no FC link"
+        if self.require_armed and not b.armed:
+            return False, "disarmed"
+        if b.mode_name != "ALT_HOLD":
+            return False, f"FC in {b.mode_name}, not ALT_HOLD"
+        if self.commit_chan:
+            c = b.commit()
+            if c is None:
+                return False, "commit channel not read yet"
+            if c < max(self.commit_abort_below, 1e-6):
+                return False, f"commit switch down ({c:.2f})"
+        return True, ""
+
+    def _mission_tx(self, now):
+        ok, why = self._mission_gate()
+        self._mission_why = why
+        b = self.backend
+        h = b.height() if hasattr(b, "height") else None
+        with self._lock:
+            cmd = dict(self._cmd)
+            ai_t = self._last_target_t
+            off = self._target_off
+            det_t, det_conf = self._det_t, self._det_conf
+        fresh = (now - ai_t) <= self.target_timeout and off is not None
+        ctx = dict(gate_ok=ok, gate_why=why,
+                   att=b.attitude() if ok else None,
+                   height=None if h is None else h[0],
+                   climb=None if h is None else h[1],
+                   ai_cmd=cmd if fresh else None,
+                   ai_t=ai_t if fresh else None,
+                   det_t=det_t, det_conf=det_conf)
+        out = self.mission.cycle(now, ctx)
+        if out:
+            written = b.steer_pwm(out)
+        else:
+            written = b.release() if self.linked else False
+        self._mission_out = dict(out)
+        self._steering = bool(out)
+        self._rate_mode_ok = ok
+        if self.linked and (now - self._last_stt) >= (1.0 / self.statustext_hz):
+            self._last_stt = now
+            b.statustext(f"WASP {self.mission.phase} "
+                         + (f"h{h[0]:.1f}" if h else ""))
+        self._log_row(now, cmd, off, bool(out), written)
+
+    def mission_checklist(self):
+        """The FC settings this app depends on, read at connect, each with a
+        verdict.  The app never WRITES a parameter: this is for Mission Planner."""
+        p = getattr(self.backend, "params", {}) or {}
+
+        def v(name):
+            return p.get(name)
+
+        rows = []
+
+        def row(name, want, ok, why):
+            cur = v(name)
+            cur_s = "?" if cur is None else (f"{cur:g}")
+            rows.append(f"{'ok ' if ok else '!! '}{name:<17s} {cur_s:>8s}  "
+                        f"-> {want:<8s} {why}")
+
+        up, dn = v("PILOT_SPEED_UP"), v("PILOT_SPEED_DN")
+        row("PILOT_SPEED_UP", "2500", up is not None and up >= 2500,
+            "25 m/s: the AI's climb authority")
+        row("PILOT_SPEED_DN", "250", dn is not None and 0 < dn <= 300,
+            "slow descents (0 would copy UP = 25 m/s down)")
+        row("PILOT_ACCEL_Z", "500", v("PILOT_ACCEL_Z") is not None,
+            "sets how fast climbs start/stop (stop distance uses it)")
+        row("ANGLE_MAX", "4000", (v("ANGLE_MAX") or 0) >= 4000,
+            "40 deg: PUSH FAST and the AI's lean")
+        row("RC_OVERRIDE_TIME", "1", (v("RC_OVERRIDE_TIME") or 3.0) <= 1.0,
+            "a hung Jetson's last command dies in 1 s, not 3")
+        row("ATC_INPUT_TC", "0.2-0.25", (v("ATC_INPUT_TC") or 0.15) >= 0.2,
+            "softer attitude response to a new command: less kick")
+        lb = v("LOG_BACKEND_TYPE")
+        row("LOG_BACKEND_TYPE", "1 + SD", bool(lb), "fit an SD card: no FC logs exist")
+        row("INS_LOG_BAT_MASK", "1", bool(v("INS_LOG_BAT_MASK")),
+            "IMU batch log for vibration FFT")
+        return rows
+
+    def mission_state(self):
+        """Everything the phone shows, read off the live objects."""
+        now = perf_counter()
+        b = self.backend
+        st = dict(app="mission" if self.mission is not None else "auto",
+                  gate_why=self._mission_why)
+        if self.mission is not None:
+            st.update(self.mission.snapshot(now))
+        h = b.height() if b is not None and hasattr(b, "height") else None
+        st["height_m"] = None if h is None else round(h[0], 2)
+        st["climb_mps"] = None if h is None else round(h[1], 2)
+        st["heading_deg"] = None if h is None else round(h[2])
+        vib = b.vibration() if b is not None and hasattr(b, "vibration") else None
+        st["vibe"] = None if vib is None else dict(
+            x=round(vib["x"], 1), y=round(vib["y"], 1), z=round(vib["z"], 1),
+            clip=vib["clip"])
+        with self._lock:
+            det_t, conf = self._det_t, self._det_conf
+            cmd = dict(self._cmd)
+            fresh = (now - self._last_target_t) <= self.target_timeout
+        st["det_age_s"] = None if det_t is None else round(now - det_t, 2)
+        st["det_conf"] = None if conf is None else round(conf, 2)
+        st["target_fresh"] = bool(fresh)
+        st["target_az_deg"] = round(cmd.get("az_deg", 0.0), 1) if fresh else None
+        st["target_el_deg"] = round(cmd.get("el_cam_deg", 0.0), 1) if fresh else None
+        st["pwm"] = dict(self._mission_out)
+        return st
 
     def _commit_gate(self, steer):
         """Pull the commit stick below the threshold and every channel goes back
@@ -3629,6 +3853,15 @@ class AcroCommander:
                      # channels: without these, "why did it bank there" is
                      # guesswork.
                      "sens,pn_gain_eff,bank_cap_deg,fill_frac,lean_el_gate")
+        if self.mission_enabled:
+            # The diagnosis columns (controller vs Jetson vs vibration): what
+            # was SENT on each channel (0 = pilot), what the FC MEASURED, the
+            # airframe's vibration, and what the detector saw.
+            cols += (",phase,pwm_roll,pwm_pitch,pwm_yaw,pwm_thr,"
+                     "meas_roll_deg,meas_pitch_deg,meas_yaw_deg,"
+                     "rollspeed_dps,pitchspeed_dps,yawspeed_dps,"
+                     "height_m,climb_mps,vibe_x,vibe_y,vibe_z,clip,"
+                     "det_age_s,det_conf,bbox_w,bbox_h,cap_age_s")
         self._log_fh.write(cols + "\n")
         print(f"[FC] control log -> {self.log_path}", flush=True)
 
@@ -3667,9 +3900,42 @@ class AcroCommander:
                         f",{cmd.get('bank_cap_deg', 0.0):.2f}"
                         f",{cmd.get('fill_frac', 0.0):.5f}"
                         f",{cmd.get('lean_el_gate', 1.0):.3f}")
+            if self.mission_enabled:
+                row += self._mission_csv(now)
             self._log_fh.write(row + "\n")
         except Exception:
             pass
+
+    def _mission_csv(self, now):
+        b = self.backend
+        o = self._mission_out
+        ph = self.mission.phase if self.mission is not None else ""
+        att = b.attitude() if b is not None else None
+        h = b.height() if hasattr(b, "height") else None
+        vib = b.vibration() if hasattr(b, "vibration") else None
+
+        def f(x, fmt):
+            return "" if x is None else fmt % x
+        a = (["", "", "", "", "", ""] if att is None else
+             [f(math.degrees(att[k]), "%+.2f") for k in
+              ("roll", "pitch", "yaw", "rollspeed", "pitchspeed", "yawspeed")])
+        with self._lock:
+            det_t, conf, bb, age = (self._det_t, self._det_conf,
+                                    self._det_bbox, self._cap_age)
+        bw = bh = None
+        if bb is not None and len(bb) >= 4:
+            bw, bh = bb[2], bb[3]
+        return ("," + ph
+                + "".join(f",{o.get(ax, 0)}" for ax in
+                          ("roll", "pitch", "yaw", "throttle"))
+                + "," + ",".join(a)
+                + f",{'' if h is None else '%.2f' % h[0]}"
+                + f",{'' if h is None else '%+.2f' % h[1]}"
+                + (",,,," if vib is None else
+                   f",{vib['x']:.2f},{vib['y']:.2f},{vib['z']:.2f},{vib['clip']}")
+                + f",{'' if det_t is None else '%.3f' % (now - det_t)}"
+                + f",{f(conf, '%.3f')},{f(bw, '%d')},{f(bh, '%d')}"
+                + f",{f(age, '%.4f')}")
 
     # ── console line (one per frame) ─────────────────────────────────────────
     def format_command(self, state, cmd, target_off, sent, live, is_yolo):
@@ -4065,5 +4331,11 @@ def _intercept_from_env(log_dir=None, verbose=True):
         commit_chan=commit_chan,
         commit_abort_below=abort_below,
         engage_max_s=_env_f("ENGAGE_MAX_S", 0.0),
+        # The Hover -> Scout -> Engage app.  WASP_APP=auto brings back the old
+        # "lock = drive" behaviour.
+        mission=os.environ.get("WASP_APP", "mission").strip().lower() == "mission",
+        mission_min_conf=_env_f("ENGAGE_MIN_CONF", 0.20),
+        mission_ceiling_m=_env_f("MISSION_CEILING_M", 30.0),
+        mission_floor_m=_env_f("MISSION_FLOOR_M", 0.5),
         verbose=verbose,
     )

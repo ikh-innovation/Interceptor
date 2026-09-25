@@ -51,218 +51,44 @@ import cv2
 
 _BOUNDARY = "waspframe"
 
-_PAGE = """<!doctype html>
-<html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
-<title>WASP</title>
-<style>
-  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  html,body{margin:0;height:100%;background:#000;color:#e8e8e8;
-            font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
-                 ui-sans-serif,system-ui,sans-serif;
-            -webkit-text-size-adjust:100%;overflow:hidden}
-  .app{height:100%;display:flex;flex-direction:column}
+import os
+import random
+from pathlib import Path
 
-  /* ── header: the colour IS the message.  Black = pilot has it,
-       blue = ALT_HOLD, orange = ACRO.  Readable across a field. ── */
-  .hdr{flex:0 0 auto;padding:16px 18px 14px;transition:background .18s linear}
-  .hdr.m_stab{background:#101010}
-  .hdr.m_alt {background:#0d3a7a}
-  .hdr.m_acro{background:#8a4409}
-  .hdr .title{font-size:clamp(28px,9vw,46px);font-weight:800;letter-spacing:-.01em;
-              line-height:1.05}
-  .hdr .desc{margin-top:5px;font-size:clamp(13px,3.8vw,16px);color:#cfd6e0;
-             line-height:1.35}
-  .hdr.m_stab .desc{color:#9a9a9a}
-  .chips{display:flex;gap:7px;margin-top:11px;flex-wrap:wrap}
-  .chip{font-size:clamp(11px,3.1vw,13px);font-weight:700;letter-spacing:.04em;
-        padding:5px 10px;border-radius:999px;background:rgba(255,255,255,.14);
-        color:#fff;white-space:nowrap}
-  .chip.hot{background:#fff;color:#000}
+# The phone app lives in its own file so it can be read and edited as HTML.
+_UI_FILE = Path(__file__).resolve().parent / "mission_ui.html"
 
-  .vid{flex:1 1 auto;min-height:0;display:flex;align-items:center;
-       justify-content:center;background:#000}
-  img{max-width:100%;max-height:100%;object-fit:contain;display:block}
 
-  /* ── the panel the active tab shows ── */
-  .panel{flex:0 0 auto;background:#0b0b0b;border-top:1px solid #242424}
-  .panel .plabel{padding:9px 16px 0;font-size:12px;font-weight:700;
-                 letter-spacing:.1em;color:#6d6d6d}
-  .opts{display:flex;gap:8px;padding:9px 12px 12px}
-  .opts button{flex:1;min-width:0;padding:15px 6px;border:1px solid #2e2e2e;
-               border-radius:12px;background:#151515;color:#a8a8a8;
-               font:inherit;font-size:clamp(12px,3.5vw,15px);font-weight:700;
-               letter-spacing:.03em}
-  .opts button.on{background:#f2f2f2;color:#000;border-color:#f2f2f2}
+def _load_page():
+    try:
+        return _UI_FILE.read_bytes()
+    except OSError as exc:
+        return (f"<h1>WASP</h1><p>UI file missing: {_UI_FILE} ({exc})</p>"
+                ).encode("utf-8")
 
-  /* ── bottom nav, app style ── */
-  .nav{flex:0 0 auto;display:flex;background:#0b0b0b;border-top:1px solid #242424;
-       padding-bottom:env(safe-area-inset-bottom)}
-  .nav button{flex:1;padding:11px 4px 13px;background:none;border:0;
-              color:#6d6d6d;font:inherit;font-size:11px;font-weight:700;
-              letter-spacing:.07em}
-  .nav button .ic{display:block;font-size:19px;line-height:1.1;margin-bottom:3px;
-                  font-weight:400}
-  .nav button.on{color:#fff}
-  .msg{flex:0 0 auto;padding:5px 12px;font-size:11px;color:#5e5e5e;
-       text-align:center;background:#0b0b0b;height:22px;overflow:hidden}
-</style></head>
-<body><div class="app">
 
-  <div class="hdr m_stab" id="hdr">
-    <div class="title" id="h_title">--</div>
-    <div class="desc" id="h_desc">σύνδεση...</div>
-    <div class="chips">
-      <span class="chip" id="c_arm">--</span>
-      <span class="chip" id="c_drv">--</span>
-      <span class="chip" id="c_lock">--</span>
-    </div>
-  </div>
+def load_token():
+    """The operator PIN every /cmd must carry.  WASP_UI_TOKEN wins; otherwise
+    ~/.wasp_ui_token, created once with a random 6-digit PIN.  This page moves
+    the aircraft, so an unauthenticated phone on the field WiFi may WATCH but
+    never command."""
+    t = os.environ.get("WASP_UI_TOKEN", "").strip()
+    if t:
+        return t
+    f = Path.home() / ".wasp_ui_token"
+    try:
+        t = f.read_text().strip()
+    except OSError:
+        t = ""
+    if not t:
+        t = f"{random.SystemRandom().randrange(10 ** 6):06d}"
+        try:
+            f.write_text(t + "\n")
+            os.chmod(f, 0o600)
+        except OSError:
+            pass
+    return t
 
-  <div class="vid"><img id="v" src="/stream.mjpg" alt=""></div>
-
-  <div class="panel">
-    <div class="plabel" id="p_label">ΤΑΧΥΤΗΤΑ</div>
-    <div class="opts" id="p_opts"></div>
-  </div>
-
-  <div class="msg" id="msg">connecting</div>
-
-  <div class="nav">
-    <button data-tab="test"><span class="ic">&#9680;</span>TEST</button>
-    <button data-tab="speed" class="on"><span class="ic">&#9654;</span>ΤΑΧΥΤΗΤΑ</button>
-    <button data-tab="target"><span class="ic">&#9678;</span>ΣΤΟΧΟΣ</button>
-  </div>
-</div>
-<script>
-  var v = document.getElementById('v');
-  v.onerror = function () {
-    setTimeout(function () { v.src = '/stream.mjpg?t=' + Date.now(); }, 1000);
-  };
-  function T(id, s) { document.getElementById(id).textContent = s; }
-
-  // Title + one line.  Not a manual -- the pilot has the manual; this is the
-  // reminder you can read at arm's length while something is in the air.
-  var MODES = {
-    ALT_HOLD: {t: 'ALT_HOLD', d: 'Το AI οδηγεί και το γκάζι. Κέντρο γκαζιού = κράτημα ύψους.'},
-    ACRO:     {t: 'ACRO',     d: 'Το γκάζι το κρατάς ΕΣΥ. Το AI οδηγεί μόνο roll / pitch / yaw.'},
-    _pilot:   {t: null,       d: 'Ο χειριστής έχει τον πλήρη έλεγχο.'},
-    _nolink:  {t: 'NO LINK',  d: 'Καμία σύνδεση με τον FC.'}
-  };
-
-  // TEMPORARY-ish: forces the header to draw a mode the FC is not in, so the
-  // three looks can be checked on the bench.  Only changes what THIS page
-  // draws -- it never reaches the tracker.  LIVE clears it.
-  var PREVIEW = '';
-  var TAB = 'speed';
-
-  var TABS = {
-    test:   {label: 'ΔΟΚΙΜΗ ΟΘΟΝΩΝ', key: 'pv',
-             opts: [['', 'LIVE'], ['STABILIZE', 'STABILIZE'],
-                    ['ALT_HOLD', 'ALT_HOLD'], ['ACRO', 'ACRO']]},
-    speed:  {label: 'ΤΑΧΥΤΗΤΑ', key: 'mode',
-             opts: [['SLOW', 'SLOW'], ['MEDIUM', 'MEDIUM'], ['FAST', 'FAST']]},
-    target: {label: 'ΣΤΟΧΟΣ', key: 'target',
-             opts: [['HUMAN', 'HUMAN'], ['DRONE', 'DRONE']]}
-  };
-
-  var LAST = {};
-
-  function drawPanel() {
-    var t = TABS[TAB];
-    T('p_label', t.label);
-    var box = document.getElementById('p_opts');
-    box.innerHTML = '';
-    for (var i = 0; i < t.opts.length; i++) {
-      var b = document.createElement('button');
-      b.textContent = t.opts[i][1];
-      b.setAttribute('data-k', t.key);
-      b.setAttribute('data-v', t.opts[i][0]);
-      box.appendChild(b);
-    }
-    markPanel();
-  }
-
-  function markPanel() {
-    var t = TABS[TAB];
-    var cur = (t.key === 'pv') ? PREVIEW
-            : (t.key === 'mode') ? LAST.mode : LAST.target;
-    var bs = document.querySelectorAll('#p_opts button');
-    for (var i = 0; i < bs.length; i++) {
-      bs[i].classList.toggle('on', bs[i].getAttribute('data-v') === (cur || ''));
-    }
-  }
-
-  // Painted from the SERVER's reply, never from the click -- if the tracker
-  // refused a command, or the pilot flipped the switch, this shows what is
-  // actually true.
-  function paint(j) {
-    LAST = j;
-    var linked = j.linked, mode = j.fc_mode || '?';
-    var armed = j.armed, steering = j.steering, state = j.state;
-    if (PREVIEW) { linked = true; mode = PREVIEW;
-                   steering = (PREVIEW !== 'STABILIZE') && steering; }
-
-    var spec = !linked ? MODES._nolink : (MODES[mode] || MODES._pilot);
-    T('h_title', spec.t || mode);
-    T('h_desc', spec.d);
-    document.getElementById('hdr').className = 'hdr ' +
-      (linked && mode === 'ALT_HOLD' ? 'm_alt'
-       : linked && mode === 'ACRO' ? 'm_acro' : 'm_stab');
-
-    T('c_arm', armed ? 'ΟΠΛΙΣΜΕΝΟ' : 'ΑΣΦΑΛΕΙΑ');
-    document.getElementById('c_arm').className = 'chip' + (armed ? ' hot' : '');
-    T('c_drv', steering ? 'AI ΟΔΗΓΕΙ' : 'ΧΕΙΡΙΣΤΗΣ');
-    document.getElementById('c_drv').className = 'chip' + (steering ? ' hot' : '');
-    T('c_lock', state === 'LOCK' ? 'ΚΛΕΙΔΩΜΕΝΟΣ'
-              : state === 'PREDICT' ? 'PREDICT' : 'ΑΝΑΖΗΤΗΣΗ');
-    document.getElementById('c_lock').className =
-      'chip' + (state === 'LOCK' ? ' hot' : '');
-    markPanel();
-  }
-
-  var busy = false;
-  function req(url, note) {
-    if (busy) return;
-    busy = true;
-    fetch(url, {cache: 'no-store'}).then(function (r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    }).then(function (j) {
-      paint(j);
-      if (note) T('msg', note + ' \u2014 ' + new Date().toLocaleTimeString());
-    }).catch(function (e) {
-      T('msg', 'link error: ' + e.message);
-    }).then(function () { busy = false; });
-  }
-
-  document.addEventListener('click', function (ev) {
-    var b = ev.target.closest ? ev.target.closest('button') : null;
-    if (!b) return;
-    if (b.hasAttribute('data-tab')) {
-      TAB = b.getAttribute('data-tab');
-      var nb = document.querySelectorAll('.nav button');
-      for (var i = 0; i < nb.length; i++) nb[i].classList.toggle('on', nb[i] === b);
-      drawPanel();
-      return;
-    }
-    var k = b.getAttribute('data-k'), val = b.getAttribute('data-v');
-    if (k === 'pv') {
-      PREVIEW = val;
-      T('msg', val ? ('ΔΟΚΙΜΗ: ' + val + ' (δεν αλλάζει τίποτα στο drone)') : 'LIVE');
-      req('/state');
-      return;
-    }
-    T('msg', 'sending ' + k + '=' + val);
-    req('/cmd?' + k + '=' + encodeURIComponent(val), k + '=' + val);
-  });
-
-  drawPanel();
-  req('/state');
-  setInterval(function () { req('/state'); }, 500);
-</script>
-</body></html>
-""".encode("utf-8")
 
 
 class MJPEGServer:
@@ -276,15 +102,25 @@ class MJPEGServer:
         stream.stop()
     """
 
+    # Commands that move the aircraft need the controller lease; ABORT never
+    # does (any phone with the PIN may stop it).  Everything needs the PIN.
+    CONTROL_KEYS = ("hold", "release", "step", "engage", "lvl", "mode", "target")
+    ALL_KEYS = CONTROL_KEYS + ("abort",)
+    LEASE_S = 2.0
+
     def __init__(self, port: int = 8080, quality: int = 70,
                  fps: float = 15.0, host: str = "0.0.0.0",
-                 state_get=None, command=None):
+                 state_get=None, command=None, console_get=None, token=None):
         # state_get()      -> dict of what the tracker is ACTUALLY doing.
         # command(k, v)    -> applies an operator command, returns nothing.
         # Both are None when nothing is wired, and the dashboard then 503s
         # rather than pretending to have changed something.
         self.state_get = state_get
         self.command = command
+        self.console_get = console_get
+        self.token = load_token() if token is None else str(token)
+        self._lease = None            # (client_id, last_seen)
+        self._lease_lock = threading.Lock()
         self.port    = int(port)
         self.host    = host
         self.quality = max(1, min(100, int(quality)))
@@ -324,6 +160,8 @@ class MJPEGServer:
                     self._state()
                 elif path == "/cmd":
                     self._cmd()
+                elif path == "/console":
+                    self._console()
                 else:
                     self.send_error(404)
 
@@ -350,7 +188,19 @@ class MJPEGServer:
                 if st is None:
                     self.send_error(503, "no tracker wired")
                     return
+                q = parse_qs(urlparse(self.path).query)
+                st["control"] = server._lease_status((q.get("c") or [""])[0],
+                                                     renew=True)
                 self._json(st)
+
+            def _console(self):
+                q = parse_qs(urlparse(self.path).query)
+                try:
+                    since = int((q.get("since") or ["0"])[0])
+                except ValueError:
+                    since = 0
+                rows = server.console_get(since) if server.console_get else []
+                self._json([list(r) for r in rows])
 
             def _cmd(self):
                 """Apply an operator command, then report the resulting state.
@@ -367,25 +217,39 @@ class MJPEGServer:
                     self.send_error(503, "no tracker wired")
                     return
                 q = parse_qs(urlparse(self.path).query)
-                applied = []
-                for key in ("mode", "speed", "sens", "target"):
-                    if key in q:
-                        try:
-                            server.command(key, q[key][0])
-                            applied.append(key)
-                        except Exception as exc:
-                            self.send_error(400, f"{key}: {exc}")
-                            return
+                if server.token and (q.get("k") or [""])[0] != server.token:
+                    self._json(dict(error="bad PIN"), code=403)
+                    return
+                client = (q.get("c") or [""])[0]
+                keys = [k for k in server.ALL_KEYS if k in q]
+                if any(k in server.CONTROL_KEYS for k in keys):
+                    if not server._take_lease(client):
+                        self._json(dict(error="another phone has control"),
+                                   code=409)
+                        return
+                applied, refused = [], ""
+                for key in keys:
+                    try:
+                        why = server.command(key, q[key][0])
+                        applied.append(key)
+                        if why:
+                            refused = why
+                    except Exception as exc:
+                        refused = f"{key}: {exc}"
                 st = self._read_state() or {}
                 st["applied"] = applied
+                st["refused"] = refused
+                st["control"] = server._lease_status(client, renew=True)
                 self._json(st)
 
             def _send_page(self):
+                page = _load_page()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(_PAGE)))
+                self.send_header("Content-Length", str(len(page)))
+                self.send_header("Cache-Control", "no-store")
                 self.end_headers()
-                self.wfile.write(_PAGE)
+                self.wfile.write(page)
 
             def _send_snapshot(self):
                 # Count as a viewer for the duration: publish() is a no-op with
@@ -446,9 +310,37 @@ class MJPEGServer:
 
         for url in self.urls():
             print("[STREAM] seeker view -> " + url)
+        if self.token:
+            print(f"[STREAM] operator PIN {self.token}  (open "
+                  f"{self.urls()[0]}?k={self.token} to control; without it "
+                  f"the page is view-only)")
         print("[STREAM] MJPEG q=%d cap=%.0f fps - encodes only while a viewer "
               "is connected" % (self.quality, 1.0 / self.min_dt))
         return self
+
+    # -- the one phone allowed to fly it -----------------------------------
+    def _take_lease(self, client):
+        now = perf_counter()
+        with self._lease_lock:
+            if not client:
+                return False                 # control needs an identity
+            cur = self._lease
+            if cur is None or cur[0] == client or (now - cur[1]) > self.LEASE_S:
+                self._lease = (client, now)
+                return True
+            return False
+
+    def _lease_status(self, client, renew=False):
+        now = perf_counter()
+        with self._lease_lock:
+            cur = self._lease
+            if cur is None or (now - cur[1]) > self.LEASE_S:
+                return "free"
+            if client and cur[0] == client:
+                if renew:
+                    self._lease = (client, now)
+                return "you"
+            return "other"
 
     def stop(self):
         if not self._running:

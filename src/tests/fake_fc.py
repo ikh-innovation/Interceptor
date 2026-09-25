@@ -31,6 +31,9 @@ class FakeArduPilot(threading.Thread):
         self.overrides = {}            # chan(1-based) -> pwm, when accepted
         self.rejected_from = set()     # sysids whose overrides we dropped
         self.radio = {i: 1500 for i in range(1, 19)}
+        # VFR_HUD / VIBRATION, for the mission's instruments.
+        self.vfr = dict(alt=2.0, climb=0.0, heading=0)
+        self.vibe = dict(x=8.0, y=9.0, z=12.0, clip=0)
         self.params = {
             "SYSID_MYGCS": float(sysid_mygcs),
             "RC_OPTIONS": float(rc_options),
@@ -80,6 +83,13 @@ class FakeArduPilot(threading.Thread):
                 t_rc = now
                 vals = [self.overrides.get(i, self.radio[i]) for i in range(1, 19)]
                 self.m.mav.rc_channels_send(int(now * 1000), 8, *vals, 100)
+            if now - t_att > 0.05:
+                self.m.mav.vfr_hud_send(0.0, 0.0, int(self.vfr["heading"]), 0,
+                                        float(self.vfr["alt"]),
+                                        float(self.vfr["climb"]))
+                self.m.mav.vibration_send(int(now * 1e6), self.vibe["x"],
+                                          self.vibe["y"], self.vibe["z"],
+                                          int(self.vibe["clip"]), 0, 0)
             if self.attitude and now - t_att > 0.05:
                 t_att = now
                 a = self.att

@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="el"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#111">
+<title>WASP</title>
+<style>
+  :root{--bg:#000;--panel:#0d0d0d;--line:#262626;--txt:#eee;--dim:#777;
+        --pilot:#262626;--hover:#0d47a1;--vert:#00838f;--scout:#6a1b9a;
+        --push:#e65100;--ai:#b71c1c;--stop:#8a5a00;--ok:#2e7d32;--warn:#f9a825;--bad:#d50000}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;
+    user-select:none;-webkit-touch-callout:none}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);overflow:hidden;
+    font:15px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif}
+  .app{height:100%;display:flex;flex-direction:column}
+
+  /* header: the colour IS the phase */
+  .hdr{flex:0 0 auto;padding:10px 14px 8px;background:var(--pilot);transition:background .15s}
+  .row1{display:flex;align-items:flex-end;gap:10px}
+  .phase{font-size:clamp(26px,8.5vw,40px);font-weight:900;letter-spacing:-.01em;line-height:1;flex:1;min-width:0}
+  .alt{text-align:right;line-height:1}
+  .alt .h{font-size:clamp(26px,8.5vw,40px);font-weight:900;font-variant-numeric:tabular-nums}
+  .alt .v{font-size:13px;color:#ddd;font-variant-numeric:tabular-nums}
+  .hint{margin-top:5px;font-size:clamp(13px,3.7vw,15px);color:#e6e6e6;min-height:1.3em}
+  .chips{display:flex;gap:5px;margin-top:7px;flex-wrap:wrap}
+  .chip{font-size:12px;font-weight:800;letter-spacing:.03em;padding:4px 8px;border-radius:999px;
+        background:rgba(255,255,255,.14);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .chip.on{background:#fff;color:#000}.chip.ok{background:var(--ok)}.chip.warn{background:var(--warn);color:#000}
+  .chip.bad{background:var(--bad)}
+
+  /* video + the aim mark */
+  .vidwrap{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;background:#000;position:relative}
+  .vbox{position:relative;height:100%;max-width:100%;aspect-ratio:1/1}
+  .vbox img{width:100%;height:100%;display:block;object-fit:contain}
+  .aim{position:absolute;width:15%;aspect-ratio:1/1;transform:translate(-50%,-50%);
+       border:3px solid #00e5ff;border-radius:50%;box-shadow:0 0 0 2px rgba(0,0,0,.6);pointer-events:none}
+  .aim:after{content:"";position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;background:#00e5ff;border-radius:50%}
+  .aim.good{border-color:#00e676}.aim.good:after{background:#00e676}
+  .tgt{position:absolute;width:5%;aspect-ratio:1/1;transform:translate(-50%,-50%);border:2px solid #ffea00;pointer-events:none;display:none}
+  .badge{position:absolute;left:50%;top:8px;transform:translateX(-50%);padding:5px 12px;border-radius:999px;
+         font-weight:900;font-size:15px;background:rgba(0,0,0,.65);white-space:nowrap}
+  .badge.good{background:#00c853;color:#000}
+  .offs{position:absolute;right:6px;bottom:6px;background:rgba(0,0,0,.6);padding:3px 7px;border-radius:6px;font-size:12px;font-variant-numeric:tabular-nums}
+
+  .ticker{flex:0 0 auto;height:26px;padding:5px 10px;font:12px/16px ui-monospace,Menlo,monospace;color:#cfcfcf;
+          background:#101010;border-top:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ticker.refuse{color:#ffab91}
+
+  /* controls */
+  .ctl{flex:0 0 auto;display:grid;grid-template-columns:1fr 1.25fr 1fr;gap:8px;padding:8px 10px;background:var(--panel)}
+  .pair{display:flex;flex-direction:column;gap:8px}
+  .btn{border:0;border-radius:14px;background:#1d1d1d;color:#fff;font:inherit;font-weight:900;
+       font-size:clamp(24px,7.5vw,34px);height:clamp(58px,8.5vh,76px);touch-action:none;position:relative}
+  .btn small{position:absolute;left:0;right:0;bottom:4px;font-size:10px;font-weight:700;color:#aaa;letter-spacing:.04em}
+  .btn.held{background:#fff;color:#000}.btn.held small{color:#333}
+  .btn:disabled{opacity:.28}
+  .eng{border-radius:18px;background:#3a1400;border:2px solid var(--push);color:#fff;font-weight:900;
+       font-size:clamp(18px,5.4vw,24px);touch-action:none;position:relative;overflow:hidden}
+  .eng .fill{position:absolute;left:0;bottom:0;width:100%;height:0;background:var(--push);transition:none}
+  .eng span{position:relative}
+  .eng:disabled{opacity:.28}
+  .tools{flex:0 0 auto;display:flex;gap:8px;padding:0 10px 8px;background:var(--panel)}
+  .tools button{flex:1;border:1px solid #333;background:#151515;color:#ddd;border-radius:10px;padding:9px 4px;
+                font:inherit;font-size:13px;font-weight:800}
+  .abort{flex:0 0 auto;border:0;width:100%;background:var(--bad);color:#fff;font:inherit;font-weight:900;
+         font-size:clamp(24px,7vw,32px);letter-spacing:.06em;padding:14px 0 calc(14px + env(safe-area-inset-bottom));touch-action:none}
+  .abort:active{background:#ff1744}
+
+  /* sheets (never cover ABORT) */
+  .sheet{position:absolute;left:0;right:0;bottom:0;max-height:62%;overflow:auto;background:#121212;
+         border-top:2px solid #333;border-radius:16px 16px 0 0;padding:10px 12px 14px;display:none;z-index:5}
+  .sheet.open{display:block}
+  .sheet h3{margin:2px 0 8px;font-size:14px;letter-spacing:.08em;color:#aaa;display:flex;justify-content:space-between}
+  .sheet h3 button{background:none;border:0;color:#fff;font-size:20px}
+  .grp{margin:8px 0 12px}.grp .lbl{font-size:12px;color:#999;font-weight:800;letter-spacing:.06em;margin-bottom:5px}
+  .seg{display:flex;gap:6px}.seg button{flex:1;border:1px solid #333;background:#1b1b1b;color:#bbb;border-radius:10px;
+       padding:11px 2px 8px;font:inherit;font-weight:900;font-size:14px}
+  .seg button i{display:block;font-style:normal;font-size:11px;font-weight:700;color:#888;margin-top:2px}
+  .seg button.on{background:#fff;color:#000;border-color:#fff}.seg button.on i{color:#333}
+  .log{font:12px/1.35 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word;color:#ccc}
+  .log .ln{padding:2px 0;border-bottom:1px solid #1d1d1d}.log .t{color:#666}
+  .log .m{color:#80d8ff}.log .r{color:#ffab91}.log .e{color:#ff5252}
+
+  .cover{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;
+         background:rgba(160,0,0,.92);z-index:9;text-align:center;padding:20px}
+  .cover.on{display:flex}.cover b{font-size:30px}.cover p{font-size:15px;max-width:22em}
+  .pin{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.9);z-index:8}
+  .pin.on{display:flex}.pin div{background:#1a1a1a;padding:18px;border-radius:14px;width:80%;max-width:320px}
+  .pin input{width:100%;font-size:28px;padding:10px;border-radius:10px;border:1px solid #444;background:#000;color:#fff;
+             text-align:center;letter-spacing:.3em;-webkit-user-select:text;user-select:text}
+  .pin button{margin-top:10px;width:100%;padding:12px;font-size:17px;font-weight:900;border-radius:10px;border:0}
+</style></head>
+<body><div class="app">
+
+  <div class="hdr" id="hdr">
+    <div class="row1">
+      <div class="phase" id="phase">--</div>
+      <div class="alt"><div class="h" id="alt">--</div><div class="v" id="vs">&nbsp;</div></div>
+    </div>
+    <div class="hint" id="hint">σύνδεση…</div>
+    <div class="chips">
+      <span class="chip" id="c_arm">--</span><span class="chip" id="c_mode">--</span>
+      <span class="chip" id="c_hdg">--</span><span class="chip" id="c_vib">--</span>
+      <span class="chip" id="c_det">--</span><span class="chip" id="c_ctl">--</span>
+    </div>
+  </div>
+
+  <div class="vidwrap"><div class="vbox" id="vbox">
+    <img id="v" src="/stream.mjpg" alt="">
+    <div class="aim" id="aim"></div><div class="tgt" id="tgt"></div>
+    <div class="badge" id="badge" style="display:none"></div>
+    <div class="offs" id="offs" style="display:none"></div>
+  </div>
+    <div class="sheet" id="sh_speed">
+      <h3>ΤΑΧΥΤΗΤΕΣ <button data-close>&times;</button></h3>
+      <div class="grp"><div class="lbl">▲▼ ΥΨΟΣ</div><div class="seg" data-g="vert"></div></div>
+      <div class="grp"><div class="lbl">⟲⟳ ΣΤΡΟΦΗ (κράτημα / ένα άγγιγμα)</div><div class="seg" data-g="yaw"></div></div>
+      <div class="grp"><div class="lbl">ΩΘΗΣΗ — κλίση μπροστά</div><div class="seg" data-g="push"></div></div>
+      <div class="grp"><div class="lbl">AI — προσέγγιση</div><div class="seg" data-g="ai"></div></div>
+    </div>
+    <div class="sheet" id="sh_log">
+      <h3>ΜΗΝΥΜΑΤΑ <button data-close>&times;</button></h3>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+
+  <div class="ticker" id="ticker">—</div>
+
+  <div class="ctl">
+    <div class="pair">
+      <button class="btn" id="b_up" data-hold="up">▲<small>ΑΝΟΔΟΣ</small></button>
+      <button class="btn" id="b_dn" data-hold="down">▼<small>ΚΑΘΟΔΟΣ</small></button>
+    </div>
+    <button class="eng" id="b_eng"><div class="fill" id="engfill"></div><span>ENGAGE<br><small style="font-size:11px">κράτα 1 s</small></span></button>
+    <div class="pair">
+      <button class="btn" id="b_yl" data-hold="yawl" data-tap="l">⟲<small>ΑΡΙΣΤΕΡΑ</small></button>
+      <button class="btn" id="b_yr" data-hold="yawr" data-tap="r">⟳<small>ΔΕΞΙΑ</small></button>
+    </div>
+  </div>
+  <div class="tools">
+    <button id="t_speed">ΤΑΧΥΤΗΤΕΣ</button>
+    <button id="t_log">ΜΗΝΥΜΑΤΑ</button>
+    <button id="t_tgt">ΣΤΟΧΟΣ: --</button>
+  </div>
+  <button class="abort" id="b_abort">ABORT</button>
+</div>
+
+<div class="cover" id="cover"><b>ΧΑΘΗΚΕ Η ΣΥΝΔΕΣΗ</b>
+  <p>Το Jetson σταματά κάθε κίνηση μόνο του σε 0,3 s. Ο πιλότος έχει τον έλεγχο με τον διακόπτη.</p></div>
+<div class="pin" id="pin"><div>
+  <div style="font-weight:800;margin-bottom:8px">Κωδικός χειριστή</div>
+  <input id="pin_in" inputmode="numeric" autocomplete="off">
+  <button id="pin_ok" style="background:#fff;color:#000">ΕΛΕΓΧΟΣ</button>
+  <button id="pin_view" style="background:#333;color:#fff">ΜΟΝΟ ΠΡΟΒΟΛΗ</button>
+</div></div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  function T(id, s) { $(id).textContent = s; }
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+  function rid() { return Math.random().toString(36).slice(2, 10); }
+
+  // ── identity: the PIN (token) and this page's client id ────────────────
+  var qs = new URLSearchParams(location.search);
+  var K = qs.get("k") || store("wasp_k") || "";
+  if (qs.get("k")) store("wasp_k", K);
+  var C = rid();
+  var VIEW = !K;
+
+  var HFOV = 62.2, VFOV = 48.8, TILT = 30;
+  var PH = {
+    PILOT:   {t: "ΧΕΙΡΙΣΤΗΣ", c: "var(--pilot)", h: "Ο πιλότος: όπλιση, απογείωση, ALT_HOLD, γκάζι στο κέντρο."},
+    HOVER:   {t: "ΑΙΩΡΗΣΗ",   c: "var(--hover)", h: "▲▼ ύψος · ⟲⟳ κατεύθυνση · στόχος στο ◎ · μετά ENGAGE."},
+    CLIMB:   {t: "ΑΝΟΔΟΣ",    c: "var(--vert)",  h: "Όσο κρατάς ▲ ανεβαίνει. Άφησε = κρατά ύψος."},
+    DESCEND: {t: "ΚΑΘΟΔΟΣ",   c: "var(--vert)",  h: "Όσο κρατάς ▼ κατεβαίνει. Άφησε = κρατά ύψος."},
+    SCOUT:   {t: "ΑΝΙΧΝΕΥΣΗ", c: "var(--scout)", h: "Κράτημα = στροφή · ένα άγγιγμα = μικρό βήμα."},
+    PUSH:    {t: "ΩΘΗΣΗ",     c: "var(--push)",  h: "Κλίση μπροστά, ίδια κατεύθυνση και ύψος. AI σε λίγο."},
+    AI:      {t: "AI",        c: "var(--ai)",    h: "Το AI κυνηγά τον στόχο. ABORT = αιώρηση αμέσως."},
+    STOP:    {t: "ΣΤΑΜΑΤΑ",   c: "var(--stop)",  h: "Ομαλή επαναφορά σε αιώρηση."}
+  };
+  var LEVELS = ["SLOW", "MEDIUM", "FAST"];
+  var LAST = null, lastOk = 0, consoleSeq = 0;
+
+  // ── transport: polls may be skipped, commands never ────────────────────
+  var polling = false;
+  function poll() {
+    if (polling) return;
+    polling = true;
+    fetch("/state?c=" + C, {cache: "no-store"}).then(function (r) {
+      if (!r.ok) throw new Error(r.status); return r.json();
+    }).then(function (j) { lastOk = Date.now(); paint(j); })
+      .catch(function () {}).then(function () { polling = false; });
+  }
+  function cmd(q, quiet) {
+    if (VIEW) { if (!quiet) note("μόνο προβολή: βάλε κωδικό", true); return Promise.resolve(null); }
+    return fetch("/cmd?k=" + encodeURIComponent(K) + "&c=" + C + "&" + q, {cache: "no-store"})
+      .then(function (r) {
+        if (r.status === 403) { VIEW = true; $("pin").classList.add("on"); note("λάθος κωδικός", true); return null; }
+        if (r.status === 409) { if (!quiet) note("άλλο κινητό έχει τον έλεγχο", true); return null; }
+        return r.ok ? r.json() : null;
+      }).then(function (j) {
+        if (j) { lastOk = Date.now(); if (j.refused && !quiet) note("✗ " + j.refused, true); paint(j); }
+        return j;
+      }).catch(function () { return null; });
+  }
+  function note(s, bad) { var t = $("ticker"); t.textContent = s; t.className = "ticker" + (bad ? " refuse" : ""); }
+
+  // ── hold-to-move: keepalives every 100 ms while the finger is down ─────
+  var holds = {};
+  function holdButton(el) {
+    var kind = el.getAttribute("data-hold"), tap = el.getAttribute("data-tap");
+    var st = null;
+    function send() {
+      if (!st || st.inflight) return;
+      st.inflight = true;
+      var s = st; cmd("hold=" + kind + ":" + s.session, true).then(function (j) {
+        s.inflight = false;
+        if (j && j.refused && !s.warned) { s.warned = true; note("✗ " + j.refused, true); }
+      });
+    }
+    function start() { if (!st) return; st.live = true; send(); st.timer = setInterval(send, 100); }
+    function end(ev) {
+      if (!st) return;
+      var s = st; st = null; el.classList.remove("held");
+      clearTimeout(s.delay); clearInterval(s.timer);
+      if (s.live) cmd("release=" + s.session, true);
+      else if (tap && ev !== "lost") cmd("step=" + tap);
+    }
+    el.addEventListener("pointerdown", function (e) {
+      if (el.disabled) return;
+      e.preventDefault(); try { el.setPointerCapture(e.pointerId); } catch (x) {}
+      if (navigator.vibrate) navigator.vibrate(15);
+      st = {session: rid(), live: false, inflight: false};
+      el.classList.add("held");
+      if (tap) st.delay = setTimeout(start, 250); else start();
+    });
+    ["pointerup", "pointercancel", "lostpointercapture"].forEach(function (n) {
+      el.addEventListener(n, function () { end(n === "pointerup" ? "up" : "lost"); });
+    });
+    holds[kind] = end;
+  }
+  ["b_up", "b_dn", "b_yl", "b_yr"].forEach(function (id) { holdButton($(id)); });
+  function releaseAll() { for (var k in holds) holds[k]("lost"); }
+  document.addEventListener("visibilitychange", function () { if (document.hidden) releaseAll(); });
+  window.addEventListener("blur", releaseAll);
+  window.addEventListener("pagehide", releaseAll);
+  document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+
+  // ── ENGAGE: a deliberate 1 s press ─────────────────────────────────────
+  (function () {
+    var el = $("b_eng"), fill = $("engfill"), t0 = null, raf = null;
+    function frame() {
+      if (t0 === null) return;
+      var a = Math.min(1, (performance.now() - t0) / 1000);
+      fill.style.height = (a * 100) + "%";
+      if (a >= 1) { t0 = null; fill.style.height = "0"; if (navigator.vibrate) navigator.vibrate([60, 40, 120]); cmd("engage=1"); return; }
+      raf = requestAnimationFrame(frame);
+    }
+    el.addEventListener("pointerdown", function (e) {
+      if (el.disabled) return; e.preventDefault();
+      try { el.setPointerCapture(e.pointerId); } catch (x) {}
+      t0 = performance.now(); frame();
+    });
+    ["pointerup", "pointercancel", "lostpointercapture"].forEach(function (n) {
+      el.addEventListener(n, function () { t0 = null; cancelAnimationFrame(raf); fill.style.height = "0"; });
+    });
+  })();
+
+  // ── ABORT: on touch-down, sent three times ─────────────────────────────
+  $("b_abort").addEventListener("pointerdown", function (e) {
+    e.preventDefault(); releaseAll();
+    if (navigator.vibrate) navigator.vibrate(200);
+    note("ABORT…", true);
+    cmd("abort=1"); setTimeout(function () { cmd("abort=1", true); }, 120);
+    setTimeout(function () { cmd("abort=1", true); }, 240);
+  });
+
+  // ── sheets ─────────────────────────────────────────────────────────────
+  function openSheet(id) {
+    ["sh_speed", "sh_log"].forEach(function (s) { $(s).classList.toggle("open", s === id && !$(s).classList.contains("open")); });
+    if (id === "sh_log") { var L = $("log"); L.scrollTop = L.scrollHeight; $("sh_log").scrollTop = 1e9; }
+  }
+  $("t_speed").onclick = function () { openSheet("sh_speed"); };
+  $("t_log").onclick = function () { openSheet("sh_log"); };
+  document.querySelectorAll("[data-close]").forEach(function (b) {
+    b.onclick = function () { b.closest(".sheet").classList.remove("open"); };
+  });
+  $("t_tgt").onclick = function () {
+    var cur = LAST && LAST.target; cmd("target=" + (cur === "DRONE" ? "HUMAN" : "DRONE"));
+  };
+  document.querySelectorAll(".seg").forEach(function (seg) {
+    var g = seg.getAttribute("data-g");
+    LEVELS.forEach(function (lv) {
+      var b = document.createElement("button"); b.setAttribute("data-lv", lv);
+      b.innerHTML = lv + "<i>&nbsp;</i>";
+      b.onclick = function () { cmd("lvl=" + g + ":" + lv); };
+      seg.appendChild(b);
+    });
+  });
+
+  // ── PIN ────────────────────────────────────────────────────────────────
+  if (VIEW) $("pin").classList.add("on");
+  $("pin_ok").onclick = function () {
+    K = $("pin_in").value.trim(); store("wasp_k", K); VIEW = !K; $("pin").classList.remove("on");
+  };
+  $("pin_view").onclick = function () { VIEW = true; $("pin").classList.remove("on"); };
+
+  // ── paint: ONLY from the server's reply ────────────────────────────────
+  function fmt(x, d) { return (x === null || x === undefined) ? "--" : Number(x).toFixed(d); }
+  function paint(j) {
+    LAST = j;
+    var m = j.mission || {}, ph = m.phase || "PILOT", spec = PH[ph] || PH.PILOT;
+    $("hdr").style.background = spec.c;
+    T("phase", spec.t);
+    var hint = spec.h;
+    if (ph === "PUSH" && m.push_s !== null && m.push_s !== undefined)
+      hint = "ΩΘΗΣΗ " + fmt(m.speeds && m.speeds.push, 0) + "° · " + fmt(m.push_s, 1) + " s · AI μόλις δει στόχο ≥ " + fmt(m.min_conf, 2);
+    if (ph === "PILOT" && j.mission && m.gate_why) hint = "Ο πιλότος έχει τον έλεγχο (" + m.gate_why + ").";
+    if (!j.mission || m.app === "auto") hint = "Η εφαρμογή αποστολής δεν τρέχει (WASP_APP).";
+    T("hint", hint);
+    T("alt", m.height_m === null || m.height_m === undefined ? "-- m" : fmt(m.height_m, 1) + " m");
+    T("vs", m.climb_mps === null || m.climb_mps === undefined ? "ύψος άγνωστο"
+        : (m.climb_mps >= 0 ? "↑ " : "↓ ") + fmt(Math.abs(m.climb_mps), 1) + " m/s");
+
+    var arm = !!j.armed;
+    T("c_arm", arm ? "ΟΠΛΙΣΜΕΝΟ" : "ΑΦΟΠΛΙΣΜΕΝΟ"); $("c_arm").className = "chip" + (arm ? " on" : "");
+    T("c_mode", j.linked ? (j.fc_mode || "?") : "NO LINK");
+    $("c_mode").className = "chip" + (!j.linked ? " bad" : j.fc_mode === "ALT_HOLD" ? " ok" : "");
+    T("c_hdg", m.heading_deg === null || m.heading_deg === undefined ? "--°" : fmt(m.heading_deg, 0) + "°");
+    var vb = m.vibe;
+    if (vb) {
+      var vmax = Math.max(vb.x, vb.y, vb.z);
+      T("c_vib", "ΔΟΝΗΣΗ " + fmt(vmax, 0) + (vb.clip ? " CLIP " + vb.clip : ""));
+      $("c_vib").className = "chip " + (vb.clip || vmax >= 60 ? "bad" : vmax >= 30 ? "warn" : "ok");
+    } else { T("c_vib", "ΔΟΝΗΣΗ --"); $("c_vib").className = "chip"; }
+    var conf = m.det_conf, fresh = m.det_age_s !== null && m.det_age_s !== undefined && m.det_age_s < 0.5;
+    T("c_det", fresh ? "ΣΤΟΧΟΣ " + fmt(conf, 2) : "ΣΤΟΧΟΣ --");
+    $("c_det").className = "chip" + (fresh ? (conf >= (m.min_conf || 0.2) ? " ok" : " warn") : "");
+    var ctl = j.control || "free";
+    T("c_ctl", VIEW ? "ΠΡΟΒΟΛΗ" : ctl === "you" ? "ΕΣΥ ΕΛΕΓΧΕΙΣ" : ctl === "other" ? "ΑΛΛΟΣ ΕΛΕΓΧΕΙ" : "ΕΛΕΥΘΕΡΟ");
+    $("c_ctl").className = "chip" + (ctl === "other" || VIEW ? " warn" : ctl === "you" ? " on" : "");
+    T("t_tgt", "ΣΤΟΧΟΣ: " + (j.target || "--"));
+
+    // which buttons can act right now (the server decides; this only mirrors it)
+    var manual = ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other";
+    ["b_up", "b_dn", "b_yl", "b_yr"].forEach(function (id) { $(id).disabled = !manual; });
+    $("b_eng").disabled = !((ph === "HOVER" || ph === "SCOUT") && !VIEW && ctl !== "other");
+
+    // aim mark: where the target must sit NOW so it is centred once leaning
+    TILT = (j.tilt_deg !== undefined && j.tilt_deg !== null) ? j.tilt_deg : TILT;
+    var push = (m.speeds && m.speeds.push) || 30;
+    var aimEl = (ph === "PUSH" || ph === "AI" || ph === "STOP") ? 0 : -Math.min(push, 20);
+    var ty = function (el) { return 50 - 50 * Math.tan(el * Math.PI / 180) / Math.tan(VFOV / 2 * Math.PI / 180); };
+    var tx = function (az) { return 50 + 50 * Math.tan(az * Math.PI / 180) / Math.tan(HFOV / 2 * Math.PI / 180); };
+    var aim = $("aim"); aim.style.left = "50%"; aim.style.top = ty(aimEl) + "%";
+    var az = m.target_az_deg, el = m.target_el_deg, tg = $("tgt"), bd = $("badge"), of = $("offs");
+    if (m.target_fresh && az !== null && el !== null) {
+      tg.style.display = "block"; tg.style.left = tx(az) + "%"; tg.style.top = ty(el) + "%";
+      var dy = el - aimEl, good = Math.abs(az) < 2 && Math.abs(dy) < 2;
+      aim.classList.toggle("good", good);
+      bd.style.display = "block"; bd.className = "badge" + (good ? " good" : "");
+      bd.textContent = good ? "ΣΤΟ ΣΤΟΧΟ ✓  ENGAGE" :
+        (Math.abs(az) >= 2 ? (az > 0 ? "⟳ δεξιά " : "⟲ αριστερά ") + fmt(Math.abs(az), 0) + "°  " : "") +
+        (Math.abs(dy) >= 2 ? (dy > 0 ? "▲ ψηλότερα " : "▼ χαμηλότερα ") + fmt(Math.abs(dy), 0) + "°" : "");
+      of.style.display = "block"; of.textContent = "az " + fmt(az, 1) + "°  el " + fmt(el, 1) + "°";
+    } else {
+      tg.style.display = "none"; aim.classList.remove("good"); of.style.display = "none";
+      bd.style.display = (ph === "HOVER" || ph === "SCOUT") ? "block" : "none"; bd.className = "badge";
+      bd.textContent = "κανένας στόχος";
+    }
+
+    // speed sheet
+    var lv = m.levels || {}, sp = m.speeds || {};
+    var val = {vert: function (L) { return {SLOW: "1 / 0.5", MEDIUM: "3 / 1.5", FAST: "8 / 2.5"}[L] + " m/s"; },
+               yaw: function (L) { return {SLOW: "10°/s · 2°", MEDIUM: "20°/s · 5°", FAST: "45°/s · 10°"}[L]; },
+               push: function (L) { return {SLOW: "20°", MEDIUM: "30°", FAST: "40°"}[L]; },
+               ai: function (L) { return {SLOW: "ήπια", MEDIUM: "κανονικά", FAST: "γρήγορα"}[L]; }};
+    document.querySelectorAll(".seg").forEach(function (seg) {
+      var g = seg.getAttribute("data-g");
+      seg.querySelectorAll("button").forEach(function (b) {
+        var L = b.getAttribute("data-lv");
+        b.classList.toggle("on", lv[g] === L);
+        b.querySelector("i").textContent = val[g](L);
+      });
+    });
+    if (j.console_seq !== undefined && j.console_seq > consoleSeq) pullConsole();
+  }
+
+  // ── console: the tracker's own printed lines ───────────────────────────
+  var pulling = false;
+  function pullConsole() {
+    if (pulling) return; pulling = true;
+    fetch("/console?since=" + consoleSeq, {cache: "no-store"}).then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (rows) {
+        var L = $("log"), atEnd = (L.parentNode.scrollTop + L.parentNode.clientHeight + 40 >= L.parentNode.scrollHeight);
+        rows.forEach(function (x) {
+          consoleSeq = Math.max(consoleSeq, x[0]);
+          var d = document.createElement("div"), s = x[2];
+          d.className = "ln " + (/refused|ΑΠΟΡ|!!|REFUSED/.test(s) ? "r" : /ABORT|ERROR|FAIL|Traceback/.test(s) ? "e" : /^\[MISSION\]/.test(s) ? "m" : "");
+          d.innerHTML = '<span class="t">' + x[1] + "</span> "; d.appendChild(document.createTextNode(s));
+          L.appendChild(d);
+          if (/^\[MISSION\]|^\[FC\]\[MODE\]|REFUSED|ABORT/.test(s)) note(s, /refused|REFUSED|ABORT/.test(s));
+        });
+        while (L.childNodes.length > 300) L.removeChild(L.firstChild);
+        if (atEnd) L.parentNode.scrollTop = L.parentNode.scrollHeight;
+      }).catch(function () {}).then(function () { pulling = false; });
+  }
+
+  // ── video reconnect, link watchdog, poll ───────────────────────────────
+  var v = $("v");
+  v.onerror = function () { setTimeout(function () { v.src = "/stream.mjpg?t=" + Date.now(); }, 1000); };
+  setInterval(function () { $("cover").classList.toggle("on", lastOk && Date.now() - lastOk > 1500); }, 250);
+  setInterval(poll, 250); poll(); pullConsole();
+})();
+</script>
+</body></html>

@@ -66,6 +66,7 @@ import os
 import queue
 import sys
 import threading
+import collections
 os.environ.pop("SESSION_MANAGER", None)
 
 import cv2
@@ -676,6 +677,13 @@ class DroneTracker:
             linked=(bool(getattr(ap, "linked", False)) if ap else False),
             steering=bool(self._last_sent),
         )
+        if hasattr(ap, "mission_state"):
+            try:
+                out["mission"] = ap.mission_state()
+            except Exception as exc:              # never take the flight down
+                out["mission"] = dict(error=str(exc))
+        with _CONSOLE_LOCK:
+            out["console_seq"] = _CONSOLE_SEQ[0]
         for k, dp in (("range_m", 1), ("bank_deg", 1), ("lean_deg", 1),
                       ("climb_mps", 2), ("az_deg", 1), ("el_deg", 1),
                       ("los_az_dps", 1), ("latency_s", 3),
@@ -1331,14 +1339,48 @@ class DroneTracker:
         the steering mode is a single clamped float store into the law, and the
         target switch only raises a flag for the loop to act on between frames.
         """
-        if key in ("mode", "speed", "sens"):
+        if key in ("mode", "sens"):
             # "speed"/"sens" kept as aliases so an old bookmarked dashboard
             # still drives the one control instead of silently doing nothing.
             self.set_mode(value)
+            m = getattr(self.ap, "mission", None)
+            if m is not None:
+                m.set_level("ai", self.mode_name)
         elif key == "target":
             self.request_target_kind(value)
+        elif key in ("hold", "release", "step", "engage", "abort", "lvl"):
+            return self._mission_command(key, str(value))
         else:
             raise ValueError("unknown command")
+        return ""
+
+    def _mission_command(self, key, value):
+        """The phone's mission buttons.  Only POSTS a request to the mission;
+        the commander's TX thread decides.  Returns '' or a refusal reason."""
+        m = getattr(self.ap, "mission", None)
+        if m is None:
+            return "mission app not running (WASP_APP=mission, FC linked?)"
+        now = perf_counter()
+        if key == "hold":
+            kind, _, session = value.partition(":")
+            return m.request_hold(kind.strip().lower(), session.strip() or "?", now)
+        if key == "release":
+            m.request_release(value.strip())
+            return ""
+        if key == "step":
+            return m.request_step(-1 if value.strip().lower().startswith("l") else 1)
+        if key == "engage":
+            return m.request_engage()
+        if key == "abort":
+            return m.request_abort()
+        # lvl=<group>:<LEVEL>, groups vert / yaw / push / ai
+        group, _, level = value.partition(":")
+        group, level = group.strip().lower(), level.strip().upper()
+        if group == "ai":
+            if level not in self.MODES:
+                return "unknown speed"
+            self.set_mode(level)
+        return m.set_level(group, level)
 
     # ── master draw ──────────────────────────────────────────────────────────────
 
@@ -1522,7 +1564,8 @@ class DroneTracker:
                                           quality=self.stream_quality,
                                           fps=self.stream_fps,
                                           state_get=self.state_snapshot,
-                                          command=self._command).start()
+                                          command=self._command,
+                                          console_get=console_since).start()
             except OSError as exc:
                 print(f"[STREAM] disabled — cannot bind port "
                       f"{self.stream_port}: {exc}")
@@ -1615,8 +1658,8 @@ class DroneTracker:
             self._t_ui_prev = t_cap
 
             if is_yolo_frame:
-                fused, _t_kf, _t_yolo, roi, _ = self._process(frame_full,
-                                                              frame_disp)
+                fused, _t_kf, _t_yolo, roi, detected = self._process(
+                    frame_full, frame_disp)
                 _tp = self._lap("detect", _tp)
                 if self.PROFILE:
                     # _process reports the model call separately, so "detect"
@@ -1656,7 +1699,10 @@ class DroneTracker:
                                           bbox=self.last_bbox, capture_t=t_cap)
                 else:
                     cmd = self.ap.neutral_command()     # no target: centre + release
-                self.ap.update(cmd, target_off, have_face=bool(fused))
+                self.ap.update(cmd, target_off, have_face=bool(fused),
+                               detected=bool(detected),
+                               conf=self.conf if detected else None,
+                               bbox=self.last_bbox if detected else None)
                 self._last_cmd = cmd
             else:
                 cmd = self._last_cmd               # HUD display only
@@ -1867,6 +1913,34 @@ def make_pipeline(cfg: CameraConfig) -> str:
 _DATA_DIR = Path(__file__).resolve().parent / "data"
 
 
+# The last few hundred IMPORTANT console lines, for the phone's console panel.
+# Per-frame chatter ([CTRL], [PROF]) and GStreamer's banner are left out: the
+# point is to read what HAPPENED (phase changes, refusals, FC messages) at arm's
+# length, not to scroll a firehose.
+CONSOLE = collections.deque(maxlen=300)
+_CONSOLE_SEQ = [0]
+_CONSOLE_LOCK = threading.Lock()
+_CONSOLE_SKIP = ("[CTRL]", "[PROF]", "GST_", "CONSUMER", "[ WARN", "   ",
+                 "Camera index", "Camera mode", "Output Stream", "seconds to Run",
+                 "Frame Rate")
+
+
+def console_since(seq):
+    """[(seq, 'HH:MM:SS', line)] newer than `seq`."""
+    with _CONSOLE_LOCK:
+        return [x for x in CONSOLE if x[0] > seq]
+
+
+def _console_add(line):
+    line = line.rstrip()
+    if not line or line.startswith(_CONSOLE_SKIP):
+        return
+    with _CONSOLE_LOCK:
+        _CONSOLE_SEQ[0] += 1
+        CONSOLE.append((_CONSOLE_SEQ[0], datetime.now().strftime("%H:%M:%S"),
+                        line[:220]))
+
+
 class _Tee:
     """Duplicate a stream to the console AND a log file (line-buffered), so the
     full console output is persisted offline while still showing live.
@@ -1878,6 +1952,7 @@ class _Tee:
     def __init__(self, stream, fh):
         self._stream, self._fh = stream, fh
         self._need_prefix = True          # at the start of a fresh line
+        self._partial = ""                # for the phone's console buffer
 
     @staticmethod
     def _prefix():
@@ -1895,6 +1970,10 @@ class _Tee:
             if ch == "\n":
                 self._need_prefix = True
         self._fh.write("".join(out))
+        buf = self._partial + data
+        *lines, self._partial = buf.split("\n")
+        for ln in lines:
+            _console_add(ln)
         return len(data)
 
     def flush(self):
@@ -1998,7 +2077,7 @@ if __name__ == "__main__":
         display_size = (640, 640),
         skip_frames  = 0,
         show_sky     = False,
-        use_sky_mask = False,      # detect on the full frame, not just the sky region
+        use_sky_mask = True,       # ground rejection: the SkyDetector sky gate
         record_dir      = str(_DATA_DIR),   # <stamp>.mp4 lands here
         record_pad_sec  = 1.5,
         log_dir         = str(_DATA_DIR),   # commands_<stamp>.csv lands here
