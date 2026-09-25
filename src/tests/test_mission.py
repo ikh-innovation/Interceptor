@@ -400,6 +400,30 @@ q.step()
 check("after ABORT a NEW press works again",
       set(q.run_until(0.3, hold="up", session="s2")) == {"throttle"})
 
+print("=== A9b. one attempt per pilot mode cycle (ENGAGE red -> green -> reset) ===")
+q = push_rig()
+check("before the AI steers: not engaged (ENGAGE stays red)", not q.m.snapshot(q.t)["engaged"])
+q.run_until(0.3)
+see(q, 0.6)
+q.step()
+check("the AI takes a channel: engaged (ENGAGE turns green)", q.m.snapshot(q.t)["engaged"])
+q.ctx.update(ai_cmd=None, ai_t=None, det_t=None)
+q.run_until(4.5)                               # lost -> back to hold -> timeout -> STOP -> HOVER
+q.run_until(1.2)
+check("after the attempt, back in HOVER: still engaged, a 2nd ENGAGE is refused",
+      q.m.phase == "HOVER" and q.m.snapshot(q.t)["engaged"] and "STAB" in q.m.request_engage())
+q.ctx["gate_ok"] = False                       # pilot -> STAB
+q.step()
+q.ctx["gate_ok"] = True                        # ... -> ALT_HOLD
+q.step()
+check("pilot STAB -> ALT_HOLD: reset (red), ENGAGE accepted again",
+      not q.m.snapshot(q.t)["engaged"] and q.m.request_engage() == "")
+q = push_rig()
+q.run_until(4.2)                               # PUSH timed out, the AI never steered
+q.run_until(1.2)
+check("a push that never found a target does NOT latch: ENGAGE again at once",
+      q.m.phase == "HOVER" and not q.m.snapshot(q.t)["engaged"] and q.m.request_engage() == "")
+
 print("=== A10. refused during PUSH / AI ===")
 q, _ = in_phase("PUSH")
 check("holds refused in PUSH", q.m.request_hold("up", "z", q.t) != "")

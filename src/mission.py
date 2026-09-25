@@ -201,6 +201,10 @@ class Mission:
         self._steer_t = None
         self._t_last = None
         self.last_handover = None           # (conf, t_in_push)
+        # ONE attempt per pilot mode cycle.  Latched the moment the AI takes
+        # any channel; cleared only when the pilot leaves ALT_HOLD (STAB) and
+        # comes back.  The phone shows ENGAGE green while it is set.
+        self.engaged = False
 
     # ── HTTP thread: requests only ─────────────────────────────────────────
     def request_hold(self, kind, session, now):
@@ -231,6 +235,8 @@ class Mission:
 
     def request_engage(self):
         with self._lock:
+            if self.engaged:
+                return "already engaged: pilot STAB -> ALT_HOLD for a new try"
             if self.phase not in ("HOVER", "SCOUT"):
                 return f"ENGAGE only from HOVER or SCOUT, not {self.phase}"
             self._req_engage = True
@@ -321,6 +327,9 @@ class Mission:
         if not ctx.get("gate_ok"):
             if self.phase != "PILOT":
                 self._note(f"PILOT has it: {ctx.get('gate_why') or 'gate'}", now)
+            if self.engaged:
+                self.engaged = False
+                self._note("reset: ENGAGE ready again once back in ALT_HOLD", now)
             self._set_phase("PILOT", now, ctx.get("gate_why", ""))
             self._reset_motion()
             with self._lock:
@@ -532,6 +541,7 @@ class Mission:
         if not self._push_steer and self._confirmed(now, ctx):
             self._push_steer = True
             self._steer_t = now
+            self.engaged = True
             for a in self.STEER_AXES:
                 self._switch(a, "ai", now)
             self._note(f"target confirmed (conf {conf:.2f}) {t_in:.1f} s into "
@@ -614,4 +624,5 @@ class Mission:
                     and self.phase == "PUSH" else None),
             blending=self.blending(now),
             ai_steering=bool(self._push_steer) or self.phase == "AI",
+            engaged=bool(self.engaged),
             handover=self.last_handover)

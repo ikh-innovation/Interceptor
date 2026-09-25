@@ -56,17 +56,16 @@
   .btn small{position:absolute;left:0;right:0;bottom:4px;font-size:10px;font-weight:700;color:#aaa;letter-spacing:.04em}
   .btn.held{background:#fff;color:#000}.btn.held small{color:#333}
   .btn:disabled{opacity:.28}
-  .eng{border-radius:18px;background:#3a1400;border:2px solid var(--push);color:#fff;font-weight:900;
+  .eng{border-radius:18px;background:#5c0000;border:3px solid #ff1744;color:#fff;font-weight:900;
        font-size:clamp(18px,5.4vw,24px);touch-action:none;position:relative;overflow:hidden}
-  .eng .fill{position:absolute;left:0;bottom:0;width:100%;height:0;background:var(--push);transition:none}
+  .eng .fill{position:absolute;left:0;bottom:0;width:100%;height:0;background:#ff1744;transition:none}
+  .eng.go{background:#1b5e20;border-color:#00e676}
+  .eng.go:disabled{opacity:1}
   .eng span{position:relative}
   .eng:disabled{opacity:.28}
-  .tools{flex:0 0 auto;display:flex;gap:8px;padding:0 10px 8px;background:var(--panel)}
+  .tools{flex:0 0 auto;display:flex;gap:8px;padding:0 10px calc(10px + env(safe-area-inset-bottom));background:var(--panel)}
   .tools button{flex:1;border:1px solid #333;background:#151515;color:#ddd;border-radius:10px;padding:9px 4px;
                 font:inherit;font-size:13px;font-weight:800}
-  .abort{flex:0 0 auto;border:0;width:100%;background:var(--bad);color:#fff;font:inherit;font-weight:900;
-         font-size:clamp(24px,7vw,32px);letter-spacing:.06em;padding:14px 0 calc(14px + env(safe-area-inset-bottom));touch-action:none}
-  .abort:active{background:#ff1744}
 
   /* sheets (never cover ABORT) */
   .sheet{position:absolute;left:0;right:0;bottom:0;max-height:62%;overflow:auto;background:#121212;
@@ -140,14 +139,13 @@
       <button class="btn" id="b_dn" data-hold="down">▼<small>ΚΑΘΟΔΟΣ</small></button>
       <div></div>
     </div>
-    <button class="eng" id="b_eng"><div class="fill" id="engfill"></div><span>ENGAGE<br><small style="font-size:11px">κράτα 1 s</small></span></button>
+    <button class="eng" id="b_eng"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE<br><small style="font-size:11px">κράτα 1 s</small></span></button>
   </div>
   <div class="tools">
     <button id="t_speed">ΤΑΧΥΤΗΤΕΣ</button>
     <button id="t_log">ΜΗΝΥΜΑΤΑ</button>
     <button id="t_tgt">ΣΤΟΧΟΣ: --</button>
   </div>
-  <button class="abort" id="b_abort">ABORT</button>
 </div>
 
 <div class="cover" id="cover"><b>ΧΑΘΗΚΕ Η ΣΥΝΔΕΣΗ</b>
@@ -182,7 +180,7 @@
     DESCEND: {t: "ΚΑΘΟΔΟΣ",   c: "var(--vert)",  h: "Όσο κρατάς ▼ κατεβαίνει. Άφησε = κρατά ύψος."},
     SCOUT:   {t: "ΑΝΙΧΝΕΥΣΗ", c: "var(--scout)", h: "Κράτημα = στροφή · ένα άγγιγμα = μικρό βήμα."},
     PUSH:    {t: "ΩΘΗΣΗ",     c: "var(--push)",  h: "Κλίση μπροστά, ίδια κατεύθυνση και ύψος. AI σε λίγο."},
-    AI:      {t: "AI",        c: "var(--ai)",    h: "Το AI κυνηγά τον στόχο. ABORT = αιώρηση αμέσως."},
+    AI:      {t: "AI",        c: "var(--ai)",    h: "Το AI κυνηγά τον στόχο. Στοπ: ο πιλότος σε STAB."},
     STOP:    {t: "ΣΤΑΜΑΤΑ",   c: "var(--stop)",  h: "Ομαλή επαναφορά σε αιώρηση."}
   };
   var LEVELS = ["SLOW", "MEDIUM", "FAST"];
@@ -273,15 +271,6 @@
     });
   })();
 
-  // ── ABORT: on touch-down, sent three times ─────────────────────────────
-  $("b_abort").addEventListener("pointerdown", function (e) {
-    e.preventDefault(); releaseAll();
-    if (navigator.vibrate) navigator.vibrate(200);
-    note("ABORT…", true);
-    cmd("abort=1"); setTimeout(function () { cmd("abort=1", true); }, 120);
-    setTimeout(function () { cmd("abort=1", true); }, 240);
-  });
-
   // ── sheets ─────────────────────────────────────────────────────────────
   function openSheet(id) {
     ["sh_speed", "sh_log"].forEach(function (s) { $(s).classList.toggle("open", s === id && !$(s).classList.contains("open")); });
@@ -323,6 +312,7 @@
     if (ph === "PUSH" && m.push_s !== null && m.push_s !== undefined)
       hint = "ΩΘΗΣΗ " + fmt(m.speeds && m.speeds.push, 0) + "° · " + fmt(m.push_s, 1) + " s · AI μόλις δει στόχο ≥ " + fmt(m.min_conf, 2);
     if (ph === "PILOT" && j.mission && m.gate_why) hint = "Ο πιλότος έχει τον έλεγχο (" + m.gate_why + ").";
+    if ((ph === "HOVER" || ph === "SCOUT") && m.engaged) hint = "Έγινε μία προσπάθεια. Για νέα: ο πιλότος STAB → ALT_HOLD.";
     if (!j.mission || m.app === "auto") hint = "Η εφαρμογή αποστολής δεν τρέχει (WASP_APP).";
     T("hint", hint);
     T("alt", m.height_m === null || m.height_m === undefined ? "-- m" : fmt(m.height_m, 1) + " m");
@@ -351,7 +341,15 @@
     // which buttons can act right now (the server decides; this only mirrors it)
     var manual = ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other";
     ["b_up", "b_dn", "b_yl", "b_yr"].forEach(function (id) { $(id).disabled = !manual; });
-    $("b_eng").disabled = !((ph === "HOVER" || ph === "SCOUT") && !VIEW && ctl !== "other");
+    // ENGAGE: red = ready; green = the AI has (or had) the drone, until the
+    // pilot's STAB -> ALT_HOLD resets it for the next try.
+    var eng = $("b_eng"), done = !!m.engaged || !!m.ai_steering;
+    eng.classList.toggle("go", done);
+    eng.disabled = done || !((ph === "HOVER" || ph === "SCOUT") && !VIEW && ctl !== "other");
+    $("engtxt").innerHTML = !done ? (ph === "PUSH" ? "ΩΘΗΣΗ…<br><small style='font-size:11px'>ψάχνει στόχο</small>"
+                                                   : "ENGAGE<br><small style='font-size:11px'>κράτα 1 s</small>")
+      : (ph === "AI" || ph === "PUSH") ? "AI ✓<br><small style='font-size:11px'>οδηγεί</small>"
+      : "ΕΓΙΝΕ ✓<br><small style='font-size:11px'>STAB→ALT_HOLD<br>για νέα</small>";
 
     // aim mark: where the target must sit NOW so it is centred once leaning
     TILT = (j.tilt_deg !== undefined && j.tilt_deg !== null) ? j.tilt_deg : TILT;
@@ -366,7 +364,7 @@
       var dy = el - aimEl, good = Math.abs(az) < 2 && Math.abs(dy) < 2;
       aim.classList.toggle("good", good);
       bd.style.display = "block"; bd.className = "badge" + (good ? " good" : "");
-      bd.textContent = good ? "ΣΤΟ ΣΤΟΧΟ ✓  ENGAGE" :
+      bd.textContent = good ? ((ph === "HOVER" || ph === "SCOUT") ? "ΣΤΟ ΣΤΟΧΟ ✓  ENGAGE" : "ΣΤΟΧΟΣ ΣΤΟ ΚΕΝΤΡΟ ✓") :
         (Math.abs(az) >= 2 ? (az > 0 ? "⟳ δεξιά " : "⟲ αριστερά ") + fmt(Math.abs(az), 0) + "°  " : "") +
         (Math.abs(dy) >= 2 ? (dy > 0 ? "▲ ψηλότερα " : "▼ χαμηλότερα ") + fmt(Math.abs(dy), 0) + "°" : "");
       of.style.display = "block"; of.textContent = "az " + fmt(az, 1) + "°  el " + fmt(el, 1) + "°";
@@ -408,7 +406,7 @@
           d.className = "ln " + (/refused|ΑΠΟΡ|!!|REFUSED/.test(s) ? "r" : /ABORT|ERROR|FAIL|Traceback/.test(s) ? "e" : /^\[MISSION\]/.test(s) ? "m" : "");
           d.innerHTML = '<span class="t">' + x[1] + "</span> "; d.appendChild(document.createTextNode(s));
           L.appendChild(d);
-          if (/^\[MISSION\]|^\[FC\]\[MODE\]|REFUSED|ABORT/.test(s)) note(s, /refused|REFUSED|ABORT/.test(s));
+          if (/^\[MISSION\]|^\[FC\]\[MODE\]|REFUSED/.test(s)) note(s, /refused|REFUSED/.test(s));
         });
         while (L.childNodes.length > 300) L.removeChild(L.firstChild);
         if (atEnd) L.parentNode.scrollTop = L.parentNode.scrollHeight;
