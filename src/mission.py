@@ -140,7 +140,12 @@ class Mission:
     PUSH_RAMP_S = 1.20        # lean eased in at PUSH start
     PUSH_MIN_S = 1.50         # the detector cannot hand over before this
     PUSH_MAX_S = 4.00         # no confirmed target by then -> soft stop
-    BLEND_S = 1.00            # PUSH -> AI blend
+    # PUSH -> AI blend.  Sim, 96 engagements each (6 directions, 2 speeds,
+    # 4 winds): blend/lock-ramp 1.0/0.5 s -> 65 touches, mean bank in the
+    # first second 11.1 deg, sideways-speed jump p95 4.5 m/s; 1.5/1.0 s -> 67,
+    # 5.7 deg, 3.2 m/s; 2.0/1.5 s -> 63, 2.8 deg, 2.0 m/s.  1.5 halves the
+    # takeover kick at no cost in accuracy.  MISSION_BLEND_S overrides.
+    BLEND_S = 1.50
     STOP_S = 1.00             # soft stop back to level
     STEP_TIMEOUT_S = 3.00
     STEP_KP = 2.5             # deg/s of yaw rate per deg of step error
@@ -184,12 +189,14 @@ class Mission:
         self._step = None                   # (target_yaw_deg, t0, dir)
         self._push = None                   # dict of Ramps per axis
         self._push_t = None
-        self._blend_from = None             # {axis: pwm} at the AI handover
-        self._blend_t = None
         self._stop_from = None              # {axis: pwm} at soft-stop start
         self._stop_t = None
         self._last_out = {}
         self._terminal = None
+        self._src = {}
+        self._mix = {}
+        self._push_steer = False
+        self._steer_t = None
         self._t_last = None
         self.last_handover = None           # (conf, t_in_push)
 
@@ -279,9 +286,12 @@ class Mission:
         self._step = None
         self._push = None
         self._push_t = None
-        self._blend_from = self._blend_t = None
         self._stop_from = self._stop_t = None
         self._terminal = None
+        self._src = {}
+        self._mix = {}
+        self._push_steer = False
+        self._steer_t = None
         self._last_out = {}
 
     def _pilot_value(self, axis):
@@ -449,42 +459,101 @@ class Mission:
             r.set(target, now)
             self._push[axis] = r
         self._push_t = now
+        self._src = {a: "push" for a in ("roll", "pitch", "yaw", "throttle")}
+        self._mix = {}
+        self._push_steer = False
         self._thr_on = self._yaw_on = False
         self._step = None
-        self._note(f"ENGAGE: PUSH {self.push_deg():.0f} deg, heading and "
-                   f"altitude held, AI after >= {self.PUSH_MIN_S:.1f} s on a "
-                   f"detection >= {self.min_conf:.2f}", now)
+        self._note(f"ENGAGE: PUSH {self.push_deg():.0f} deg; the AI steers "
+                   f"yaw / roll / throttle from the first detection >= "
+                   f"{self.min_conf:.2f}, and the lean after "
+                   f">= {self.PUSH_MIN_S:.1f} s", now)
         self._set_phase("PUSH", now, "ENGAGE")
         return self._push_output(now)
 
-    def _push_output(self, now):
-        out = {a: self.mapper.phys_to_pwm(a, r.value(now))
-               for a, r in self._push.items()}
+    # Per-axis source switching.  Every axis is driven by exactly one source,
+    # "push" (the held push command) or "ai" (the InterceptLaw), and a switch
+    # glides from whatever that axis is outputting RIGHT NOW to the new source
+    # over BLEND_S.  So PUSH -> AI steering, AI -> back to PUSH hold when the
+    # target is lost mid-push, and the final pitch handover are all smooth.
+    STEER_AXES = ("yaw", "roll", "throttle")
+
+    def _switch(self, axis, src, now):
+        if self._src.get(axis) == src:
+            return
+        self._mix[axis] = (self._last_out.get(axis), now)
+        self._src[axis] = src
+
+    def _mixed_output(self, now, ai):
+        out = {}
+        for axis in ("roll", "pitch", "yaw", "throttle"):
+            if self._src.get(axis) == "ai" and ai is not None and axis in ai:
+                target = ai[axis]
+            else:
+                r = self._push.get(axis) if self._push else None
+                target = self.mapper.phys_to_pwm(axis, r.value(now) if r else 0.0)
+            frm = self._mix.get(axis)
+            if frm is not None and frm[0] is not None:
+                w = smoothstep((now - frm[1]) / self.BLEND_S)
+                if w >= 1.0:
+                    self._mix.pop(axis, None)
+                else:
+                    target = int(round((1.0 - w) * frm[0] + w * target))
+            out[axis] = int(target)
         self._last_out = out
         return out
 
-    def _push_cycle(self, now, ctx):
-        t_in = now - self._push_t
+    def blending(self, now):
+        return any(v is not None for v in self._mix.values())
+
+    def _confirmed(self, now, ctx):
         det_t, conf = ctx.get("det_t"), ctx.get("det_conf")
         ai_t = ctx.get("ai_t")
-        if (t_in >= self.PUSH_MIN_S and det_t is not None
-                and (now - det_t) <= self.DET_FRESH_S
+        return (det_t is not None and (now - det_t) <= self.DET_FRESH_S
                 and conf is not None and conf >= self.min_conf
                 and ai_t is not None and (now - ai_t) <= self.TARGET_FRESH_S
-                and ctx.get("ai_cmd")):
-            self._blend_from = dict(self._last_out)
-            self._blend_t = now
+                and bool(ctx.get("ai_cmd")))
+
+    def _push_output(self, now):
+        return self._mixed_output(now, None)
+
+    def _push_cycle(self, now, ctx):
+        """PUSH: the lean is the push angle throughout.  From the FIRST
+        confirmed detection the AI steers yaw, roll and throttle (it keeps the
+        target centred and sets the height); after PUSH_MIN_S it takes pitch
+        too, and that is the AI phase."""
+        t_in = now - self._push_t
+        conf = ctx.get("det_conf")
+        fresh_ai = (ctx.get("ai_cmd") and ctx.get("ai_t") is not None
+                    and (now - ctx["ai_t"]) <= self.TARGET_FRESH_S)
+        ai = self.mapper.ai_pwm(ctx["ai_cmd"]) if fresh_ai else None
+        if not self._push_steer and self._confirmed(now, ctx):
+            self._push_steer = True
+            self._steer_t = now
+            for a in self.STEER_AXES:
+                self._switch(a, "ai", now)
+            self._note(f"target confirmed (conf {conf:.2f}) {t_in:.1f} s into "
+                       f"PUSH: AI steers yaw / roll / throttle, lean stays "
+                       f"{self.push_deg():.0f} deg", now)
+        elif self._push_steer and not fresh_ai:
+            self._push_steer = False
+            for a in self.STEER_AXES:
+                self._switch(a, "push", now)
+            self._note("target lost during PUSH: back to heading / height "
+                       "hold, still pushing", now)
+            ai = None
+        if self._push_steer and t_in >= self.PUSH_MIN_S and fresh_ai:
+            self._switch("pitch", "ai", now)
             self.last_handover = (conf, t_in)
-            self._note(f"target confirmed (conf {conf:.2f}) after {t_in:.1f} s "
-                       f"of PUSH: AI takes over, blended over {self.BLEND_S:.1f} s",
-                       now)
+            self._note(f"{t_in:.1f} s of PUSH: AI takes the lean too "
+                       f"(full AI), blended over {self.BLEND_S:.1f} s", now)
             self._set_phase("AI", now, "handover")
             return self._ai_cycle(now, ctx)
         if t_in >= self.PUSH_MAX_S:
             self._note(f"no confirmed target in {self.PUSH_MAX_S:.0f} s of PUSH: "
                        f"soft stop", now)
             return self._start_stop(now)
-        return self._push_output(now)
+        return self._mixed_output(now, ai)
 
     # ── AI ─────────────────────────────────────────────────────────────────
     def _ai_cycle(self, now, ctx):
@@ -498,24 +567,14 @@ class Mission:
         elif stale:
             self._note("target lost: soft stop back to level", now)
             return self._start_stop(now)
-        out = self.mapper.ai_pwm(cmd)
-        if self._blend_from is not None:
-            w = smoothstep((now - self._blend_t) / self.BLEND_S)
-            if w >= 1.0:
-                self._blend_from = self._blend_t = None
-            else:
-                out = {a: int(round((1.0 - w) * self._blend_from.get(a, p)
-                                    + w * p))
-                       for a, p in out.items()}
-        self._last_out = out
-        return out
+        return self._mixed_output(now, self.mapper.ai_pwm(cmd))
 
     # ── STOP (soft) ────────────────────────────────────────────────────────
     def _start_stop(self, now):
         self._stop_from = dict(self._last_out)
         self._stop_t = now
         self._push = None
-        self._blend_from = self._blend_t = None
+        self._mix = {}
         self._set_phase("STOP", now)
         return self._stop_cycle(now)
 
@@ -551,5 +610,6 @@ class Mission:
             min_conf=self.min_conf,
             push_s=(round(now - self._push_t, 1) if self._push_t is not None
                     and self.phase == "PUSH" else None),
-            blending=self._blend_from is not None,
+            blending=self.blending(now),
+            ai_steering=bool(self._push_steer) or self.phase == "AI",
             handover=self.last_handover)

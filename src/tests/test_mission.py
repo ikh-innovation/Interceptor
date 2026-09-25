@@ -258,15 +258,42 @@ def see(q, conf):
 
 
 q = push_rig()
-for _ in range(60):                       # 1.2 s, detection every cycle
+q.run_until(0.3)
+p_before = dict(q.out)
+for _ in range(45):                       # detections from 0.3 s to 1.2 s
     see(q, 0.9)
     q.step()
-check("a strong detection at 1.2 s is IGNORED (PUSH_MIN_S 1.5)", q.m.phase == "PUSH")
+check("a detection early in PUSH: the AI already steers yaw / roll / throttle",
+      q.m.phase == "PUSH" and q.m.snapshot(q.t)["ai_steering"]
+      and q.out["roll"] > p_before["roll"] + 50 and q.out["yaw"] > 1520,
+      f"roll {p_before['roll']}->{q.out['roll']}  yaw {q.out['yaw']}")
+check("...but the lean is still the push angle until 1.5 s",
+      abs(phys(q.mp, q.out, "pitch") + 30.0) < 0.2, f"{phys(q.mp, q.out, 'pitch'):.1f} deg")
+for _ in range(20):
+    see(q, 0.9)
+    q.step()
+check("at 1.5 s the AI takes the lean too: full AI", q.m.phase == "AI")
 q = push_rig()
 for _ in range(100):
     see(q, 0.15)
     q.step()
-check("conf 0.15 < 0.20: junk-level, never hands over", q.m.phase == "PUSH")
+check("conf 0.15 < 0.20: junk-level, never steers anything",
+      q.m.phase == "PUSH" and q.out["roll"] == 1500 and q.out["yaw"] == 1500
+      and not q.m.snapshot(q.t)["ai_steering"])
+q = push_rig()
+q.run_until(0.5)
+for _ in range(30):
+    see(q, 0.6)
+    q.step()
+q.ctx.update(ai_cmd=None, ai_t=None, det_t=None)      # lost mid-push
+rolls_back = []
+for _ in range(int(M.Mission.BLEND_S / 0.02) + 5):
+    rolls_back.append(q.step()["roll"])
+check("target lost mid-PUSH: steering glides back to heading / height hold, "
+      "still pushing (no soft stop yet)",
+      q.m.phase == "PUSH" and rolls_back[-1] == 1500
+      and max(abs(b - a) for a, b in zip(rolls_back, rolls_back[1:])) <= 8,
+      f"roll back to {rolls_back[-1]}")
 q = push_rig()
 q.run_until(1.52)
 push_out = dict(q.out)
@@ -276,7 +303,7 @@ check("conf 0.35 after 1.5 s: AI takes over", q.m.phase == "AI")
 check("...first AI output == the PUSH output (no step)",
       all(abs(o[a] - push_out[a]) <= 2 for a in o), f"{o} vs {push_out}")
 rolls = [o["roll"]]
-for _ in range(55):
+for _ in range(int(M.Mission.BLEND_S / 0.02) + 5):
     see(q, 0.35)
     rolls.append(q.step()["roll"])
 d = [b - a for a, b in zip(rolls, rolls[1:])]

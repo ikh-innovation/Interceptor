@@ -188,7 +188,10 @@ MODES = {
         # 20 m/s climb should be a decision someone makes, not a default.
         "speed_mode": "MEDIUM",
         "pn_near_mult": 1.4,       # and 40% more gain once it fills the frame
-        "lock_ramp_s": 0.5,        # ignore the first-lock differentiator spike
+        # Ramp the bank ceiling in over 1 s after lock (was 0.5).  With the
+        # mission's 1.5 s blend this halves the takeover kick in sim (mean
+        # bank in the first second 11.1 -> 5.7 deg) at no accuracy cost.
+        "lock_ramp_s": 1.0,        # ignore the first-lock differentiator spike
         "note": ("Sim: closes to ~35 deg elevation.  Nothing closes above ~45 "
                  "deg in any configuration."),
         # BOTH flight modes drive the SAME guidance law.  ALT_HOLD commands

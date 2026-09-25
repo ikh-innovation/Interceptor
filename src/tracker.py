@@ -562,16 +562,24 @@ class DroneTracker:
     # command is v_forward * tan(elevation), so picking a faster mode buys a
     # proportionally faster climb and never a steeper one — which is the whole
     # point.  The ceiling is only a cap for the corrective term.
+    # Retuned 2026-09-25 for the mission app (FC now 25 m/s up, 40 deg lean,
+    # camera fixed 30 deg up) in the closed-loop sim: hover at 10 m, enemy
+    # 40 m out on the aim mark, 6 directions x 5/10 m/s x 4 winds (calm,
+    # 5 and 8 m/s crosswind, 8 m/s headwind), PUSH 30 then AI:
+    #   stabiliser 14/.13 (old) 67/96 touches, 8/.18 66, 6/.22 65 -> 6/.22,
+    #   the smoothest with no accuracy cost.  2.5/.60 ("SMOOTH") was too slow
+    #   for a MOVING target: 35-39/48 vs 44-48/48.
+    #   lean 20 (MEDIUM) and 22 (FAST) touch alike; 30 deg lean loses the
+    #   target out of the 30-deg-up camera more often (27/36 vs 34-36/36).
+    #   SLOW (12 deg) can NOT beat an 8 m/s headwind: 0/9.  Calm air only.
+    _STAB = dict(slew_per_s=6.0, rate_tau=0.22, deadband_frac=0.050)
     MODES = {
         "SLOW":   dict(climb_limit_mps=8.0,  max_lean_deg=12.0, sens=0.35,
-                       slew_per_s=8.0,  rate_tau=0.18, deadband_frac=0.030,
-                       climb_trim=5.0),
-        "MEDIUM": dict(climb_limit_mps=14.0, max_lean_deg=16.0, sens=0.50,
-                       slew_per_s=11.0, rate_tau=0.15, deadband_frac=0.035,
-                       climb_trim=6.0),
+                       climb_trim=5.0, **_STAB),
+        "MEDIUM": dict(climb_limit_mps=15.0, max_lean_deg=20.0, sens=0.50,
+                       climb_trim=6.0, **_STAB),
         "FAST":   dict(climb_limit_mps=25.0, max_lean_deg=22.0, sens=0.65,
-                       slew_per_s=14.0, rate_tau=0.13, deadband_frac=0.040,
-                       climb_trim=8.0),
+                       climb_trim=8.0, **_STAB),
     }
     _SPEED_KEYS = ("climb_limit_mps", "max_lean_deg")
     _STAB_KEYS  = ("slew_per_s", "rate_tau", "deadband_frac")

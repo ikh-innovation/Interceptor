@@ -3533,6 +3533,9 @@ class AcroCommander:
     def _build_mission(self):
         import mission as _mission_mod
         b = self.backend
+        _bs = os.environ.get("MISSION_BLEND_S", "").strip()
+        if _bs:
+            _mission_mod.Mission.BLEND_S = max(0.0, float(_bs))
         self.mission = _mission_mod.Mission(
             self, min_conf=self._mission_cfg["min_conf"],
             ceiling_m=self._mission_cfg["ceiling_m"],
