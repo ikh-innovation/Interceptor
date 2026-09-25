@@ -181,7 +181,14 @@ MODES = {
         # cleanly (0.56 m, 100% in frame) — same still-air result either way
         # (0.60 m), so this costs nothing when there is no wind.  Field flights
         # are not indoors: raised for that reason, not for a faster acquisition.
-        "bank_far_deg": 24,        # ...opening to MAX_BANK_DEG as it closes
+        # 30/36 since 2026-09-25: the miss traces showed the bank PINNED at the
+        # 24 deg ceiling in the last second while the target slid sideways.
+        # ANGLE_MAX is 40 on this FC now, so there is room.
+        "bank_far_deg": 30,        # ...opening to MAX_BANK_DEG as it closes
+        "max_bank_deg": 36,
+        # Vertical LOS-rate lead: 3 -> 8 cut the vertical miss (0.66 -> 0.57 m
+        # at 10 m/s) and raised touches 13 -> 19% in the scenarios.
+        "climb_lead": 8,
         "sens_default": 0.5,       # STANDARD on the dashboard = the plain gain
         "sens_mode": "STANDARD",
         # MEDIUM at power-up: FAST is one tap away on the phone, but a
@@ -191,7 +198,9 @@ MODES = {
         # Ramp the bank ceiling in over 1 s after lock (was 0.5).  With the
         # mission's 1.5 s blend this halves the takeover kick in sim (mean
         # bank in the first second 11.1 -> 5.7 deg) at no accuracy cost.
-        "lock_ramp_s": 1.0,        # ignore the first-lock differentiator spike
+        # 0.3 s since 2026-09-25 (with the mission's 0.4 s blend): the AI must
+        # reach authority inside a 1-2 s encounter.  See mission.BLEND_S.
+        "lock_ramp_s": 0.3,        # ignore the first-lock differentiator spike
         "note": ("Sim: closes to ~35 deg elevation.  Nothing closes above ~45 "
                  "deg in any configuration."),
         # BOTH flight modes drive the SAME guidance law.  ALT_HOLD commands
@@ -272,6 +281,8 @@ def as_shell(cfg):
         f"SENS_DEFAULT={cfg.get('sens_default', 0.5)}",
         f"PN_NEAR_MULT={cfg.get('pn_near_mult', 1.0)}",
         f"LOCK_RAMP_S={cfg.get('lock_ramp_s', 0.0)}",
+        f"MAX_BANK_DEG={cfg.get('max_bank_deg', 30)}",
+        f"CLIMB_LEAD={cfg.get('climb_lead', 3)}",
         f"CLIMB_GAIN={cfg.get('climb_gain', 8)}",
         f"STICK_LIMIT_THROTTLE={cfg.get('stick_limit_throttle', 0.90)}",
         f"LEAN_EL_GUARD={cfg.get('lean_el_guard', 0.0)}",

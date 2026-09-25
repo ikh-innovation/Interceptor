@@ -147,7 +147,14 @@ class Mission:
     # first second 11.1 deg, sideways-speed jump p95 4.5 m/s; 1.5/1.0 s -> 67,
     # 5.7 deg, 3.2 m/s; 2.0/1.5 s -> 63, 2.8 deg, 2.0 m/s.  1.5 halves the
     # takeover kick at no cost in accuracy.  MISSION_BLEND_S overrides.
-    BLEND_S = 1.50
+    #
+    # 2026-09-25, operator's scenarios (enemy 0-10 m/s toward us, 2-3 Bf wind,
+    # the push then the AI), 100 each: a 1.5 s blend lets the AI reach full
+    # authority only after most of a fast encounter is gone.  0.4 s (with a
+    # 0.3 s lock ramp): 5 m/s 23 -> 44% touches, 10 m/s 6 -> 17% (with the
+    # other settings below); the price is ~15 deg of bank in the first second
+    # instead of ~8.  Still no spins: yaw is capped at 40 deg/s.
+    BLEND_S = 0.40
     STOP_S = 1.00             # soft stop back to level
     STEP_TIMEOUT_S = 3.00
     STEP_KP = 2.5             # deg/s of yaw rate per deg of step error
@@ -186,6 +193,9 @@ class Mission:
         self._req_abort = False
         self.level = {g: "MEDIUM" for g in GROUPS}
         self.level["vert"] = "SLOW"         # "slowly and as steady as possible"
+        # PUSH 20 deg by default: a lower closing speed leaves the AI more
+        # frames; in the scenarios 20 beat 30 (5 m/s 23 -> 31%, 10 m/s 6 -> 13%).
+        self.level["push"] = "SLOW"
 
         self.phase = "PILOT"
         self.phase_t = 0.0

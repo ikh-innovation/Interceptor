@@ -217,6 +217,9 @@ check("ENGAGE refused while climbing", r.m.request_engage() != "")
 r.run_until(1.0)
 r.mp.pilot.update(pitch=r.mp.phys_to_pwm("pitch", -2.0),
                   roll=r.mp.phys_to_pwm("roll", 3.0))
+check("the shipped default push is SLOW = 20 deg (lower closing speed, more frames)",
+      r.m.level["push"] == "SLOW" and r.m.push_deg() == 20.0)
+r.m.set_level("push", "MEDIUM")
 check("ENGAGE accepted from HOVER", r.m.request_engage() == "")
 o = r.step()
 check("PUSH drives all four channels", set(o) == {"roll", "pitch", "yaw", "throttle"}, str(o))
@@ -248,6 +251,7 @@ AI = {"pwm": {"roll": 1700, "pitch": 1350, "yaw": 1560, "throttle": 1520}}
 def push_rig():
     q = Rig(min_conf=0.20)
     q.step()
+    q.m.set_level("push", "MEDIUM")           # these checks are written for 30 deg
     q.m.request_engage()
     q.step()
     return q
@@ -289,10 +293,11 @@ q.ctx.update(ai_cmd=None, ai_t=None, det_t=None)      # lost mid-push
 rolls_back = []
 for _ in range(int(M.Mission.BLEND_S / 0.02) + 5):
     rolls_back.append(q.step()["roll"])
+_glide = int(200 * 1.5 * 0.02 / M.Mission.BLEND_S) + 3
 check("target lost mid-PUSH: steering glides back to heading / height hold, "
       "still pushing (no soft stop yet)",
       q.m.phase == "PUSH" and rolls_back[-1] == 1500
-      and max(abs(b - a) for a, b in zip(rolls_back, rolls_back[1:])) <= 8,
+      and max(abs(b - a) for a, b in zip(rolls_back, rolls_back[1:])) <= _glide,
       f"roll back to {rolls_back[-1]}")
 q = push_rig()
 q.run_until(1.52)
@@ -307,8 +312,9 @@ for _ in range(int(M.Mission.BLEND_S / 0.02) + 5):
     see(q, 0.35)
     rolls.append(q.step()["roll"])
 d = [b - a for a, b in zip(rolls, rolls[1:])]
-check("roll glides monotonically to the AI's value, max step <= 8 us per 20 ms",
-      all(x >= -1 for x in d) and max(d) <= 8 and rolls[-1] == 1700,
+_lim = int(200 * 1.5 * 0.02 / M.Mission.BLEND_S) + 3     # smoothstep's peak slope
+check(f"roll glides monotonically to the AI's value, max step <= {_lim} us per 20 ms",
+      all(x >= -1 for x in d) and max(d) <= _lim and rolls[-1] == 1700,
       f"max {max(d)} us, final {rolls[-1]}")
 
 print("=== A8. soft stops ===")
