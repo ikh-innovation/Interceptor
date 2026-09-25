@@ -157,6 +157,10 @@ class Mission:
     # TARGET_FRESH_S, so a target lost off the right edge no longer keeps the
     # drone turning right; roll / pitch / throttle hold the last real command.
     YAW_FADE_S = 0.15
+    # Target lost during AI: go back to the PUSH hold (straight, the push
+    # lean, heading and height held) and look for it again for this long;
+    # a new confirmed detection hands straight back to the AI.
+    REACQ_S = 2.50
     # In the last metre the target fills the frame and the detector drops out;
     # the law FREEZES the sticks there and flies through ("terminal commit",
     # held 1 s).  Soft-stopping on that loss would abort the touch itself.
@@ -474,6 +478,7 @@ class Mission:
             r.set(target, now)
             self._push[axis] = r
         self._push_t = now
+        self._push_deadline = now + self.PUSH_MAX_S
         self._src = {a: "push" for a in ("roll", "pitch", "yaw", "throttle")}
         self._mix = {}
         self._push_steer = False
@@ -565,9 +570,8 @@ class Mission:
                        f"(full AI), blended over {self.BLEND_S:.1f} s", now)
             self._set_phase("AI", now, "handover")
             return self._ai_cycle(now, ctx)
-        if t_in >= self.PUSH_MAX_S:
-            self._note(f"no confirmed target in {self.PUSH_MAX_S:.0f} s of PUSH: "
-                       f"soft stop", now)
+        if now >= self._push_deadline:
+            self._note("no confirmed target in time: soft stop", now)
             return self._start_stop(now)
         return self._mixed_output(now, ai)
 
@@ -580,9 +584,23 @@ class Mission:
         if stale and self._terminal is not None \
                 and (now - self._terminal[1]) <= self.TERMINAL_GRACE_S:
             cmd = self._terminal[0]           # keep flying the frozen command
-        elif stale:
-            self._note("target lost: soft stop back to level", now)
+        elif stale and self._terminal is not None:
+            # The terminal hold ran out: it touched or flew past.  The attempt
+            # is over -- do NOT push on blind past the target.
+            self._note("terminal pass done: soft stop back to level", now)
             return self._start_stop(now)
+        elif stale:
+            # Lost: not a stop.  Back to the straight push, glide there, and
+            # look again; the operator's rule is "go straight until it finds it".
+            for a in ("roll", "pitch", "yaw", "throttle"):
+                self._switch(a, "push", now)
+            self._push_steer = False
+            self._push_deadline = now + self.REACQ_S
+            self._terminal = None
+            self._note(f"target lost: back to the straight push, looking again "
+                       f"for {self.REACQ_S:.1f} s", now)
+            self._set_phase("PUSH", now, "re-acquire")
+            return self._mixed_output(now, None)
         return self._mixed_output(now, self._faded(now, ctx, cmd))
 
     def _faded(self, now, ctx, cmd):

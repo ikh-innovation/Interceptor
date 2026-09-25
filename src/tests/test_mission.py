@@ -326,11 +326,27 @@ q = push_rig()
 q.run_until(1.52)
 see(q, 0.5)
 q.step()
-q.run_until(0.3)                           # detections stop -> ai_t goes stale
-q.run_until(0.3)
-check("AI loses the target: STOP, then HOVER", q.m.phase in ("STOP", "HOVER"))
-q.run_until(1.1)
-check("...released", q.out == {} and q.m.phase == "HOVER")
+q.run_until(0.6)                           # detections stop -> stale
+check("AI loses the target: NOT a stop -- back to the straight PUSH, looking again",
+      q.m.phase == "PUSH", q.m.phase)
+q.run_until(1.6)
+check("...gliding back to straight: roll 1500, yaw 1500, lean = the push angle",
+      q.out["roll"] == 1500 and q.out["yaw"] == 1500 and abs(phys(q.mp, q.out, "pitch") + 30.0) < 0.2,
+      str(q.out))
+q.run_until(1.2)                           # 2.5 s of re-acquire window gone
+q.run_until(1.2)
+check("...nothing found in 2.5 s: soft stop, released", q.out == {} and q.m.phase == "HOVER",
+      q.m.phase)
+q = push_rig()
+q.run_until(1.52)
+see(q, 0.5)
+q.step()
+q.run_until(0.8)                           # lost -> back to PUSH
+was = q.m.phase
+see(q, 0.5)
+q.step()
+check("lost, then SEEN AGAIN within 2.5 s: straight back to the AI", was == "PUSH" and q.m.phase == "AI",
+      f"{was} -> {q.m.phase}")
 
 q = push_rig()
 q.run_until(1.52)
@@ -377,7 +393,8 @@ def in_phase(name):
     q.step()
     if name == "AI":
         return q, None
-    q.run_until(0.7)                       # target lost -> STOP
+    q.run_until(0.7)                       # target lost -> back to PUSH
+    q.run_until(2.6)                       # nothing re-acquired -> STOP
     return q, None
 
 
@@ -420,7 +437,8 @@ check("the gap: yaw eases from the AI's turn back to 1500 before the stop (stops
       f"{y0} -> {yaws[-1]} over {len(yaws) * 0.02:.2f} s")
 check("...while roll holds the last REAL command", all(r == r0 for r in rolls), f"{r0}")
 q.run_until(0.1)
-check("0.5 s with no real detection: soft stop", q.m.phase in ("STOP", "HOVER"), q.m.phase)
+check("0.5 s with no real detection: back to the straight push (not a spin, not a stop)",
+      q.m.phase == "PUSH", q.m.phase)
 
 print("=== A9b. one attempt per pilot mode cycle (ENGAGE red -> green -> reset) ===")
 q = push_rig()
