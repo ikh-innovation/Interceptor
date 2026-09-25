@@ -31,11 +31,14 @@
   .vidwrap{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;background:#000;position:relative}
   .vbox{position:relative;height:100%;max-width:100%;aspect-ratio:1/1}
   .vbox img{width:100%;height:100%;display:block;object-fit:contain}
-  .aim{position:absolute;width:15%;aspect-ratio:1/1;transform:translate(-50%,-50%);
-       border:3px solid #00e5ff;border-radius:50%;box-shadow:0 0 0 2px rgba(0,0,0,.6);pointer-events:none}
-  .aim:after{content:"";position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;background:#00e5ff;border-radius:50%}
+  /* the aim mark: 20% of the frame.  "Inside the circle" IS the green test
+     (AIM_R below), so what you see is exactly what counts. */
+  .aim{position:absolute;width:20%;aspect-ratio:1/1;transform:translate(-50%,-50%);
+       border:5px solid #00e5ff;border-radius:50%;box-shadow:0 0 0 2px rgba(0,0,0,.6),inset 0 0 0 2px rgba(0,0,0,.4);pointer-events:none}
+  .aim:after{content:"";position:absolute;left:50%;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;background:#00e5ff;border-radius:50%}
   .aim.good{border-color:#00e676}.aim.good:after{background:#00e676}
-  .tgt{position:absolute;width:5%;aspect-ratio:1/1;transform:translate(-50%,-50%);border:2px solid #ffea00;pointer-events:none;display:none}
+  .tgt{position:absolute;width:8%;aspect-ratio:1/1;transform:translate(-50%,-50%);border:3px solid #ffea00;
+       box-shadow:0 0 0 2px rgba(0,0,0,.6);pointer-events:none;display:none}
   .badge{position:absolute;left:50%;top:8px;transform:translateX(-50%);padding:5px 12px;border-radius:999px;
          font-weight:900;font-size:15px;background:rgba(0,0,0,.65);white-space:nowrap}
   .badge.good{background:#00c853;color:#000}
@@ -370,12 +373,14 @@
     var az = m.target_az_deg, el = m.target_el_deg, tg = $("tgt"), bd = $("badge"), of = $("offs");
     if (m.target_fresh && az !== null && el !== null) {
       tg.style.display = "block"; tg.style.left = tx(az) + "%"; tg.style.top = ty(el) + "%";
-      var dy = el - aimEl, good = Math.abs(az) < 2 && Math.abs(dy) < 2;
+      // green = the target is INSIDE the drawn circle (radius 10% of the frame)
+      var AIM_R = 10, dx_s = tx(az) - 50, dy_s = ty(el) - ty(aimEl);
+      var dy = el - aimEl, good = Math.sqrt(dx_s * dx_s + dy_s * dy_s) <= AIM_R;
       aim.classList.toggle("good", good);
       bd.style.display = "block"; bd.className = "badge" + (good ? " good" : "");
       bd.textContent = good ? ((ph === "HOVER" || ph === "SCOUT") ? "ΣΤΟ ΣΤΟΧΟ ✓  ENGAGE" : "ΣΤΟΧΟΣ ΣΤΟ ΚΕΝΤΡΟ ✓") :
-        (Math.abs(az) >= 2 ? (az > 0 ? "⟳ δεξιά " : "⟲ αριστερά ") + fmt(Math.abs(az), 0) + "°  " : "") +
-        (Math.abs(dy) >= 2 ? (dy > 0 ? "▲ ψηλότερα " : "▼ χαμηλότερα ") + fmt(Math.abs(dy), 0) + "°" : "");
+        (Math.abs(dx_s) > AIM_R * 0.7 ? (az > 0 ? "⟳ δεξιά " : "⟲ αριστερά ") + fmt(Math.abs(az), 0) + "°  " : "") +
+        (Math.abs(dy_s) > AIM_R * 0.7 ? (dy > 0 ? "▲ ψηλότερα " : "▼ χαμηλότερα ") + fmt(Math.abs(dy), 0) + "°" : "");
       of.style.display = "block"; of.textContent = "az " + fmt(az, 1) + "°  el " + fmt(el, 1) + "°";
     } else {
       tg.style.display = "none"; aim.classList.remove("good"); of.style.display = "none";
