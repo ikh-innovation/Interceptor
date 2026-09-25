@@ -439,6 +439,7 @@ class DroneTracker:
         self.gated_total     = 0
         self.gate_note       = ""
         self._t_last_frame   = None
+        self._frame_dt       = None     # between detection frames, for the ROI margin
         self.mode_name       = os.environ.get("WASP_MODE_SPEED", "MEDIUM").upper()
         self.target_kind     = os.environ.get("TARGET_KIND", "DRONE").upper()
         self._pending_kind   = None
@@ -837,13 +838,41 @@ class DroneTracker:
         bw, bh = (self.last_bbox[2], self.last_bbox[3]) if self.last_bbox else (80, 80)
 
         base = max(self.MIN_ROI_HALF, int(max(bw, bh) * 0.6))
-        hw   = min(base + int(abs(vx) * self.missed * 1.5), self.fw // 2)
-        hh   = min(base + int(abs(vy) * self.missed * 1.5), self.fh // 2)
+        mx, my = self._rotation_margin()
+        hw   = min(base + int(abs(vx) * self.missed * 1.5) + mx, self.fw // 2)
+        hh   = min(base + int(abs(vy) * self.missed * 1.5) + my, self.fh // 2)
 
         return (
             max(0, px - hw),        max(0, py - hh),
             min(self.fw, px + hw),  min(self.fh, py + hh),
         )
+
+    def _rotation_margin(self):
+        """Extra ROI half-size, px, for how far the IMAGE moves between two
+        detection frames because the airframe itself is rotating.
+
+        The Kalman filter works in pixels and knows nothing of the airframe's
+        turn.  Field 2026-09-25: at ~140 deg/s of yaw the picture moved ~144 px
+        between detection frames against a +/-50 px search window, so a locked
+        target left the window within 3-4 frames and was "lost" while still in
+        view.  The gyro says how fast the image is moving; widen by that.
+        """
+        ap = getattr(self, "ap", None)
+        b = getattr(ap, "backend", None)
+        if b is None or not hasattr(b, "attitude"):
+            return 0, 0
+        try:
+            att = b.attitude()
+        except Exception:
+            return 0, 0
+        if not att:
+            return 0, 0
+        dt = self._frame_dt or 0.1
+        fx = (self.fw / 2.0) / math.tan(getattr(ap, "H_FOV", math.radians(62.2)) / 2.0)
+        fy = (self.fh / 2.0) / math.tan(getattr(ap, "V_FOV", math.radians(48.8)) / 2.0)
+        mx = abs(att.get("yawspeed") or 0.0) * dt * fx * 1.3
+        my = abs(att.get("pitchspeed") or 0.0) * dt * fy * 1.3
+        return int(mx), int(my)
 
     def _roi_disp_to_native(self, roi):
         sx = self.full_w / self.fw
@@ -894,6 +923,8 @@ class DroneTracker:
         _now = perf_counter()
         _dt = None if self._t_last_frame is None else (_now - self._t_last_frame)
         self._t_last_frame = _now
+        if _dt is not None and 0.0 < _dt < 1.0:
+            self._frame_dt = _dt
         if yolo_det is not None and not self._gate_detection(yolo_det, kf_pred, _dt):
             yolo_det = None          # treat as a miss: coast on the filter
 
