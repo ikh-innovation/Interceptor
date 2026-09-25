@@ -1712,22 +1712,35 @@ class DroneTracker:
             # The sticks are driven ONLY while the FC is armed and a target is
             # locked; every other instant the channels go back to the pilot.
             target_off = None
+            # Mission app: the AI steers ONLY on real detections.  Field logs
+            # 2026-09-25 (11:43, 12:52): the AI was driven by the Kalman COAST
+            # 74-76% of the time, turned 92-117 deg per engagement on it
+            # against 11-22 deg on real detections, and every engagement ended
+            # chasing a prediction -- the pixel-space filter extrapolates a
+            # target leaving the RIGHT edge further right, knowing nothing of
+            # the airframe's own turn.  The filter still guides the detector's
+            # search window; it just no longer moves the drone.
+            _mission_on = getattr(self.ap, "mission", None) is not None
             if is_yolo_frame:
-                if fused:
+                if fused and _mission_on and not detected:
                     target_off = (fused[0] - cx_f, fused[1] - cy_f)
-                    # last_bbox and t_cap are ignored by the servo law and used by
-                    # the intercept law for the range estimate, the terminal
-                    # trigger and the latency measurement.
-                    cmd = self.ap.compute(target_off[0], target_off[1],
-                                          self.state, self.fw, self.fh,
-                                          bbox=self.last_bbox, capture_t=t_cap)
+                    cmd = self._last_cmd           # coasting: HUD only, no steer
                 else:
-                    cmd = self.ap.neutral_command()     # no target: centre + release
-                self.ap.update(cmd, target_off, have_face=bool(fused),
-                               detected=bool(detected),
-                               conf=self.conf if detected else None,
-                               bbox=self.last_bbox if detected else None)
-                self._last_cmd = cmd
+                    if fused:
+                        target_off = (fused[0] - cx_f, fused[1] - cy_f)
+                        # last_bbox and t_cap are ignored by the servo law and used
+                        # by the intercept law for the range estimate, the
+                        # terminal trigger and the latency measurement.
+                        cmd = self.ap.compute(target_off[0], target_off[1],
+                                              self.state, self.fw, self.fh,
+                                              bbox=self.last_bbox, capture_t=t_cap)
+                    else:
+                        cmd = self.ap.neutral_command()  # no target: centre + release
+                    self.ap.update(cmd, target_off, have_face=bool(fused),
+                                   detected=bool(detected),
+                                   conf=self.conf if detected else None,
+                                   bbox=self.last_bbox if detected else None)
+                    self._last_cmd = cmd
             else:
                 cmd = self._last_cmd               # HUD display only
                 if fused:

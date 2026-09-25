@@ -400,6 +400,28 @@ q.step()
 check("after ABORT a NEW press works again",
       set(q.run_until(0.3, hold="up", session="s2")) == {"throttle"})
 
+print("=== A8b. a gap in REAL detections: stop turning, then soft stop ===")
+q = push_rig()
+q.run_until(1.52)
+for _ in range(90):                       # AI established, target in view
+    see(q, 0.6)
+    q.step()
+y0, r0 = q.out["yaw"], q.out["roll"]
+t_lost = q.t
+q.ctx.update(det_t=t_lost - 0.02, ai_t=t_lost - 0.02)     # detections stop; the cmd stays
+yaws, rolls = [], []
+for _ in range(40):                       # until the soft stop takes over
+    o = q.step()
+    if q.m.phase != "AI":
+        break
+    yaws.append(o["yaw"]); rolls.append(o["roll"])
+check("the gap: yaw eases from the AI's turn back to 1500 before the stop (stops turning)",
+      y0 > 1540 and abs(yaws[-1] - 1500) <= 3 and all(b <= a + 1 for a, b in zip(yaws, yaws[1:])),
+      f"{y0} -> {yaws[-1]} over {len(yaws) * 0.02:.2f} s")
+check("...while roll holds the last REAL command", all(r == r0 for r in rolls), f"{r0}")
+q.run_until(0.1)
+check("0.5 s with no real detection: soft stop", q.m.phase in ("STOP", "HOVER"), q.m.phase)
+
 print("=== A9b. one attempt per pilot mode cycle (ENGAGE red -> green -> reset) ===")
 q = push_rig()
 check("before the AI steers: not engaged (ENGAGE stays red)", not q.m.snapshot(q.t)["engaged"])

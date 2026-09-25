@@ -152,7 +152,11 @@ class Mission:
     STEP_TIMEOUT_S = 3.00
     STEP_KP = 2.5             # deg/s of yaw rate per deg of step error
     STEP_ACCEL = 60.0         # deg/s^2: how fast a step's yaw rate may change
-    TARGET_FRESH_S = 0.50     # an AI command older than this = target lost
+    TARGET_FRESH_S = 0.50     # no REAL detection for this long = target lost
+    # A gap in real detections: from YAW_FADE_S the AI's yaw eases to zero by
+    # TARGET_FRESH_S, so a target lost off the right edge no longer keeps the
+    # drone turning right; roll / pitch / throttle hold the last real command.
+    YAW_FADE_S = 0.15
     # In the last metre the target fills the frame and the detector drops out;
     # the law FREEZES the sticks there and flies through ("terminal commit",
     # held 1 s).  Soft-stopping on that loss would abort the touch itself.
@@ -537,7 +541,7 @@ class Mission:
         conf = ctx.get("det_conf")
         fresh_ai = (ctx.get("ai_cmd") and ctx.get("ai_t") is not None
                     and (now - ctx["ai_t"]) <= self.TARGET_FRESH_S)
-        ai = self.mapper.ai_pwm(ctx["ai_cmd"]) if fresh_ai else None
+        ai = self._faded(now, ctx, ctx["ai_cmd"]) if fresh_ai else None
         if not self._push_steer and self._confirmed(now, ctx):
             self._push_steer = True
             self._steer_t = now
@@ -579,7 +583,20 @@ class Mission:
         elif stale:
             self._note("target lost: soft stop back to level", now)
             return self._start_stop(now)
-        return self._mixed_output(now, self.mapper.ai_pwm(cmd))
+        return self._mixed_output(now, self._faded(now, ctx, cmd))
+
+    def _faded(self, now, ctx, cmd):
+        """The AI's PWM, with yaw eased to zero through a detection gap (not in
+        the terminal hold, which is a deliberate freeze)."""
+        out = self.mapper.ai_pwm(cmd)
+        det_t = ctx.get("det_t")
+        gap = 1e9 if det_t is None else now - det_t
+        if gap > self.YAW_FADE_S and "yaw" in out and not cmd.get("terminal"):
+            k = max(0.0, 1.0 - (gap - self.YAW_FADE_S)
+                    / max(1e-3, self.TARGET_FRESH_S - self.YAW_FADE_S))
+            n = self.mapper.phys_to_pwm("yaw", 0.0)
+            out["yaw"] = int(round(n + (out["yaw"] - n) * k))
+        return out
 
     # ── STOP (soft) ────────────────────────────────────────────────────────
     def _start_stop(self, now):

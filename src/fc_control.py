@@ -3649,9 +3649,10 @@ class AcroCommander:
         h = b.height() if hasattr(b, "height") else None
         with self._lock:
             cmd = dict(self._cmd)
-            ai_t = self._last_target_t
             off = self._target_off
             det_t, det_conf = self._det_t, self._det_conf
+        # Fresh = a REAL detection recently, never a Kalman coast (see tracker).
+        ai_t = det_t if det_t is not None else -1e9
         fresh = (now - ai_t) <= self.target_timeout and off is not None
         ctx = dict(gate_ok=ok, gate_why=why,
                    att=b.attitude() if ok else None,
