@@ -151,7 +151,7 @@
       <button class="btn" id="b_dn" data-hold="down">▼<small>ΚΑΘΟΔΟΣ</small></button>
       <div></div>
     </div>
-    <button class="eng" id="b_eng"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE<br><small style="font-size:11px">κράτα 1 s</small></span></button>
+    <button class="eng" id="b_eng"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE<br><small style="font-size:11px">πάτα</small></span></button>
   </div>
   <div class="tools">
     <button id="t_speed">ΤΑΧΥΤΗΤΕΣ</button>
@@ -263,25 +263,16 @@
   window.addEventListener("pagehide", releaseAll);
   document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
 
-  // ── ENGAGE: a deliberate 1 s press ─────────────────────────────────────
-  (function () {
-    var el = $("b_eng"), fill = $("engfill"), t0 = null, raf = null;
-    function frame() {
-      if (t0 === null) return;
-      var a = Math.min(1, (performance.now() - t0) / 1000);
-      fill.style.height = (a * 100) + "%";
-      if (a >= 1) { t0 = null; fill.style.height = "0"; if (navigator.vibrate) navigator.vibrate([60, 40, 120]); cmd("engage=1"); return; }
-      raf = requestAnimationFrame(frame);
-    }
-    el.addEventListener("pointerdown", function (e) {
-      if (el.disabled) return; e.preventDefault();
-      try { el.setPointerCapture(e.pointerId); } catch (x) {}
-      t0 = performance.now(); frame();
-    });
-    ["pointerup", "pointercancel", "lostpointercapture"].forEach(function (n) {
-      el.addEventListener(n, function () { t0 = null; cancelAnimationFrame(raf); fill.style.height = "0"; });
-    });
-  })();
+  // ── ENGAGE: fires on touch-down (the operator's choice: instant) ────────
+  $("b_eng").addEventListener("pointerdown", function (e) {
+    var el = $("b_eng");
+    if (el.disabled) return;
+    e.preventDefault();
+    var fill = $("engfill"); fill.style.height = "100%";
+    setTimeout(function () { fill.style.height = "0"; }, 180);
+    if (navigator.vibrate) navigator.vibrate([60, 40, 120]);
+    cmd("engage=1");
+  });
 
   // ── sheets ─────────────────────────────────────────────────────────────
   function openSheet(id) {
@@ -359,7 +350,7 @@
     eng.classList.toggle("go", done);
     eng.disabled = done || !((ph === "HOVER" || ph === "SCOUT") && !VIEW && ctl !== "other");
     $("engtxt").innerHTML = !done ? (ph === "PUSH" ? "ΩΘΗΣΗ…<br><small style='font-size:11px'>ψάχνει στόχο</small>"
-                                                   : "ENGAGE<br><small style='font-size:11px'>κράτα 1 s</small>")
+                                                   : "ENGAGE<br><small style='font-size:11px'>πάτα</small>")
       : (ph === "AI" || ph === "PUSH") ? "AI ✓<br><small style='font-size:11px'>οδηγεί</small>"
       : "ΕΓΙΝΕ ✓<br><small style='font-size:11px'>STAB→ALT_HOLD<br>για νέα</small>";
 
