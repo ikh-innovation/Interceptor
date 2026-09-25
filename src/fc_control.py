@@ -1728,6 +1728,24 @@ class ArduPilotAcro(FcBackend):
         # are already holding, and backing it off is an instant, natural abort.
         self._throttle_frac = 0.0
         self._throttle_chan = None
+        # ── mission instruments (read-only; nothing in the AI law uses them) ──
+        # VFR_HUD: (t, alt_m, climb_mps, heading_deg).  VIBRATION: (t, x, y, z,
+        # clip0, clip1, clip2), m/s^2 and cumulative clipping counts.
+        self._vfr = None
+        self._vibe = None
+        # Height is VFR_HUD.alt minus the alt captured when the FC ARMS.  With no
+        # GPS the FC's own relative_alt is not trustworthy (measured 1.28 m on
+        # the bench), while VFR_HUD.alt read -0.01 m on the ground, so until an
+        # arming is observed the raw VFR_HUD.alt is used as-is.
+        self._alt_ref = None
+        self._was_armed = None
+        # The PILOT's own stick on each axis, from RC_CHANNELS, only while we are
+        # not overriding that channel (an active override is echoed back into
+        # RC_CHANNELS, so it would read our own value).  (t, pwm) per axis.
+        # This is what makes a takeover bumpless: the Jetson starts from where
+        # the pilot's thumb is, not from centre.
+        self._pilot_pwm = {}
+        self._override_t = {}         # chan -> last time we sent a non-zero value
 
     # ── link bring-up ─────────────────────────────────────────────────────────
     def connect(self):
@@ -1767,6 +1785,8 @@ class ArduPilotAcro(FcBackend):
         self._adopt_gcs_sysid()
         self._request_rc_channels_stream()
         self._request_attitude_stream()
+        self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_VFR_HUD, 10.0)
+        self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_VIBRATION, 10.0)
 
         self._stop.clear()
         self._rx = threading.Thread(target=self._rx_loop, daemon=True)
@@ -1800,6 +1820,10 @@ class ArduPilotAcro(FcBackend):
         self.mode_name = COPTER_MODES.get(hb.custom_mode, f"MODE{hb.custom_mode}")
         self.armed = bool(hb.base_mode
                           & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+        # Height reference: the altitude at the moment of arming.
+        if self.armed and self._was_armed is False and self._vfr is not None:
+            self._alt_ref = self._vfr[1]
+        self._was_armed = self.armed
 
     def in_rate_mode(self):
         """ArduPilot reports its flight mode in every HEARTBEAT, and the rx
@@ -1935,12 +1959,15 @@ class ArduPilotAcro(FcBackend):
         mx = self._param(f"RC{ch}_MAX")
         tr = self._param(f"RC{ch}_TRIM")
         rv = self._param(f"RC{ch}_REVERSED")
+        dzp = self._param(f"RC{ch}_DZ")
         from_fc = None not in (mn, mx, tr)
         cfg = dict(chan=ch,
                    min=int(mn) if mn else 1000,
                    max=int(mx) if mx else 2000,
                    trim=int(tr) if tr else 1500,
                    reversed=bool(int(rv)) if rv is not None else False,
+                   # RCn_DZ: only the mission's exact map reads it.
+                   dz=int(dzp) if dzp else 0,
                    from_fc=from_fc)
         src = "from FC" if from_fc else "DEFAULTS (param read failed!)"
         warn = "" if 1 <= cfg["chan"] <= 8 else "  [chan>8 cannot be overridden!]"
@@ -1998,6 +2025,18 @@ class ArduPilotAcro(FcBackend):
         except Exception:
             pass
 
+    def _request_message(self, msg_id, hz):
+        """MAV_CMD_SET_MESSAGE_INTERVAL for one message.  Verified on this FC
+        (4.6.3, 2026-09-25): VFR_HUD and VIBRATION both ACKed and arrived at
+        10 Hz.  A refusal only leaves the mission instruments blank."""
+        try:
+            self.master.mav.command_long_send(
+                self.master.target_system, self.master.target_component,
+                mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
+                msg_id, int(1e6 / max(1.0, hz)), 0, 0, 0, 0, 0)
+        except Exception:
+            pass
+
     def _request_attitude_stream(self, hz=50.0):
         """Ask for ATTITUDE.  Required by the approach controller: holding a fixed
         forward lean is an ATTITUDE problem, and ACRO gives us only a rate input,
@@ -2037,7 +2076,18 @@ class ArduPilotAcro(FcBackend):
                     and msg.type != mavutil.mavlink.MAV_TYPE_GCS):
                 with self._lock:
                     self._apply_heartbeat(msg)
+            elif t == "VFR_HUD":
+                with self._lock:
+                    self._vfr = (perf_counter(), float(msg.alt),
+                                 float(msg.climb), float(msg.heading))
+            elif t == "VIBRATION":
+                with self._lock:
+                    self._vibe = (perf_counter(), float(msg.vibration_x),
+                                  float(msg.vibration_y), float(msg.vibration_z),
+                                  int(msg.clipping_0), int(msg.clipping_1),
+                                  int(msg.clipping_2))
             elif t == "RC_CHANNELS":
+                self._apply_pilot_sticks(msg)
                 self._check_echo(msg)
                 self._apply_pilot_throttle(msg)
                 self._apply_commit(msg)
@@ -2285,6 +2335,136 @@ class ArduPilotAcro(FcBackend):
                       "              Run fc_check.py --verify for a full report.",
                       flush=True)
 
+    # ── mission instruments ──────────────────────────────────────────────────
+    def height(self, max_age=1.0):
+        """(height_m, climb_mps, heading_deg), or None if VFR_HUD is missing or
+        stale.  Height is relative to the altitude at arming (see _alt_ref)."""
+        with self._lock:
+            v, ref = self._vfr, self._alt_ref
+        if v is None or (perf_counter() - v[0]) > max_age:
+            return None
+        return (v[1] - (ref or 0.0), v[2], v[3])
+
+    def vibration(self, max_age=1.0):
+        """dict(x, y, z, clip) in m/s^2 and total clipping count, or None."""
+        with self._lock:
+            v = self._vibe
+        if v is None or (perf_counter() - v[0]) > max_age:
+            return None
+        return dict(x=v[1], y=v[2], z=v[3], clip=v[4] + v[5] + v[6])
+
+    # How long after we stop overriding a channel before RC_CHANNELS is trusted
+    # to show the pilot's stick again, not a lagging echo of ours (~10 Hz).
+    PILOT_SETTLE_S = 0.35
+
+    def _apply_pilot_sticks(self, rc_msg):
+        now = perf_counter()
+        with self._lock:
+            for axis, cfg in self.rc.items():
+                if axis not in ("roll", "pitch", "yaw", "throttle"):
+                    continue
+                ch = cfg["chan"]
+                if not 1 <= ch <= 18:
+                    continue
+                if now - self.__dict__.get("_override_t", {}).get(ch, -1e9) \
+                        < self.PILOT_SETTLE_S:
+                    continue
+                raw = getattr(rc_msg, f"chan{ch}_raw", 0)
+                if raw and raw != 65535:
+                    self._pilot_pwm[axis] = (now, int(raw))
+
+    def pilot_pwm(self, axis, max_age=0.6):
+        """The pilot's own PWM on this axis, or None if unknown or stale."""
+        with self._lock:
+            v = self._pilot_pwm.get(axis)
+        if v is None or (perf_counter() - v[0]) > max_age:
+            return None
+        return v[1]
+
+    def _exact_pwm(self, axis, norm):
+        """Normalised command -> PWM, the EXACT inverse of ArduPilot 4.6's own
+        stick decode, so the FC targets precisely the angle / rate asked.
+
+        Angle axes and yaw (RC_Channel::norm_input_dz): RCn_DZ us around trim
+        reads as 0, the rest is linear to MIN / MAX.  `norm` is the fraction of
+        ANGLE_MAX (roll, pitch) or PILOT_Y_RATE (yaw).
+
+        Throttle (Copter::get_pilot_desired_climb_rate): the PWM is decoded to
+        0..1000 with RCn_DZ at the bottom; mid is the decode of the centre PWM;
+        THR_DZ is in those 0..1000 units, NOT microseconds.  Beyond mid +/-
+        THR_DZ the climb rate is linear to PILOT_SPEED_UP / PILOT_SPEED_DN.
+        `norm` is the fraction of UP (positive) or DN (negative).
+
+        Measured against an independent model of that decode with this FC's
+        calibration (RC1_DZ 30, RC2-4_DZ 20, THR_DZ 100): 8 m/s -> 1681 ->
+        8.04 m/s, 20 deg -> 1290 -> 20.00 deg.  The old linear map made those
+        9.23 m/s and 18.95 deg.
+        """
+        cfg = self.rc[axis]
+        norm = _clamp(norm, -1.0, 1.0)
+        lo, hi = float(cfg["min"]), float(cfg["max"])
+        dz = float(cfg.get("dz", 0))
+        if axis == "throttle":
+            span = hi - lo - dz
+            mid_pwm = (int(lo) + int(hi)) // 2
+            mid = int(1000.0 * (mid_pwm - lo - dz) / span)
+            if norm == 0.0:
+                pwm = float(mid_pwm)
+            elif norm > 0.0:
+                top = mid + self.thr_deadzone
+                pwm = lo + dz + (top + norm * (1000.0 - top)) * span / 1000.0
+            else:
+                bot = mid - self.thr_deadzone
+                pwm = lo + dz + (bot + norm * bot) * span / 1000.0
+            if cfg["reversed"]:
+                pwm = hi - (pwm - lo)
+                away_up = pwm <= mid_pwm
+            else:
+                away_up = pwm >= mid_pwm
+            # Round AWAY from mid: ArduPilot truncates, so a PWM a hair short
+            # decodes a hair under the rate asked.
+            pwm = (math.ceil(pwm - 1e-9) if away_up else math.floor(pwm + 1e-9))
+            return int(_clamp(pwm, lo, hi))
+        if cfg["reversed"]:
+            norm = -norm
+        tr = float(cfg["trim"])
+        if norm > 0.0:
+            pwm = math.ceil(tr + dz + norm * (hi - tr - dz) - 1e-9)
+        elif norm < 0.0:
+            pwm = math.floor(tr - dz + norm * (tr - dz - lo) + 1e-9)
+        else:
+            pwm = tr
+        return int(_clamp(pwm, lo, hi))
+
+    def _exact_norm(self, axis, pwm):
+        """ArduPilot's decode of a PWM, as the same normalised units that
+        _exact_pwm takes.  Used to read the PILOT's stick for a bumpless start."""
+        cfg = self.rc[axis]
+        lo, hi = float(cfg["min"]), float(cfg["max"])
+        dz = float(cfg.get("dz", 0))
+        pwm = _clamp(float(pwm), lo, hi)
+        if axis == "throttle":
+            if cfg["reversed"]:
+                pwm = hi - (pwm - lo)
+            span = hi - lo - dz
+            c = 1000.0 * (pwm - lo - dz) / span if pwm > lo + dz else 0.0
+            mid = int(1000.0 * ((int(lo) + int(hi)) // 2 - lo - dz) / span)
+            top, bot = mid + self.thr_deadzone, mid - self.thr_deadzone
+            if c > top:
+                return _clamp((c - top) / (1000.0 - top), 0.0, 1.0)
+            if c < bot and bot > 0:
+                return _clamp((c - bot) / bot, -1.0, 0.0)
+            return 0.0
+        tr = float(cfg["trim"])
+        if pwm < tr - dz and tr - dz > lo:
+            n = (pwm - (tr - dz)) / ((tr - dz) - lo)
+        elif pwm > tr + dz and hi > tr + dz:
+            n = (pwm - (tr + dz)) / (hi - (tr + dz))
+        else:
+            n = 0.0
+        n = _clamp(n, -1.0, 1.0)
+        return -n if cfg["reversed"] else n
+
     # ── stick output ──────────────────────────────────────────────────────────
     def _axis_pwm(self, axis, norm):
         """Normalized deflection (-1..1) -> PWM, using the FC's own calibration
@@ -2337,6 +2517,31 @@ class ArduPilotAcro(FcBackend):
     _AXIS_FIELD = {"yaw": "yaw_stick", "pitch": "pitch_stick",
                    "roll": "roll_stick", "throttle": "throttle_stick"}
 
+    def ai_pwm(self, cmd):
+        """The AI law's command -> {axis: pwm}, on the map it was flown with."""
+        out = {}
+        for axis in self.axes:
+            if axis in self.rc:
+                out[axis] = self._axis_pwm(axis, cmd.get(self._AXIS_FIELD[axis], 0.0))
+        return out
+
+    def steer_pwm(self, pwm_by_axis):
+        """Override EXACTLY these axes with these PWMs; every other channel is
+        sent as 0 and stays with the pilot.  The mission's primitive: a climb
+        overrides throttle only, a scout yaw only.  The same throttle guard as
+        steer(): never outside an angle mode."""
+        chans = [0] * 8
+        sent = {}
+        for axis, pwm in pwm_by_axis.items():
+            if axis == "throttle" and self.mode_name not in ANGLE_MODES:
+                continue
+            cfg = self.rc.get(axis)
+            if not cfg or not 1 <= cfg["chan"] <= 8 or not pwm:
+                continue
+            chans[cfg["chan"] - 1] = int(pwm)
+            sent[cfg["chan"]] = int(pwm)
+        return self._commit_override(chans, sent)
+
     def steer(self, cmd):
         chans = [0] * 8               # 0 = "no override", pilot keeps the channel
         sent = {}
@@ -2358,8 +2563,16 @@ class ArduPilotAcro(FcBackend):
             pwm = self._axis_pwm(axis, cmd.get(self._AXIS_FIELD[axis], 0.0))
             chans[cfg["chan"] - 1] = pwm
             sent[cfg["chan"]] = pwm
+        return self._commit_override(chans, sent)
+
+    def _commit_override(self, chans, sent):
         now = perf_counter()
         with self._lock:
+            ot = self.__dict__.setdefault("_override_t", {})
+            for ch in sent:
+                ot[ch] = now
+            if not sent:
+                self._steer_since = None
             self._sent_pwm = sent
             # Short rolling history per channel, so the echo check can match a
             # lagging RC_CHANNELS frame against what we were sending when that
@@ -2373,7 +2586,7 @@ class ArduPilotAcro(FcBackend):
             for ch in list(self._sent_hist):
                 if ch not in sent:
                     del self._sent_hist[ch]
-            if self._steer_since is None:
+            if self._steer_since is None and sent:
                 self._steer_since = now
         return self._send_override(chans)
 
