@@ -4,14 +4,20 @@
 # This is the ONE file to edit in the field.  It is what the systemd user unit
 # runs at Jetson power-up, and it is also runnable by hand:
 #
-#     ~/Documents/Interceptor-1/src/start-wasp.sh
+#     ~/Documents/Interceptor/src/start-wasp.sh
 #
 # Autostart:  systemctl --user enable --now wasp-tracker.service
 # Watch:      tail -f ~/wasp-logs/wasp-tracker.log
 # Stop:       systemctl --user stop wasp-tracker     (releases every channel)
 
 set -u
-cd /home/iknowhow/Documents/Interceptor-1/src || exit 1
+cd /home/iknowhow/Documents/Interceptor/src || exit 1
+
+# THE VENV IS NOT ACTIVE UNDER SYSTEMD.  torch, ultralytics and pymavlink live
+# in ../.env/yolo; without this, python3 and run.py's shebang find the system
+# interpreter, which has none of them.  The venv sees system site-packages, so
+# the GStreamer cv2 and TensorRT still come from JetPack.
+export PATH=/home/iknowhow/Documents/Interceptor/.env/yolo/bin:$PATH
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WHICH MODE FLIES IS DECIDED IN flight_config.py, NOT HERE.

@@ -6,7 +6,7 @@
 # an airborne target ABOVE the airframe — and it is deliberately manual,
 # because it needs the camera physically re-mounted first.
 #
-#     ~/Documents/Interceptor-1/src/start-wasp-sky.sh
+#     ~/Documents/Interceptor/src/start-wasp-sky.sh
 #
 # Back to head tracking:  systemctl --user start wasp-tracker
 # Watch:                  tail -f ~/wasp-logs/wasp-tracker.log   (head mode)
@@ -31,7 +31,10 @@
 # near-vertical intercept is not in this law.  Do not expect one.
 
 set -u
-cd /home/iknowhow/Documents/Interceptor-1/src || exit 1
+cd /home/iknowhow/Documents/Interceptor/src || exit 1
+
+# Same venv as start-wasp.sh — see the note there.
+export PATH=/home/iknowhow/Documents/Interceptor/.env/yolo/bin:$PATH
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. CAMERA TILT — A HARDWARE FACT, NOT A PREFERENCE.

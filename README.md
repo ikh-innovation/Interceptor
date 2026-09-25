@@ -375,6 +375,6 @@ These were each paid for with a real bug. [PROTOTYPE.md §7](PROTOTYPE.md) has t
 
 * **Hardware bring-up of the intercept path.** Everything else is downstream of this.
 * **`48ce562` added `docs/` to `.gitignore`** — dropped into the middle of the Python "Distribution / packaging" block, which looks unintended. `docs/wasp-explained-gr.html` survives because ignore rules do not apply to already-tracked files, but **any new file under `docs/` will now be ignored silently.** The same commit untracked `WASP_EXPLAINED_GR.pdf`, so the PDF has to be regenerated from the HTML locally — it will not arrive with a `git pull`.
-* **`src/wasp-tracker.service` carries a stale comment** claiming `run.py` ships exactly one preset; there are two, and the unit does not set `CONTROL_LAW`, so it gets the intercept default. Its paths are the Jetson's (`/home/iknowhow/Documents/Interceptor-1/src`) — verify them there.
+* **`src/wasp-tracker.service` carries a stale comment** claiming `run.py` ships exactly one preset; there are two, and the unit does not set `CONTROL_LAW`, so it gets the intercept default. Its paths are the Jetson's (`/home/iknowhow/Documents/Interceptor/src`), and both launchers run from the venv at `.env/yolo`.
 * **Detection jitter on hard zigzags** (§5) is the remaining accuracy limit.
 * Camera shortlist for longer-range work was narrowed to three options under €200 for the Jetson Orin dev kit; not ordered.

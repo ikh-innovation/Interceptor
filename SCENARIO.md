@@ -525,7 +525,7 @@ systemctl --user stop  wasp-tracker
 tail -f ~/wasp-logs/wasp-tracker.log
 
 # Σενάριο 2 — χειροκίνητα, σταματάει πρώτο το service και ρωτάει για το mount
-cd ~/Documents/Interceptor-1/src
+cd ~/Documents/Interceptor/src
 ./start-wasp-sky.sh
 TARGET_WIDTH_M=0.35 ./start-wasp-sky.sh     # αφού μετρήσεις τον στόχο
 
