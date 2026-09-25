@@ -78,6 +78,15 @@
        padding:11px 2px 8px;font:inherit;font-weight:900;font-size:14px}
   .seg button i{display:block;font-style:normal;font-size:11px;font-weight:700;color:#888;margin-top:2px}
   .seg button.on{background:#fff;color:#000;border-color:#fff}.seg button.on i{color:#333}
+  /* SPEEDS: a full-screen page with a big close X, not a pop-up */
+  #sh_speed{position:fixed;inset:0;max-height:none;border-radius:0;border-top:0;z-index:7;
+            background:#0d0d0d;padding:14px 16px calc(18px + env(safe-area-inset-bottom))}
+  #sh_speed h3{font-size:22px;color:#fff;letter-spacing:.06em;align-items:center;margin:0 0 14px}
+  #sh_speed h3 button{width:52px;height:52px;border-radius:14px;background:#222;font-size:30px;line-height:1}
+  #sh_speed .grp{margin:0 0 20px}
+  #sh_speed .grp .lbl{font-size:14px;color:#bbb}
+  #sh_speed .seg button{padding:18px 2px 12px;font-size:17px;border-radius:12px}
+  #sh_speed .seg button i{font-size:12px}
   .log{font:12px/1.35 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word;color:#ccc}
   .log .ln{padding:2px 0;border-bottom:1px solid #1d1d1d}.log .t{color:#666}
   .log .m{color:#80d8ff}.log .r{color:#ffab91}.log .e{color:#ff5252}
@@ -113,7 +122,7 @@
     <div class="offs" id="offs" style="display:none"></div>
   </div>
     <div class="sheet" id="sh_speed">
-      <h3>ΤΑΧΥΤΗΤΕΣ <button data-close>&times;</button></h3>
+      <h3>ΤΑΧΥΤΗΤΕΣ <button data-close aria-label="κλείσιμο">&#x2715;</button></h3>
       <div class="grp"><div class="lbl">▲▼ ΥΨΟΣ</div><div class="seg" data-g="vert"></div></div>
       <div class="grp"><div class="lbl">⟲⟳ ΣΤΡΟΦΗ (κράτημα / ένα άγγιγμα)</div><div class="seg" data-g="yaw"></div></div>
       <div class="grp"><div class="lbl">ΩΘΗΣΗ — κλίση μπροστά</div><div class="seg" data-g="push"></div></div>
@@ -276,7 +285,7 @@
     ["sh_speed", "sh_log"].forEach(function (s) { $(s).classList.toggle("open", s === id && !$(s).classList.contains("open")); });
     if (id === "sh_log") { var L = $("log"); L.scrollTop = L.scrollHeight; $("sh_log").scrollTop = 1e9; }
   }
-  $("t_speed").onclick = function () { openSheet("sh_speed"); };
+  $("t_speed").onclick = function () { releaseAll(); openSheet("sh_speed"); };
   $("t_log").onclick = function () { openSheet("sh_log"); };
   document.querySelectorAll("[data-close]").forEach(function (b) {
     b.onclick = function () { b.closest(".sheet").classList.remove("open"); };
