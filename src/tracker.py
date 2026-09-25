@@ -572,7 +572,19 @@ class DroneTracker:
     #   lean 20 (MEDIUM) and 22 (FAST) touch alike; 30 deg lean loses the
     #   target out of the 30-deg-up camera more often (27/36 vs 34-36/36).
     #   SLOW (12 deg) can NOT beat an 8 m/s headwind: 0/9.  Calm air only.
-    _STAB = dict(slew_per_s=6.0, rate_tau=0.22, deadband_frac=0.050)
+    _STAB = dict(slew_per_s=6.0, rate_tau=0.22, deadband_frac=0.050,
+                 # THE CIRCLES (field, 2026-09-25): with the seeker at KP_YAW 4.5
+                 # and no yaw ceiling, a target first seen at the frame edge
+                 # commanded ~140 deg/s of yaw; the logs show the heading
+                 # sweeping 150-330 deg in 2-3 s and a line-of-sight rate of
+                 # 40-126 deg/s where the geometry allows ~14.  That excess is
+                 # the airframe's OWN yaw leaking into lambda = yaw + az through
+                 # any timing/FOV error, and PN banks on it.  Sim with the FC's
+                 # yaw-accel limit and attitude 80 ms late (or FOV 15% off):
+                 # today's yaw circles 6/16 (4/16); kp 2.0 + 40 deg/s: 0/16 in
+                 # every case, touches 14-16/16.  PN (roll) does the steering;
+                 # yaw only has to keep the target in the picture.
+                 kp_yaw=2.0, yaw_cap_dps=40.0)
     MODES = {
         "SLOW":   dict(climb_limit_mps=8.0,  max_lean_deg=12.0, sens=0.35,
                        climb_trim=5.0, **_STAB),
@@ -599,6 +611,10 @@ class DroneTracker:
             law.set_sens(prof["sens"])
         if law is not None and hasattr(law, "climb_trim"):
             law.climb_trim = float(prof["climb_trim"])
+        if law is not None and "kp_yaw" in prof and hasattr(law, "kp_yaw"):
+            law.kp_yaw = float(prof["kp_yaw"])
+            full = math.degrees(getattr(law, "max_yaw_rate", math.radians(202.5)))
+            law.stick_limit_yaw = min(0.90, float(prof["yaw_cap_dps"]) / max(1.0, full))
         self.mode_name = key
         return key
 
