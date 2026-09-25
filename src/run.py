@@ -1061,6 +1061,14 @@ def main():
         # unit on failure only, so swallowing a crash here would turn a dead
         # tracker into a "clean exit" and the service would stay down in the
         # field.  Conversely, q / Ctrl-C exit 0 and must NOT be restarted.
+        # TensorRT + CUDA initialise before the camera opens and use up the
+        # static TLS block; the camera's GStreamer plugins then fail with
+        # "libGLdispatch.so.0: cannot allocate memory in static TLS block"
+        # (seen 2026-09-25 the first time the engine really loaded).  Loading
+        # it at exec, first, is the standard Jetson fix.
+        _gld = "/usr/lib/aarch64-linux-gnu/libGLdispatch.so.0"
+        if os.path.exists(_gld) and _gld not in env.get("LD_PRELOAD", ""):
+            env["LD_PRELOAD"] = ":".join(x for x in (_gld, env.get("LD_PRELOAD", "")) if x)
         rc = subprocess.run([str(YOLO_PY), str(TRACKER)],
                             cwd=str(HERE), env=env).returncode
         # subprocess reports a child killed BY A SIGNAL as a NEGATIVE number,
