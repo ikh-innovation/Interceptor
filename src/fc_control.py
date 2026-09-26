@@ -3867,7 +3867,11 @@ class AcroCommander:
         if not self.log_dir:
             return
         Path(self.log_dir).mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # the tracker's run stamp when there is one, so the CSV pairs with the
+        # video and log of the same run (and survives a 1970 clock, see
+        # tracker._run_stamp)
+        stamp = (os.environ.get("WASP_RUN_STAMP")
+                 or datetime.now().strftime("%Y%m%d_%H%M%S"))
         self.log_path = str(Path(self.log_dir) / f"control_{stamp}.csv")
         self._log_fh = open(self.log_path, "w", buffering=1)
         cols = ("t_s,mode,armed,steering,written,confirmed,"

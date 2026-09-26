@@ -24,10 +24,11 @@ import cv2
 SENSOR_ID   = int(os.getenv("CAM_SENSOR_ID", "0"))
 # IMX219 modes: 0:3280x2464@21  1:3280x1848@28  2:1920x1080@30
 #               3:1640x1232@30  4:1280x720@60
-# Mode 4 matches the 720p defaults below; -1 lets Argus pick from the caps.
-SENSOR_MODE = int(os.getenv("CAM_SENSOR_MODE", "4"))
+# Mode 3 = the full array binned (62.2 x 48.8 deg, what the control law
+# assumes); mode 4 is a centre crop.  Same defaults as tracker.CameraConfig.
+SENSOR_MODE = int(os.getenv("CAM_SENSOR_MODE", "3"))
 WIDTH       = int(os.getenv("CAM_WIDTH", "1280"))
-HEIGHT      = int(os.getenv("CAM_HEIGHT", "720"))
+HEIGHT      = int(os.getenv("CAM_HEIGHT", "960"))
 FPS         = int(os.getenv("CAM_FPS", "30"))
 FLIP        = int(os.getenv("CAM_FLIP_METHOD", "0"))
 

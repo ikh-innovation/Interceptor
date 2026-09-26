@@ -197,6 +197,7 @@ class Mission:
         # Requests posted by the HTTP thread, consumed by cycle().
         self._hold = None                   # (kind, session, t_last)
         self._dead_sessions = set()
+        self._released = set()              # sessions whose finger is up
         self._req_step = None               # -1 / +1
         self._req_engage = False
         self._req_abort = False
@@ -243,6 +244,10 @@ class Mission:
         with self._lock:
             if session in self._dead_sessions:
                 return "hold ended by ABORT: lift the finger and press again"
+            if session in self._released:
+                # a keepalive the WiFi delayed past its own release: the
+                # finger is already up, so it must not restart the axis
+                return "hold already released"
             if self.phase in ("PUSH", "AI", "STOP"):
                 return f"no manual moves during {self.phase}"
             if self.phase == "PILOT":
@@ -252,6 +257,9 @@ class Mission:
 
     def request_release(self, session):
         with self._lock:
+            self._released.add(session)
+            if len(self._released) > 64:
+                self._released = set(list(self._released)[-32:])
             if self._hold and self._hold[1] == session:
                 self._hold = None
 

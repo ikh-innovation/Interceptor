@@ -224,15 +224,20 @@
   function note(s, bad) { var t = $("ticker"); t.textContent = s; t.className = "ticker" + (bad ? " refuse" : ""); }
 
   // ── hold-to-move: keepalives every 100 ms while the finger is down ─────
+  // Up to 3 in flight, not 1: with one, a single slow request over field WiFi
+  // held back every keepalive behind it, the 0.3 s dead-man fired, and a
+  // button held without a break stuttered (tests/test_hold_wifi.py: 88/200
+  // holds on a hotspot at 30-80 m).  The server refuses a keepalive that
+  // lands after its release, so a late one cannot restart the axis.
   var holds = {};
   function holdButton(el) {
     var kind = el.getAttribute("data-hold"), tap = el.getAttribute("data-tap");
     var st = null;
     function send() {
-      if (!st || st.inflight) return;
-      st.inflight = true;
+      if (!st || st.inflight >= 3) return;
+      st.inflight++;
       var s = st; cmd("hold=" + kind + ":" + s.session, true).then(function (j) {
-        s.inflight = false;
+        s.inflight--;
         if (j && j.refused && !s.warned) { s.warned = true; note("✗ " + j.refused, true); }
       });
     }
@@ -248,7 +253,7 @@
       if (el.disabled) return;
       e.preventDefault(); try { el.setPointerCapture(e.pointerId); } catch (x) {}
       if (navigator.vibrate) navigator.vibrate(15);
-      st = {session: rid(), live: false, inflight: false};
+      st = {session: rid(), live: false, inflight: 0};
       el.classList.add("held");
       if (tap) st.delay = setTimeout(start, 250); else start();
     });

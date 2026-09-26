@@ -1963,13 +1963,21 @@ class CameraConfig:
     #   3: 1640x1232@30  4: 1280x720@60
     # Mode 0 (full-res, 21 fps) cannot output 1280x720@30 — that mismatch makes
     # nvarguscamerasrc fail with "Frame Rate specified is greater than supported"
-    # / InvalidState.  Default to mode 4, which matches the 720p defaults below.
-    # Set CAM_SENSOR_MODE=-1 to let Argus auto-select a mode from the caps.
-    sensor_mode: int = int(os.getenv("CAM_SENSOR_MODE", "4"))
+    # / InvalidState.  Set CAM_SENSOR_MODE=-1 to let Argus auto-select.
+    #
+    # MODE 3, NOT MODE 4 (2026-09-26).  Read off nv_imx219.ko's register
+    # tables: mode 4 is a CENTRE CROP (x 360-2919, y 512-1951 = 2560x1440 of
+    # the 3280x2464 array, 2x2 binned), so its real FOV is 50.4 x 29.7 deg —
+    # while the control law is told 62.2 x 48.8 (CAM_HFOV_DEG / CAM_VFOV_DEG).
+    # Every azimuth read 28% large and every elevation 71% large, and the
+    # vertical band was +/-14.9 deg, not +/-24.4.  Mode 3 is the FULL array
+    # 2x2 binned, i.e. exactly 62.2 x 48.8; 1280x960 keeps it 4:3 (square
+    # pixels).  Sim (tests/sim_sky_wind.py): touches Bf0/Bf3 66/42% -> 82/76%.
+    sensor_mode: int = int(os.getenv("CAM_SENSOR_MODE", "3"))
 
     # Video mode
     width: int = int(os.getenv("CAM_WIDTH", "1280"))
-    height: int = int(os.getenv("CAM_HEIGHT", "720"))
+    height: int = int(os.getenv("CAM_HEIGHT", "960"))
     fps: int = int(os.getenv("CAM_FPS", "30"))
 
     # Image orientation
@@ -2126,10 +2134,41 @@ class _Tee:
         self._fh.flush()
 
 
+def _run_stamp(data_dir):
+    """The per-run file stem, unique even with no real clock.
+
+    The Jetson has no RTC battery: in the field (no network, no NTP) every
+    boot starts at 1970-01-01 02:00, so two boots reaching this line in the
+    same second would get the same stamp and the second run would OVERWRITE
+    the first one's video and log.  With the clock unsynced, a persistent run
+    counter goes in the name (nosync_r0042_020109) and keeps runs in order;
+    with a real clock the date stamp stays, made unique if it is ever taken.
+    """
+    now = datetime.now()
+    stamp = now.strftime("%Y%m%d_%H%M%S")
+    if now.year < 2024:
+        ctr = data_dir / ".run_counter"
+        try:
+            n = int(ctr.read_text().strip() or 0) + 1
+        except (OSError, ValueError):
+            n = 1
+        try:
+            ctr.write_text(f"{n}\n")
+        except OSError:
+            pass
+        stamp = f"nosync_r{n:04d}_{now.strftime('%H%M%S')}"
+    base, k = stamp, 2
+    while any(data_dir.glob(f"{stamp}.*")) or any(data_dir.glob(f"control_{stamp}.*")):
+        stamp, k = f"{base}_{k}", k + 1
+    return stamp
+
+
 if __name__ == "__main__":
     # Single timestamp for this run: <stamp>.mp4 / <stamp>.log / commands_<stamp>.csv
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
-    RUN_STAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+    RUN_STAMP = _run_stamp(_DATA_DIR)
+    # fc_control names its control_<stamp>.csv from this, so all three match
+    os.environ["WASP_RUN_STAMP"] = RUN_STAMP
     _log_fh = open(_DATA_DIR / f"{RUN_STAMP}.log", "w", buffering=1)
     sys.stdout = _Tee(sys.stdout, _log_fh)
     sys.stderr = _Tee(sys.stderr, _log_fh)
