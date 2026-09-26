@@ -928,12 +928,26 @@ class DroneTracker:
 
         small = self._target_is_small()  
 
-        if self.state in ("LOCK", "PREDICT") and kf_pred:
+        # ONE detector call per frame while coasting.  Replay of field video
+        # through this function (2026-09-26): 86% of frames had no detection,
+        # and each such frame in LOCK/PREDICT ran the ROI AND the sky search --
+        # two calls, 53 ms/frame, 18.7 fps.  After the FIRST miss (both, so a
+        # target that just left the window is found at once) the two now
+        # alternate frame by frame.  ALT_SEARCH=0 restores both-every-frame.
+        _alt = (self.missed >= 1 and os.environ.get("ALT_SEARCH", "1") == "1")
+        _sky_turn = _alt and (self._frame_idx % 2 == 1)
+        if self.state in ("LOCK", "PREDICT") and kf_pred and _sky_turn:
+            sky_bbox = self._sky_bbox_native()
+            if sky_bbox is not None:
+                srch_imgsz = self.IMGSZ_SEARCH if small else self.IMGSZ_TRACK
+                yolo_det = self._detect_region(frame_full, sky_bbox,
+                                               srch_imgsz, enhance=(self.USE_CLAHE and small))
+        elif self.state in ("LOCK", "PREDICT") and kf_pred:
             roi         = self._predict_roi()
             track_imgsz = self.IMGSZ_TRACK if small else self.IMGSZ_CLOSE
             yolo_det = self._detect_region(frame_full, self._roi_disp_to_native(roi),
                                            track_imgsz, enhance=(self.USE_CLAHE and small))
-            if yolo_det is None:
+            if yolo_det is None and not _alt:
                 sky_bbox = self._sky_bbox_native()
                 if sky_bbox is not None:
                     srch_imgsz = self.IMGSZ_SEARCH if small else self.IMGSZ_TRACK
