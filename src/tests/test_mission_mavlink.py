@@ -144,6 +144,8 @@ try:
 
     print("=== 5. ENGAGE: PUSH on all four, exact 30 deg ===")
     M.set_level("push", "MEDIUM")
+    fc.vfr.update(alt=10.0)                  # the real flow engages at ~10 m
+    sleep(0.3)
     check("ENGAGE accepted in HOVER", M.request_engage() == "")
     sleep(1.5)
     o = dict(fc.overrides)
@@ -154,6 +156,13 @@ try:
           o.get(4) == 1500 and o.get(1) == 1500 and o.get(2) == 1500, str(o))
     check("the FC echo confirms the override", c.override_confirmed is True)
     check("holds are refused during PUSH", M.request_hold("up", "z", perf_counter()) != "")
+    fc.vfr.update(alt=2.0)                   # dropped under the 3 m AI floor
+    sleep(0.4)
+    got = fc.overrides.get(1)
+    check("AI floor over MAVLink: at 2 m the push CLIMBS (ch1 -> +1 m/s), never descends",
+          got is not None and abs(ap_climb(got) - 1.0) < 0.1, f"ch1={got} -> {ap_climb(got or 1500):+.2f} m/s")
+    fc.vfr.update(alt=10.0)
+    sleep(0.3)
 
     print("=== 6. the detector confirms: AI, blended in ===")
     HALF_H = math.tan(math.radians(62.2 / 2))
@@ -206,7 +215,7 @@ check("CSV: every phase flown is logged", {"PILOT", "HOVER", "CLIMB", "SCOUT", "
 cl = [r for r in rows if r["phase"] == "CLIMB"]
 check("CSV: CLIMB rows show ch1 only, plus height and vibration",
       cl and all(r["pwm_roll"] == "0" and r["pwm_pitch"] == "0" for r in cl)
-      and cl[-1]["height_m"] == "2.00" and cl[-1]["vibe_z"] == "12.00")
+      and cl[-1]["height_m"] in ("2.00", "10.00") and cl[-1]["vibe_z"] == "12.00")
 
 print()
 if FAILED:

@@ -211,6 +211,7 @@ for lv, deg in (("SLOW", 2.0), ("MEDIUM", 5.0), ("FAST", 10.0)):
 
 print("=== A6. ENGAGE -> PUSH ===")
 r = Rig()
+r.ctx["height"] = 10.0
 r.step()
 r.run_until(0.3, hold="up")
 check("ENGAGE refused while climbing", r.m.request_engage() != "")
@@ -250,6 +251,7 @@ AI = {"pwm": {"roll": 1700, "pitch": 1350, "yaw": 1560, "throttle": 1520}}
 
 def push_rig():
     q = Rig(min_conf=0.20)
+    q.ctx["height"] = 10.0                    # the real flow engages at ~10 m
     q.step()
     q.m.set_level("push", "MEDIUM")           # these checks are written for 30 deg
     q.m.request_engage()
@@ -445,6 +447,22 @@ check("...while roll holds the last REAL command", all(r == r0 for r in rolls), 
 q.run_until(0.1)
 check("0.5 s with no real detection: back to the straight push (not a spin, not a stop)",
       q.m.phase == "PUSH", q.m.phase)
+
+print("=== A8c. the AI floor: never chase a target down into the ground ===")
+DOWN = {"pwm": {"roll": 1500, "pitch": 1350, "yaw": 1500, "throttle": 1450}}   # AI wants -5 m/s
+for h, vz, want, label in ((12.0, 0.0, "free", "high up (12 m): the AI's descent passes"),
+                           (3.8, -2.5, "hold", "3.8 m descending at 2.5 m/s: no further descent"),
+                           (2.5, 0.0, "hold", "2.5 m (under the 3 m AI floor): no descent"),
+                           (1.5, 0.0, "climb", "1.5 m (under the floor band): climbs gently")):
+    q = push_rig()
+    q.ctx.update(height=h, climb=vz)
+    q.run_until(1.52)
+    for _ in range(40):
+        q.ctx.update(det_t=q.t, det_conf=0.6, ai_cmd=DOWN, ai_t=q.t)
+        q.step()
+    c = phys(q.mp, q.out, "throttle")
+    ok = (c < -4.0) if want == "free" else (c >= 0.0 and c < 0.5) if want == "hold" else (c >= 0.9)
+    check(label, q.m.phase == "AI" and ok, f"climb command {c:+.1f} m/s")
 
 print("=== A9b. one attempt per pilot mode cycle (ENGAGE red -> green -> reset) ===")
 q = push_rig()
