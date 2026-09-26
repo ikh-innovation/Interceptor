@@ -1360,8 +1360,35 @@ class DroneTracker:
             try:
                 if self._writer is not None:
                     self._writer.write(frame)
+                    self._rec_seg_n = getattr(self, "_rec_seg_n", 0) + 1
+                    if self._rec_seg_n >= self._rec_seg_frames():
+                        self._rec_rotate(frame)
             except Exception:
                 pass                      # a bad reel never stops the flight
+
+    # The reel is written in SEGMENTS.  An mp4 is only readable once its writer
+    # is released (the moov atom goes at the end), and in the field the run
+    # ends when the battery is pulled: the 11:43 and 12:52 AI flights of
+    # 2026-09-25 left 243 MB and 119 MB of unreadable video.  Closing a segment
+    # every REC_SEGMENT_S (default 20 s) bounds the loss to the last segment.
+    def _rec_seg_frames(self):
+        fps = getattr(self, "_rec_fps", 0.0) or 30.0
+        return max(30, int(float(os.environ.get("REC_SEGMENT_S", "20")) * fps))
+
+    def _rec_rotate(self, frame):
+        base = getattr(self, "_rec_base", None)
+        fourcc = getattr(self, "_rec_fourcc", None)
+        if base is None or fourcc is None:
+            return
+        self._rec_part = getattr(self, "_rec_part", 1) + 1
+        nxt = base.with_name(f"{base.stem}_p{self._rec_part:02d}{base.suffix}")
+        w = cv2.VideoWriter(str(nxt), fourcc, getattr(self, "_rec_fps", 30.0),
+                            (frame.shape[1], frame.shape[0]))
+        if not w.isOpened():
+            return                        # keep writing the current segment
+        old, self._writer = self._writer, w
+        old.release()                     # the finished segment is now playable
+        self._rec_seg_n = 0
 
     def _rec_submit(self, frame):
         """Hand a frame to the writer thread.  Never blocks."""
@@ -1841,6 +1868,8 @@ class DroneTracker:
                    if post_left == 0:
                        self._rec_windows += 1
                        if self._writer is None:
+                           self._rec_base, self._rec_fourcc = Path(out_path), fourcc
+                           self._rec_part, self._rec_seg_n = 1, 0
                            self._writer = cv2.VideoWriter(
                                str(out_path), fourcc, src_fps,
                                (frame_disp.shape[1], frame_disp.shape[0]))
