@@ -597,7 +597,11 @@ class DroneTracker:
     #   lean 20 (MEDIUM) and 22 (FAST) touch alike; 30 deg lean loses the
     #   target out of the 30-deg-up camera more often (27/36 vs 34-36/36).
     #   SLOW (12 deg) can NOT beat an 8 m/s headwind: 0/9.  Calm air only.
-    _STAB = dict(slew_per_s=6.0, rate_tau=0.22, deadband_frac=0.050,
+    # slew 3 (was 6) since 2026-09-26: sim, 1440 engagements (0-10 m/s enemy,
+    # gusty 3-5 m/s wind, both detector models): touches 64 -> 63% (noise),
+    # the biggest bank-command change in 0.2 s p95 48 -> 31 deg, roll rate p95
+    # 300 -> 201 deg/s.  A third less "snap" for the same result.
+    _STAB = dict(slew_per_s=3.0, rate_tau=0.22, deadband_frac=0.050,
                  # THE CIRCLES (field, 2026-09-25): with the seeker at KP_YAW 4.5
                  # and no yaw ceiling, a target first seen at the frame edge
                  # commanded ~140 deg/s of yaw; the logs show the heading
