@@ -107,7 +107,7 @@ ls src/mission_ui.html runs/detect/v0/weights/best.pt src/flight_config.py
    - It takes several minutes and produces `best.engine` next to `best.pt`. The tracker picks it up automatically.
    - It must be **exported by ultralytics**, so the class metadata is embedded. The tracker refuses an engine with placeholder class names.
    - The input is fixed at 640, which is expected.
-3. **Face/person model for human mode** (the in-air target switch loads it too). Download it into the HF cache **while online**; the field has no internet and the launchers set `HF_HUB_OFFLINE=1`:
+3. **Face/person model**: only needed if `flight_config.py` is ever set to `MODE = "human"` (the in-air HUMAN/DRONE switch was removed; sky mode never loads it). Download it into the HF cache **while online**; the field has no internet and the launchers set `HF_HUB_OFFLINE=1`:
    ```bash
    .env/yolo/bin/python -c "from huggingface_hub import hf_hub_download as d; print(d('iitolstykh/YOLO-Face-Person-Detector','yolov8x_person_face.pt'))"
    ```

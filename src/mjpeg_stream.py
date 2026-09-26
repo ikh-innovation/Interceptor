@@ -57,6 +57,11 @@ from pathlib import Path
 
 # The phone app lives in its own file so it can be read and edited as HTML.
 _UI_FILE = Path(__file__).resolve().parent / "mission_ui.html"
+# Its typeface, served from here: the field has no internet, so a web font
+# from a CDN would silently fall back.  Only these names are ever served.
+_FONT_DIR = Path(__file__).resolve().parent / "fonts"
+_FONTS = ("Ubuntu-R.ttf", "Ubuntu-M.ttf", "Ubuntu-B.ttf", "Ubuntu-C.ttf",
+          "UbuntuMono-B.ttf")
 
 
 def _load_page():
@@ -104,7 +109,7 @@ class MJPEGServer:
 
     # Commands that move the aircraft need the controller lease; ABORT never
     # does (any phone with the PIN may stop it).  Everything needs the PIN.
-    CONTROL_KEYS = ("hold", "release", "step", "engage", "lvl", "mode", "target")
+    CONTROL_KEYS = ("hold", "release", "step", "engage", "lvl", "mode")
     ALL_KEYS = CONTROL_KEYS + ("abort",)
     LEASE_S = 2.0
 
@@ -162,6 +167,8 @@ class MJPEGServer:
                     self._cmd()
                 elif path == "/console":
                     self._console()
+                elif path.startswith("/font/") and path[6:] in _FONTS:
+                    self._send_font(path[6:])
                 else:
                     self.send_error(404)
 
@@ -206,7 +213,7 @@ class MJPEGServer:
                 """Apply an operator command, then report the resulting state.
 
                 GET /cmd?sens=STANDARD
-                GET /cmd?target=DRONE
+                GET /cmd?lvl=vert:FAST
 
                 The reply is the state read back AFTER the command, so the
                 dashboard can only ever display what the control loop actually
@@ -250,6 +257,19 @@ class MJPEGServer:
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(page)
+
+            def _send_font(self, name):
+                try:
+                    body = (_FONT_DIR / name).read_bytes()
+                except OSError:
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "font/ttf")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "max-age=31536000, immutable")
+                self.end_headers()
+                self.wfile.write(body)
 
             def _send_snapshot(self):
                 # Count as a viewer for the duration: publish() is a no-op with

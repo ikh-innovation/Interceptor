@@ -1,144 +1,217 @@
 <!doctype html>
 <html lang="el"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="theme-color" content="#111">
+<meta name="theme-color" content="#0a1628">
 <title>WASP</title>
 <style>
-  :root{--bg:#000;--panel:#0d0d0d;--line:#262626;--txt:#eee;--dim:#777;
-        --pilot:#262626;--hover:#0d47a1;--vert:#00838f;--scout:#6a1b9a;
-        --push:#e65100;--ai:#b71c1c;--stop:#8a5a00;--ok:#2e7d32;--warn:#f9a825;--bad:#d50000}
+  /* The typeface is served by the Jetson itself (/font/...): the field has no
+     internet, so a CDN font would silently fall back. */
+  @font-face{font-family:"U";src:url(/font/Ubuntu-R.ttf) format("truetype");font-weight:400;font-display:swap}
+  @font-face{font-family:"U";src:url(/font/Ubuntu-M.ttf) format("truetype");font-weight:500;font-display:swap}
+  @font-face{font-family:"U";src:url(/font/Ubuntu-B.ttf) format("truetype");font-weight:700;font-display:swap}
+  @font-face{font-family:"UC";src:url(/font/Ubuntu-C.ttf) format("truetype");font-display:swap}
+  @font-face{font-family:"UM";src:url(/font/UbuntuMono-B.ttf) format("truetype");font-display:swap}
+
+  :root{
+    --bg:#0a1628; --bg2:#0f2140; --bg3:#16305a; --line:#23426e;
+    --txt:#ffffff; --dim:#9db2cc; --faint:#5f7a9c;
+    --acc:#ff8a1f; --acc2:#ffad5c; --acc-ink:#1a0d00;
+    /* phase colours: the colour IS the phase */
+    --pilot:#34496a; --hover:#1f6fe0; --vert:#0e9f9a; --scout:#7a4fd8;
+    --push:#ff8a1f; --ai:#e5383b; --stop:#d99a00;
+    --ok:#22c55e; --warn:#f5b400; --bad:#ef4444;
+    --r:14px;
+    --sans:"U",-apple-system,"Segoe UI",Roboto,system-ui,sans-serif;
+    --cond:"UC","U","Roboto Condensed","Arial Narrow",sans-serif;
+    --mono:"UM",ui-monospace,Menlo,monospace;
+  }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;
     user-select:none;-webkit-touch-callout:none}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);overflow:hidden;
-    font:15px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif}
-  .app{height:100%;display:flex;flex-direction:column}
+    font:15px/1.3 var(--sans)}
+  .app{height:100%;display:flex;flex-direction:column;gap:8px;
+       padding:calc(8px + env(safe-area-inset-top)) 12px calc(10px + env(safe-area-inset-bottom));
+       background:radial-gradient(120% 60% at 50% 0%,#12305c 0%,var(--bg) 60%)}
 
-  /* header: the colour IS the phase */
-  .hdr{flex:0 0 auto;padding:10px 14px 8px;background:var(--pilot);transition:background .15s}
-  .row1{display:flex;align-items:flex-end;gap:10px}
-  .phase{font-size:clamp(26px,8.5vw,40px);font-weight:900;letter-spacing:-.01em;line-height:1;flex:1;min-width:0}
+  /* ── top bar ─────────────────────────────────────────────────────────── */
+  .top{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between}
+  .brand{font:700 15px/1 var(--sans);letter-spacing:.22em;color:var(--acc)}
+  .brand span{color:var(--dim);font-weight:500;letter-spacing:.14em;margin-left:6px;font-size:11px}
+  .pill{font:500 11px/1 var(--cond);letter-spacing:.08em;padding:6px 10px;border-radius:999px;
+        border:1px solid var(--line);color:var(--dim);text-transform:uppercase}
+  .pill.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink)}
+  .pill.warn{background:var(--warn);border-color:var(--warn);color:#1a1400}
+
+  /* ── phase card ──────────────────────────────────────────────────────── */
+  /* no colour fade: the phase colour is a safety cue and must change at once */
+  .card{flex:0 0 auto;border-radius:var(--r);padding:11px 14px 10px;background:var(--pilot);
+        box-shadow:0 6px 18px rgba(0,0,0,.35)}
+  .card.ink{color:#140a00}.card.ink .hint,.card.ink .alt .v{color:rgba(20,10,0,.78)}
+  .row1{display:flex;align-items:flex-end;gap:12px}
+  .phase{font:700 clamp(24px,7.6vw,34px)/1 var(--sans);letter-spacing:.02em;flex:1;min-width:0}
   .alt{text-align:right;line-height:1}
-  .alt .h{font-size:clamp(26px,8.5vw,40px);font-weight:900;font-variant-numeric:tabular-nums}
-  .alt .v{font-size:13px;color:#ddd;font-variant-numeric:tabular-nums}
-  .hint{margin-top:5px;font-size:clamp(13px,3.7vw,15px);color:#e6e6e6;min-height:1.3em}
-  .chips{display:flex;gap:5px;margin-top:7px;flex-wrap:wrap}
-  .chip{font-size:12px;font-weight:800;letter-spacing:.03em;padding:4px 8px;border-radius:999px;
-        background:rgba(255,255,255,.14);white-space:nowrap;font-variant-numeric:tabular-nums}
-  .chip.on{background:#fff;color:#000}.chip.ok{background:var(--ok)}.chip.warn{background:var(--warn);color:#000}
-  .chip.bad{background:var(--bad)}
+  .alt .h{font:clamp(24px,7.6vw,34px)/1 var(--mono);font-variant-numeric:tabular-nums}
+  .alt .v{font:12px/1.2 var(--mono);color:rgba(255,255,255,.82);margin-top:3px}
+  .hint{margin-top:6px;font-size:clamp(12.5px,3.5vw,14px);color:rgba(255,255,255,.9);min-height:1.3em}
 
-  /* video + the aim mark */
-  .vidwrap{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;background:#000;position:relative}
-  .vbox{position:relative;height:100%;max-width:100%;aspect-ratio:1/1}
-  .vbox img{width:100%;height:100%;display:block;object-fit:contain}
-  /* the aim mark: 20% of the frame.  "Inside the circle" IS the green test
-     (AIM_R below), so what you see is exactly what counts. */
-  .aim{position:absolute;width:20%;aspect-ratio:1/1;transform:translate(-50%,-50%);
-       border:5px solid #00e5ff;border-radius:50%;box-shadow:0 0 0 2px rgba(0,0,0,.6),inset 0 0 0 2px rgba(0,0,0,.4);pointer-events:none}
-  .aim:after{content:"";position:absolute;left:50%;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;background:#00e5ff;border-radius:50%}
-  .aim.good{border-color:#00e676}.aim.good:after{background:#00e676}
-  .tgt{position:absolute;width:8%;aspect-ratio:1/1;transform:translate(-50%,-50%);border:3px solid #ffea00;
-       box-shadow:0 0 0 2px rgba(0,0,0,.6);pointer-events:none;display:none}
-  .badge{position:absolute;left:50%;top:8px;transform:translateX(-50%);padding:5px 12px;border-radius:999px;
-         font-weight:900;font-size:15px;background:rgba(0,0,0,.65);white-space:nowrap}
-  .badge.good{background:#00c853;color:#000}
-  .offs{position:absolute;right:6px;bottom:6px;background:rgba(0,0,0,.6);padding:3px 7px;border-radius:6px;font-size:12px;font-variant-numeric:tabular-nums}
+  /* ── status tiles ────────────────────────────────────────────────────── */
+  .tiles{flex:0 0 auto;display:grid;grid-template-columns:1fr 1.15fr .95fr;gap:6px}
+  .tile{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:6px 8px 7px;min-width:0}
+  .tile .k{display:block;font:11px/1 var(--cond);letter-spacing:.09em;color:var(--faint);text-transform:uppercase;
+           white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tile .v{display:flex;align-items:center;gap:5px;margin-top:4px;font:500 12.5px/1.1 var(--sans);
+           white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+  .tile .v:before{content:"";flex:0 0 6px;height:6px;border-radius:50%;background:var(--faint)}
+  .tile .v.ok:before{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+  .tile .v.warn:before{background:var(--warn)}
+  .tile .v.bad:before{background:var(--bad);box-shadow:0 0 6px var(--bad)}
+  .tile .v.bad{color:#ffb4b4}
+  .tile .v.on:before{background:var(--acc);box-shadow:0 0 6px var(--acc)}
 
-  .ticker{flex:0 0 auto;height:26px;padding:5px 10px;font:12px/16px ui-monospace,Menlo,monospace;color:#cfcfcf;
-          background:#101010;border-top:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .ticker.refuse{color:#ffab91}
-
-  /* controls */
-  /* a D-pad under the left thumb, ENGAGE apart on the right */
-  .ctl{flex:0 0 auto;display:grid;grid-template-columns:1.55fr 1fr;gap:10px;padding:8px 10px;background:var(--panel)}
-  .pad{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,auto);gap:6px}
-  .pad .mid{display:flex;align-items:center;justify-content:center;text-align:center;font-size:11px;white-space:pre-line;
-            color:#888;font-weight:800;line-height:1.2;font-variant-numeric:tabular-nums}
-  .btn{border:0;border-radius:14px;background:#1d1d1d;color:#fff;font:inherit;font-weight:900;
-       font-size:clamp(22px,7vw,32px);height:clamp(50px,7.2vh,66px);touch-action:none;position:relative;padding:0}
-  .btn small{position:absolute;left:0;right:0;bottom:4px;font-size:10px;font-weight:700;color:#aaa;letter-spacing:.04em}
-  .btn.held{background:#fff;color:#000}.btn.held small{color:#333}
-  .btn:disabled{opacity:.28}
-  .eng{border-radius:18px;background:#5c0000;border:3px solid #ff1744;color:#fff;font-weight:900;
-       font-size:clamp(18px,5.4vw,24px);touch-action:none;position:relative;overflow:hidden}
-  .eng .fill{position:absolute;left:0;bottom:0;width:100%;height:0;background:#ff1744;transition:none}
-  .eng.go{background:#1b5e20;border-color:#00e676}
+  /* ── video + overlays ────────────────────────────────────────────────── */
+  .vidwrap{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center}
+  /* 4:3, the camera's true shape (mode 3, 1280x960).  The overlay maths is
+     proportional to the box, so it stays exact at any size. */
+  .vbox{position:relative;height:100%;max-width:100%;aspect-ratio:4/3;border-radius:var(--r);overflow:hidden;
+        background:#000;border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.45)}
+  .vbox img{width:100%;height:100%;display:block;object-fit:fill}
+  /* the aim indication: an ARC from the bottom-left corner, over the aim
+     point, down to the bottom-right corner.  Its apex sits where the top of
+     the old 20%-of-frame circle was, so it moves with the aim point (higher
+     in PUSH / AI).  "On target" is still that circle around the dot (AIM_R
+     below), so the arc turns green exactly when it used to. */
+  .arc{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+  .arc path{fill:none;vector-effect:non-scaling-stroke;stroke-linecap:round}
+  .arc .sh{stroke:rgba(0,0,0,.55);stroke-width:7}
+  .arc .fg{stroke:var(--acc);stroke-width:3.5}
+  .arc.good .fg{stroke:var(--ok)}
+  .aim{position:absolute;width:10px;height:10px;transform:translate(-50%,-50%);border-radius:50%;
+       background:var(--acc);box-shadow:0 0 0 2px rgba(0,0,0,.55);pointer-events:none}
+  .aim.good{background:var(--ok)}
+  /* compass tape across the top of the picture.  Its width IS the camera's
+     horizontal FOV, so a bearing on the tape sits over the picture's pixels
+     that face it.  Heading from the FC (VFR_HUD), eased between polls. */
+  .tape{position:absolute;left:0;top:0;width:100%;height:26px;display:block;pointer-events:none;
+        background:linear-gradient(180deg,rgba(10,22,40,.88),rgba(10,22,40,.62));border-bottom:1px solid rgba(255,255,255,.12)}
+  .tgt{position:absolute;width:8%;aspect-ratio:1/1;transform:translate(-50%,-50%);border:2px solid #fff;
+       border-radius:4px;box-shadow:0 0 0 2px rgba(0,0,0,.6);pointer-events:none;display:none}
+  .badge{position:absolute;left:50%;top:34px;transform:translateX(-50%);padding:5px 12px;border-radius:999px;
+         font:500 13px/1.2 var(--sans);background:rgba(10,22,40,.78);border:1px solid rgba(255,255,255,.15);
+         white-space:nowrap;backdrop-filter:blur(4px)}
+  .badge.good{background:var(--ok);border-color:var(--ok);color:#03220f}
+  .offs{position:absolute;left:8px;bottom:8px;background:rgba(10,22,40,.78);padding:4px 8px;border-radius:8px;
+        font:12px/1 var(--mono);color:var(--dim)}
+  /* ENGAGE: a small red button inside the picture, bottom right */
+  .eng{position:absolute;right:10px;bottom:10px;width:66px;height:66px;border-radius:50%;padding:0;
+       border:3px solid rgba(255,255,255,.9);background:#d32f2f;color:#fff;overflow:hidden;touch-action:none;
+       box-shadow:0 0 0 3px rgba(211,47,47,.35),0 6px 14px rgba(0,0,0,.5);font:700 10.5px/1.15 var(--sans);letter-spacing:.06em}
+  .eng .fill{position:absolute;inset:0;background:#fff;opacity:0;transition:opacity .18s}
+  .eng span{position:relative;display:block}
+  .eng.push{background:var(--acc);color:var(--acc-ink);border-color:#fff}
+  .eng.go{background:#16a34a;border-color:#fff;box-shadow:0 0 0 3px rgba(34,197,94,.35),0 6px 14px rgba(0,0,0,.5)}
   .eng.go:disabled{opacity:1}
-  .eng span{position:relative}
-  .eng:disabled{opacity:.28}
-  .tools{flex:0 0 auto;display:flex;gap:8px;padding:0 10px calc(10px + env(safe-area-inset-bottom));background:var(--panel)}
-  .tools button{flex:1;border:1px solid #333;background:#151515;color:#ddd;border-radius:10px;padding:9px 4px;
-                font:inherit;font-size:13px;font-weight:800}
+  .eng:disabled{opacity:.35;filter:grayscale(.6)}
 
-  /* sheets (never cover ABORT) */
-  .sheet{position:absolute;left:0;right:0;bottom:0;max-height:62%;overflow:auto;background:#121212;
-         border-top:2px solid #333;border-radius:16px 16px 0 0;padding:10px 12px 14px;display:none;z-index:5}
-  .sheet.open{display:block}
-  .sheet h3{margin:2px 0 8px;font-size:14px;letter-spacing:.08em;color:#aaa;display:flex;justify-content:space-between}
-  .sheet h3 button{background:none;border:0;color:#fff;font-size:20px}
-  .grp{margin:8px 0 12px}.grp .lbl{font-size:12px;color:#999;font-weight:800;letter-spacing:.06em;margin-bottom:5px}
-  .seg{display:flex;gap:6px}.seg button{flex:1;border:1px solid #333;background:#1b1b1b;color:#bbb;border-radius:10px;
-       padding:11px 2px 8px;font:inherit;font-weight:900;font-size:14px}
-  .seg button i{display:block;font-style:normal;font-size:11px;font-weight:700;color:#888;margin-top:2px}
-  .seg button.on{background:#fff;color:#000;border-color:#fff}.seg button.on i{color:#333}
-  /* SPEEDS: a full-screen page with a big close X, not a pop-up */
-  #sh_speed{position:fixed;inset:0;max-height:none;border-radius:0;border-top:0;z-index:7;
-            background:#0d0d0d;padding:14px 16px calc(18px + env(safe-area-inset-bottom))}
-  #sh_speed h3{font-size:22px;color:#fff;letter-spacing:.06em;align-items:center;margin:0 0 14px}
-  #sh_speed h3 button{width:52px;height:52px;border-radius:14px;background:#222;font-size:30px;line-height:1}
-  #sh_speed .grp{margin:0 0 20px}
-  #sh_speed .grp .lbl{font-size:14px;color:#bbb}
-  #sh_speed .seg button{padding:18px 2px 12px;font-size:17px;border-radius:12px}
-  #sh_speed .seg button i{font-size:12px}
-  .log{font:12px/1.35 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word;color:#ccc}
-  .log .ln{padding:2px 0;border-bottom:1px solid #1d1d1d}.log .t{color:#666}
-  .log .m{color:#80d8ff}.log .r{color:#ffab91}.log .e{color:#ff5252}
+  /* ── message line ────────────────────────────────────────────────────── */
+  .ticker{flex:0 0 auto;display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;border-radius:10px;
+          background:var(--bg2);border:1px solid var(--line);font:12px/1 var(--mono);color:var(--dim)}
+  .ticker .tx{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ticker .more{font:11px/1 var(--cond);letter-spacing:.08em;color:var(--acc)}
+  .ticker.refuse .tx{color:#ffb38a}
+
+  /* ── D-pad, centred ──────────────────────────────────────────────────── */
+  .ctl{flex:0 0 auto;display:flex;justify-content:center}
+  .pad{display:grid;grid-template-columns:repeat(3,clamp(76px,23vw,96px));gap:7px}
+  .pad .mid{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+            font:12px/1.35 var(--mono);color:var(--dim);white-space:pre-line}
+  .btn{border:1px solid var(--line);border-radius:var(--r);background:linear-gradient(180deg,var(--bg3),var(--bg2));
+       color:#fff;font:700 clamp(22px,6.6vw,28px)/1 var(--sans);height:clamp(54px,7.4vh,66px);touch-action:none;
+       position:relative;padding:0 0 12px}
+  .btn small{position:absolute;left:0;right:0;bottom:6px;font:10px/1 var(--cond);letter-spacing:.1em;color:var(--dim)}
+  .btn.held{background:var(--acc);border-color:var(--acc);color:var(--acc-ink)}.btn.held small{color:var(--acc-ink)}
+  .btn:disabled{opacity:.3}
+
+  /* ── tools ───────────────────────────────────────────────────────────── */
+  .tools{flex:0 0 auto;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .tools button{border:1px solid var(--line);background:transparent;color:var(--txt);border-radius:10px;
+                padding:11px 4px;font:500 12px/1 var(--cond);letter-spacing:.12em}
+  .tools button:active{background:var(--bg2)}
+
+  /* ── full-screen pages with a big ✕ (never pop-ups) ─────────────────── */
+  .sheet{position:fixed;inset:0;z-index:7;display:none;flex-direction:column;background:var(--bg);
+         padding:calc(12px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom))}
+  .sheet.open{display:flex}
+  .sheet h3{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;margin:0 0 14px;
+            font:700 20px/1 var(--sans);letter-spacing:.14em;color:var(--txt)}
+  .sheet h3 small{display:block;font:11px/1 var(--cond);letter-spacing:.1em;color:var(--faint);margin-top:6px}
+  .sheet h3 button{width:52px;height:52px;border-radius:14px;border:1px solid var(--line);background:var(--bg2);
+                   color:#fff;font-size:26px;line-height:1}
+  .sheet .body{flex:1;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch}
+  .grp{margin:0 0 20px}.grp .lbl{font:12px/1 var(--cond);color:var(--dim);letter-spacing:.1em;margin-bottom:8px}
+  .seg{display:flex;gap:7px}.seg button{flex:1;border:1px solid var(--line);background:var(--bg2);color:var(--dim);
+       border-radius:12px;padding:16px 2px 12px;font:700 15px/1 var(--sans);letter-spacing:.04em}
+  .seg button i{display:block;font:normal 11px/1 var(--mono);color:var(--faint);margin-top:6px}
+  .seg button.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink)}.seg button.on i{color:var(--acc-ink)}
+  .log{font:12px/1.4 var(--mono);white-space:pre-wrap;word-break:break-word;color:#d6e2f0;-webkit-user-select:text;user-select:text}
+  .log .ln{padding:5px 0;border-bottom:1px solid #16294a}.log .t{color:var(--faint)}
+  .log .m{color:#8cc8ff}.log .r{color:#ffb38a}.log .e{color:#ff7b7b}
 
   .cover{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;
-         background:rgba(160,0,0,.92);z-index:9;text-align:center;padding:20px}
-  .cover.on{display:flex}.cover b{font-size:30px}.cover p{font-size:15px;max-width:22em}
-  .pin{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.9);z-index:8}
-  .pin.on{display:flex}.pin div{background:#1a1a1a;padding:18px;border-radius:14px;width:80%;max-width:320px}
-  .pin input{width:100%;font-size:28px;padding:10px;border-radius:10px;border:1px solid #444;background:#000;color:#fff;
+         background:rgba(150,20,24,.94);z-index:9;text-align:center;padding:24px}
+  .cover.on{display:flex}.cover b{font:700 26px/1.2 var(--sans);letter-spacing:.06em}.cover p{font-size:15px;max-width:22em;opacity:.92}
+  .pin{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(6,14,28,.94);z-index:8}
+  .pin.on{display:flex}.pin > div{background:var(--bg2);border:1px solid var(--line);padding:20px;border-radius:16px;width:84%;max-width:330px}
+  .pin .ttl{font:700 16px/1 var(--sans);letter-spacing:.12em;margin-bottom:12px}
+  .pin input{width:100%;font:28px/1 var(--mono);padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:#fff;
              text-align:center;letter-spacing:.3em;-webkit-user-select:text;user-select:text}
-  .pin button{margin-top:10px;width:100%;padding:12px;font-size:17px;font-weight:900;border-radius:10px;border:0}
+  /* smaller phones: give the picture the room, keep every word whole */
+  @media (max-height:780px){
+    .app{gap:6px}.card{padding:8px 12px}.phase,.alt .h{font-size:26px}
+    .hint{font-size:12px;margin-top:4px}.tile{padding:5px 7px 6px}
+    .btn{height:48px;padding-bottom:11px}.btn small{bottom:5px}.tools button{padding:9px 4px}.ticker{height:30px}
+  }
+  @media (max-width:370px){
+    .app{padding-left:10px;padding-right:10px}.tiles{gap:5px}
+    .tile .v{font-size:11.5px}.tile .k{font-size:10px;letter-spacing:.06em}
+  }
+  .pin button{margin-top:10px;width:100%;padding:13px;font:700 15px/1 var(--sans);letter-spacing:.1em;border-radius:10px;border:0}
 </style></head>
 <body><div class="app">
 
-  <div class="hdr" id="hdr">
+  <div class="top">
+    <div class="brand">WASP<span>INTERCEPTOR</span></div>
+    <span class="pill" id="c_ctl">--</span>
+  </div>
+
+  <div class="card" id="hdr">
     <div class="row1">
       <div class="phase" id="phase">--</div>
       <div class="alt"><div class="h" id="alt">--</div><div class="v" id="vs">&nbsp;</div></div>
     </div>
     <div class="hint" id="hint">σύνδεση…</div>
-    <div class="chips">
-      <span class="chip" id="c_arm">--</span><span class="chip" id="c_mode">--</span>
-      <span class="chip" id="c_hdg">--</span><span class="chip" id="c_vib">--</span>
-      <span class="chip" id="c_det">--</span><span class="chip" id="c_ctl">--</span>
-      <span class="chip" id="c_ai">--</span>
-    </div>
+  </div>
+
+  <div class="tiles">
+    <div class="tile"><span class="k">Λειτουργία FC</span><span class="v" id="c_mode">--</span></div>
+    <div class="tile"><span class="k">Όπλιση</span><span class="v" id="c_arm">--</span></div>
+    <div class="tile"><span class="k">Πορεία</span><span class="v" id="c_hdg">--</span></div>
+    <div class="tile"><span class="k">Στόχος (drone)</span><span class="v" id="c_det">--</span></div>
+    <div class="tile"><span class="k">Δόνηση</span><span class="v" id="c_vib">--</span></div>
+    <div class="tile"><span class="k" id="c_ai_k">Ανιχνευτής</span><span class="v" id="c_ai">--</span></div>
   </div>
 
   <div class="vidwrap"><div class="vbox" id="vbox">
     <img id="v" src="/stream.mjpg" alt="">
+    <svg class="arc" id="arc" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      <path class="sh" id="arc_sh" d="M0,100 Q50,40 100,100"/><path class="fg" id="arc_fg" d="M0,100 Q50,40 100,100"/></svg>
     <div class="aim" id="aim"></div><div class="tgt" id="tgt"></div>
+    <canvas class="tape" id="tape"></canvas>
     <div class="badge" id="badge" style="display:none"></div>
     <div class="offs" id="offs" style="display:none"></div>
-  </div>
-    <div class="sheet" id="sh_speed">
-      <h3>ΤΑΧΥΤΗΤΕΣ <button data-close aria-label="κλείσιμο">&#x2715;</button></h3>
-      <div class="grp"><div class="lbl">▲▼ ΥΨΟΣ</div><div class="seg" data-g="vert"></div></div>
-      <div class="grp"><div class="lbl">⟲⟳ ΣΤΡΟΦΗ (κράτημα / ένα άγγιγμα)</div><div class="seg" data-g="yaw"></div></div>
-      <div class="grp"><div class="lbl">ΩΘΗΣΗ — κλίση μπροστά</div><div class="seg" data-g="push"></div></div>
-      <div class="grp"><div class="lbl">AI — προσέγγιση</div><div class="seg" data-g="ai"></div></div>
-    </div>
-    <div class="sheet" id="sh_log">
-      <h3>ΜΗΝΥΜΑΤΑ <button data-close>&times;</button></h3>
-      <div class="log" id="log"></div>
-    </div>
-  </div>
+    <button class="eng" id="b_eng" aria-label="ENGAGE"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE</span></button>
+  </div></div>
 
-  <div class="ticker" id="ticker">—</div>
+  <div class="ticker" id="ticker"><span class="tx" id="ticktx">—</span><span class="more">ΟΛΑ ›</span></div>
 
   <div class="ctl">
     <div class="pad">
@@ -152,22 +225,35 @@
       <button class="btn" id="b_dn" data-hold="down">▼<small>ΚΑΘΟΔΟΣ</small></button>
       <div></div>
     </div>
-    <button class="eng" id="b_eng"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE<br><small style="font-size:11px">πάτα</small></span></button>
   </div>
+
   <div class="tools">
     <button id="t_speed">ΤΑΧΥΤΗΤΕΣ</button>
     <button id="t_log">ΜΗΝΥΜΑΤΑ</button>
-    <button id="t_tgt">ΣΤΟΧΟΣ: --</button>
   </div>
+</div>
+
+<div class="sheet" id="sh_speed">
+  <h3><span>ΤΑΧΥΤΗΤΕΣ<small>ΙΣΧΥΟΥΝ ΑΜΕΣΩΣ</small></span><button data-close aria-label="κλείσιμο">&#x2715;</button></h3>
+  <div class="body">
+    <div class="grp"><div class="lbl">▲▼ ΥΨΟΣ — ανάβαση / κάθοδος</div><div class="seg" data-g="vert"></div></div>
+    <div class="grp"><div class="lbl">⟲⟳ ΣΤΡΟΦΗ — κράτημα / ένα άγγιγμα</div><div class="seg" data-g="yaw"></div></div>
+    <div class="grp"><div class="lbl">ΩΘΗΣΗ — κλίση μπροστά</div><div class="seg" data-g="push"></div></div>
+    <div class="grp"><div class="lbl">AI — προσέγγιση</div><div class="seg" data-g="ai"></div></div>
+  </div>
+</div>
+<div class="sheet" id="sh_log">
+  <h3><span>ΜΗΝΥΜΑΤΑ<small>ΑΠΟ ΤΟ JETSON</small></span><button data-close aria-label="κλείσιμο">&#x2715;</button></h3>
+  <div class="body" id="logbody"><div class="log" id="log"></div></div>
 </div>
 
 <div class="cover" id="cover"><b>ΧΑΘΗΚΕ Η ΣΥΝΔΕΣΗ</b>
   <p>Το Jetson σταματά κάθε κίνηση μόνο του σε 0,3 s. Ο πιλότος έχει τον έλεγχο με τον διακόπτη.</p></div>
 <div class="pin" id="pin"><div>
-  <div style="font-weight:800;margin-bottom:8px">Κωδικός χειριστή</div>
+  <div class="ttl">ΚΩΔΙΚΟΣ ΧΕΙΡΙΣΤΗ</div>
   <input id="pin_in" inputmode="numeric" autocomplete="off">
-  <button id="pin_ok" style="background:#fff;color:#000">ΕΛΕΓΧΟΣ</button>
-  <button id="pin_view" style="background:#333;color:#fff">ΜΟΝΟ ΠΡΟΒΟΛΗ</button>
+  <button id="pin_ok" style="background:var(--acc);color:var(--acc-ink)">ΕΛΕΓΧΟΣ</button>
+  <button id="pin_view" style="background:var(--bg3);color:#fff">ΜΟΝΟ ΠΡΟΒΟΛΗ</button>
 </div></div>
 
 <script>
@@ -175,6 +261,7 @@
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
   function T(id, s) { $(id).textContent = s; }
+  function S(id, s, cls) { T(id, s); $(id).className = "v" + (cls ? " " + cls : ""); }
   function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
   function rid() { return Math.random().toString(36).slice(2, 10); }
 
@@ -186,18 +273,19 @@
   var VIEW = !K;
 
   var HFOV = 62.2, VFOV = 48.8, TILT = 30;
+  // c = card colour, ink = dark text on a light card
   var PH = {
     PILOT:   {t: "ΧΕΙΡΙΣΤΗΣ", c: "var(--pilot)", h: "Ο πιλότος: όπλιση και απογείωση σε ALT_HOLD, αιώρηση 1–2 m, γκάζι στο κέντρο."},
-    HOVER:   {t: "ΑΙΩΡΗΣΗ",   c: "var(--hover)", h: "▲▼ ύψος · ⟲⟳ κατεύθυνση · στόχος στο ◎ · μετά ENGAGE."},
+    HOVER:   {t: "ΑΙΩΡΗΣΗ",   c: "var(--hover)", h: "▲▼ ύψος · ⟲⟳ κατεύθυνση · στόχος κάτω από την κορυφή του τόξου · μετά ENGAGE."},
     CLIMB:   {t: "ΑΝΟΔΟΣ",    c: "var(--vert)",  h: "Όσο κρατάς ▲ ανεβαίνει. Άφησε = κρατά ύψος."},
     DESCEND: {t: "ΚΑΘΟΔΟΣ",   c: "var(--vert)",  h: "Όσο κρατάς ▼ κατεβαίνει. Άφησε = κρατά ύψος."},
     SCOUT:   {t: "ΑΝΙΧΝΕΥΣΗ", c: "var(--scout)", h: "Κράτημα = στροφή · ένα άγγιγμα = μικρό βήμα."},
-    PUSH:    {t: "ΩΘΗΣΗ",     c: "var(--push)",  h: "Κλίση μπροστά, ίδια κατεύθυνση και ύψος. AI σε λίγο."},
+    PUSH:    {t: "ΩΘΗΣΗ",     c: "var(--push)",  h: "Κλίση μπροστά, ίδια κατεύθυνση και ύψος. AI σε λίγο.", ink: true},
     AI:      {t: "AI",        c: "var(--ai)",    h: "Το AI κυνηγά τον στόχο. Στοπ: ο πιλότος σε STAB."},
-    STOP:    {t: "ΣΤΑΜΑΤΑ",   c: "var(--stop)",  h: "Ομαλή επαναφορά σε αιώρηση."}
+    STOP:    {t: "ΣΤΑΜΑΤΑ",   c: "var(--stop)",  h: "Ομαλή επαναφορά σε αιώρηση.", ink: true}
   };
   var LEVELS = ["SLOW", "MEDIUM", "FAST"];
-  var LAST = null, lastOk = 0, consoleSeq = 0;
+  var LAST = null, lastOk = 0, consoleSeq = 0, HDG = null;
 
   // ── transport: polls may be skipped, commands never ────────────────────
   var polling = false;
@@ -221,7 +309,9 @@
         return j;
       }).catch(function () { return null; });
   }
-  function note(s, bad) { var t = $("ticker"); t.textContent = s; t.className = "ticker" + (bad ? " refuse" : ""); }
+  // Messages never pop up: one line under the picture, the full list on its
+  // own full-screen page (ΜΗΝΥΜΑΤΑ).
+  function note(s, bad) { T("ticktx", s); $("ticker").className = "ticker" + (bad ? " refuse" : ""); }
 
   // ── hold-to-move: keepalives every 100 ms while the finger is down ─────
   // Up to 3 in flight, not 1: with one, a single slow request over field WiFi
@@ -274,25 +364,24 @@
     var el = $("b_eng");
     if (el.disabled) return;
     e.preventDefault();
-    var fill = $("engfill"); fill.style.height = "100%";
-    setTimeout(function () { fill.style.height = "0"; }, 180);
+    var fill = $("engfill"); fill.style.opacity = ".6";
+    setTimeout(function () { fill.style.opacity = "0"; }, 180);
     if (navigator.vibrate) navigator.vibrate([60, 40, 120]);
     cmd("engage=1");
   });
 
-  // ── sheets ─────────────────────────────────────────────────────────────
+  // ── full-screen pages ──────────────────────────────────────────────────
   function openSheet(id) {
-    ["sh_speed", "sh_log"].forEach(function (s) { $(s).classList.toggle("open", s === id && !$(s).classList.contains("open")); });
-    if (id === "sh_log") { var L = $("log"); L.scrollTop = L.scrollHeight; $("sh_log").scrollTop = 1e9; }
+    releaseAll();
+    ["sh_speed", "sh_log"].forEach(function (s) { $(s).classList.toggle("open", s === id); });
+    if (id === "sh_log") { var B = $("logbody"); B.scrollTop = B.scrollHeight; }
   }
-  $("t_speed").onclick = function () { releaseAll(); openSheet("sh_speed"); };
+  $("t_speed").onclick = function () { openSheet("sh_speed"); };
   $("t_log").onclick = function () { openSheet("sh_log"); };
+  $("ticker").onclick = function () { openSheet("sh_log"); };
   document.querySelectorAll("[data-close]").forEach(function (b) {
     b.onclick = function () { b.closest(".sheet").classList.remove("open"); };
   });
-  $("t_tgt").onclick = function () {
-    var cur = LAST && LAST.target; cmd("target=" + (cur === "DRONE" ? "HUMAN" : "DRONE"));
-  };
   document.querySelectorAll(".seg").forEach(function (seg) {
     var g = seg.getAttribute("data-g");
     LEVELS.forEach(function (lv) {
@@ -316,6 +405,7 @@
     LAST = j;
     var m = j.mission || {}, ph = m.phase || "PILOT", spec = PH[ph] || PH.PILOT;
     $("hdr").style.background = spec.c;
+    $("hdr").className = "card" + (spec.ink ? " ink" : "");
     T("phase", spec.t);
     var hint = spec.h;
     if (ph === "PUSH" && m.push_s !== null && m.push_s !== undefined)
@@ -329,41 +419,38 @@
         : (m.climb_mps >= 0 ? "↑ " : "↓ ") + fmt(Math.abs(m.climb_mps), 1) + " m/s");
 
     var arm = !!j.armed;
-    T("c_arm", arm ? "ΟΠΛΙΣΜΕΝΟ" : "ΑΦΟΠΛΙΣΜΕΝΟ"); $("c_arm").className = "chip" + (arm ? " on" : "");
-    T("c_mode", j.linked ? (j.fc_mode || "?") : "NO LINK");
-    $("c_mode").className = "chip" + (!j.linked ? " bad" : j.fc_mode === "ALT_HOLD" ? " ok" : "");
-    T("c_hdg", m.heading_deg === null || m.heading_deg === undefined ? "--°" : fmt(m.heading_deg, 0) + "°");
+    S("c_arm", arm ? "ΟΠΛΙΣΜΕΝΟ" : "ΑΦΟΠΛΙΣΜΕΝΟ", arm ? "on" : "");
+    S("c_mode", j.linked ? (j.fc_mode || "?") : "ΧΩΡΙΣ FC", !j.linked ? "bad" : j.fc_mode === "ALT_HOLD" ? "ok" : "warn");
+    S("c_hdg", m.heading_deg === null || m.heading_deg === undefined ? "--°" : fmt(m.heading_deg, 0) + "°", "");
+    var hadHdg = HDG !== null;
+    HDG = (m.heading_deg === null || m.heading_deg === undefined) ? null : Number(m.heading_deg);
+    if (!hadHdg && HDG !== null && typeof renderTape === "function") renderTape(performance.now());
     var vb = m.vibe;
     if (vb) {
       var vmax = Math.max(vb.x, vb.y, vb.z);
-      T("c_vib", "ΔΟΝΗΣΗ " + fmt(vmax, 0) + (vb.clip ? " CLIP " + vb.clip : ""));
-      $("c_vib").className = "chip " + (vb.clip || vmax >= 60 ? "bad" : vmax >= 30 ? "warn" : "ok");
-    } else { T("c_vib", "ΔΟΝΗΣΗ --"); $("c_vib").className = "chip"; }
+      S("c_vib", fmt(vmax, 0) + (vb.clip ? " · CLIP " + vb.clip : ""), vb.clip || vmax >= 60 ? "bad" : vmax >= 30 ? "warn" : "ok");
+    } else S("c_vib", "--", "");
     var conf = m.det_conf, fresh = m.det_age_s !== null && m.det_age_s !== undefined && m.det_age_s < 0.5;
-    T("c_det", fresh ? "ΣΤΟΧΟΣ " + fmt(conf, 2) : "ΣΤΟΧΟΣ --");
+    S("c_det", fresh ? "ΝΑΙ · " + fmt(conf, 2) : "ΟΧΙ", fresh ? (conf >= (m.min_conf || 0.2) ? "ok" : "warn") : "");
     // Readiness: the detector really in use, and the frame rate it holds.
     // Green = TensorRT at >= 20 fps; amber = slower; red = the PyTorch fallback.
     var trt = j.detector === "TensorRT", fps_ = j.fps || 0;
-    T("c_ai", (j.detector || "?") + " " + fmt(fps_, 0) + " fps" + (j.lat_ms ? " · " + j.lat_ms + " ms" : ""));
-    $("c_ai").className = "chip " + (!trt ? "bad" : fps_ >= 20 ? "ok" : "warn");
-    $("c_det").className = "chip" + (fresh ? (conf >= (m.min_conf || 0.2) ? " ok" : " warn") : "");
+    T("c_ai_k", (j.detector || "Ανιχνευτής") + (j.lat_ms ? " · " + j.lat_ms + " ms" : ""));
+    S("c_ai", fmt(fps_, 0) + " fps", !trt ? "bad" : fps_ >= 20 ? "ok" : "warn");
     var ctl = j.control || "free";
     T("c_ctl", VIEW ? "ΠΡΟΒΟΛΗ" : ctl === "you" ? "ΕΣΥ ΕΛΕΓΧΕΙΣ" : ctl === "other" ? "ΑΛΛΟΣ ΕΛΕΓΧΕΙ" : "ΕΛΕΥΘΕΡΟ");
-    $("c_ctl").className = "chip" + (ctl === "other" || VIEW ? " warn" : ctl === "you" ? " on" : "");
-    T("t_tgt", "ΣΤΟΧΟΣ: " + (j.target || "--"));
+    $("c_ctl").className = "pill" + (ctl === "other" || VIEW ? " warn" : ctl === "you" ? " on" : "");
 
     // which buttons can act right now (the server decides; this only mirrors it)
     var manual = ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other";
     ["b_up", "b_dn", "b_yl", "b_yr"].forEach(function (id) { $(id).disabled = !manual; });
-    // ENGAGE: red = ready; green = the AI has (or had) the drone, until the
-    // pilot's STAB -> ALT_HOLD resets it for the next try.
+    // ENGAGE: red = ready; orange = pushing; green = the AI has (or had) the
+    // drone, until the pilot's STAB -> ALT_HOLD resets it for the next try.
     var eng = $("b_eng"), done = !!m.engaged || !!m.ai_steering;
-    eng.classList.toggle("go", done);
+    eng.className = "eng" + (done ? " go" : ph === "PUSH" ? " push" : "");
     eng.disabled = done || !((ph === "HOVER" || ph === "SCOUT") && !VIEW && ctl !== "other");
-    $("engtxt").innerHTML = !done ? (ph === "PUSH" ? "ΩΘΗΣΗ…<br><small style='font-size:11px'>ψάχνει στόχο</small>"
-                                                   : "ENGAGE<br><small style='font-size:11px'>πάτα</small>")
-      : (ph === "AI" || ph === "PUSH") ? "AI ✓<br><small style='font-size:11px'>οδηγεί</small>"
-      : "ΕΓΙΝΕ ✓<br><small style='font-size:11px'>STAB→ALT_HOLD<br>για νέα</small>";
+    $("engtxt").innerHTML = !done ? (ph === "PUSH" ? "ΩΘΗΣΗ" : "ENGAGE")
+      : (ph === "AI" || ph === "PUSH") ? "AI ✓" : "ΕΓΙΝΕ ✓";
 
     // aim mark: where the target must sit NOW so it is centred once leaning
     TILT = (j.tilt_deg !== undefined && j.tilt_deg !== null) ? j.tilt_deg : TILT;
@@ -372,28 +459,35 @@
     var ty = function (el) { return 50 - 50 * Math.tan(el * Math.PI / 180) / Math.tan(VFOV / 2 * Math.PI / 180); };
     var tx = function (az) { return 50 + 50 * Math.tan(az * Math.PI / 180) / Math.tan(HFOV / 2 * Math.PI / 180); };
     var aim = $("aim"); aim.style.left = "50%"; aim.style.top = ty(aimEl) + "%";
+    // the arc: corner, apex at the top of the (invisible) aim circle, corner.
+    // A quadratic's apex is halfway between the ends' y and the control's y.
+    var AIM_RY_ = 10 * 4 / 3, apex = Math.max(2, ty(aimEl) - AIM_RY_), ctrl = 2 * apex - 100;
+    var dArc = "M0,100 Q50," + ctrl.toFixed(2) + " 100,100";
+    $("arc_sh").setAttribute("d", dArc); $("arc_fg").setAttribute("d", dArc);
     var az = m.target_az_deg, el = m.target_el_deg, tg = $("tgt"), bd = $("badge"), of = $("offs");
     if (m.target_fresh && az !== null && el !== null) {
       tg.style.display = "block"; tg.style.left = tx(az) + "%"; tg.style.top = ty(el) + "%";
-      // green = the target is INSIDE the drawn circle (radius 10% of the frame)
-      var AIM_R = 10, dx_s = tx(az) - 50, dy_s = ty(el) - ty(aimEl);
-      var dy = el - aimEl, good = Math.sqrt(dx_s * dx_s + dy_s * dy_s) <= AIM_R;
-      aim.classList.toggle("good", good);
+      // green = the target is inside the aim circle (not drawn any more: the
+      // arc's apex marks its top).  The circle is 20% of the frame WIDTH; the
+      // frame is 4:3, so in height-% its radius is 10*4/3.
+      var AIM_RX = 10, AIM_RY = 10 * 4 / 3, dx_s = tx(az) - 50, dy_s = ty(el) - ty(aimEl);
+      var dy = el - aimEl, good = (dx_s * dx_s) / (AIM_RX * AIM_RX) + (dy_s * dy_s) / (AIM_RY * AIM_RY) <= 1;
+      aim.classList.toggle("good", good); $("arc").classList.toggle("good", good);
       bd.style.display = "block"; bd.className = "badge" + (good ? " good" : "");
-      bd.textContent = good ? ((ph === "HOVER" || ph === "SCOUT") ? "ΣΤΟ ΣΤΟΧΟ ✓  ENGAGE" : "ΣΤΟΧΟΣ ΣΤΟ ΚΕΝΤΡΟ ✓") :
-        (Math.abs(dx_s) > AIM_R * 0.7 ? (az > 0 ? "⟳ δεξιά " : "⟲ αριστερά ") + fmt(Math.abs(az), 0) + "°  " : "") +
-        (Math.abs(dy_s) > AIM_R * 0.7 ? (dy > 0 ? "▲ ψηλότερα " : "▼ χαμηλότερα ") + fmt(Math.abs(dy), 0) + "°" : "");
+      bd.textContent = good ? ((ph === "HOVER" || ph === "SCOUT") ? "ΣΤΟΝ ΣΤΟΧΟ ✓  ENGAGE" : "ΣΤΟΧΟΣ ΣΤΟ ΚΕΝΤΡΟ ✓") :
+        (Math.abs(dx_s) > AIM_RX * 0.7 ? (az > 0 ? "⟳ δεξιά " : "⟲ αριστερά ") + fmt(Math.abs(az), 0) + "°  " : "") +
+        (Math.abs(dy_s) > AIM_RY * 0.7 ? (dy > 0 ? "▲ ψηλότερα " : "▼ χαμηλότερα ") + fmt(Math.abs(dy), 0) + "°" : "");
       of.style.display = "block"; of.textContent = "az " + fmt(az, 1) + "°  el " + fmt(el, 1) + "°";
     } else {
-      tg.style.display = "none"; aim.classList.remove("good"); of.style.display = "none";
+      tg.style.display = "none"; aim.classList.remove("good"); $("arc").classList.remove("good"); of.style.display = "none";
       bd.style.display = (ph === "HOVER" || ph === "SCOUT") ? "block" : "none"; bd.className = "badge";
       bd.textContent = "κανένας στόχος";
     }
 
-    // speed sheet
+    // speeds: the pad's centre and the speeds page
     var lv = m.levels || {}, sp = m.speeds || {};
-    T("padmid", (sp.climb !== undefined ? "↑" + sp.climb + " ↓" + sp.descent : "--") + "\n" +
-      (sp.yaw !== undefined ? sp.yaw + "°/s" : ""));
+    T("padmid", (sp.climb !== undefined ? "↑" + sp.climb + " ↓" + sp.descent + " m/s" : "--") + "\n" +
+      (sp.yaw !== undefined ? "⟳ " + sp.yaw + "°/s" : ""));
     var val = {vert: function (L) { return {SLOW: "1 / 0.5", MEDIUM: "3 / 1.5", FAST: "8 / 2.5"}[L] + " m/s"; },
                yaw: function (L) { return {SLOW: "10°/s · 2°", MEDIUM: "20°/s · 5°", FAST: "45°/s · 10°"}[L]; },
                push: function (L) { return {SLOW: "20°", MEDIUM: "30°", FAST: "40°"}[L]; },
@@ -415,7 +509,7 @@
     if (pulling) return; pulling = true;
     fetch("/console?since=" + consoleSeq, {cache: "no-store"}).then(function (r) { return r.ok ? r.json() : []; })
       .then(function (rows) {
-        var L = $("log"), atEnd = (L.parentNode.scrollTop + L.parentNode.clientHeight + 40 >= L.parentNode.scrollHeight);
+        var L = $("log"), B = $("logbody"), atEnd = (B.scrollTop + B.clientHeight + 40 >= B.scrollHeight);
         rows.forEach(function (x) {
           consoleSeq = Math.max(consoleSeq, x[0]);
           var d = document.createElement("div"), s = x[2];
@@ -425,9 +519,62 @@
           if (/^\[MISSION\]|^\[FC\]\[MODE\]|REFUSED/.test(s)) note(s, /refused|REFUSED/.test(s));
         });
         while (L.childNodes.length > 300) L.removeChild(L.firstChild);
-        if (atEnd) L.parentNode.scrollTop = L.parentNode.scrollHeight;
+        if (atEnd) B.scrollTop = B.scrollHeight;
       }).catch(function () {}).then(function () { pulling = false; });
   }
+
+  // ── compass tape ───────────────────────────────────────────────────────
+  // The heading arrives at the 4 Hz poll; the tape eases toward it along the
+  // SHORT way round (350 -> 10 turns through north), so a turn slides.
+  var tape = $("tape"), tctx = tape.getContext("2d"), hdgDisp = null, tPrev = 0, lastKey = "";
+  var CARD = {0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW"};
+  function wrap(a) { a %= 360; return a < 0 ? a + 360 : a; }
+  function adiff(a, b) { var d = wrap(a - b); return d > 180 ? d - 360 : d; }
+  function drawTape(now) { renderTape(now); requestAnimationFrame(drawTape); }
+  function renderTape(now) {
+    var dt = tPrev ? Math.min(0.2, (now - tPrev) / 1000) : 0; tPrev = now;
+    if (HDG === null) hdgDisp = null;
+    else if (hdgDisp === null) hdgDisp = HDG;
+    else if (Math.abs(adiff(HDG, hdgDisp)) < 0.05) hdgDisp = HDG;
+    else hdgDisp = wrap(hdgDisp + adiff(HDG, hdgDisp) * (1 - Math.exp(-dt / 0.12)));
+    var dpr = window.devicePixelRatio || 1, w = tape.clientWidth, h = tape.clientHeight;
+    // redraw only when something moved: an idle tape costs the phone nothing
+    var key = (hdgDisp === null ? "n" : hdgDisp.toFixed(2)) + "|" + w + "|" + h + "|" + dpr;
+    if (key === lastKey) return;
+    lastKey = key;
+    if (tape.width !== Math.round(w * dpr) || tape.height !== Math.round(h * dpr)) {
+      tape.width = Math.round(w * dpr); tape.height = Math.round(h * dpr);
+    }
+    var c = tctx; c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h);
+    var half = Math.tan(HFOV / 2 * Math.PI / 180);
+    if (hdgDisp !== null) {
+      c.textAlign = "center"; c.textBaseline = "top";
+      var b0 = Math.floor((hdgDisp - HFOV / 2 - 5) / 5) * 5;
+      for (var b = b0; b <= hdgDisp + HFOV / 2 + 5; b += 5) {
+        var off = adiff(b, hdgDisp);
+        if (Math.abs(off) > HFOV / 2 + 1) continue;
+        var x = w * (0.5 + 0.5 * Math.tan(off * Math.PI / 180) / half), bb = wrap(b), major = bb % 15 === 0;
+        c.strokeStyle = major ? "rgba(255,255,255,.85)" : "rgba(255,255,255,.4)"; c.lineWidth = 1;
+        c.beginPath(); c.moveTo(x, h); c.lineTo(x, h - (major ? 7 : 4)); c.stroke();
+        if (major && Math.abs(x - w / 2) > 30) {
+          var card = CARD[bb];
+          c.font = card ? "700 12px U, sans-serif" : "11px UC, sans-serif";
+          c.fillStyle = card ? "#ff8a1f" : "rgba(255,255,255,.8)";
+          c.fillText(card || String(bb), x, 3);
+        }
+      }
+    }
+    // centre: pointer + readout
+    var txt = hdgDisp === null ? "---°" : ("00" + Math.round(wrap(hdgDisp)) % 360).slice(-3) + "°";
+    c.font = "13px UM, monospace"; var bw = c.measureText(txt).width + 14;
+    c.fillStyle = "#ff8a1f"; c.beginPath();
+    if (c.roundRect) c.roundRect(w / 2 - bw / 2, 2, bw, 17, 5); else c.rect(w / 2 - bw / 2, 2, bw, 17);
+    c.fill();
+    c.beginPath(); c.moveTo(w / 2 - 5, 19); c.lineTo(w / 2 + 5, 19); c.lineTo(w / 2, h); c.closePath(); c.fill();
+    c.fillStyle = "#1a0d00"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(txt, w / 2, 11);
+  }
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { lastKey = ""; });
+  requestAnimationFrame(drawTape);
 
   // ── video reconnect, link watchdog, poll ───────────────────────────────
   var v = $("v");

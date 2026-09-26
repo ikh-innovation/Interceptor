@@ -465,11 +465,10 @@ class DroneTracker:
         self._t_last_frame   = None
         self._frame_dt       = None     # between detection frames, for the ROI margin
         self.mode_name       = os.environ.get("WASP_MODE_SPEED", "MEDIUM").upper()
+        # One target type per run, set by flight_config at boot.  The in-air
+        # HUMAN/DRONE switch was removed 2026-09-26 (operator: always DRONE).
         self.target_kind     = os.environ.get("TARGET_KIND", "DRONE").upper()
-        self._pending_kind   = None
         self.model_path      = model_path
-        self.model_paths     = {}
-        self.target_widths   = {"HUMAN": 0.20, "DRONE": 0.30}
         self._last_cmd       = None
         self._last_sent      = False
         self._ui_fps         = 0.0
@@ -482,21 +481,6 @@ class DroneTracker:
         self._prof_n = 0
         self.prof_ms = {}
         self.PROFILE = os.environ.get("PROFILE", "1") == "1"
-        # Both detectors, so the operator can switch target type in the air.
-        # WASP_MODEL is whatever flight_config picked for the flying mode;
-        # WASP_MODEL_ALT is the other one.  Either may be absent, in which case
-        # that direction of the switch simply refuses and says so.
-        _alt = os.environ.get("WASP_MODEL_ALT", "").strip()
-        _cur_kind = self.target_kind
-        self.model_paths[_cur_kind] = model_path
-        self.model_paths["HUMAN" if _cur_kind == "DRONE" else "DRONE"] = (
-            _alt or None)
-        for _k, _e in (("HUMAN", "TARGET_WIDTH_HUMAN"),
-                       ("DRONE", "TARGET_WIDTH_DRONE")):
-            try:
-                self.target_widths[_k] = float(os.environ[_e])
-            except (KeyError, ValueError):
-                pass
         # The named mode is the operator-facing control; push it into the law
         # now so the banner and the dashboard agree from the first frame.
         self.set_mode(self.mode_name)
@@ -651,67 +635,6 @@ class DroneTracker:
 
 
 
-
-    def request_target_kind(self, kind):
-        """Ask for HUMAN or DRONE tracking.  Applied by the CONTROL LOOP.
-
-        The HTTP thread must not load a model: ultralytics is not re-entrant
-        against a running inference, and swapping self.model underneath a
-        detect call is a crash waiting for the field.  So this only sets a flag
-        and the loop performs the switch between frames.
-
-        The camera TILT is deliberately NOT touched.  Tilt is a hardware fact —
-        the angle the mount is physically bolted at — and the control law adds
-        it to every elevation it computes.  Changing it from a web page would
-        fly the airframe high or low by exactly that error with nothing in the
-        log.  What this switches is the DETECTOR and the target width; the
-        visible band still follows the mount you actually have.
-        """
-        key = str(kind).strip().upper()
-        if key in ("HUMAN", "DRONE") and key != self.target_kind:
-            self._pending_kind = key
-        return self._pending_kind or self.target_kind
-
-    def _apply_pending_kind(self):
-        """Called from the control loop only."""
-        key = self._pending_kind
-        if not key:
-            return
-        self._pending_kind = None
-        path = self.model_paths.get(key)
-        if not path:
-            print(f"[TARGET] no weights configured for {key} — staying on "
-                  f"{self.target_kind}")
-            return
-        try:
-            if path == self.model_path:
-                model = self.model
-            elif str(path).endswith(".engine"):
-                model = YOLO(path, task="detect")
-            else:
-                model = YOLO(path)
-            names = model.names
-            if key == "HUMAN":
-                cls = next((i for i, n in names.items()
-                            if "face" in str(n).lower()), None)
-            else:
-                cls = None
-            if cls is None:
-                cls = next(iter(names)) if len(names) == 1 else 0
-            self.model = model
-            self.model_path = path
-            self.target_class = cls
-            self.target_kind = key
-            width = self.target_widths.get(key)
-            law = getattr(getattr(self, "ap", None), "law", None)
-            if width and hasattr(law, "target_width_m"):
-                law.target_width_m = float(width)
-            self._reset()          # the old track belongs to the old detector
-            print(f"[TARGET] now tracking {key}: class {cls} "
-                  f"('{names[cls]}'), width {width} m, weights {path}")
-        except Exception as exc:                     # never take the flight down
-            print(f"[TARGET] switch to {key} FAILED, staying on "
-                  f"{self.target_kind}: {exc}", file=sys.stderr)
 
     def state_snapshot(self):
         """Everything the dashboard shows, read off the live objects."""
@@ -1465,9 +1388,9 @@ class DroneTracker:
     def _command(self, key, value):
         """One operator command from the dashboard.  Runs on the HTTP thread.
 
-        Neither branch touches anything the control loop is mid-way through:
-        the steering mode is a single clamped float store into the law, and the
-        target switch only raises a flag for the loop to act on between frames.
+        Nothing here touches anything the control loop is mid-way through: the
+        steering mode is a single clamped float store into the law, and the
+        mission commands only post requests under the mission's lock.
         """
         if key in ("mode", "sens"):
             # "speed"/"sens" kept as aliases so an old bookmarked dashboard
@@ -1476,8 +1399,6 @@ class DroneTracker:
             m = getattr(self.ap, "mission", None)
             if m is not None:
                 m.set_level("ai", self.mode_name)
-        elif key == "target":
-            self.request_target_kind(value)
         elif key in ("hold", "release", "step", "engage", "abort", "lvl"):
             return self._mission_command(key, str(value))
         else:
@@ -1775,10 +1696,6 @@ class DroneTracker:
 
             self._frame_idx += 1
             is_yolo_frame = (self._frame_idx % period == 0)
-
-            # Between frames is the only safe place to swap the detector.
-            if self._pending_kind:
-                self._apply_pending_kind()
 
             # Display FPS, smoothed, for the dashboard.
             if self._t_ui_prev is not None:
@@ -2239,22 +2156,8 @@ if __name__ == "__main__":
                 print(f"[MODEL] engine {_eng.name} unusable ({_exc}); "
                       f"falling back to {Path(model_pth).name}")
 
-    _alt = ""
-    try:
-        if _model_env:                       # flying DRONE weights -> alt is the face detector
-            _alt = hf_hub_download(
-                repo_id="iitolstykh/YOLO-Face-Person-Detector",
-                filename="yolov8x_person_face.pt", repo_type="model")
-        else:                                # flying the face detector -> alt is the sky model
-            _sky = Path(__file__).resolve().parent.parent / "runs/detect/v0/weights/best.pt"
-            _alt = str(_sky) if _sky.is_file() else ""
-    except Exception as _exc:
-        print(f"[TARGET] alternate detector unavailable ({_exc}); "
-              f"the in-air target switch will refuse.")
-    os.environ["WASP_MODEL_ALT"] = _alt
     os.environ.setdefault("TARGET_KIND", "DRONE" if _model_env else "HUMAN")
-    print(f"[TARGET] {os.environ['TARGET_KIND']} active; alternate: "
-          f"{_alt or 'NONE'}")
+    print(f"[TARGET] {os.environ['TARGET_KIND']} (fixed for this run)")
 
     DroneTracker(
         #model_path   = "./runs/detect/v0/weights/best.pt",

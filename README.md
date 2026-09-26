@@ -91,6 +91,14 @@ The Jetson flies headless. A phone or laptop on the field WiFi opens:
 | `/state` | JSON state (phase, detector, fps, latency) |
 | `/cmd` | commands; **require the operator PIN** |
 
+The page layout, top to bottom:
+- **Status:** the phase card (its colour is the phase) and status tiles (FC mode, arming, heading, target, vibration, detector fps).
+- **Picture:** the 4:3 picture with a compass tape along its top (its width is the camera's 62° field of view). An aim arc runs corner to corner and turns green when the target is on it. A small red **ENGAGE** button sits in the bottom-right corner.
+- **Controls:** the ▲▼⟲⟳ pad, centred.
+- **Pages:** SPEEDS and MESSAGES open full-screen with ✕.
+
+The target is always a drone; there is no in-air HUMAN/DRONE switch. The Ubuntu typeface is served from `src/fonts/` by the Jetson itself, since the field has no internet.
+
 The PIN comes from `WASP_UI_TOKEN`, or from `~/.wasp_ui_token`, which is created once with a random 6-digit PIN. Without the PIN a phone can watch but never command. The server is not otherwise authenticated, so use it only on a private field network. Frames are JPEG-encoded only while someone is watching.
 
 ---

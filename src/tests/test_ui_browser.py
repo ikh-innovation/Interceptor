@@ -52,21 +52,32 @@ SLOW, DEAD = {"on": False}, {"on": False}
 STEPS = [
     ("rep({step:'boot', phase:q('#phase').textContent, alt:q('#alt').textContent,"
      " abort:!!q('#b_abort'), eng:q('#b_eng').className, engtxt:q('#engtxt').textContent,"
-     " aimTop:q('#aim').style.top, badge:q('#badge').textContent, ai:q('#c_ai').textContent,"
-     " aicls:q('#c_ai').className}); fetch('/reset');", 400),
-    ("pe(q('#b_up'),'pointerdown');", 1200),
+     " aimTop:q('#aim').style.top, badge:q('#badge').textContent, ai:q('#c_ai_k').textContent+' '+q('#c_ai').textContent,"
+     " aicls:q('#c_ai').className, tgtbtn:!!q('#t_tgt'), engInVid:q('#vbox').contains(q('#b_eng')),"
+     " engW:q('#b_eng').getBoundingClientRect().width, engR:q('#vbox').getBoundingClientRect().right-q('#b_eng').getBoundingClientRect().right,"
+     " engB:q('#vbox').getBoundingClientRect().bottom-q('#b_eng').getBoundingClientRect().bottom,"
+     " padC:Math.abs((q('.pad').getBoundingClientRect().left+q('.pad').getBoundingClientRect().right)/2-W.innerWidth/2)}); fetch('/reset');", 400),
+    ("var cv=q('#tape'), vb=q('#vbox').getBoundingClientRect(), r=cv.getBoundingClientRect();"
+     " window._ink=function(x0,x1){var c=cv.getContext('2d'), d=c.getImageData(Math.round(cv.width*x0),0,"
+     "Math.max(1,Math.round(cv.width*(x1-x0))),cv.height).data, n=0; for(var i=3;i<d.length;i+=4) if(d[i]>100) n++; return n;};"
+     " rep({step:'tape', top:r.top-vb.top, wdiff:Math.abs(r.width-vb.width), h:r.height, left:_ink(0,0.35), right:_ink(0.65,1)});"
+     " fetch('/set?phase=HOVER&heading=352');", 900),
+    ("rep({step:'tape352', left:_ink(0,0.35), right:_ink(0.65,1)}); fetch('/set?phase=HOVER&heading=123'); fetch('/reset');", 500),
+    ("fetch('/reset').then(function(){ pe(q('#b_up'),'pointerdown'); });", 1300),
     ("pe(q('#b_up'),'pointerup');", 300),
     ("cmds().then(function(c){rep({step:'hold_up', n:c.filter(function(x){return x.indexOf('hold=up')>=0}).length,"
      " rel:c.some(function(x){return x.indexOf('release=')>=0}), pin:c.every(function(x){return x.indexOf('k=424242')>=0})});"
      " fetch('/reset');});", 300),
-    ("pe(q('#b_yl'),'pointerdown'); setTimeout(function(){pe(q('#b_yl'),'pointerup');},120);", 500),
+    # reset FIRST, then tap: the previous step's async reset could otherwise
+    # land after the tap's command and erase it
+    ("fetch('/reset').then(function(){ pe(q('#b_yl'),'pointerdown'); setTimeout(function(){pe(q('#b_yl'),'pointerup');},120); });", 700),
     ("cmds().then(function(c){rep({step:'tap', cmds:c.map(function(x){return x.replace(/k=\\d+&c=\\w+&/,'')})}); fetch('/reset');});", 300),
-    ("pe(q('#b_yr'),'pointerdown');", 700),
+    ("fetch('/reset').then(function(){ pe(q('#b_yr'),'pointerdown'); });", 800),
     ("W.dispatchEvent(new W.Event('blur'));", 600),
     ("cmds().then(function(c){rep({step:'blur', n:c.filter(function(x){return x.indexOf('hold=yawr')>=0}).length,"
      " rel:c.some(function(x){return x.indexOf('release=')>=0})}); fetch('/reset');});", 700),
     ("cmds().then(function(c){rep({step:'after_blur', n:c.filter(function(x){return x.indexOf('hold=')>=0}).length}); fetch('/reset');});", 300),
-    ("pe(q('#b_eng'),'pointerdown'); setTimeout(function(){pe(q('#b_eng'),'pointerup');},80);", 500),
+    ("fetch('/reset').then(function(){ pe(q('#b_eng'),'pointerdown'); setTimeout(function(){pe(q('#b_eng'),'pointerup');},80); });", 700),
     ("cmds().then(function(c){rep({step:'engage_tap', n:c.filter(function(x){return x.indexOf('engage=')>=0}).length}); fetch('/reset');});", 300),
     ("fetch('/set?phase=AI&engaged=1');", 700),
     ("rep({step:'ai', eng:q('#b_eng').className, engtxt:q('#engtxt').textContent, dis:q('#b_eng').disabled,"
@@ -81,7 +92,10 @@ STEPS = [
      " q('#sh_speed [data-close]').click(); rep({step:'closed', open:q('#sh_speed').classList.contains('open')}); fetch('/reset');});", 400),
     ("q('#t_log').click();", 400),
     ("rep({step:'console', lines:[].map.call(d.querySelectorAll('#log .ln'),function(l){return l.textContent})});"
-     " q('#sh_log [data-close]').click(); fetch('/set?phase=PUSH&engaged=1');", 700),
+     " var lg=q('#sh_log'); rep({step:'logsheet', open:lg.classList.contains('open'), pos:W.getComputedStyle(lg).position,"
+     " h:lg.getBoundingClientRect().height, winh:W.innerHeight});"
+     " q('#sh_log [data-close]').click(); rep({step:'logclosed', open:q('#sh_log').classList.contains('open')});"
+     " fetch('/set?phase=PUSH&engaged=1');", 700),
     ("rep({step:'push', up:q('#b_up').disabled, eng:q('#b_eng').disabled, aimTop:q('#aim').style.top});"
      " fetch('/set?phase=HOVER&engaged=0'); fetch('/dead?1');", 1900),
     ("rep({step:'dead', cover:q('#cover').classList.contains('on'), done:1});", 0),
@@ -93,8 +107,11 @@ f.onload=function(){ var d=f.contentDocument, W=f.contentWindow, q=function(s){r
  function pe(el,t){ el.dispatchEvent(new W.PointerEvent(t,{bubbles:true,cancelable:true,pointerId:1,isPrimary:true})); }
  function cmds(){ return fetch('/cmds').then(function(r){return r.json()}); }
  var S=%s; var i=0;
- (function go(){ if(i>=S.length) return; try{ eval(S[i][0]); }catch(e){ rep({step:'error',err:String(e),at:i}); }
-   var w=S[i][1]; i++; setTimeout(go, w); })(); };
+ function go(){ if(i>=S.length) return; try{ eval(S[i][0]); }catch(e){ rep({step:'error',err:String(e),at:i}); }
+   var w=S[i][1]; i++; setTimeout(go, w); }
+ // start only once the page has painted its first /state (fonts etc. can
+ // delay it past a fixed wait, which made the boot step flaky)
+ (function ready(){ if(q('#phase').textContent !== '--') go(); else setTimeout(ready, 50); })(); };
 </script></body></html>""" % json.dumps(STEPS)).encode()
 
 
@@ -133,6 +150,8 @@ class H(BaseHTTPRequestHandler):
         if p == "/set":
             a = parse_qs(q)
             ST["mission"]["phase"] = a.get("phase", [ST["mission"]["phase"]])[0]
+            if "heading" in a:
+                ST["mission"]["heading_deg"] = float(a["heading"][0])
             en = a.get("engaged", ["0"])[0] == "1"
             ST["mission"]["engaged"] = en
             ST["mission"]["ai_steering"] = en and ST["mission"]["phase"] in ("AI", "PUSH")
@@ -157,7 +176,17 @@ b = R.get("boot", {})
 check("no ABORT button on the page (removed on request)", b.get("abort") is False)
 check("readiness chip: 'TensorRT 28 fps' in green", b.get("ai", "").startswith("TensorRT 28 fps")
       and "ok" in b.get("aicls", ""), f"{b.get('ai')} [{b.get('aicls')}]")
-check("ENGAGE starts red and says 'πάτα' (instant)", "go" not in b.get("eng", "go") and "πάτα" in b.get("engtxt", ""))
+check("ENGAGE starts red and says 'ENGAGE'", "go" not in b.get("eng", "go") and "ENGAGE" in b.get("engtxt", ""))
+check("ENGAGE is a SMALL button INSIDE the picture, bottom right",
+      b.get("engInVid") and b.get("engW", 999) <= 80 and 0 <= b.get("engR", -1) <= 20 and 0 <= b.get("engB", -1) <= 20, str(b))
+check("no HUMAN/DRONE target button (always DRONE)", b.get("tgtbtn") is False)
+check("the ▲▼⟲⟳ pad is centred on the screen", b.get("padC", 99) <= 2, str(b.get("padC")))
+tp, t3 = R.get("tape", {}), R.get("tape352", {})
+check("compass tape: full width, along the top edge of the picture, ~26 px high",
+      abs(tp.get("top", 99)) <= 2 and tp.get("wdiff", 99) <= 3 and 20 <= tp.get("h", 0) <= 30, str(tp))
+check("compass tape draws marks on both sides at 123 deg, and across north at 352 deg",
+      min(tp.get("left", 0), tp.get("right", 0), t3.get("left", 0), t3.get("right", 0)) > 25,
+      f"{tp} {t3}")
 h = R.get("hold_up", {})
 check("hold ▲ 1.2 s: ~10 keepalives, then a release, every command with the PIN",
       8 <= h.get("n", 0) <= 14 and h.get("rel") and h.get("pin"), str(h))
@@ -180,6 +209,10 @@ check("ΤΑΧΥΤΗΤΕΣ opens FULL-SCREEN", sp.get("open") and sp.get("pos") =
 check("a speed button sends lvl=vert:FAST; ✕ closes the page",
       R.get("lvl", {}).get("cmds") == ["lvl=vert:FAST"] and R.get("closed", {}).get("open") is False)
 check("console shows the tracker's printed lines", len(R.get("console", {}).get("lines", [])) == 2)
+lg = R.get("logsheet", {})
+check("ΜΗΝΥΜΑΤΑ opens FULL-SCREEN (not a pop-up) and ✕ closes it",
+      lg.get("open") and lg.get("pos") == "fixed" and lg.get("h", 0) >= 0.95 * lg.get("winh", 1)
+      and R.get("logclosed", {}).get("open") is False, str(lg))
 pu = R.get("push", {})
 check("PUSH: ▲ and ENGAGE disabled; the aim mark moves to the centre", pu.get("up") and pu.get("eng")
       and pu.get("aimTop") == "50%", str(pu))
