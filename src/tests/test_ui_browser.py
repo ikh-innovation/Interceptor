@@ -52,7 +52,8 @@ SLOW, DEAD = {"on": False}, {"on": False}
 STEPS = [
     ("rep({step:'boot', phase:q('#phase').textContent, alt:q('#alt').textContent,"
      " abort:!!q('#b_abort'), eng:q('#b_eng').className, engtxt:q('#engtxt').textContent,"
-     " aimTop:q('#aim').style.top, badge:q('#badge').textContent}); fetch('/reset');", 400),
+     " aimTop:q('#aim').style.top, badge:q('#badge').textContent, ai:q('#c_ai').textContent,"
+     " aicls:q('#c_ai').className}); fetch('/reset');", 400),
     ("pe(q('#b_up'),'pointerdown');", 1200),
     ("pe(q('#b_up'),'pointerup');", 300),
     ("cmds().then(function(c){rep({step:'hold_up', n:c.filter(function(x){return x.indexOf('hold=up')>=0}).length,"
@@ -154,6 +155,8 @@ print("=== the phone app in headless Firefox ===")
 check("page ran every step", "dead" in R and "error" not in R, str(R.get("error", "")))
 b = R.get("boot", {})
 check("no ABORT button on the page (removed on request)", b.get("abort") is False)
+check("readiness chip: 'TensorRT 28 fps' in green", b.get("ai", "").startswith("TensorRT 28 fps")
+      and "ok" in b.get("aicls", ""), f"{b.get('ai')} [{b.get('aicls')}]")
 check("ENGAGE starts red and says 'πάτα' (instant)", "go" not in b.get("eng", "go") and "πάτα" in b.get("engtxt", ""))
 h = R.get("hold_up", {})
 check("hold ▲ 1.2 s: ~10 keepalives, then a release, every command with the PIN",

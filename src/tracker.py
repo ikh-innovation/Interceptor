@@ -725,6 +725,12 @@ class DroneTracker:
             gated=self.gated_total, gate_note=self.gate_note,
             prof=self.prof_ms,
             fps=round(self._ui_fps, 1),
+            # Readiness, for the phone: which detector really runs, and how
+            # long a frame spends from capture to command.
+            detector=("TensorRT" if str(getattr(self, "model_path", "")).endswith(".engine")
+                      else "PyTorch"),
+            lat_ms=(None if not self._last_cmd or not self._last_cmd.get("latency_s")
+                    else round(1000 * float(self._last_cmd["latency_s"]))),
             fc_mode=(getattr(ap, "mode_name", None) if ap else None),
             armed=(bool(getattr(ap, "armed", False)) if ap else False),
             linked=(bool(getattr(ap, "linked", False)) if ap else False),

@@ -115,6 +115,7 @@
       <span class="chip" id="c_arm">--</span><span class="chip" id="c_mode">--</span>
       <span class="chip" id="c_hdg">--</span><span class="chip" id="c_vib">--</span>
       <span class="chip" id="c_det">--</span><span class="chip" id="c_ctl">--</span>
+      <span class="chip" id="c_ai">--</span>
     </div>
   </div>
 
@@ -335,6 +336,11 @@
     } else { T("c_vib", "ΔΟΝΗΣΗ --"); $("c_vib").className = "chip"; }
     var conf = m.det_conf, fresh = m.det_age_s !== null && m.det_age_s !== undefined && m.det_age_s < 0.5;
     T("c_det", fresh ? "ΣΤΟΧΟΣ " + fmt(conf, 2) : "ΣΤΟΧΟΣ --");
+    // Readiness: the detector really in use, and the frame rate it holds.
+    // Green = TensorRT at >= 20 fps; amber = slower; red = the PyTorch fallback.
+    var trt = j.detector === "TensorRT", fps_ = j.fps || 0;
+    T("c_ai", (j.detector || "?") + " " + fmt(fps_, 0) + " fps" + (j.lat_ms ? " · " + j.lat_ms + " ms" : ""));
+    $("c_ai").className = "chip " + (!trt ? "bad" : fps_ >= 20 ? "ok" : "warn");
     $("c_det").className = "chip" + (fresh ? (conf >= (m.min_conf || 0.2) ? " ok" : " warn") : "");
     var ctl = j.control || "free";
     T("c_ctl", VIEW ? "ΠΡΟΒΟΛΗ" : ctl === "you" ? "ΕΣΥ ΕΛΕΓΧΕΙΣ" : ctl === "other" ? "ΑΛΛΟΣ ΕΛΕΓΧΕΙ" : "ΕΛΕΥΘΕΡΟ");
