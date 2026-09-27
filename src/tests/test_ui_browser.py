@@ -70,8 +70,9 @@ STEPS = [
      " grpC:Math.abs((q('.pad').getBoundingClientRect().left+q('#b_eng').getBoundingClientRect().right)/2-W.innerWidth/2),"
      " lockAbove:q('#b_lock').getBoundingClientRect().bottom<=q('#b_eng').getBoundingClientRect().top,"
      " lockW:q('#b_lock').getBoundingClientRect().width, lockBg:W.getComputedStyle(q('#b_lock')).backgroundColor,"
-     " lockTxt:q('#b_lock').textContent, pill:q('#c_lock').textContent, pillCls:q('#c_lock').className,"
-     " pillTop:q('#c_lock').getBoundingClientRect().top, pillR:q('#c_lock').getBoundingClientRect().right,"
+     " lockTxt:q('#b_lock').textContent, pills:d.querySelectorAll('.top .pill, #c_lock, #c_ctl').length,"
+     " lockB:q('#b_lock').getBoundingClientRect().bottom, lockR:q('#b_lock').getBoundingClientRect().right,"
+     " engR2:q('#b_eng').getBoundingClientRect().right,"
      " dialL:q('#dial').getBoundingClientRect().left, vbR:q('#vbox').getBoundingClientRect().right, dialH:q('#dial').getBoundingClientRect().height,"
      " dialOff:q('#dial').classList.contains('off'), vbL:q('#vbox').getBoundingClientRect().left,"
      " vbH:q('#vbox').getBoundingClientRect().height, vbW:q('#vbox').getBoundingClientRect().width,"
@@ -88,12 +89,12 @@ STEPS = [
      " fetch('/set?phase=HOVER&locked=1&lock_hdg=352');});", 800),
     ("until(function(){return q('#b_lock').classList.contains('on')},3000).then(function(){"
      " rep({step:'locked', cls:q('#b_lock').className, txt:q('#locktxt').textContent, phase:d.body.getAttribute('data-phase'),"
-     " pill:q('#c_lock').textContent, pillCls:q('#c_lock').className});"
+     "});"
      " fetch('/reset').then(function(){ pe(q('#b_lock'),'pointerdown'); }); });", 3600),
     ("cmds().then(function(c){rep({step:'lock_off', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
      " fetch('/set?phase=HOVER&locked=0').then(function(){ fetch('/reset'); });});", 400),
     ("until(function(){return !q('#b_lock').classList.contains('on') && !q('#b_yl').disabled},3000);", 3100),
-    ("rep({step:'unlocked', pill:q('#c_lock').textContent, pillCls:q('#c_lock').className}); fetch('/reset');", 300),
+    ("rep({step:'unlocked', cls:q('#b_lock').className, txt:q('#locktxt').textContent}); fetch('/reset');", 300),
     # the degree scroll: drag up 60 px in slow steps, lift -> the YES / NO pop-up
     ("var dl=q('#dial'); pey(dl,'pointerdown',300);"
      " [1,2,3,4,5,6].forEach(function(k){ setTimeout(function(){ pey(dl,'pointermove',300-10*k); }, 80*k); });"
@@ -272,10 +273,12 @@ check("readiness chip: 'TensorRT 28 fps' in green", b.get("ai", "").startswith("
       and "ok" in b.get("aicls", ""), f"{b.get('ai')} [{b.get('aicls')}]")
 check("ENGAGE starts red and says 'ENGAGE'", "go" not in b.get("eng", "go") and "ENGAGE" in b.get("engtxt", ""))
 check("no phase card (no PILOT / HOVER banner, no hint line): the picture gets the room", b.get("card") is False, str(b.get("card")))
-check("LOCK / ENGAGE right of the pad, not in the picture", not b.get("engInVid") and b.get("engW", 999) <= 72 and b.get("engRightOfPad"), str(b))
-check("Game Boy B / A: LOCK lower-left, ENGAGE higher-right",
-      b.get("lockL", 999) < b.get("engL", 0) and b.get("lockT", 0) - b.get("engT", 0) >= 25,
-      str({k: b.get(k) for k in ("lockL", "lockT", "engL", "engT")}))
+check("LOCK / ENGAGE right of the pad, not in the picture", not b.get("engInVid") and b.get("engRightOfPad"), str(b))
+check("LOCK right ABOVE ENGAGE, one column (same left edge)",
+      b.get("lockB", 999) <= b.get("engT", 0) and abs(b.get("lockL", 0) - b.get("engL", 99)) <= 1,
+      str({k: b.get(k) for k in ("lockL", "lockB", "engL", "engT")}))
+check("both a bit bigger: 74 px round (was 66)", 72 <= b.get("engW", 0) <= 76 and 72 <= b.get("lockW", 0) <= 76,
+      f"{b.get('engW')} / {b.get('lockW')}")
 check("no message bar and no speed/message buttons under the picture; a ☰ menu top-left",
       b.get("ticker") is False and b.get("tools") is False and b.get("menu") and b.get("menuTL"), str(b))
 check("light theme: light-grey page, black control buttons",
@@ -290,7 +293,7 @@ check("compass tape draws marks on both sides at 123 deg, and across north at 35
       min(tp.get("left", 0), tp.get("right", 0), t3.get("left", 0), t3.get("right", 0)) > 25,
       f"{tp} {t3}")
 check("LOCK: a white button of the same size as ENGAGE",
-      60 <= b.get("lockW", 0) <= 72 and b.get("lockBg") == "rgb(255, 255, 255)"
+      abs(b.get("lockW", 0) - b.get("engW", 99)) <= 1 and b.get("lockBg") == "rgb(255, 255, 255)"
       and b.get("lockTxt") == "LOCK", str({k: b.get(k) for k in ("lockW", "lockBg", "lockTxt")}))
 lo, ld, lf = R.get("lock_on", {}), R.get("locked", {}), R.get("lock_off", {})
 check("LOCK pressed: sends lock=on", lo.get("cmds") == ["lock=on"], str(lo))
@@ -298,13 +301,10 @@ check("locked: ring on, shows the heading 352°", "on" in ld.get("cls", "") and 
       and ld.get("phase") == "LOCKED", str(ld))
 check("LOCK pressed again: sends lock=off (never a blind toggle)", lf.get("cmds") == ["lock=off"], str(lf))
 check("no vibration anywhere in the page", b"vibrate" not in PAGE)
-check("lock state always on top: 'UNLOCKED' in the top bar, grey",
-      "UNLOCKED" in b.get("pill", "") and " on" not in b.get("pillCls", " on") and b.get("pillTop", 99) < 60, str(b.get("pill")))
-check("locked: the top shows 'LOCKED 352°' in orange", "LOCKED 352°" in ld.get("pill", "")
-      and "on" in ld.get("pillCls", "").split(), str(ld))
+check("top right is empty: no UNLOCKED / LOCKED and no FREE / YOU CONTROL", b.get("pills") == 0, str(b.get("pills")))
 un = R.get("unlocked", {})
-check("unlocked again: back to 'UNLOCKED'", "UNLOCKED" in un.get("pill", "") and "on" not in un.get("pillCls", "").split(), str(un))
-check("the top bar fits the phone (pill inside the 390 px width)", b.get("pillR", 999) <= 390, str(b.get("pillR")))
+check("unlocked again: the LOCK ring off, no heading", "on" not in un.get("cls", "").split() and un.get("txt") == "LOCK", str(un))
+check("the buttons fit the phone (ENGAGE inside the 390 px width)", b.get("engR2", 999) <= 390, str(b.get("engR2")))
 check("heading bar: BELOW the picture, from its left edge, ~46 px high, active while hovering",
       b.get("dialT", 0) >= b.get("vbB", 999) and abs(b.get("vbL", 0) - (b.get("dialR", 0) - b.get("dialW", 0))) <= 2
       and 40 <= b.get("dialH", 0) <= 50 and b.get("dialW", 0) > 180 and not b.get("dialOff"),
