@@ -106,7 +106,9 @@ STEPS = [
     ("fetch('/set?phase=HOVER&armed=0').then(function(){ return until(function(){return !q('#t_sim').disabled},3000); })"
      ".then(function(){ fetch('/reset'); q('#t_menu').click(); q('#t_test').click(); setTimeout(function(){ rep({step:'sim_menu', dis:q('#t_sim').disabled,"
      " menu:q('#sh_menu').classList.contains('open'), test:q('#sh_test').classList.contains('open'),"
-     " rows:[].map.call(d.querySelectorAll('#sh_menu .row'),function(x){return x.firstChild.firstChild.textContent})});"
+     " rows:[].map.call(d.querySelectorAll('#sh_menu .row'),function(x){return x.firstChild.firstChild.textContent}),"
+     " indent:[].map.call(d.querySelectorAll('#sh_menu .row'),function(x){var rg=d.createRange(); rg.selectNodeContents(x.firstChild.firstChild);"
+     " return Math.round(rg.getBoundingClientRect().left-x.getBoundingClientRect().left)})});"
      " q('#t_sim').click(); }, 200); });", 3400),
     ("until(function(){return d.body.classList.contains('sim')},3000).then(function(){ setTimeout(function(){"
      " rep({step:'sim_on', bar:W.getComputedStyle(q('#simbar')).display, img:W.getComputedStyle(q('#v')).visibility,"
@@ -325,6 +327,8 @@ so, sc, sf = R.get("sim_on", {}), R.get("sim_cmds", {}), R.get("sim_off", {})
 sm = R.get("sim_menu", {})
 check("☰ = a MENU with three sections: PARAMETERS, MESSAGES, TEST; TEST opens its own page",
       sm.get("rows") == ["PARAMETERS", "MESSAGES", "TEST"] and sm.get("menu") and sm.get("test"), str(sm))
+check("menu rows: the text starts at the LEFT of each row (not centred)",
+      sm.get("indent") and all(0 <= x <= 24 for x in sm.get("indent")), str(sm.get("indent")))
 check("TEST → START TEST (drone disarmed): allowed; the menu closes, a striped TEST bar, a drawn view instead of the camera",
       R.get("sim_menu", {}).get("dis") is False and so.get("bar") == "flex" and so.get("img") == "hidden"
       and so.get("canv") == "block" and so.get("sheet") is False and len(SIMPOLLS) > 2, f"{so} polls {len(SIMPOLLS)}")

@@ -181,6 +181,8 @@
   .row{display:flex;justify-content:space-between;align-items:center;width:100%;margin-top:6px;padding:16px;border-radius:12px;
        border:1px solid var(--line);background:var(--bg2);color:var(--ink);font:700 15px/1 var(--sans);letter-spacing:.1em}
   .row span{color:var(--faint);font-size:20px}
+  /* a button centres its text by default: menu rows read left-aligned */
+  .row > div{flex:1;min-width:0;text-align:left}
   .log{font:12px/1.45 var(--mono);white-space:pre-wrap;word-break:break-word;color:#1d2229;-webkit-user-select:text;user-select:text}
   .log .ln{padding:6px 0;border-bottom:1px solid var(--line)}.log .t{color:var(--faint)}
   .log .m{color:#1f4f99}.log .r{color:#b44a00}.log .e{color:var(--bad)}

@@ -3,7 +3,7 @@
 
     ../.env/yolo/bin/python tests/ui_demo.py [--port 8090]
 
-Open the printed link, then ☰ → ΔΟΚΙΜΗ ΧΩΡΙΣ ΠΤΗΣΗ: the same test mode the
+Open the printed link, then ☰ → TEST → START TEST: the same test mode the
 Jetson serves (desk_sim.py: the real mission code against a model of
 ArduPilot's yaw hold and gusty wind).  The "real" drone here is a stand-in
 that is never armed, so the test mode is always allowed.
@@ -46,10 +46,10 @@ def main():
     ap.add_argument("--port", type=int, default=8090)
     a = ap.parse_args()
     srv = mjpeg_stream.MJPEGServer(port=a.port, state_get=lambda: dict(IDLE),
-                                   command=lambda k, v: "desk: no FC -- use ☰ → ΔΟΚΙΜΗ",
+                                   command=lambda k, v: "desk: no FC -- use ☰ → TEST",
                                    console_get=lambda since: []).start()
     print(f"\n  phone app on the desk:\n    http://{lan_ip()}:{a.port}/\n"
-          f"    http://127.0.0.1:{a.port}/\n  then ☰ → ΔΟΚΙΜΗ ΧΩΡΙΣ ΠΤΗΣΗ.  Ctrl-C stops.\n")
+          f"    http://127.0.0.1:{a.port}/\n  then ☰ → TEST.  Ctrl-C stops.\n")
     try:
         while True:
             time.sleep(1)
