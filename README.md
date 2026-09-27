@@ -102,7 +102,7 @@ How it behaves:
 - **The FC gets the first go.** ArduPilot's own heading hold already pulls back from a gust. LOCK acts only once the heading has been **still for 1 s at the wrong value**. That is the case the FC cannot fix: a gust stronger than the yaw authority drags the FC's own heading target, and the FC then holds the wrong heading. Correcting during the swing instead fights the FC and overshoots.
 - **No chatter.** On a noisy heading, the smoothed error decides whether to correct, with hysteresis (on at 1°, off at 0.4°). The actual error sets how much.
 - **Moving the drone while locked.** ▲▼ work while locked, and the heading stays. ⟲/⟳ (held, or a tap) also turn the drone. Let go and it turns back slowly to the **locked** heading. The lock itself never moves with them.
-- **Changing the lock.** Use the **degree scroll** right of the picture. Drag it (up = more degrees). Nothing is sent while you drag. Lift your finger and a pop-up asks **LOCK AT 313°?**
+- **Changing the lock.** Use the **heading bar** under the picture. Drag it; it follows your finger like the compass tape, so dragging left = more degrees. Nothing is sent while you drag. Lift your finger and a pop-up asks **LOCK AT 313°?**
   - **YES** sends `lock=313`. The drone turns there slowly (15°/s at most) and holds it. This works whether or not it was already locked.
   - **NO** sends nothing.
 - **Repeats are safe.** `lock=on` while already locked changes nothing, so a double tap or a WiFi retry cannot move it.
@@ -126,16 +126,16 @@ The Jetson flies headless. A phone or laptop on the field WiFi opens:
 | `/cmd` | commands (no PIN; one phone at a time holds control) |
 
 The look is light grey and white with black controls; orange is used only as the accent. The page layout, top to bottom:
-- **Top bar:** ☰ top-left opens the **MENU** with three sections, each a full-screen page with ✕: **PARAMETERS** (all the SLOW / MEDIUM / FAST settings and the search time), **MESSAGES** (what the Jetson reports) and **TEST**. The whole app is in English. There is no message bar. A refusal shows for 4 s in the phase card's hint. The only pop-up is the degree scroll's YES / NO.
+- **Top bar:** ☰ top-left opens the **MENU** with three sections, each a full-screen page with ✕: **PARAMETERS** (all the SLOW / MEDIUM / FAST settings and the search time), **MESSAGES** (what the Jetson reports) and **TEST**. The whole app is in English. There is no message bar. A refusal shows for 4 s over the bottom of the picture. The only pop-up is the heading bar's YES / NO.
   - ☰ → **TEST** → START TEST (only while the drone is disarmed): the same screen drives a pretend drone on the Jetson. It runs the real mission code (`desk_sim.py`) against a model of ArduPilot's yaw hold and gusty wind, and never touches the FC. A striped bar offers GUST ⟲/⟳ (a gust stronger than the motors), WIND 0–3, ↺ and EXIT. If the real drone arms, the page leaves test mode at once.
   - The lock state is always shown at the top: **UNLOCKED** (grey) or **LOCKED 313°** (orange). The phone never vibrates.
-- **Status:** the phase card (its colour is the phase; it reads **LOCKED** while locked) and status tiles (FC mode, arming, heading, target, vibration, detector fps).
-- **Picture:** the 4:3 picture, with the **degree scroll** on its right. When idle, the scroll follows the heading and shows the locked heading as a white notch. While you drag it, the picked heading also shows as an orange line on the compass tape.
+- **Status:** the status tiles (FC mode, arming, heading, target, vibration, detector fps). There is no phase card, so the picture gets the room. The phase shows on ENGAGE (PUSH / AI ✓ / DONE ✓) and the lock state in the top bar.
+- **Picture:** the 4:3 picture, as wide as the screen. Under it are the **heading bar** and, on its right, a box with the **height** and climb rate, in the same style. When idle, the bar follows the heading and shows the locked heading as a white notch. While you drag it, the picked heading also shows as an orange line on the compass tape.
   - A compass tape runs along its top. Its width is the camera's 62° field of view, and it carries a white mark at the LOCKed heading.
   - A thin dashed aim arc runs corner to corner and turns green when the target is on it.
 - **Controls:**
-  - The ▲▼⟲⟳ pad sits a little left of centre. A held button turns orange, and pulses while the Jetson is accepting its keepalives, so you can see the drone is being told. It turns red if the command is refused.
-  - Beside the pad are **LOCK** (white; an orange ring and the heading when on) and **ENGAGE** (red).
+  - The ▲▼⟲⟳ pad sits at the left. A held button turns orange, and pulses while the Jetson is accepting its keepalives, so you can see the drone is being told. It turns red if the command is refused.
+  - On the right, set on a diagonal like a Game Boy's B / A, are **LOCK** (low-left; white, with an orange ring and the heading when on) and **ENGAGE** (high-right; red).
 
 The target is always a drone; there is no in-air HUMAN/DRONE switch. The Ubuntu typeface is served from `src/fonts/` by the Jetson itself, since the field has no internet.
 

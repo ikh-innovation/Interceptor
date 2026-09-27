@@ -54,20 +54,6 @@
   .lockst.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink);font-weight:700}
   .lockst:not(.on) .shk{transform:translate(4px,-2px)}
 
-  /* ── phase card ──────────────────────────────────────────────────────── */
-  /* no colour fade: the phase colour is a safety cue and must change at once */
-  .card{flex:0 0 auto;border-radius:var(--r);padding:11px 14px 10px;background:var(--pilot);color:#fff;
-        box-shadow:0 4px 14px rgba(16,19,23,.18)}
-  .card.ink{color:#140a00}.card.ink .hint,.card.ink .alt .v{color:rgba(20,10,0,.8)}
-  .row1{display:flex;align-items:flex-end;gap:12px}
-  .phase{font:700 clamp(24px,7.6vw,34px)/1 var(--sans);letter-spacing:.02em;flex:1;min-width:0}
-  .alt{text-align:right;line-height:1}
-  .alt .h{font:clamp(24px,7.6vw,34px)/1 var(--mono);font-variant-numeric:tabular-nums}
-  .alt .v{font:12px/1.2 var(--mono);color:rgba(255,255,255,.8);margin-top:3px}
-  .hint{margin-top:6px;font-size:clamp(12.5px,3.5vw,14px);color:rgba(255,255,255,.9);min-height:1.3em}
-  .hint.refuse{color:#ffd0b0;font-weight:500}
-  .card.ink .hint.refuse{color:#5a1a00}
-
   /* ── status tiles ────────────────────────────────────────────────────── */
   .tiles{flex:0 0 auto;display:grid;grid-template-columns:1fr 1.15fr .95fr;gap:6px}
   .tile{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:6px 8px 7px;min-width:0}
@@ -83,17 +69,28 @@
   .tile .v.on:before{background:var(--acc)}
 
   /* ── video + overlays (overlays stay dark: they sit on the picture) ──── */
-  .vidwrap{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;gap:6px}
+  .vidwrap{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:6px}
+  /* under the picture: the heading bar (drag it) and the height, same look */
+  .belt{flex:0 0 46px;width:100%;display:flex;gap:6px}
+  .hbox{flex:0 0 76px;border-radius:12px;background:var(--ink);border:1px solid var(--ink);color:#fff;
+        display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+        box-shadow:0 2px 8px rgba(16,19,23,.2);font-variant-numeric:tabular-nums}
+  .hbox b{font:700 15px/1 var(--mono)}
+  .hbox span{font:10.5px/1 var(--mono);color:#aeb5bd}
+  /* a refusal: 4 s over the bottom of the picture (the phase card is gone) */
+  .toast{position:absolute;left:8px;right:8px;bottom:8px;display:none;padding:7px 10px;border-radius:9px;
+         background:rgba(185,28,28,.92);color:#fff;font:500 13px/1.3 var(--sans);text-align:center}
+  .toast.on{display:block}
   /* the degree scroll, RIGHT of the picture: drag up = more degrees.  It
      only PICKS a heading; lifting the finger asks whether to LOCK there. */
-  .dial{flex:0 0 46px;align-self:stretch;position:relative;border-radius:12px;overflow:hidden;touch-action:none;
+  .dial{flex:1 1 auto;min-width:0;position:relative;border-radius:12px;overflow:hidden;touch-action:none;
         background:var(--ink);border:1px solid var(--ink);box-shadow:0 2px 8px rgba(16,19,23,.2)}
   .dial canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   .dial.off{opacity:.3}
   .dial.drag{border-color:var(--acc);box-shadow:0 0 0 3px rgba(255,122,0,.45)}
   /* 4:3, the camera's true shape (mode 3, 1280x960).  The overlay maths is
      proportional to the box, so it stays exact at any size. */
-  .vbox{position:relative;height:100%;max-width:calc(100% - 52px);aspect-ratio:4/3;border-radius:var(--r);overflow:hidden;
+  .vbox{position:relative;height:calc(100% - 52px);max-width:100%;aspect-ratio:4/3;border-radius:var(--r);overflow:hidden;
         background:#000;border:1px solid var(--line);box-shadow:0 4px 16px rgba(16,19,23,.2)}
   .vbox img{width:100%;height:100%;display:block;object-fit:fill}
   /* the aim indication: an ARC from the bottom-left corner, over the aim
@@ -124,8 +121,9 @@
   .offs{position:absolute;left:8px;bottom:8px;background:rgba(12,14,17,.78);padding:4px 8px;border-radius:8px;
         font:12px/1 var(--mono);color:#cfd5dc}
 
-  /* ── controls: the pad a little left of centre, LOCK / ENGAGE beside it ─ */
-  .ctl{flex:0 0 auto;display:flex;justify-content:center;align-items:center;gap:16px}
+  /* ── controls: the pad on the left, LOCK / ENGAGE on the right set on a
+     diagonal like a Game Boy's B / A (LOCK low-left, ENGAGE high-right) ── */
+  .ctl{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;padding:0 4px 0 0}
   .pad{display:grid;grid-template-columns:repeat(3,clamp(64px,19vw,84px));gap:7px}
   .pad .mid{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
             font:11.5px/1.35 var(--mono);color:var(--dim);white-space:pre-line}
@@ -141,7 +139,8 @@
   @keyframes tx{from{box-shadow:0 0 0 3px rgba(255,122,0,.55)}to{box-shadow:0 0 0 7px rgba(255,122,0,.18)}}
   .btn.refused{background:var(--bad);color:#fff}
   .btn:disabled{opacity:.28}
-  .acts{display:flex;flex-direction:column;gap:12px}
+  .acts{display:flex;align-items:flex-start;gap:8px;padding-top:4px}
+  .acts .lock{margin-top:44px}
   .rbtn{width:66px;height:66px;border-radius:50%;padding:0;touch-action:none;position:relative;overflow:hidden;
         font:700 10.5px/1.15 var(--sans);letter-spacing:.06em}
   /* LOCK: white, black ring.  On = orange ring + the heading */
@@ -219,21 +218,20 @@
   .cover.on{display:flex}.cover b{font:700 26px/1.2 var(--sans);letter-spacing:.06em}.cover p{font-size:15px;max-width:22em;opacity:.92}
   /* smaller phones: give the picture the room, keep every word whole */
   @media (max-height:780px){
-    .app{gap:6px}.card{padding:8px 12px}.phase,.alt .h{font-size:26px}
-    .hint{font-size:12px;margin-top:4px}.tile{padding:5px 7px 6px}
-    .btn{height:50px;padding-bottom:11px}.btn small{bottom:5px}.rbtn{width:60px;height:60px}.acts{gap:10px}
+    .app{gap:6px}.tile{padding:5px 7px 6px}
+    .btn{height:50px;padding-bottom:11px}.btn small{bottom:5px}.rbtn{width:60px;height:60px}.acts .lock{margin-top:38px}
   }
   @media (max-width:420px){ .brand span{display:none} }
   @media (max-width:370px){
-    .app{padding-left:10px;padding-right:10px}.tiles{gap:5px}.ctl{gap:12px}
+    .app{padding-left:10px;padding-right:10px}.tiles{gap:5px}
     .tile .v{font-size:11.5px}.tile .k{font-size:10px;letter-spacing:.06em}
   }
   /* true 4:3 whatever the phone: the picture is as big as fits beside the
      scroll, and the scroll is exactly as tall as the picture */
   @supports (width:1cqw){
     .vidwrap{container-type:size}
-    .vbox{height:auto;max-width:none;width:min(100cqw - 52px, 100cqh * 4 / 3)}
-    .dial{align-self:center;height:min(100cqh, (100cqw - 52px) * 3 / 4)}
+    .vbox{height:auto;max-width:none;width:min(100cqw, (100cqh - 52px) * 4 / 3)}
+    .belt{width:min(100cqw, (100cqh - 52px) * 4 / 3)}
   }
 </style></head>
 <body><div class="app">
@@ -248,14 +246,6 @@
     <button id="s_gl">GUST ⟲</button><button id="s_gr">GUST ⟳</button>
     <button id="s_wind">WIND 2</button><button id="s_reset" aria-label="start over">↺</button>
     <button class="x" id="s_exit">EXIT</button></div>
-
-  <div class="card" id="hdr">
-    <div class="row1">
-      <div class="phase" id="phase">--</div>
-      <div class="alt"><div class="h" id="alt">--</div><div class="v" id="vs">&nbsp;</div></div>
-    </div>
-    <div class="hint" id="hint">connecting…</div>
-  </div>
 
   <div class="tiles">
     <div class="tile"><span class="k">FC mode</span><span class="v" id="c_mode">--</span></div>
@@ -274,7 +264,12 @@
     <canvas class="tape" id="tape"></canvas>
     <div class="badge" id="badge" style="display:none"></div>
     <div class="offs" id="offs" style="display:none"></div>
-  </div><div class="dial off" id="dial" aria-label="pick a heading"><canvas id="dialc"></canvas></div></div>
+    <div class="toast" id="toast"></div>
+  </div>
+  <div class="belt">
+    <div class="dial off" id="dial" aria-label="pick a heading"><canvas id="dialc"></canvas></div>
+    <div class="hbox" id="hbox"><b id="alt">-- m</b><span id="vs">&nbsp;</span></div>
+  </div></div>
 
   <div class="ctl">
     <div class="pad">
@@ -351,17 +346,6 @@
   var VIEW = false;        // every phone may command (the controller lease still picks one)
 
   var HFOV = 62.2, VFOV = 48.8, TILT = 30;
-  // c = card colour, ink = dark text on a light card
-  var PH = {
-    PILOT:   {t: "PILOT", c: "var(--pilot)", h: "The pilot: arm and take off in ALT_HOLD, hover at 1–2 m, throttle centred."},
-    HOVER:   {t: "HOVER",     c: "var(--hover)", h: "▲▼ height · ⟲⟳ heading · target under the top of the arc · then ENGAGE."},
-    CLIMB:   {t: "CLIMB",     c: "var(--vert)",  h: "Climbs while you hold ▲. Let go = holds height."},
-    DESCEND: {t: "DESCEND",   c: "var(--vert)",  h: "Descends while you hold ▼. Let go = holds height."},
-    SCOUT:   {t: "SCOUT",     c: "var(--scout)", h: "Hold = turn · one tap = a small step."},
-    PUSH:    {t: "PUSH",      c: "var(--push)",  h: "Leaning forward, same heading and height. The AI takes over shortly.", ink: true},
-    AI:      {t: "AI",        c: "var(--ai)",    h: "The AI is chasing the target. To stop: the pilot to STAB."},
-    STOP:    {t: "STOP",      c: "var(--stop)",  h: "Easing back to a hover.", ink: true}
-  };
   var LEVELS = ["SLOW", "MEDIUM", "FAST"];
   var LAST = null, lastOk = 0, consoleSeq = 0, HDG = null, LOCKHDG = null;
   var SIM = false;         // TEST: everything goes to /sim/..., the pretend drone
@@ -401,13 +385,15 @@
   }
   // Messages never pop up: one line under the picture, the full list on its
   // own full-screen page (MESSAGES).
-  // No message bar: a refusal shows in the phase card's hint for 4 s (never
-  // a pop-up); everything else is in ☰ → MESSAGES.
-  var NOTE = null;
+  // No message bar and no phase card: a refusal shows over the bottom of the
+  // picture for 4 s; everything else is in ☰ → MESSAGES.
+  var NOTE = null, noteT = null;
   function note(s, bad) {
     if (!bad) return;
     NOTE = {s: s, until: Date.now() + 4000};
-    T("hint", s); $("hint").className = "hint refuse";
+    T("toast", s); $("toast").classList.add("on");
+    clearTimeout(noteT);
+    noteT = setTimeout(function () { $("toast").classList.remove("on"); NOTE = null; }, 4000);
   }
 
   // ── hold-to-move: keepalives every 100 ms while the finger is down ─────
@@ -482,21 +468,22 @@
 
   // ── the degree scroll: pick a heading, then YES / NO to LOCK there ─────
   // Dragging only moves the number (nothing is sent); a slow drag is 1 deg
-  // per 4 px, a fast flick up to ~4x that.  Drag up = more degrees.
+  // per 4 px, a fast flick up to ~4x that.  The bar follows the finger like
+  // the compass tape: higher bearings to the right, so drag LEFT = more.
   var dial = $("dial"), drag = null;
   dial.addEventListener("pointerdown", function (e) {
     if (!CANLOCK || $("ask").classList.contains("on")) return;
     e.preventDefault(); try { dial.setPointerCapture(e.pointerId); } catch (x) {}
     var from = HDG !== null ? HDG : (LOCKHDG !== null ? LOCKHDG : 0);
-    drag = {y: e.clientY, t: performance.now(), v: wrap(Math.round(from)), acc: 0, moved: false};
+    drag = {x: e.clientX, t: performance.now(), v: wrap(Math.round(from)), acc: 0, moved: false};
     SEL = drag.v; dial.classList.add("drag");
   });
   dial.addEventListener("pointermove", function (e) {
     if (!drag) return;
-    var now = performance.now(), dy = drag.y - e.clientY, dt = Math.max(1, now - drag.t);
+    var now = performance.now(), dy = drag.x - e.clientX, dt = Math.max(1, now - drag.t);
     var speed = Math.abs(dy) / dt;                     // px per ms
     drag.acc += dy / 4 * Math.min(4, 1 + speed * 1.5);
-    drag.y = e.clientY; drag.t = now;
+    drag.x = e.clientX; drag.t = now;
     var whole = drag.acc < 0 ? Math.ceil(drag.acc) : Math.floor(drag.acc);
     if (whole !== 0) { drag.acc -= whole; drag.v = wrap(drag.v + whole); drag.moved = true; SEL = drag.v; }
   });
@@ -590,29 +577,13 @@
       $("t_sim").disabled = !!j.armed || VIEW;
       T("t_simtxt", j.armed ? "The drone is ARMED: disarm it to test." : "");
     }
-    var m = j.mission || {}, ph = m.phase || "PILOT", spec = PH[ph] || PH.PILOT;
-    $("hdr").style.background = spec.c;
-    $("hdr").className = "card" + (spec.ink ? " ink" : "");
-    T("phase", spec.t);
-    var hint = spec.h;
-    if (ph === "PUSH" && m.push_s !== null && m.push_s !== undefined)
-      hint = "PUSH " + fmt(m.speeds && m.speeds.push, 0) + "° · " + fmt(m.push_s, 1) + " / " + fmt(m.speeds && m.speeds.search, 0) + " s · AI as soon as it sees a target ≥ " + fmt(m.min_conf, 2);
-    if (ph === "PILOT" && j.mission && m.gate_why) hint = "The pilot has control (" + m.gate_why + ").";
-    if ((ph === "HOVER" || ph === "SCOUT") && m.engaged) hint = "One attempt made. For another: the pilot STAB → ALT_HOLD.";
+    var m = j.mission || {}, ph = m.phase || "PILOT";
     var locked = !!m.locked;
     LOCKHDG = locked && m.lock_hdg !== null && m.lock_hdg !== undefined ? Number(m.lock_hdg) : null;
-    if (locked && (ph === "HOVER" || ph === "CLIMB" || ph === "DESCEND")) {
-      if (ph === "HOVER") T("phase", "LOCKED");
-      hint = "Holds " + fmt(m.lock_hdg, 0) + "° on its own, in wind too. ▲▼⟲⟳ work; let go = back to " + fmt(m.lock_hdg, 0) + "°. LOCK again = unlock.";
-    }
-    if (locked && ph === "SCOUT") {
-      hint = "Turning by hand; let go = slowly back to " + fmt(m.lock_hdg, 0) + "° (locked).";
-    }
-    if (!j.mission || m.app === "auto") hint = "The mission app is not running (WASP_APP).";
-    if (NOTE && Date.now() < NOTE.until) { T("hint", NOTE.s); $("hint").className = "hint refuse"; }
-    else { NOTE = null; T("hint", hint); $("hint").className = "hint"; }
+    // no phase card any more: the phase is kept for the page's own logic only
+    document.body.setAttribute("data-phase", locked && ph === "HOVER" ? "LOCKED" : ph);
     T("alt", m.height_m === null || m.height_m === undefined ? "-- m" : fmt(m.height_m, 1) + " m");
-    T("vs", m.climb_mps === null || m.climb_mps === undefined ? "height unknown"
+    T("vs", m.climb_mps === null || m.climb_mps === undefined ? "height ?"
         : (m.climb_mps >= 0 ? "↑ " : "↓ ") + fmt(Math.abs(m.climb_mps), 1) + " m/s");
 
     var arm = !!j.armed;
@@ -621,7 +592,7 @@
     S("c_hdg", m.heading_deg === null || m.heading_deg === undefined ? "--°" : fmt(m.heading_deg, 0) + "°", "");
     var hadHdg = HDG !== null;
     HDG = (m.heading_deg === null || m.heading_deg === undefined) ? null : Number(m.heading_deg);
-    if (!hadHdg && HDG !== null && typeof renderTape === "function") renderTape(performance.now());
+    if (!hadHdg && HDG !== null && typeof renderTape === "function") { renderTape(performance.now()); renderDial(); }
     var vb = m.vibe;
     if (vb) {
       var vmax = Math.max(vb.x, vb.y, vb.z);
@@ -794,34 +765,35 @@
       c.fillStyle = "rgba(255,255,255,.5)"; c.font = "11px UC, sans-serif"; c.textAlign = "center";
       c.textBaseline = "middle"; c.fillText("---", w / 2, h / 2); return;
     }
-    c.textAlign = "right"; c.textBaseline = "middle";
-    var span = h / 2 / PX + 5;
+    c.textAlign = "center"; c.textBaseline = "top";
+    var span = w / 2 / PX + 5;
     for (var b = Math.floor((val - span) / 5) * 5; b <= val + span; b += 5) {
-      var y = h / 2 + (b - val) * PX, bb = wrap(b), major = bb % 15 === 0;
+      var x = w / 2 + (b - val) * PX, bb = wrap(b), major = bb % 15 === 0;
       c.strokeStyle = major ? "rgba(255,255,255,.85)" : "rgba(255,255,255,.35)"; c.lineWidth = 1;
-      c.beginPath(); c.moveTo(w, y); c.lineTo(w - (major ? 9 : 5), y); c.stroke();
-      if (major && Math.abs(y - h / 2) > 14) {
+      c.beginPath(); c.moveTo(x, h); c.lineTo(x, h - (major ? 10 : 5)); c.stroke();
+      if (major && Math.abs(x - w / 2) > 30) {
         var card = CARD[bb];
-        c.font = card ? "700 11px U, sans-serif" : "10.5px UC, sans-serif";
+        c.font = card ? "700 12px U, sans-serif" : "11px UC, sans-serif";
         c.fillStyle = card ? "#ff8a1f" : "rgba(255,255,255,.75)";
-        c.fillText(card || String(bb), w - 12, y);
+        c.fillText(card || String(bb), x, 7);
       }
     }
-    // the locked heading on the dial: a white notch at the left edge
+    // the locked heading on the bar: a white notch at the top edge
     if (LOCKHDG !== null) {
-      var lo = adiff(LOCKHDG, val), ly = h / 2 + lo * PX;
+      var lo = adiff(LOCKHDG, val), lx = w / 2 + lo * PX;
       c.fillStyle = "#fff"; c.beginPath();
-      if (Math.abs(lo) * PX < h / 2 - 4) { c.moveTo(0, ly - 6); c.lineTo(8, ly); c.lineTo(0, ly + 6); }
-      else if (lo > 0) { c.moveTo(4, h - 3); c.lineTo(14, h - 3); c.lineTo(9, h - 11); }
-      else { c.moveTo(4, 3); c.lineTo(14, 3); c.lineTo(9, 11); }
+      if (Math.abs(lo) * PX < w / 2 - 4) { c.moveTo(lx - 6, 0); c.lineTo(lx, 8); c.lineTo(lx + 6, 0); }
+      else if (lo > 0) { c.moveTo(w - 3, h / 2 - 6); c.lineTo(w - 11, h / 2); c.lineTo(w - 3, h / 2 + 6); }
+      else { c.moveTo(3, h / 2 - 6); c.lineTo(11, h / 2); c.lineTo(3, h / 2 + 6); }
       c.closePath(); c.fill();
     }
     // centre readout
     var txt = ("00" + Math.round(wrap(val)) % 360).slice(-3);
     c.fillStyle = SEL !== null ? "#ff8a1f" : "#fff";
-    c.fillRect(2, h / 2 - 11, w - 4, 22);
-    c.fillStyle = SEL !== null ? "#1a0d00" : "#15181c"; c.textAlign = "center";
-    c.font = "700 13px UM, monospace"; c.fillText(txt + "°", w / 2, h / 2 + 1);
+    if (c.roundRect) { c.beginPath(); c.roundRect(w / 2 - 28, h / 2 - 12, 56, 24, 6); c.fill(); }
+    else c.fillRect(w / 2 - 28, h / 2 - 12, 56, 24);
+    c.fillStyle = SEL !== null ? "#1a0d00" : "#15181c"; c.textAlign = "center"; c.textBaseline = "middle";
+    c.font = "700 14px UM, monospace"; c.fillText(txt + "°", w / 2, h / 2 + 1);
   }
   function renderTape(now) {
     var dt = tPrev ? Math.min(0.2, (now - tPrev) / 1000) : 0; tPrev = now;

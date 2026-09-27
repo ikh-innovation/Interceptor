@@ -49,7 +49,14 @@ SLOW, DEAD = {"on": False}, {"on": False}
 
 # Each step: JS run in the harness, then a wait (ms).  rep(...) sends a report.
 STEPS = [
-    ("rep({step:'boot', phase:q('#phase').textContent, alt:q('#alt').textContent,"
+    ("rep({step:'boot', phase:d.body.getAttribute('data-phase'), alt:q('#alt').textContent, card:!!q('#hdr')||!!q('#phase')||!!q('#hint'),"
+     " hbL:q('#hbox').getBoundingClientRect().left, hbT:q('#hbox').getBoundingClientRect().top, hbBg:W.getComputedStyle(q('#hbox')).backgroundColor,"
+     " dialBg:W.getComputedStyle(q('#dial')).backgroundColor, dialT:q('#dial').getBoundingClientRect().top,"
+     " dialR:q('#dial').getBoundingClientRect().right, dialW:q('#dial').getBoundingClientRect().width,"
+     " vbB:q('#vbox').getBoundingClientRect().bottom, vbL:q('#vbox').getBoundingClientRect().left,"
+     " lockL:q('#b_lock').getBoundingClientRect().left, lockT:q('#b_lock').getBoundingClientRect().top,"
+     " engL:q('#b_eng').getBoundingClientRect().left, engT:q('#b_eng').getBoundingClientRect().top,"
+     " engR:q('#b_eng').getBoundingClientRect().right, padL:q('.pad').getBoundingClientRect().left,"
      " abort:!!q('#b_abort'), eng:q('#b_eng').className, engtxt:q('#engtxt').textContent,"
      " aimTop:q('#aim').style.top, badge:q('#badge').textContent, ai:q('#c_ai_k').textContent+' '+q('#c_ai').textContent,"
      " aicls:q('#c_ai').className, tgtbtn:!!q('#t_tgt'), engInVid:q('#vbox').contains(q('#b_eng')),"
@@ -80,27 +87,27 @@ STEPS = [
     ("cmds().then(function(c){rep({step:'lock_on', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
      " fetch('/set?phase=HOVER&locked=1&lock_hdg=352');});", 800),
     ("until(function(){return q('#b_lock').classList.contains('on')},3000).then(function(){"
-     " rep({step:'locked', cls:q('#b_lock').className, txt:q('#locktxt').textContent, phase:q('#phase').textContent,"
-     " hint:q('#hint').textContent, pill:q('#c_lock').textContent, pillCls:q('#c_lock').className});"
+     " rep({step:'locked', cls:q('#b_lock').className, txt:q('#locktxt').textContent, phase:d.body.getAttribute('data-phase'),"
+     " pill:q('#c_lock').textContent, pillCls:q('#c_lock').className});"
      " fetch('/reset').then(function(){ pe(q('#b_lock'),'pointerdown'); }); });", 3600),
     ("cmds().then(function(c){rep({step:'lock_off', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
      " fetch('/set?phase=HOVER&locked=0').then(function(){ fetch('/reset'); });});", 400),
     ("until(function(){return !q('#b_lock').classList.contains('on') && !q('#b_yl').disabled},3000);", 3100),
     ("rep({step:'unlocked', pill:q('#c_lock').textContent, pillCls:q('#c_lock').className}); fetch('/reset');", 300),
     # the degree scroll: drag up 60 px in slow steps, lift -> the YES / NO pop-up
-    ("var dl=q('#dial'); pey(dl,'pointerdown',500);"
-     " [1,2,3,4,5,6].forEach(function(k){ setTimeout(function(){ pey(dl,'pointermove',500-10*k); }, 80*k); });"
+    ("var dl=q('#dial'); pey(dl,'pointerdown',300);"
+     " [1,2,3,4,5,6].forEach(function(k){ setTimeout(function(){ pey(dl,'pointermove',300-10*k); }, 80*k); });"
      " setTimeout(function(){ rep({step:'dragging', ask:q('#ask').classList.contains('on'), drag:dl.classList.contains('drag')});"
-     " pey(dl,'pointerup',440); }, 600);", 900),
+     " pey(dl,'pointerup',240); }, 600);", 900),
     ("cmds().then(function(c){ rep({step:'asked', ask:q('#ask').classList.contains('on'), deg:q('#ask_deg').textContent,"
      " sub:q('#ask_sub').textContent, cmds:c}); q('#ask_yes').click(); });", 500),
     ("cmds().then(function(c){rep({step:'ask_yes', ask:q('#ask').classList.contains('on'),"
      " cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})}); return fetch('/reset'); }).then(function(){"
-     " var dl=q('#dial'); pey(dl,'pointerdown',500); setTimeout(function(){ pey(dl,'pointermove',540); },80);"
-     " setTimeout(function(){ pey(dl,'pointermove',580); },160); setTimeout(function(){ pey(dl,'pointerup',580); },240); });", 700),
+     " var dl=q('#dial'); pey(dl,'pointerdown',100); setTimeout(function(){ pey(dl,'pointermove',140); },80);"
+     " setTimeout(function(){ pey(dl,'pointermove',180); },160); setTimeout(function(){ pey(dl,'pointerup',180); },240); });", 700),
     ("rep({step:'asked_down', deg:q('#ask_deg').textContent}); q('#ask_no').click();"
      " setTimeout(function(){ cmds().then(function(c){ rep({step:'ask_no', ask:q('#ask').classList.contains('on'), cmds:c}); fetch('/reset'); }); }, 300);", 700),
-    ("var dl=q('#dial'); pey(dl,'pointerdown',500); pey(dl,'pointerup',500);"
+    ("var dl=q('#dial'); pey(dl,'pointerdown',200); pey(dl,'pointerup',200);"
      " setTimeout(function(){ rep({step:'dial_tap', ask:q('#ask').classList.contains('on')}); }, 200);", 400),
     # TEST: the same screen drives the pretend drone at /sim/...
     ("fetch('/set?phase=HOVER&armed=0').then(function(){ return until(function(){return !q('#t_sim').disabled},3000); })"
@@ -140,9 +147,9 @@ STEPS = [
     ("cmds().then(function(c){rep({step:'engage_tap', n:c.filter(function(x){return x.indexOf('engage=')>=0}).length}); fetch('/reset');});", 300),
     ("fetch('/set?phase=AI&engaged=1');", 100),
     ("until(function(){return q('#b_eng').classList.contains('go')},3000).then(function(){ rep({step:'ai', eng:q('#b_eng').className, engtxt:q('#engtxt').textContent, dis:q('#b_eng').disabled,"
-     " up:q('#b_up').disabled, hdr:q('#hdr').style.background}); fetch('/set?phase=HOVER&engaged=1'); });", 3200),
-    ("until(function(){return q('#phase').textContent!=='AI'},3000);", 3100),
-    ("rep({step:'latched', eng:q('#b_eng').className, dis:q('#b_eng').disabled, hint:q('#hint').textContent});"
+     " up:q('#b_up').disabled}); fetch('/set?phase=HOVER&engaged=1'); });", 3200),
+    ("until(function(){return d.body.getAttribute('data-phase')!=='AI'},3000);", 3100),
+    ("rep({step:'latched', eng:q('#b_eng').className, dis:q('#b_eng').disabled, engtxt:q('#engtxt').textContent});"
      " fetch('/set?phase=HOVER&engaged=0');", 100),
     ("until(function(){return !q('#b_eng').classList.contains('go')},3000);", 3100),
     ("rep({step:'reset', eng:q('#b_eng').className, dis:q('#b_eng').disabled}); q('#t_menu').click(); q('#t_par').click();", 400),
@@ -159,10 +166,10 @@ STEPS = [
      " h:lg.getBoundingClientRect().height, winh:W.innerHeight});"
      " q('#sh_log [data-close]').click(); rep({step:'logclosed', open:q('#sh_log').classList.contains('open')}); q('#sh_menu [data-close]').click();"
      " fetch('/set?phase=PUSH&engaged=1');", 100),
-    ("until(function(){return q('#phase').textContent==='PUSH'},3000).then(function(){"
+    ("until(function(){return d.body.getAttribute('data-phase')==='PUSH'},3000).then(function(){"
      " rep({step:'push', up:q('#b_up').disabled, eng:q('#b_eng').disabled, aimTop:q('#aim').style.top, lockdis:q('#b_lock').disabled});"
-     " rep({step:'push_dial', off:q('#dial').classList.contains('off')}); var dl=q('#dial'); pey(dl,'pointerdown',500);"
-     " pey(dl,'pointermove',400); pey(dl,'pointerup',400); setTimeout(function(){ rep({step:'push_dial2', ask:q('#ask').classList.contains('on')});"
+     " rep({step:'push_dial', off:q('#dial').classList.contains('off')}); var dl=q('#dial'); pey(dl,'pointerdown',300);"
+     " pey(dl,'pointermove',200); pey(dl,'pointerup',200); setTimeout(function(){ rep({step:'push_dial2', ask:q('#ask').classList.contains('on')});"
      " fetch('/set?phase=HOVER&engaged=0'); fetch('/dead?1'); }, 200); });", 4800),
     ("rep({step:'dead', cover:q('#cover').classList.contains('on'), done:1});", 0),
 ]
@@ -171,8 +178,8 @@ function rep(o){fetch('/report?'+encodeURIComponent(JSON.stringify(o)));}
 var f=document.getElementById('f');
 f.onload=function(){ var d=f.contentDocument, W=f.contentWindow, q=function(s){return d.querySelector(s)};
  function pe(el,t){ el.dispatchEvent(new W.PointerEvent(t,{bubbles:true,cancelable:true,pointerId:1,isPrimary:true})); }
- function pey(el,t,y){ var r=el.getBoundingClientRect(); el.dispatchEvent(new W.PointerEvent(t,{bubbles:true,cancelable:true,
-   pointerId:2,isPrimary:true,clientX:r.left+r.width/2,clientY:y})); }
+ function pey(el,t,x){ var r=el.getBoundingClientRect(); el.dispatchEvent(new W.PointerEvent(t,{bubbles:true,cancelable:true,
+   pointerId:2,isPrimary:true,clientX:x,clientY:r.top+r.height/2})); }
  function cmds(){ return fetch('/cmds').then(function(r){return r.json()}); }
  // wait for a CONDITION, not a fixed time: the Jetson running the real tracker
  // next to headless Firefox makes fixed waits flaky
@@ -183,7 +190,7 @@ f.onload=function(){ var d=f.contentDocument, W=f.contentWindow, q=function(s){r
    var w=S[i][1]; i++; setTimeout(go, w); }
  // start only once the page has painted its first /state (fonts etc. can
  // delay it past a fixed wait, which made the boot step flaky)
- (function ready(){ if(q('#phase').textContent !== '--') go(); else setTimeout(ready, 50); })(); };
+ (function ready(){ if(d.body.getAttribute('data-phase')) go(); else setTimeout(ready, 50); })(); };
 </script></body></html>""" % json.dumps(STEPS)).encode()
 
 
@@ -264,29 +271,31 @@ check("the whole page is in English (no Greek letters)",
 check("readiness chip: 'TensorRT 28 fps' in green", b.get("ai", "").startswith("TensorRT 28 fps")
       and "ok" in b.get("aicls", ""), f"{b.get('ai')} [{b.get('aicls')}]")
 check("ENGAGE starts red and says 'ENGAGE'", "go" not in b.get("eng", "go") and "ENGAGE" in b.get("engtxt", ""))
-check("LOCK / ENGAGE sit BESIDE the pad (right of it, level with it), not in the picture",
-      not b.get("engInVid") and b.get("engW", 999) <= 72 and b.get("engRightOfPad") and b.get("engVsPad", 99) <= 12, str(b))
+check("no phase card (no PILOT / HOVER banner, no hint line): the picture gets the room", b.get("card") is False, str(b.get("card")))
+check("LOCK / ENGAGE right of the pad, not in the picture", not b.get("engInVid") and b.get("engW", 999) <= 72 and b.get("engRightOfPad"), str(b))
+check("Game Boy B / A: LOCK lower-left, ENGAGE higher-right",
+      b.get("lockL", 999) < b.get("engL", 0) and b.get("lockT", 0) - b.get("engT", 0) >= 25,
+      str({k: b.get(k) for k in ("lockL", "lockT", "engL", "engT")}))
 check("no message bar and no speed/message buttons under the picture; a ☰ menu top-left",
       b.get("ticker") is False and b.get("tools") is False and b.get("menu") and b.get("menuTL"), str(b))
 check("light theme: light-grey page, black control buttons",
       b.get("bodyBg") == "rgb(236, 238, 241)" and b.get("btnBg") == "rgb(21, 24, 28)", f"{b.get('bodyBg')} / {b.get('btnBg')}")
 check("no HUMAN/DRONE target button (always DRONE)", b.get("tgtbtn") is False)
-check("pad + LOCK/ENGAGE centred as a group (so the pad sits a little left)",
-      b.get("grpC", 99) <= 3 and b.get("padC", 0) > 20, f"group {b.get('grpC')}, pad off-centre {b.get('padC')}")
+check("the pad sits at the left edge, the buttons at the right edge",
+      b.get("padL", 99) <= 16 and b.get("engR", 0) >= 390 - 20, f"pad left {b.get('padL')}, ENGAGE right {b.get('engR')}")
 tp, t3 = R.get("tape", {}), R.get("tape352", {})
 check("compass tape: full width, along the top edge of the picture, ~26 px high",
       abs(tp.get("top", 99)) <= 2 and tp.get("wdiff", 99) <= 3 and 20 <= tp.get("h", 0) <= 30, str(tp))
 check("compass tape draws marks on both sides at 123 deg, and across north at 352 deg",
       min(tp.get("left", 0), tp.get("right", 0), t3.get("left", 0), t3.get("right", 0)) > 25,
       f"{tp} {t3}")
-check("LOCK: a white button of the same size, right above ENGAGE",
-      b.get("lockAbove") and 60 <= b.get("lockW", 0) <= 72 and b.get("lockBg") == "rgb(255, 255, 255)"
-      and b.get("lockTxt") == "LOCK", str({k: b.get(k) for k in ("lockAbove", "lockW", "lockBg", "lockTxt")}))
+check("LOCK: a white button of the same size as ENGAGE",
+      60 <= b.get("lockW", 0) <= 72 and b.get("lockBg") == "rgb(255, 255, 255)"
+      and b.get("lockTxt") == "LOCK", str({k: b.get(k) for k in ("lockW", "lockBg", "lockTxt")}))
 lo, ld, lf = R.get("lock_on", {}), R.get("locked", {}), R.get("lock_off", {})
 check("LOCK pressed: sends lock=on", lo.get("cmds") == ["lock=on"], str(lo))
-check("locked: ring on, shows the heading 352°, card says LOCKED, hint says how to unlock",
-      "on" in ld.get("cls", "") and "352" in ld.get("txt", "") and ld.get("phase") == "LOCKED"
-      and "LOCK again" in ld.get("hint", ""), str(ld))
+check("locked: ring on, shows the heading 352°", "on" in ld.get("cls", "") and "352" in ld.get("txt", "")
+      and ld.get("phase") == "LOCKED", str(ld))
 check("LOCK pressed again: sends lock=off (never a blind toggle)", lf.get("cmds") == ["lock=off"], str(lf))
 check("no vibration anywhere in the page", b"vibrate" not in PAGE)
 check("lock state always on top: 'UNLOCKED' in the top bar, grey",
@@ -296,10 +305,15 @@ check("locked: the top shows 'LOCKED 352°' in orange", "LOCKED 352°" in ld.get
 un = R.get("unlocked", {})
 check("unlocked again: back to 'UNLOCKED'", "UNLOCKED" in un.get("pill", "") and "on" not in un.get("pillCls", "").split(), str(un))
 check("the top bar fits the phone (pill inside the 390 px width)", b.get("pillR", 999) <= 390, str(b.get("pillR")))
-check("degree scroll: RIGHT of the picture, full picture height, active while hovering",
-      b.get("dialL", 0) >= b.get("vbR", 999) and abs(b.get("dialH", 0) - b.get("vbH", 0)) <= 3 and not b.get("dialOff"),
-      str({k: b.get(k) for k in ("dialL", "vbR", "dialH", "vbH", "dialOff")}))
-check("the picture stays 4:3 next to it", abs(b.get("vbW", 0) / max(1, b.get("vbH", 1)) - 4 / 3) < 0.02,
+check("heading bar: BELOW the picture, from its left edge, ~46 px high, active while hovering",
+      b.get("dialT", 0) >= b.get("vbB", 999) and abs(b.get("vbL", 0) - (b.get("dialR", 0) - b.get("dialW", 0))) <= 2
+      and 40 <= b.get("dialH", 0) <= 50 and b.get("dialW", 0) > 180 and not b.get("dialOff"),
+      str({k: b.get(k) for k in ("dialT", "vbB", "vbL", "dialR", "dialW", "dialH", "dialOff")}))
+check("height box: right of the bar, same colour, shows the height (10.2 m)",
+      b.get("hbL", 0) >= b.get("dialR", 999) and abs(b.get("hbT", 0) - b.get("dialT", 0)) <= 2
+      and b.get("hbBg") == b.get("dialBg") and b.get("alt") == "10.2 m",
+      str({k: b.get(k) for k in ("hbL", "dialR", "hbT", "dialT", "hbBg", "dialBg", "alt")}))
+check("the picture stays 4:3", abs(b.get("vbW", 0) / max(1, b.get("vbH", 1)) - 4 / 3) < 0.02,
       f"{b.get('vbW')} x {b.get('vbH')}")
 dg, ak, ay = R.get("dragging", {}), R.get("asked", {}), R.get("ask_yes", {})
 check("while dragging: no pop-up yet, the scroll highlighted", dg.get("ask") is False and dg.get("drag"), str(dg))
@@ -307,7 +321,7 @@ try:
     picked = int(ak.get("deg", "x").rstrip("°"))
 except ValueError:
     picked = None
-check("finger up: the pop-up asks 'LOCK AT <deg>?', dragged UP = more degrees (from 123)",
+check("finger up: the pop-up asks 'LOCK AT <deg>?', dragged LEFT = more degrees (from 123)",
       ak.get("ask") and picked is not None and 130 <= picked <= 160 and "turns" in ak.get("sub", ""), str(ak))
 check("nothing is sent while scrolling or asking", ak.get("cmds") == [], str(ak.get("cmds")))
 check("YES: sends lock=<that heading>, the pop-up closes",
@@ -317,7 +331,7 @@ try:
     down = int(ad.get("deg", "x").rstrip("°"))
 except ValueError:
     down = None
-check("dragged DOWN = fewer degrees", down is not None and 80 <= down < 123, str(ad))
+check("dragged RIGHT = fewer degrees", down is not None and 80 <= down < 123, str(ad))
 check("NO: nothing sent, the pop-up closes", an.get("cmds") == [] and an.get("ask") is False, str(an))
 check("a touch on the scroll without moving asks nothing", R.get("dial_tap", {}).get("ask") is False, str(R.get("dial_tap")))
 check("PUSH: the degree scroll is off and a drag asks nothing",
@@ -333,7 +347,7 @@ check("TEST → START TEST (drone disarmed): allowed; the menu closes, a striped
       R.get("sim_menu", {}).get("dis") is False and so.get("bar") == "flex" and so.get("img") == "hidden"
       and so.get("canv") == "block" and so.get("sheet") is False and len(SIMPOLLS) > 2, f"{so} polls {len(SIMPOLLS)}")
 check("in TEST the buttons go to the pretend drone ONLY (/sim/cmd): LOCK, a gust, the wind",
-      sc.get("cmds") == ["SIM lock=on", "SIM gust=r", "SIM wind=3"], str(sc))
+      sorted(sc.get("cmds", [])) == ["SIM gust=r", "SIM lock=on", "SIM wind=3"], str(sc))   # sent together: any order
 check("EXIT: back to the real drone, the bar gone", sf.get("sim") is False and sf.get("bar") == "none", str(sf))
 check("drone armed: TEST cannot be started", R.get("sim_armed", {}).get("dis") is True, str(R.get("sim_armed")))
 hd = R.get("held", {}).get("cls", "")
@@ -347,12 +361,11 @@ check("holding ⟳ then the page losing focus: release sent, keepalives stop",
       R.get("blur", {}).get("rel") and R.get("after_blur", {}).get("n") == 0, f"{R.get('blur')} {R.get('after_blur')}")
 check("ENGAGE: one quick tap = exactly one engage", R.get("engage_tap", {}).get("n") == 1, str(R.get("engage_tap")))
 a = R.get("ai", {})
-check("AI took over: ENGAGE green 'AI ✓', disabled; manual buttons disabled; header red",
-      "go" in a.get("eng", "") and "AI" in a.get("engtxt", "") and a.get("dis") and a.get("up")
-      and "--ai" in a.get("hdr", ""), str(a))
+check("AI took over: ENGAGE green 'AI ✓', disabled; manual buttons disabled",
+      "go" in a.get("eng", "") and "AI" in a.get("engtxt", "") and a.get("dis") and a.get("up"), str(a))
 l = R.get("latched", {})
-check("after the attempt: still green, still disabled, hint says STAB -> ALT_HOLD",
-      "go" in l.get("eng", "") and l.get("dis") and "STAB" in l.get("hint", ""), str(l))
+check("after the attempt: still green 'DONE ✓', still disabled",
+      "go" in l.get("eng", "") and l.get("dis") and "DONE" in l.get("engtxt", ""), str(l))
 check("pilot STAB -> ALT_HOLD: ENGAGE red and enabled again",
       "go" not in R.get("reset", {}).get("eng", "go") and R.get("reset", {}).get("dis") is False)
 sp = R.get("speeds", {})
