@@ -218,8 +218,8 @@ check("ENGAGE refused while climbing", r.m.request_engage() != "")
 r.run_until(1.0)
 r.mp.pilot.update(pitch=r.mp.phys_to_pwm("pitch", -2.0),
                   roll=r.mp.phys_to_pwm("roll", 3.0))
-check("the shipped default push is SLOW = 20 deg (lower closing speed, more frames)",
-      r.m.level["push"] == "SLOW" and r.m.push_deg() == 20.0)
+check("the shipped default push is MEDIUM = 30 deg (the operator's choice)",
+      r.m.level["push"] == "MEDIUM" and r.m.push_deg() == 30.0)
 r.m.set_level("push", "MEDIUM")
 check("ENGAGE accepted from HOVER", r.m.request_engage() == "")
 o = r.step()
@@ -495,6 +495,75 @@ check("yaw step refused in PUSH", q.m.request_step(1) != "")
 check("ENGAGE refused in PUSH", q.m.request_engage() != "")
 q, _ = in_phase("AI")
 check("holds refused in AI", q.m.request_hold("yawl", "z", q.t) != "")
+
+print("=== A11. LOCK: hold the heading where it was pressed ===")
+
+
+def hdg(r):
+    return math.degrees(r.ctx["att"]["yaw"]) % 360.0
+
+
+def herr(a, b):
+    return (a - b + 180.0) % 360.0 - 180.0
+
+
+r = Rig()
+r.step()                                             # HOVER
+r.ctx["att"]["yaw"] = math.radians(0.0)              # facing north
+check("LOCK accepted while hovering", r.m.request_lock(True) == "")
+r.step()
+check("LOCK on: heading captured, phase still HOVER, yaw channel held at centre",
+      r.m.lock_hdg is not None and abs(herr(r.m.lock_hdg, 0.0)) < 0.1 and r.m.phase == "HOVER"
+      and "yaw" in r.out and abs(phys(r.mp, r.out, "yaw")) < 0.5, f"{r.m.lock_hdg} {r.out}")
+r.ctx["att"]["yaw"] = math.radians(25.0)             # a gust knocks it 25 deg right
+r.step(1)
+turned = phys(r.mp, r.out, "yaw")
+r.run_until(6.0)
+check("knocked 25 deg: it turns back on its own (negative rate) and settles within 1 deg",
+      abs(herr(hdg(r), 0.0)) < 1.0, f"now {hdg(r):.1f} deg")
+peak = []
+r.ctx["att"]["yaw"] = math.radians(-90.0)
+for _ in range(450):                                 # 1 s settle wait + the turn back
+    r.step()
+    peak.append(abs(phys(r.mp, r.out, "yaw")))
+check(f"knocked 90 deg: back without a spin (rate <= {r.m.LOCK_MAX_DPS:.0f} deg/s)",
+      max(peak) <= r.m.LOCK_MAX_DPS + 0.5 and abs(herr(hdg(r), 0.0)) < 1.0,
+      f"peak {max(peak):.1f} deg/s, now {hdg(r):.1f}")
+r.run_until(20.0)
+check("no timeout: 20 s later it still holds the yaw channel (a step gives up at 3 s)",
+      r.m.lock_hdg is not None and "yaw" in r.out)
+r.run_until(1.0, hold="up")
+check("▲ while locked: climbs AND keeps the heading", "throttle" in r.out and "yaw" in r.out
+      and r.m.lock_hdg is not None)
+r.m.request_release("s1"); r.run_until(1.5)
+# a held ⟳ moves the lock
+r.run_until(1.0, hold="yawr", session="s2")
+r.m.request_release("s2"); r.run_until(1.5)
+check("hold ⟳ while locked, let go: re-locked where it stopped (not snapped back)",
+      r.m.lock_hdg is not None and 10.0 < r.m.lock_hdg < 60.0
+      and abs(herr(hdg(r), r.m.lock_hdg)) < 1.0, f"lock {r.m.lock_hdg:.1f}, heading {hdg(r):.1f}")
+before = r.m.lock_hdg
+r.m.request_step(-1); r.run_until(3.0)
+check("a tap ⟲ while locked moves the lock by one step and turns there",
+      abs(herr(r.m.lock_hdg, before - r.m.step_deg())) < 0.1 and abs(herr(hdg(r), r.m.lock_hdg)) < 1.0,
+      f"{before:.1f} -> {r.m.lock_hdg:.1f}, heading {hdg(r):.1f}")
+r.m.request_lock(False); r.run_until(1.0)
+check("LOCK pressed again: off, the yaw channel goes back to the pilot",
+      r.m.lock_hdg is None and "yaw" not in r.out, str(r.out))
+r.m.request_lock(True); r.step()
+r.m.request_engage(); r.step()
+check("ENGAGE clears LOCK (the AI takes the yaw); PUSH starts", r.m.lock_hdg is None and r.m.phase == "PUSH")
+check("LOCK refused during PUSH", r.m.request_lock(True) != "")
+r = Rig(); r.step(); r.m.request_lock(True); r.step()
+r.m.request_abort(); r.step()
+check("ABORT clears LOCK", r.m.lock_hdg is None and r.out == {})
+r.m.request_lock(True); r.step()
+r.ctx["gate_ok"] = False; r.step()
+check("the pilot's mode switch clears LOCK", r.m.lock_hdg is None and r.m.phase == "PILOT")
+r.ctx["gate_ok"] = True; r.step()
+check("...and it does not come back on its own", r.m.lock_hdg is None)
+r = Rig(); r.step(); r.ctx["att"] = None; r.m.request_lock(True); r.step()
+check("no attitude: LOCK refused, nothing driven", r.m.lock_hdg is None and r.out == {})
 
 print("=== B. exact PWM vs ArduPilot 4.6's own decode, this FC ===")
 from fc_control import ArduPilotAcro                               # noqa: E402

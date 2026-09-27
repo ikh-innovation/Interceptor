@@ -9,6 +9,10 @@ FC reports the drone IN THE AIR.  From there the phone drives it:
     CLIMB     while ▲ is HELD: throttle channel only, a slow steady climb.
     DESCEND   while ▼ is HELD: throttle channel only.
     SCOUT     while ⟲ / ⟳ is HELD (or one tap = a small step): yaw only.
+    LOCK      (a flag, not a phase) the heading is held where LOCK was
+              pressed: a closed loop on the FC's yaw, no timeout, against
+              any gust.  ⟲ / ⟳ still work and re-lock where they leave it;
+              ENGAGE, ABORT or the pilot's switch clear it.
     PUSH      ENGAGE: all four channels, a fixed nose-down lean, heading and
               altitude held.  The detector cannot steer yet.
     AI        the existing InterceptLaw (proportional navigation), blended in.
@@ -159,6 +163,30 @@ class Mission:
     STEP_TIMEOUT_S = 3.00
     STEP_KP = 2.5             # deg/s of yaw rate per deg of step error
     STEP_ACCEL = 60.0         # deg/s^2: how fast a step's yaw rate may change
+    # LOCK: the same loop as a step, without the timeout.  Inside the dead band the
+    # command is zero and the FC's own heading hold does the work; outside it
+    # the Jetson closes the loop on ATTITUDE.yaw.  The rate is capped at
+    # LOCK_MAX_DPS whatever the yaw speed level: a gust is corrected
+    # firmly, never with a spin.  See tests/sim_lock_wind.py.
+    LOCK_KP = 2.5             # deg/s of yaw rate per deg of heading error
+    # Dead band WITH hysteresis on a smoothed error: start correcting past
+    # LOCK_DB_ON, stop inside LOCK_DB_OFF.  A single band chattered the stick
+    # ~5 times a second on a 2-deg-noisy heading (tests/test_lock.py 1).
+    LOCK_DB_ON = 1.0          # deg
+    LOCK_DB_OFF = 0.4         # deg
+    LOCK_TAU = 0.20           # s, the error's smoothing
+    # Start a correction only once the heading has SETTLED (yaw rate under
+    # this).  While a gust is still turning it, ArduPilot's own heading hold
+    # is already pulling back; a correction on top is integrated into the
+    # FC's target and overshoots (sim: worst excursion 21 -> 33 deg).  What
+    # the FC cannot fix is settling at a WRONG heading after a gust dragged
+    # its target -- that is what LOCK walks back.
+    LOCK_SETTLED_DPS = 4.0
+    # ...and has STAYED settled this long.  The apex of a gust swing also has
+    # zero yaw rate for an instant; starting there fought the FC's own return
+    # and overshot to the other side (-32 deg in the trace that found it).
+    LOCK_SETTLE_S = 1.0
+    LOCK_MAX_DPS = 30.0
     TARGET_FRESH_S = 0.50     # no REAL detection for this long = target lost
     # A gap in real detections: from YAW_FADE_S the AI's yaw eases to zero by
     # TARGET_FRESH_S, so a target lost off the right edge no longer keeps the
@@ -199,13 +227,21 @@ class Mission:
         self._dead_sessions = set()
         self._released = set()              # sessions whose finger is up
         self._req_step = None               # -1 / +1
+        self._req_lock = None               # True / False, applied by cycle()
+        self.lock_hdg = None                # deg, the heading LOCK holds
+        self._lock_follow = False           # a held ⟲/⟳ is moving the lock
+        self._lock_err = None               # smoothed heading error, deg
+        self._lock_act = False              # correcting (hysteresis state)
+        self._lock_prev = None              # last yaw reading, deg
+        self._lock_rate = 0.0               # smoothed yaw rate, deg/s
+        self._lock_still = 0.0              # s the yaw has been still
         self._req_engage = False
         self._req_abort = False
         self.level = {g: "MEDIUM" for g in GROUPS}
         self.level["vert"] = "SLOW"         # "slowly and as steady as possible"
-        # PUSH 20 deg by default: a lower closing speed leaves the AI more
-        # frames; in the scenarios 20 beat 30 (5 m/s 23 -> 31%, 10 m/s 6 -> 13%).
-        self.level["push"] = "SLOW"
+        # PUSH at MEDIUM (30 deg) by default: the operator's choice
+        # (2026-09-27).  The sims use the same default; tests/sim_sky_wind.py.
+        self.level["push"] = "MEDIUM"
 
         self.phase = "PILOT"
         self.phase_t = 0.0
@@ -270,6 +306,14 @@ class Mission:
             self._req_step = -1 if direction < 0 else +1
         return ""
 
+    def request_lock(self, on):
+        """LOCK on / off from the phone.  Idempotent (on twice = on)."""
+        with self._lock:
+            if on and self.phase not in ("HOVER", "CLIMB", "DESCEND", "SCOUT"):
+                return f"LOCK only while hovering, not during {self.phase}"
+            self._req_lock = bool(on)
+        return ""
+
     def request_engage(self):
         with self._lock:
             if self.engaged:
@@ -325,6 +369,9 @@ class Mission:
         self.log(f"[MISSION] {text}")
 
     def _reset_motion(self):
+        # every path back to "the pilot / nothing driving" clears LOCK:
+        # gate lost, ABORT, soft stop done, and ENGAGE (_start_push) itself
+        self._unlock()
         self._thr.reset(0.0)
         self._yaw.reset(0.0)
         self._thr_on = self._yaw_on = False
@@ -339,6 +386,17 @@ class Mission:
         self._steer_t = None
         self._last_out = {}
         self._floor_noted = False
+
+    def _unlock(self, why=None, now=None):
+        if getattr(self, "lock_hdg", None) is not None and why:
+            self._note(f"LOCK off ({why})", now if now is not None else 0.0)
+        self.lock_hdg = None
+        self._lock_follow = False
+        self._lock_err = None
+        self._lock_act = False
+        self._lock_prev = None
+        self._lock_rate = 0.0
+        self._lock_still = 0.0
 
     def _pilot_value(self, axis):
         """The pilot's own stick on `axis` in physical units, or 0."""
@@ -361,11 +419,13 @@ class Mission:
             step, self._req_step = self._req_step, None
             engage, self._req_engage = self._req_engage, False
             abort, self._req_abort = self._req_abort, False
+            lock_req, self._req_lock = self._req_lock, None
 
         # ── the pilot's gate: always first, always instant ────────────────
         if not ctx.get("gate_ok"):
             if self.phase != "PILOT":
                 self._note(f"PILOT has it: {ctx.get('gate_why') or 'gate'}", now)
+            self._unlock("the pilot has it", now)
             if self.engaged:
                 self.engaged = False
                 self._note("reset: ENGAGE ready again once back in ALT_HOLD", now)
@@ -380,13 +440,17 @@ class Mission:
 
         if abort:
             self._note(f"ABORT from {self.phase}: every channel to the pilot", now)
+            self._unlock("ABORT", now)
             self._set_phase("HOVER", now, "ABORT")
             self._reset_motion()
             return {}
 
         if self.phase in ("HOVER", "CLIMB", "DESCEND", "SCOUT"):
             if engage:
+                self._unlock("ENGAGE: the AI takes the yaw", now)
                 return self._start_push(now, ctx)
+            if lock_req is not None:
+                self._apply_lock(lock_req, ctx, now)
             return self._manual(now, ctx, hold, step)
         if self.phase == "PUSH":
             return self._push_cycle(now, ctx)
@@ -430,13 +494,56 @@ class Mission:
         att = ctx.get("att")
         yaw_deg = None if att is None else math.degrees(att.get("yaw", 0.0))
         want_yaw = 0.0
+        locked = self.lock_hdg is not None
         if axis == "yaw":
             self._step = None
             want_yaw = sign * self.yaw_rate()
+            if locked:
+                self._lock_follow = True        # re-lock wherever it stops
+        elif step and locked:
+            # a tap while locked moves the LOCK itself by one step
+            self.lock_hdg = (self.lock_hdg + step * self.step_deg()) % 360.0
         elif step and yaw_deg is not None:
             self._step = (yaw_deg + step * self.step_deg(), now, step)
         elif step:
             self._refuse("no attitude: no yaw step", now)
+        lock_loop = False
+        if locked and axis != "yaw":
+            if self._lock_follow:
+                # finger up: let the yaw ramp land, then lock where it is
+                if self._yaw.idle(now) and yaw_deg is not None:
+                    self.lock_hdg = yaw_deg % 360.0
+                    self._lock_follow = False
+                    self._lock_err, self._lock_act = None, False
+                    self._note(f"LOCK moved to {self.lock_hdg:.0f} deg", now)
+            elif yaw_deg is None:
+                self._lock_err, self._lock_act = None, False   # no attitude: zero rate
+                self._lock_prev = None
+            else:
+                if self._lock_prev is not None and self._dt > 0:
+                    d = ((yaw_deg - self._lock_prev + 180.0) % 360.0 - 180.0) / self._dt
+                    self._lock_rate += (d - self._lock_rate) * (self._dt / (0.3 + self._dt))
+                self._lock_prev = yaw_deg
+                self._lock_still = (self._lock_still + self._dt
+                                    if abs(self._lock_rate) < self.LOCK_SETTLED_DPS else 0.0)
+                err = (self.lock_hdg - yaw_deg + 180.0) % 360.0 - 180.0
+                f = self._lock_err
+                if f is None or abs(err - f) > 90.0:   # first sample, or a jump
+                    f = err
+                else:
+                    f += (err - f) * (self._dt / (self.LOCK_TAU + self._dt))
+                self._lock_err = f
+                # smoothed error decides WHETHER to correct (no chatter on a
+                # noisy heading); the actual error sets HOW MUCH (no lag, so
+                # no overshoot as it arrives)
+                if abs(f) > self.LOCK_DB_ON and (
+                        self._lock_still >= self.LOCK_SETTLE_S or self._lock_act):
+                    self._lock_act = True
+                if self._lock_act and (abs(err) < self.LOCK_DB_OFF or abs(f) < self.LOCK_DB_OFF):
+                    self._lock_act = False
+                lim = self.LOCK_MAX_DPS
+                want_yaw = max(-lim, min(lim, self.LOCK_KP * err)) if self._lock_act else 0.0
+                lock_loop = True
         if self._step is not None and axis != "yaw":
             tgt, t0, _d = self._step
             err = tgt - yaw_deg if yaw_deg is not None else 0.0
@@ -449,9 +556,10 @@ class Mission:
         if want_yaw != 0.0 and not self._yaw_on:
             self._yaw.reset(self._pilot_value("yaw"))
             self._yaw_on = True
-        if self._step is not None and axis != "yaw":
+        if (self._step is not None or lock_loop) and axis != "yaw":
             # A step's target moves every cycle, and a smoothstep restarted
             # every cycle never leaves its (zero-slope) start.  Rate-limit it.
+            # LOCK's correction is the same kind of command.
             v = self._yaw.value(now)
             d = self.STEP_ACCEL * self._dt
             self._yaw.reset(v + max(-d, min(d, want_yaw - v)))
@@ -462,8 +570,13 @@ class Mission:
         if self._thr_on and self._thr.idle(now) and want_thr == 0.0:
             self._thr_on = False
         if self._yaw_on and self._yaw.idle(now) and want_yaw == 0.0 \
-                and self._step is None:
+                and self._step is None and not locked:
             self._yaw_on = False
+        if locked and not self._yaw_on:
+            # LOCK owns the yaw channel for as long as it is on: centred
+            # (zero rate) inside the dead band, a correction outside it
+            self._yaw.reset(self._pilot_value("yaw"))
+            self._yaw_on = True
 
         out = {}
         if self._thr_on:
@@ -475,12 +588,29 @@ class Mission:
             self._set_phase("CLIMB" if self._thr.target > 0 or
                             (self._thr.target == 0 and self._thr.v0 > 0)
                             else "DESCEND", now)
-        elif self._yaw_on:
+        elif self._yaw_on and (not locked or axis == "yaw"
+                               or self._step is not None or self._lock_follow):
             self._set_phase("SCOUT", now)
         else:
             self._set_phase("HOVER", now)
         self._last_out = out
         return out
+
+    def _apply_lock(self, on, ctx, now):
+        att = ctx.get("att")
+        if not on:
+            self._unlock("LOCK pressed again", now)
+            return
+        if self.lock_hdg is not None:
+            return                  # already locked: lock=on again changes nothing
+        if att is None:
+            self._refuse("no attitude: cannot LOCK", now)
+            return
+        self.lock_hdg = math.degrees(att.get("yaw", 0.0)) % 360.0
+        self._lock_err, self._lock_act = None, False
+        self._lock_follow = False
+        self._step = None
+        self._note(f"LOCK on: heading held at {self.lock_hdg:.0f} deg", now)
 
     def _refuse(self, why, now):
         if self.refusal != why or (now - self.event_t) > 2.0:
@@ -717,4 +847,6 @@ class Mission:
             blending=self.blending(now),
             ai_steering=bool(self._push_steer) or self.phase == "AI",
             engaged=bool(self.engaged),
+            locked=self.lock_hdg is not None,
+            lock_hdg=None if self.lock_hdg is None else round(self.lock_hdg, 1),
             handover=self.last_handover)

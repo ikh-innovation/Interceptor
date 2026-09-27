@@ -1399,7 +1399,7 @@ class DroneTracker:
             m = getattr(self.ap, "mission", None)
             if m is not None:
                 m.set_level("ai", self.mode_name)
-        elif key in ("hold", "release", "step", "engage", "abort", "lvl"):
+        elif key in ("hold", "release", "step", "engage", "abort", "lvl", "lock"):
             return self._mission_command(key, str(value))
         else:
             raise ValueError("unknown command")
@@ -1422,6 +1422,8 @@ class DroneTracker:
             return m.request_step(-1 if value.strip().lower().startswith("l") else 1)
         if key == "engage":
             return m.request_engage()
+        if key == "lock":                   # lock=on | lock=off (idempotent)
+            return m.request_lock(value.strip().lower() in ("1", "on", "true"))
         if key == "abort":
             return m.request_abort()
         # lvl=<group>:<LEVEL>, groups vert / yaw / push / ai

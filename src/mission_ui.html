@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="el"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<meta name="theme-color" content="#0a1628">
+<meta name="theme-color" content="#eceef1">
 <title>WASP</title>
 <style>
   /* The typeface is served by the Jetson itself (/font/...): the field has no
@@ -12,14 +12,16 @@
   @font-face{font-family:"UC";src:url(/font/Ubuntu-C.ttf) format("truetype");font-display:swap}
   @font-face{font-family:"UM";src:url(/font/UbuntuMono-B.ttf) format("truetype");font-display:swap}
 
+  /* light: white / grey surfaces, black controls, orange only as the accent */
   :root{
-    --bg:#0a1628; --bg2:#0f2140; --bg3:#16305a; --line:#23426e;
-    --txt:#ffffff; --dim:#9db2cc; --faint:#5f7a9c;
-    --acc:#ff8a1f; --acc2:#ffad5c; --acc-ink:#1a0d00;
+    --bg:#eceef1; --bg2:#ffffff; --bg3:#f5f6f8; --line:#d5d9df;
+    --txt:#101317; --dim:#56606b; --faint:#8b939d;
+    --ink:#15181c; --ink2:#2a2f36;
+    --acc:#ff7a00; --acc-ink:#1a0d00;
     /* phase colours: the colour IS the phase */
-    --pilot:#34496a; --hover:#1f6fe0; --vert:#0e9f9a; --scout:#7a4fd8;
-    --push:#ff8a1f; --ai:#e5383b; --stop:#d99a00;
-    --ok:#22c55e; --warn:#f5b400; --bad:#ef4444;
+    --pilot:#3a4048; --hover:#15181c; --vert:#2f3540; --scout:#2f3540;
+    --push:#ff7a00; --ai:#d62828; --stop:#e0a400;
+    --ok:#16a34a; --warn:#e8a200; --bad:#dc2626;
     --r:14px;
     --sans:"U",-apple-system,"Segoe UI",Roboto,system-ui,sans-serif;
     --cond:"UC","U","Roboto Condensed","Arial Narrow",sans-serif;
@@ -30,50 +32,54 @@
   html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);overflow:hidden;
     font:15px/1.3 var(--sans)}
   .app{height:100%;display:flex;flex-direction:column;gap:8px;
-       padding:calc(8px + env(safe-area-inset-top)) 12px calc(10px + env(safe-area-inset-bottom));
-       background:radial-gradient(120% 60% at 50% 0%,#12305c 0%,var(--bg) 60%)}
+       padding:calc(8px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom))}
 
-  /* ── top bar ─────────────────────────────────────────────────────────── */
-  .top{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between}
-  .brand{font:700 15px/1 var(--sans);letter-spacing:.22em;color:var(--acc)}
-  .brand span{color:var(--dim);font-weight:500;letter-spacing:.14em;margin-left:6px;font-size:11px}
-  .pill{font:500 11px/1 var(--cond);letter-spacing:.08em;padding:6px 10px;border-radius:999px;
-        border:1px solid var(--line);color:var(--dim);text-transform:uppercase}
+  /* ── top bar: menu, name, who controls ───────────────────────────────── */
+  .top{flex:0 0 auto;display:flex;align-items:center;gap:10px}
+  .burger{flex:0 0 auto;width:42px;height:42px;border-radius:12px;border:1px solid var(--line);background:var(--bg2);
+          display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:0}
+  .burger i{display:block;width:18px;height:2px;border-radius:2px;background:var(--ink)}
+  .brand{flex:1;font:700 15px/1 var(--sans);letter-spacing:.22em;color:var(--ink)}
+  .brand span{color:var(--acc);font-weight:500;letter-spacing:.14em;margin-left:6px;font-size:11px}
+  .pill{font:500 11px/1 var(--cond);letter-spacing:.08em;padding:7px 10px;border-radius:999px;
+        border:1px solid var(--line);background:var(--bg2);color:var(--dim);text-transform:uppercase}
   .pill.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink)}
   .pill.warn{background:var(--warn);border-color:var(--warn);color:#1a1400}
 
   /* ── phase card ──────────────────────────────────────────────────────── */
   /* no colour fade: the phase colour is a safety cue and must change at once */
-  .card{flex:0 0 auto;border-radius:var(--r);padding:11px 14px 10px;background:var(--pilot);
-        box-shadow:0 6px 18px rgba(0,0,0,.35)}
-  .card.ink{color:#140a00}.card.ink .hint,.card.ink .alt .v{color:rgba(20,10,0,.78)}
+  .card{flex:0 0 auto;border-radius:var(--r);padding:11px 14px 10px;background:var(--pilot);color:#fff;
+        box-shadow:0 4px 14px rgba(16,19,23,.18)}
+  .card.ink{color:#140a00}.card.ink .hint,.card.ink .alt .v{color:rgba(20,10,0,.8)}
   .row1{display:flex;align-items:flex-end;gap:12px}
   .phase{font:700 clamp(24px,7.6vw,34px)/1 var(--sans);letter-spacing:.02em;flex:1;min-width:0}
   .alt{text-align:right;line-height:1}
   .alt .h{font:clamp(24px,7.6vw,34px)/1 var(--mono);font-variant-numeric:tabular-nums}
-  .alt .v{font:12px/1.2 var(--mono);color:rgba(255,255,255,.82);margin-top:3px}
+  .alt .v{font:12px/1.2 var(--mono);color:rgba(255,255,255,.8);margin-top:3px}
   .hint{margin-top:6px;font-size:clamp(12.5px,3.5vw,14px);color:rgba(255,255,255,.9);min-height:1.3em}
+  .hint.refuse{color:#ffd0b0;font-weight:500}
+  .card.ink .hint.refuse{color:#5a1a00}
 
   /* ── status tiles ────────────────────────────────────────────────────── */
   .tiles{flex:0 0 auto;display:grid;grid-template-columns:1fr 1.15fr .95fr;gap:6px}
   .tile{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:6px 8px 7px;min-width:0}
   .tile .k{display:block;font:11px/1 var(--cond);letter-spacing:.09em;color:var(--faint);text-transform:uppercase;
            white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .tile .v{display:flex;align-items:center;gap:5px;margin-top:4px;font:500 12.5px/1.1 var(--sans);
+  .tile .v{display:flex;align-items:center;gap:5px;margin-top:4px;font:500 12.5px/1.1 var(--sans);color:var(--txt);
            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
   .tile .v:before{content:"";flex:0 0 6px;height:6px;border-radius:50%;background:var(--faint)}
-  .tile .v.ok:before{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+  .tile .v.ok:before{background:var(--ok)}
   .tile .v.warn:before{background:var(--warn)}
-  .tile .v.bad:before{background:var(--bad);box-shadow:0 0 6px var(--bad)}
-  .tile .v.bad{color:#ffb4b4}
-  .tile .v.on:before{background:var(--acc);box-shadow:0 0 6px var(--acc)}
+  .tile .v.bad:before{background:var(--bad)}
+  .tile .v.bad{color:var(--bad)}
+  .tile .v.on:before{background:var(--acc)}
 
-  /* ── video + overlays ────────────────────────────────────────────────── */
+  /* ── video + overlays (overlays stay dark: they sit on the picture) ──── */
   .vidwrap{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center}
   /* 4:3, the camera's true shape (mode 3, 1280x960).  The overlay maths is
      proportional to the box, so it stays exact at any size. */
   .vbox{position:relative;height:100%;max-width:100%;aspect-ratio:4/3;border-radius:var(--r);overflow:hidden;
-        background:#000;border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.45)}
+        background:#000;border:1px solid var(--line);box-shadow:0 4px 16px rgba(16,19,23,.2)}
   .vbox img{width:100%;height:100%;display:block;object-fit:fill}
   /* the aim indication: an ARC from the bottom-left corner, over the aim
      point, down to the bottom-right corner.  Its apex sits where the top of
@@ -82,103 +88,109 @@
      below), so the arc turns green exactly when it used to. */
   .arc{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
   .arc path{fill:none;vector-effect:non-scaling-stroke;stroke-linecap:round}
-  .arc .sh{stroke:rgba(0,0,0,.55);stroke-width:7}
-  .arc .fg{stroke:var(--acc);stroke-width:3.5}
-  .arc.good .fg{stroke:var(--ok)}
-  .aim{position:absolute;width:10px;height:10px;transform:translate(-50%,-50%);border-radius:50%;
-       background:var(--acc);box-shadow:0 0 0 2px rgba(0,0,0,.55);pointer-events:none}
-  .aim.good{background:var(--ok)}
+  /* subtle on purpose: a dashed guide, not a target ring */
+  .arc .sh{stroke:rgba(0,0,0,.3);stroke-width:3.5;stroke-dasharray:7 6}
+  .arc .fg{stroke:var(--acc);stroke-width:1.8;stroke-dasharray:7 6;opacity:.85}
+  .arc.good .fg{stroke:#22c55e;opacity:.95}
+  .aim{position:absolute;width:7px;height:7px;transform:translate(-50%,-50%);border-radius:50%;
+       background:var(--acc);box-shadow:0 0 0 1.5px rgba(0,0,0,.45);pointer-events:none;opacity:.9}
+  .aim.good{background:#22c55e}
   /* compass tape across the top of the picture.  Its width IS the camera's
      horizontal FOV, so a bearing on the tape sits over the picture's pixels
      that face it.  Heading from the FC (VFR_HUD), eased between polls. */
   .tape{position:absolute;left:0;top:0;width:100%;height:26px;display:block;pointer-events:none;
-        background:linear-gradient(180deg,rgba(10,22,40,.88),rgba(10,22,40,.62));border-bottom:1px solid rgba(255,255,255,.12)}
-  .tgt{position:absolute;width:8%;aspect-ratio:1/1;transform:translate(-50%,-50%);border:2px solid #fff;
-       border-radius:4px;box-shadow:0 0 0 2px rgba(0,0,0,.6);pointer-events:none;display:none}
+        background:linear-gradient(180deg,rgba(12,14,17,.85),rgba(12,14,17,.55));border-bottom:1px solid rgba(255,255,255,.12)}
+  .tgt{position:absolute;width:7%;aspect-ratio:1/1;transform:translate(-50%,-50%);border:1.5px solid rgba(255,255,255,.75);
+       border-radius:3px;box-shadow:0 0 0 1px rgba(0,0,0,.3);pointer-events:none;display:none}
   .badge{position:absolute;left:50%;top:34px;transform:translateX(-50%);padding:5px 12px;border-radius:999px;
-         font:500 13px/1.2 var(--sans);background:rgba(10,22,40,.78);border:1px solid rgba(255,255,255,.15);
-         white-space:nowrap;backdrop-filter:blur(4px)}
-  .badge.good{background:var(--ok);border-color:var(--ok);color:#03220f}
-  .offs{position:absolute;left:8px;bottom:8px;background:rgba(10,22,40,.78);padding:4px 8px;border-radius:8px;
-        font:12px/1 var(--mono);color:var(--dim)}
-  /* ENGAGE: a small red button inside the picture, bottom right */
-  .eng{position:absolute;right:10px;bottom:10px;width:66px;height:66px;border-radius:50%;padding:0;
-       border:3px solid rgba(255,255,255,.9);background:#d32f2f;color:#fff;overflow:hidden;touch-action:none;
-       box-shadow:0 0 0 3px rgba(211,47,47,.35),0 6px 14px rgba(0,0,0,.5);font:700 10.5px/1.15 var(--sans);letter-spacing:.06em}
-  .eng .fill{position:absolute;inset:0;background:#fff;opacity:0;transition:opacity .18s}
-  .eng span{position:relative;display:block}
-  .eng.push{background:var(--acc);color:var(--acc-ink);border-color:#fff}
-  .eng.go{background:#16a34a;border-color:#fff;box-shadow:0 0 0 3px rgba(34,197,94,.35),0 6px 14px rgba(0,0,0,.5)}
-  .eng.go:disabled{opacity:1}
-  .eng:disabled{opacity:.35;filter:grayscale(.6)}
+         font:500 13px/1.2 var(--sans);color:#fff;background:rgba(12,14,17,.78);border:1px solid rgba(255,255,255,.15);
+         white-space:nowrap}
+  .badge.good{background:#22c55e;border-color:#22c55e;color:#03220f}
+  .offs{position:absolute;left:8px;bottom:8px;background:rgba(12,14,17,.78);padding:4px 8px;border-radius:8px;
+        font:12px/1 var(--mono);color:#cfd5dc}
 
-  /* ── message line ────────────────────────────────────────────────────── */
-  .ticker{flex:0 0 auto;display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;border-radius:10px;
-          background:var(--bg2);border:1px solid var(--line);font:12px/1 var(--mono);color:var(--dim)}
-  .ticker .tx{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .ticker .more{font:11px/1 var(--cond);letter-spacing:.08em;color:var(--acc)}
-  .ticker.refuse .tx{color:#ffb38a}
-
-  /* ── D-pad, centred ──────────────────────────────────────────────────── */
-  .ctl{flex:0 0 auto;display:flex;justify-content:center}
-  .pad{display:grid;grid-template-columns:repeat(3,clamp(76px,23vw,96px));gap:7px}
+  /* ── controls: the pad a little left of centre, LOCK / ENGAGE beside it ─ */
+  .ctl{flex:0 0 auto;display:flex;justify-content:center;align-items:center;gap:16px}
+  .pad{display:grid;grid-template-columns:repeat(3,clamp(64px,19vw,84px));gap:7px}
   .pad .mid{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
-            font:12px/1.35 var(--mono);color:var(--dim);white-space:pre-line}
-  .btn{border:1px solid var(--line);border-radius:var(--r);background:linear-gradient(180deg,var(--bg3),var(--bg2));
-       color:#fff;font:700 clamp(22px,6.6vw,28px)/1 var(--sans);height:clamp(54px,7.4vh,66px);touch-action:none;
-       position:relative;padding:0 0 12px}
-  .btn small{position:absolute;left:0;right:0;bottom:6px;font:10px/1 var(--cond);letter-spacing:.1em;color:var(--dim)}
-  .btn.held{background:var(--acc);border-color:var(--acc);color:var(--acc-ink)}.btn.held small{color:var(--acc-ink)}
-  .btn:disabled{opacity:.3}
-
-  /* ── tools ───────────────────────────────────────────────────────────── */
-  .tools{flex:0 0 auto;display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  .tools button{border:1px solid var(--line);background:transparent;color:var(--txt);border-radius:10px;
-                padding:11px 4px;font:500 12px/1 var(--cond);letter-spacing:.12em}
-  .tools button:active{background:var(--bg2)}
+            font:11.5px/1.35 var(--mono);color:var(--dim);white-space:pre-line}
+  .btn{border:0;border-radius:var(--r);background:var(--ink);color:#fff;
+       font:700 clamp(22px,6.4vw,27px)/1 var(--sans);height:clamp(54px,7.4vh,64px);touch-action:none;
+       position:relative;padding:0 0 12px;box-shadow:0 2px 6px rgba(16,19,23,.25);transition:transform .06s}
+  .btn small{position:absolute;left:0;right:0;bottom:6px;font:10px/1 var(--cond);letter-spacing:.1em;color:#aeb5bd}
+  /* HELD = orange at once; SENDING (the Jetson accepted a keepalive) = a
+     pulsing ring too, so what the drone is being told is visible */
+  .btn.held{background:var(--acc);color:var(--acc-ink);transform:scale(.96)}
+  .btn.held small{color:var(--acc-ink)}
+  .btn.held.tx{animation:tx .6s ease-in-out infinite alternate}
+  @keyframes tx{from{box-shadow:0 0 0 3px rgba(255,122,0,.55)}to{box-shadow:0 0 0 7px rgba(255,122,0,.18)}}
+  .btn.refused{background:var(--bad);color:#fff}
+  .btn:disabled{opacity:.28}
+  .acts{display:flex;flex-direction:column;gap:12px}
+  .rbtn{width:66px;height:66px;border-radius:50%;padding:0;touch-action:none;position:relative;overflow:hidden;
+        font:700 10.5px/1.15 var(--sans);letter-spacing:.06em}
+  /* LOCK: white, black ring.  On = orange ring + the heading */
+  .lock{background:#fff;color:var(--ink);border:3px solid var(--ink);box-shadow:0 2px 6px rgba(16,19,23,.2)}
+  .lock small{display:block;font:11px/1.1 var(--mono);letter-spacing:0;color:var(--acc);margin-top:2px}
+  .lock.on{border-color:var(--acc);box-shadow:0 0 0 4px rgba(255,122,0,.45)}
+  /* ENGAGE: red */
+  .eng{border:3px solid #fff;background:#d62828;color:#fff;box-shadow:0 0 0 2px #d62828,0 3px 8px rgba(16,19,23,.3)}
+  .eng .fill{position:absolute;inset:0;background:#fff;opacity:0;transition:opacity .18s}
+  .eng span,.lock span{position:relative;display:block}
+  .eng.push{background:var(--acc);color:var(--acc-ink);box-shadow:0 0 0 2px var(--acc)}
+  .eng.go{background:var(--ok);box-shadow:0 0 0 2px var(--ok)}
+  .eng.go:disabled{opacity:1}
+  .rbtn:disabled{opacity:.3}
 
   /* ── full-screen pages with a big ✕ (never pop-ups) ─────────────────── */
   .sheet{position:fixed;inset:0;z-index:7;display:none;flex-direction:column;background:var(--bg);
          padding:calc(12px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom))}
   .sheet.open{display:flex}
+  #sh_log{z-index:8}
   .sheet h3{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;margin:0 0 14px;
-            font:700 20px/1 var(--sans);letter-spacing:.14em;color:var(--txt)}
+            font:700 20px/1 var(--sans);letter-spacing:.14em;color:var(--ink)}
   .sheet h3 small{display:block;font:11px/1 var(--cond);letter-spacing:.1em;color:var(--faint);margin-top:6px}
   .sheet h3 button{width:52px;height:52px;border-radius:14px;border:1px solid var(--line);background:var(--bg2);
-                   color:#fff;font-size:26px;line-height:1}
+                   color:var(--ink);font-size:26px;line-height:1}
   .sheet .body{flex:1;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch}
-  .grp{margin:0 0 20px}.grp .lbl{font:12px/1 var(--cond);color:var(--dim);letter-spacing:.1em;margin-bottom:8px}
-  .seg{display:flex;gap:7px}.seg button{flex:1;border:1px solid var(--line);background:var(--bg2);color:var(--dim);
+  .sec{font:12px/1 var(--cond);letter-spacing:.14em;color:var(--faint);margin:4px 0 12px}
+  .grp{margin:0 0 18px}.grp .lbl{font:12px/1 var(--cond);color:var(--dim);letter-spacing:.1em;margin-bottom:8px}
+  .seg{display:flex;gap:7px}.seg button{flex:1;border:1px solid var(--line);background:var(--bg2);color:var(--ink);
        border-radius:12px;padding:16px 2px 12px;font:700 15px/1 var(--sans);letter-spacing:.04em}
   .seg button i{display:block;font:normal 11px/1 var(--mono);color:var(--faint);margin-top:6px}
   .seg button.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink)}.seg button.on i{color:var(--acc-ink)}
-  .log{font:12px/1.4 var(--mono);white-space:pre-wrap;word-break:break-word;color:#d6e2f0;-webkit-user-select:text;user-select:text}
-  .log .ln{padding:5px 0;border-bottom:1px solid #16294a}.log .t{color:var(--faint)}
-  .log .m{color:#8cc8ff}.log .r{color:#ffb38a}.log .e{color:#ff7b7b}
+  .row{display:flex;justify-content:space-between;align-items:center;width:100%;margin-top:6px;padding:16px;border-radius:12px;
+       border:1px solid var(--line);background:var(--bg2);color:var(--ink);font:700 15px/1 var(--sans);letter-spacing:.1em}
+  .row span{color:var(--faint);font-size:20px}
+  .log{font:12px/1.45 var(--mono);white-space:pre-wrap;word-break:break-word;color:#1d2229;-webkit-user-select:text;user-select:text}
+  .log .ln{padding:6px 0;border-bottom:1px solid var(--line)}.log .t{color:var(--faint)}
+  .log .m{color:#1f4f99}.log .r{color:#b44a00}.log .e{color:var(--bad)}
 
   .cover{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;
-         background:rgba(150,20,24,.94);z-index:9;text-align:center;padding:24px}
+         background:rgba(170,20,24,.95);color:#fff;z-index:9;text-align:center;padding:24px}
   .cover.on{display:flex}.cover b{font:700 26px/1.2 var(--sans);letter-spacing:.06em}.cover p{font-size:15px;max-width:22em;opacity:.92}
-  .pin{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(6,14,28,.94);z-index:8}
-  .pin.on{display:flex}.pin > div{background:var(--bg2);border:1px solid var(--line);padding:20px;border-radius:16px;width:84%;max-width:330px}
-  .pin .ttl{font:700 16px/1 var(--sans);letter-spacing:.12em;margin-bottom:12px}
-  .pin input{width:100%;font:28px/1 var(--mono);padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:#fff;
+  .pin{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(236,238,241,.96);z-index:8}
+  .pin.on{display:flex}.pin > div{background:var(--bg2);border:1px solid var(--line);padding:20px;border-radius:16px;width:84%;max-width:330px;
+         box-shadow:0 8px 30px rgba(16,19,23,.15)}
+  .pin .ttl{font:700 16px/1 var(--sans);letter-spacing:.12em;margin-bottom:12px;color:var(--ink)}
+  .pin input{width:100%;font:28px/1 var(--mono);padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg3);color:var(--ink);
              text-align:center;letter-spacing:.3em;-webkit-user-select:text;user-select:text}
+  .pin button{margin-top:10px;width:100%;padding:13px;font:700 15px/1 var(--sans);letter-spacing:.1em;border-radius:10px;border:0}
   /* smaller phones: give the picture the room, keep every word whole */
   @media (max-height:780px){
     .app{gap:6px}.card{padding:8px 12px}.phase,.alt .h{font-size:26px}
     .hint{font-size:12px;margin-top:4px}.tile{padding:5px 7px 6px}
-    .btn{height:48px;padding-bottom:11px}.btn small{bottom:5px}.tools button{padding:9px 4px}.ticker{height:30px}
+    .btn{height:50px;padding-bottom:11px}.btn small{bottom:5px}.rbtn{width:60px;height:60px}.acts{gap:10px}
   }
   @media (max-width:370px){
-    .app{padding-left:10px;padding-right:10px}.tiles{gap:5px}
+    .app{padding-left:10px;padding-right:10px}.tiles{gap:5px}.ctl{gap:12px}
     .tile .v{font-size:11.5px}.tile .k{font-size:10px;letter-spacing:.06em}
   }
-  .pin button{margin-top:10px;width:100%;padding:13px;font:700 15px/1 var(--sans);letter-spacing:.1em;border-radius:10px;border:0}
 </style></head>
 <body><div class="app">
 
   <div class="top">
+    <button class="burger" id="t_menu" aria-label="ρυθμίσεις"><i></i><i></i><i></i></button>
     <div class="brand">WASP<span>INTERCEPTOR</span></div>
     <span class="pill" id="c_ctl">--</span>
   </div>
@@ -208,10 +220,7 @@
     <canvas class="tape" id="tape"></canvas>
     <div class="badge" id="badge" style="display:none"></div>
     <div class="offs" id="offs" style="display:none"></div>
-    <button class="eng" id="b_eng" aria-label="ENGAGE"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE</span></button>
   </div></div>
-
-  <div class="ticker" id="ticker"><span class="tx" id="ticktx">—</span><span class="more">ΟΛΑ ›</span></div>
 
   <div class="ctl">
     <div class="pad">
@@ -225,21 +234,23 @@
       <button class="btn" id="b_dn" data-hold="down">▼<small>ΚΑΘΟΔΟΣ</small></button>
       <div></div>
     </div>
-  </div>
-
-  <div class="tools">
-    <button id="t_speed">ΤΑΧΥΤΗΤΕΣ</button>
-    <button id="t_log">ΜΗΝΥΜΑΤΑ</button>
+    <div class="acts">
+      <button class="rbtn lock" id="b_lock" aria-label="LOCK"><span id="locktxt">LOCK</span></button>
+      <button class="rbtn eng" id="b_eng" aria-label="ENGAGE"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE</span></button>
+    </div>
   </div>
 </div>
 
 <div class="sheet" id="sh_speed">
-  <h3><span>ΤΑΧΥΤΗΤΕΣ<small>ΙΣΧΥΟΥΝ ΑΜΕΣΩΣ</small></span><button data-close aria-label="κλείσιμο">&#x2715;</button></h3>
+  <h3><span>ΡΥΘΜΙΣΕΙΣ<small>ΙΣΧΥΟΥΝ ΑΜΕΣΩΣ</small></span><button data-close aria-label="κλείσιμο">&#x2715;</button></h3>
   <div class="body">
+    <div class="sec">ΤΑΧΥΤΗΤΕΣ</div>
     <div class="grp"><div class="lbl">▲▼ ΥΨΟΣ — ανάβαση / κάθοδος</div><div class="seg" data-g="vert"></div></div>
     <div class="grp"><div class="lbl">⟲⟳ ΣΤΡΟΦΗ — κράτημα / ένα άγγιγμα</div><div class="seg" data-g="yaw"></div></div>
     <div class="grp"><div class="lbl">ΩΘΗΣΗ — κλίση μπροστά</div><div class="seg" data-g="push"></div></div>
     <div class="grp"><div class="lbl">AI — προσέγγιση</div><div class="seg" data-g="ai"></div></div>
+    <div class="sec" style="margin-top:22px">ΚΑΤΑΓΡΑΦΗ</div>
+    <button class="row" id="t_log">ΜΗΝΥΜΑΤΑ <span>›</span></button>
   </div>
 </div>
 <div class="sheet" id="sh_log">
@@ -253,7 +264,7 @@
   <div class="ttl">ΚΩΔΙΚΟΣ ΧΕΙΡΙΣΤΗ</div>
   <input id="pin_in" inputmode="numeric" autocomplete="off">
   <button id="pin_ok" style="background:var(--acc);color:var(--acc-ink)">ΕΛΕΓΧΟΣ</button>
-  <button id="pin_view" style="background:var(--bg3);color:#fff">ΜΟΝΟ ΠΡΟΒΟΛΗ</button>
+  <button id="pin_view" style="background:var(--ink);color:#fff">ΜΟΝΟ ΠΡΟΒΟΛΗ</button>
 </div></div>
 
 <script>
@@ -285,17 +296,21 @@
     STOP:    {t: "ΣΤΑΜΑΤΑ",   c: "var(--stop)",  h: "Ομαλή επαναφορά σε αιώρηση.", ink: true}
   };
   var LEVELS = ["SLOW", "MEDIUM", "FAST"];
-  var LAST = null, lastOk = 0, consoleSeq = 0, HDG = null;
+  var LAST = null, lastOk = 0, consoleSeq = 0, HDG = null, LOCKHDG = null;
 
   // ── transport: polls may be skipped, commands never ────────────────────
   var polling = false;
   function poll() {
     if (polling) return;
     polling = true;
-    fetch("/state?c=" + C, {cache: "no-store"}).then(function (r) {
+    // a poll that hangs on field WiFi must not freeze the screen: give up
+    // after 1.2 s and ask again (the red cover still shows a dead link)
+    var ac = window.AbortController ? new AbortController() : null;
+    var to = ac ? setTimeout(function () { ac.abort(); }, 1200) : null;
+    fetch("/state?c=" + C, {cache: "no-store", signal: ac ? ac.signal : undefined}).then(function (r) {
       if (!r.ok) throw new Error(r.status); return r.json();
     }).then(function (j) { lastOk = Date.now(); paint(j); })
-      .catch(function () {}).then(function () { polling = false; });
+      .catch(function () {}).then(function () { clearTimeout(to); polling = false; });
   }
   function cmd(q, quiet) {
     if (VIEW) { if (!quiet) note("μόνο προβολή: βάλε κωδικό", true); return Promise.resolve(null); }
@@ -311,7 +326,14 @@
   }
   // Messages never pop up: one line under the picture, the full list on its
   // own full-screen page (ΜΗΝΥΜΑΤΑ).
-  function note(s, bad) { T("ticktx", s); $("ticker").className = "ticker" + (bad ? " refuse" : ""); }
+  // No message bar: a refusal shows in the phase card's hint for 4 s (never
+  // a pop-up); everything else is in ☰ → ΜΗΝΥΜΑΤΑ.
+  var NOTE = null;
+  function note(s, bad) {
+    if (!bad) return;
+    NOTE = {s: s, until: Date.now() + 4000};
+    T("hint", s); $("hint").className = "hint refuse";
+  }
 
   // ── hold-to-move: keepalives every 100 ms while the finger is down ─────
   // Up to 3 in flight, not 1: with one, a single slow request over field WiFi
@@ -329,12 +351,17 @@
       var s = st; cmd("hold=" + kind + ":" + s.session, true).then(function (j) {
         s.inflight--;
         if (j && j.refused && !s.warned) { s.warned = true; note("✗ " + j.refused, true); }
+        // the button shows what the drone is really being told
+        if (st === s) {
+          el.classList.toggle("tx", !!(j && !j.refused));
+          el.classList.toggle("refused", !!(j && j.refused));
+        }
       });
     }
     function start() { if (!st) return; st.live = true; send(); st.timer = setInterval(send, 100); }
     function end(ev) {
       if (!st) return;
-      var s = st; st = null; el.classList.remove("held");
+      var s = st; st = null; el.classList.remove("held", "tx", "refused");
       clearTimeout(s.delay); clearInterval(s.timer);
       if (s.live) cmd("release=" + s.session, true);
       else if (tap && ev !== "lost") cmd("step=" + tap);
@@ -370,15 +397,26 @@
     cmd("engage=1");
   });
 
+  // ── LOCK: hold the heading where it is.  lock=on / lock=off, never a blind
+  // toggle, so a retried request cannot undo itself. ──────────────────────
+  $("b_lock").addEventListener("pointerdown", function (e) {
+    var el = $("b_lock");
+    if (el.disabled) return;
+    e.preventDefault();
+    if (navigator.vibrate) navigator.vibrate(40);
+    var on = !(LAST && LAST.mission && LAST.mission.locked);
+    cmd("lock=" + (on ? "on" : "off"));
+  });
+
   // ── full-screen pages ──────────────────────────────────────────────────
+  // ☰ opens ΡΥΘΜΙΣΕΙΣ (speeds); ΜΗΝΥΜΑΤΑ opens on top of it, ✕ goes back
   function openSheet(id) {
     releaseAll();
-    ["sh_speed", "sh_log"].forEach(function (s) { $(s).classList.toggle("open", s === id); });
+    $(id).classList.add("open");
     if (id === "sh_log") { var B = $("logbody"); B.scrollTop = B.scrollHeight; }
   }
-  $("t_speed").onclick = function () { openSheet("sh_speed"); };
+  $("t_menu").onclick = function () { openSheet("sh_speed"); };
   $("t_log").onclick = function () { openSheet("sh_log"); };
-  $("ticker").onclick = function () { openSheet("sh_log"); };
   document.querySelectorAll("[data-close]").forEach(function (b) {
     b.onclick = function () { b.closest(".sheet").classList.remove("open"); };
   });
@@ -412,8 +450,15 @@
       hint = "ΩΘΗΣΗ " + fmt(m.speeds && m.speeds.push, 0) + "° · " + fmt(m.push_s, 1) + " s · AI μόλις δει στόχο ≥ " + fmt(m.min_conf, 2);
     if (ph === "PILOT" && j.mission && m.gate_why) hint = "Ο πιλότος έχει τον έλεγχο (" + m.gate_why + ").";
     if ((ph === "HOVER" || ph === "SCOUT") && m.engaged) hint = "Έγινε μία προσπάθεια. Για νέα: ο πιλότος STAB → ALT_HOLD.";
+    var locked = !!m.locked;
+    LOCKHDG = locked && m.lock_hdg !== null && m.lock_hdg !== undefined ? Number(m.lock_hdg) : null;
+    if (locked && (ph === "HOVER" || ph === "CLIMB" || ph === "DESCEND")) {
+      if (ph === "HOVER") T("phase", "ΚΛΕΙΔΩΜΑ");
+      hint = "Κρατά κατεύθυνση " + fmt(m.lock_hdg, 0) + "° μόνο του, και με αέρα. ENGAGE όταν θέλεις · LOCK ξανά = ξεκλείδωμα.";
+    }
     if (!j.mission || m.app === "auto") hint = "Η εφαρμογή αποστολής δεν τρέχει (WASP_APP).";
-    T("hint", hint);
+    if (NOTE && Date.now() < NOTE.until) { T("hint", NOTE.s); $("hint").className = "hint refuse"; }
+    else { NOTE = null; T("hint", hint); $("hint").className = "hint"; }
     T("alt", m.height_m === null || m.height_m === undefined ? "-- m" : fmt(m.height_m, 1) + " m");
     T("vs", m.climb_mps === null || m.climb_mps === undefined ? "ύψος άγνωστο"
         : (m.climb_mps >= 0 ? "↑ " : "↓ ") + fmt(Math.abs(m.climb_mps), 1) + " m/s");
@@ -447,10 +492,15 @@
     // ENGAGE: red = ready; orange = pushing; green = the AI has (or had) the
     // drone, until the pilot's STAB -> ALT_HOLD resets it for the next try.
     var eng = $("b_eng"), done = !!m.engaged || !!m.ai_steering;
-    eng.className = "eng" + (done ? " go" : ph === "PUSH" ? " push" : "");
+    eng.className = "rbtn eng" + (done ? " go" : ph === "PUSH" ? " push" : "");
     eng.disabled = done || !((ph === "HOVER" || ph === "SCOUT") && !VIEW && ctl !== "other");
     $("engtxt").innerHTML = !done ? (ph === "PUSH" ? "ΩΘΗΣΗ" : "ENGAGE")
       : (ph === "AI" || ph === "PUSH") ? "AI ✓" : "ΕΓΙΝΕ ✓";
+
+    var lk = $("b_lock");
+    lk.className = "rbtn lock" + (locked ? " on" : "");
+    lk.disabled = !(["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other");
+    $("locktxt").innerHTML = locked ? "LOCK<small>" + ("00" + Math.round(Number(m.lock_hdg)) % 360).slice(-3) + "°</small>" : "LOCK";
 
     // aim mark: where the target must sit NOW so it is centred once leaning
     TILT = (j.tilt_deg !== undefined && j.tilt_deg !== null) ? j.tilt_deg : TILT;
@@ -491,7 +541,9 @@
     var val = {vert: function (L) { return {SLOW: "1 / 0.5", MEDIUM: "3 / 1.5", FAST: "8 / 2.5"}[L] + " m/s"; },
                yaw: function (L) { return {SLOW: "10°/s · 2°", MEDIUM: "20°/s · 5°", FAST: "45°/s · 10°"}[L]; },
                push: function (L) { return {SLOW: "20°", MEDIUM: "30°", FAST: "40°"}[L]; },
-               ai: function (L) { return {SLOW: "ήπια", MEDIUM: "κανονικά", FAST: "γρήγορα"}[L]; }};
+               // cruise speed at the profile's max lean (tracker MODES 12/20/22 deg,
+               // ~15 m/s at 20 deg as in flight_config's cruise_mps), and the climb ceiling
+               ai: function (L) { return {SLOW: "≈11 m/s ↑8", MEDIUM: "≈15 m/s ↑15", FAST: "≈16 m/s ↑25"}[L]; }};
     document.querySelectorAll(".seg").forEach(function (seg) {
       var g = seg.getAttribute("data-g");
       seg.querySelectorAll("button").forEach(function (b) {
@@ -539,7 +591,7 @@
     else hdgDisp = wrap(hdgDisp + adiff(HDG, hdgDisp) * (1 - Math.exp(-dt / 0.12)));
     var dpr = window.devicePixelRatio || 1, w = tape.clientWidth, h = tape.clientHeight;
     // redraw only when something moved: an idle tape costs the phone nothing
-    var key = (hdgDisp === null ? "n" : hdgDisp.toFixed(2)) + "|" + w + "|" + h + "|" + dpr;
+    var key = (hdgDisp === null ? "n" : hdgDisp.toFixed(2)) + "|" + w + "|" + h + "|" + dpr + "|" + LOCKHDG;
     if (key === lastKey) return;
     lastKey = key;
     if (tape.width !== Math.round(w * dpr) || tape.height !== Math.round(h * dpr)) {
@@ -563,6 +615,18 @@
           c.fillText(card || String(bb), x, 3);
         }
       }
+    }
+    // the LOCKed heading: a white marker on the tape, or an arrow at the edge
+    if (hdgDisp !== null && LOCKHDG !== null) {
+      var lo = adiff(LOCKHDG, hdgDisp);
+      c.fillStyle = "#ffffff"; c.strokeStyle = "rgba(0,0,0,.6)"; c.lineWidth = 1;
+      c.beginPath();
+      if (Math.abs(lo) <= HFOV / 2) {
+        var lx = w * (0.5 + 0.5 * Math.tan(lo * Math.PI / 180) / half);
+        c.moveTo(lx - 6, h); c.lineTo(lx + 6, h); c.lineTo(lx, h - 9);
+      } else if (lo > 0) { c.moveTo(w - 2, h / 2); c.lineTo(w - 11, h / 2 - 6); c.lineTo(w - 11, h / 2 + 6); }
+      else { c.moveTo(2, h / 2); c.lineTo(11, h / 2 - 6); c.lineTo(11, h / 2 + 6); }
+      c.closePath(); c.fill(); c.stroke();
     }
     // centre: pointer + readout
     var txt = hdgDisp === null ? "---°" : ("00" + Math.round(wrap(hdgDisp)) % 360).slice(-3) + "°";

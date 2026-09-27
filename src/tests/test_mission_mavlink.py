@@ -195,6 +195,102 @@ try:
     check("pilot flips to STABILIZE mid-climb: all released, PILOT",
           not fc.overrides and M.phase == "PILOT", f"{M.phase} {fc.overrides}")
 
+    print("=== 7b. LOCK over real MAVLink: the heading held against knocks ===")
+    import threading
+    fc.mode = 2                                                   # ALT_HOLD again
+    fc.vfr.update(alt=6.0)
+    sleep(0.6)
+    YAW = {"psi": 0.0, "run": True, "kick": 0.0}
+
+    def yaw_plant():
+        # the FC turns at the rate its yaw channel decodes to (ArduPilot's own
+        # decode, dead zone included); a "kick" is a gust knocking it round
+        while YAW["run"]:
+            rate = ap_norm(fc.overrides.get(4, fc.radio[4])) * 202.5
+            YAW["psi"] = (YAW["psi"] + rate * 0.01 + YAW["kick"]) % 360.0
+            YAW["kick"] = 0.0
+            fc.att["yaw"] = math.radians(YAW["psi"] if YAW["psi"] <= 180 else YAW["psi"] - 360)
+            sleep(0.01)
+    th = threading.Thread(target=yaw_plant, daemon=True)
+    th.start()
+
+    def herr(a, b):
+        return (a - b + 180.0) % 360.0 - 180.0
+    try:
+        YAW["psi"] = 355.0
+        sleep(0.3)
+        check("LOCK accepted in HOVER", M.request_lock(True) == "")
+        sleep(0.3)
+        L0 = M.lock_hdg
+        check("locked at the heading it had (355 deg), ch4 held at exactly 1500",
+              L0 is not None and abs(herr(L0, 355.0)) < 1.0 and fc.overrides.get(4) == 1500,
+              f"lock {L0}, ch4 {fc.overrides.get(4)}")
+        YAW["kick"] = 20.0                                        # knocked 20 deg right, past north
+        # LOCK waits until the heading has been still for LOCK_SETTLE_S (the
+        # FC's own hold gets the first go), then corrects
+        sleep(0.05)                                               # the kick lands first
+        seen, sweep, prev = [], 0.0, YAW["psi"]
+        t_end = perf_counter() + 5.0
+        while perf_counter() < t_end:
+            sleep(0.05)
+            seen.append(fc.overrides.get(4) or 1500)
+            sweep += abs(herr(YAW["psi"], prev)); prev = YAW["psi"]
+        corr = min(seen)
+        check("knocked across north (355 -> 15): the correction turns LEFT (ch4 < 1480)",
+              corr is not None and corr < 1480, f"ch4={corr}")
+        check("...back within 1 deg by the short way (swept < 30 deg, not round the long way)",
+              abs(herr(YAW["psi"], L0)) < 1.0 and sweep < 30.0,
+              f"heading {YAW['psi']:.1f}, swept {sweep:.1f} deg")
+        YAW["kick"] = 3.0                                         # a small nudge
+        seen = []
+        for _ in range(90):
+            sleep(0.02)
+            seen.append(fc.overrides.get(4) or 1500)
+        small = max(seen, key=lambda v: abs(ap_norm(v)))
+        check("a 3 deg error still gets THROUGH ArduPilot's stick dead zone (decodes to a real rate)",
+              small is not None and abs(ap_norm(small) * 202.5) > 2.0,
+              f"ch4={small} -> {ap_norm(small or 1500) * 202.5:.1f} deg/s")
+        sleep(2.0)
+        check("...and settles within 1 deg", abs(herr(YAW["psi"], L0)) < 1.0, f"{YAW['psi']:.1f}")
+        # the heading stops arriving (link or FC stream): LOCK must NOT keep turning on stale data
+        fc.attitude = False
+        YAW["kick"] = 30.0
+        sleep(1.2)
+        frozen = fc.overrides.get(4)
+        psi_a = YAW["psi"]; sleep(1.0); psi_b = YAW["psi"]
+        check("ATTITUDE stops: ch4 goes to exactly 1500 (no correction on a stale heading)",
+              frozen == 1500, f"ch4={frozen}")
+        check("...so the drone does not turn at all while blind", abs(herr(psi_b, psi_a)) < 0.5,
+              f"{psi_a:.1f} -> {psi_b:.1f}")
+        check("...and LOCK stays on, waiting", M.lock_hdg is not None)
+        fc.attitude = True
+        sleep(3.5)
+        check("ATTITUDE back: it returns to the locked heading", abs(herr(YAW["psi"], L0)) < 1.0,
+              f"{YAW['psi']:.1f} vs {L0:.1f}")
+        # ENGAGE from LOCK: bumpless on yaw
+        YAW["kick"] = 8.0
+        sleep(0.2)
+        before = fc.overrides.get(4)
+        M.request_engage()
+        seq = []
+        for _ in range(20):
+            sleep(0.02)
+            seq.append(fc.overrides.get(4))
+        s4 = [v for v in [before] + seq if v is not None]
+        jumps = [abs(b - a) for a, b in zip(s4, s4[1:])]
+        check("ENGAGE from LOCK: LOCK off, PUSH, yaw glides from the lock's correction (no step > 25 us)",
+              M.lock_hdg is None and M.phase == "PUSH" and max(jumps) <= 25,
+              f"{M.phase}, ch4 {before} -> {s4[-1]}, max step {max(jumps) if jumps else 0}")
+        M.request_abort()
+        sleep(0.2)
+        M.request_lock(True); sleep(0.3)
+        M.request_lock(False); sleep(0.8)
+        check("LOCK off: the yaw channel is handed back to the pilot", 4 not in fc.overrides,
+              str(fc.overrides))
+    finally:
+        YAW["run"] = False
+        th.join(timeout=1)
+
     print("=== 8. the checklist and the log ===")
     rows = c.mission_checklist()
     check("checklist flags RC_OVERRIDE_TIME 3 and ATC_INPUT_TC 0.15 for change",

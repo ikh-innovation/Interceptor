@@ -54,8 +54,17 @@ STEPS = [
      " abort:!!q('#b_abort'), eng:q('#b_eng').className, engtxt:q('#engtxt').textContent,"
      " aimTop:q('#aim').style.top, badge:q('#badge').textContent, ai:q('#c_ai_k').textContent+' '+q('#c_ai').textContent,"
      " aicls:q('#c_ai').className, tgtbtn:!!q('#t_tgt'), engInVid:q('#vbox').contains(q('#b_eng')),"
-     " engW:q('#b_eng').getBoundingClientRect().width, engR:q('#vbox').getBoundingClientRect().right-q('#b_eng').getBoundingClientRect().right,"
-     " engB:q('#vbox').getBoundingClientRect().bottom-q('#b_eng').getBoundingClientRect().bottom,"
+     " engW:q('#b_eng').getBoundingClientRect().width,"
+     " engRightOfPad:q('#b_eng').getBoundingClientRect().left>=q('.pad').getBoundingClientRect().right,"
+     " engVsPad:Math.abs((q('#b_eng').getBoundingClientRect().top+q('#b_lock').getBoundingClientRect().bottom)/2"
+     "-(q('.pad').getBoundingClientRect().top+q('.pad').getBoundingClientRect().bottom)/2),"
+     " ticker:!!q('#ticker'), tools:!!q('.tools'), menu:!!q('#t_menu'),"
+     " menuTL:q('#t_menu').getBoundingClientRect().left<40 && q('#t_menu').getBoundingClientRect().top<60,"
+     " bodyBg:W.getComputedStyle(d.body).backgroundColor, btnBg:W.getComputedStyle(q('#b_up')).backgroundColor,"
+     " grpC:Math.abs((q('.pad').getBoundingClientRect().left+q('#b_eng').getBoundingClientRect().right)/2-W.innerWidth/2),"
+     " lockAbove:q('#b_lock').getBoundingClientRect().bottom<=q('#b_eng').getBoundingClientRect().top,"
+     " lockW:q('#b_lock').getBoundingClientRect().width, lockBg:W.getComputedStyle(q('#b_lock')).backgroundColor,"
+     " lockTxt:q('#b_lock').textContent,"
      " padC:Math.abs((q('.pad').getBoundingClientRect().left+q('.pad').getBoundingClientRect().right)/2-W.innerWidth/2)}); fetch('/reset');", 400),
     ("var cv=q('#tape'), vb=q('#vbox').getBoundingClientRect(), r=cv.getBoundingClientRect();"
      " window._ink=function(x0,x1){var c=cv.getContext('2d'), d=c.getImageData(Math.round(cv.width*x0),0,"
@@ -63,28 +72,44 @@ STEPS = [
      " rep({step:'tape', top:r.top-vb.top, wdiff:Math.abs(r.width-vb.width), h:r.height, left:_ink(0,0.35), right:_ink(0.65,1)});"
      " fetch('/set?phase=HOVER&heading=352');", 900),
     ("rep({step:'tape352', left:_ink(0,0.35), right:_ink(0.65,1)}); fetch('/set?phase=HOVER&heading=123'); fetch('/reset');", 500),
-    ("fetch('/reset').then(function(){ pe(q('#b_up'),'pointerdown'); });", 1300),
-    ("pe(q('#b_up'),'pointerup');", 300),
+    ("until(function(){return !q('#b_lock').disabled},3000).then(function(){ return fetch('/reset'); })"
+     ".then(function(){ pe(q('#b_lock'),'pointerdown'); });", 3400),
+    ("cmds().then(function(c){rep({step:'lock_on', cmds:c.map(function(x){return x.replace(/k=\\d+&c=\\w+&/,'')})});"
+     " fetch('/set?phase=HOVER&locked=1&lock_hdg=352');});", 800),
+    ("until(function(){return q('#b_lock').classList.contains('on')},3000).then(function(){"
+     " rep({step:'locked', cls:q('#b_lock').className, txt:q('#locktxt').textContent, phase:q('#phase').textContent,"
+     " hint:q('#hint').textContent}); fetch('/reset').then(function(){ pe(q('#b_lock'),'pointerdown'); }); });", 3600),
+    ("cmds().then(function(c){rep({step:'lock_off', cmds:c.map(function(x){return x.replace(/k=\\d+&c=\\w+&/,'')})});"
+     " fetch('/set?phase=HOVER&locked=0').then(function(){ fetch('/reset'); });});", 400),
+    ("until(function(){return !q('#b_lock').classList.contains('on') && !q('#b_yl').disabled},3000);", 3100),
+    ("until(function(){return !q('#b_up').disabled},3000).then(function(){ return fetch('/reset'); })"
+     ".then(function(){ pe(q('#b_up'),'pointerdown'); setTimeout(function(){"
+     " rep({step:'held', cls:q('#b_up').className}); pe(q('#b_up'),'pointerup'); },1200); });", 4600),
     ("cmds().then(function(c){rep({step:'hold_up', n:c.filter(function(x){return x.indexOf('hold=up')>=0}).length,"
      " rel:c.some(function(x){return x.indexOf('release=')>=0}), pin:c.every(function(x){return x.indexOf('k=424242')>=0})});"
      " fetch('/reset');});", 300),
     # reset FIRST, then tap: the previous step's async reset could otherwise
     # land after the tap's command and erase it
-    ("fetch('/reset').then(function(){ pe(q('#b_yl'),'pointerdown'); setTimeout(function(){pe(q('#b_yl'),'pointerup');},120); });", 700),
+    ("until(function(){return !q('#b_yl').disabled},3000).then(function(){ return fetch('/reset'); }).then(function(){"
+     " pe(q('#b_yl'),'pointerdown'); setTimeout(function(){pe(q('#b_yl'),'pointerup');},120); });", 3300),
     ("cmds().then(function(c){rep({step:'tap', cmds:c.map(function(x){return x.replace(/k=\\d+&c=\\w+&/,'')})}); fetch('/reset');});", 300),
-    ("fetch('/reset').then(function(){ pe(q('#b_yr'),'pointerdown'); });", 800),
+    ("until(function(){return !q('#b_yr').disabled},3000).then(function(){ return fetch('/reset'); })"
+     ".then(function(){ pe(q('#b_yr'),'pointerdown'); });", 3500),
     ("W.dispatchEvent(new W.Event('blur'));", 600),
     ("cmds().then(function(c){rep({step:'blur', n:c.filter(function(x){return x.indexOf('hold=yawr')>=0}).length,"
      " rel:c.some(function(x){return x.indexOf('release=')>=0})}); fetch('/reset');});", 700),
     ("cmds().then(function(c){rep({step:'after_blur', n:c.filter(function(x){return x.indexOf('hold=')>=0}).length}); fetch('/reset');});", 300),
-    ("fetch('/reset').then(function(){ pe(q('#b_eng'),'pointerdown'); setTimeout(function(){pe(q('#b_eng'),'pointerup');},80); });", 700),
+    ("until(function(){return !q('#b_eng').disabled},3000).then(function(){ return fetch('/reset'); })"
+     ".then(function(){ pe(q('#b_eng'),'pointerdown'); setTimeout(function(){pe(q('#b_eng'),'pointerup');},80); });", 3400),
     ("cmds().then(function(c){rep({step:'engage_tap', n:c.filter(function(x){return x.indexOf('engage=')>=0}).length}); fetch('/reset');});", 300),
-    ("fetch('/set?phase=AI&engaged=1');", 700),
-    ("rep({step:'ai', eng:q('#b_eng').className, engtxt:q('#engtxt').textContent, dis:q('#b_eng').disabled,"
-     " up:q('#b_up').disabled, hdr:q('#hdr').style.background}); fetch('/set?phase=HOVER&engaged=1');", 700),
+    ("fetch('/set?phase=AI&engaged=1');", 100),
+    ("until(function(){return q('#b_eng').classList.contains('go')},3000).then(function(){ rep({step:'ai', eng:q('#b_eng').className, engtxt:q('#engtxt').textContent, dis:q('#b_eng').disabled,"
+     " up:q('#b_up').disabled, hdr:q('#hdr').style.background}); fetch('/set?phase=HOVER&engaged=1'); });", 3200),
+    ("until(function(){return q('#phase').textContent!=='AI'},3000);", 3100),
     ("rep({step:'latched', eng:q('#b_eng').className, dis:q('#b_eng').disabled, hint:q('#hint').textContent});"
-     " fetch('/set?phase=HOVER&engaged=0');", 700),
-    ("rep({step:'reset', eng:q('#b_eng').className, dis:q('#b_eng').disabled}); q('#t_speed').click();", 400),
+     " fetch('/set?phase=HOVER&engaged=0');", 100),
+    ("until(function(){return !q('#b_eng').classList.contains('go')},3000);", 3100),
+    ("rep({step:'reset', eng:q('#b_eng').className, dis:q('#b_eng').disabled}); q('#t_menu').click();", 400),
     ("var sh=q('#sh_speed'), cs=W.getComputedStyle(sh); rep({step:'speeds', open:sh.classList.contains('open'),"
      " pos:cs.position, h:sh.getBoundingClientRect().height, winh:W.innerHeight});"
      " q('.seg[data-g=vert] button[data-lv=FAST]').click();", 500),
@@ -95,9 +120,10 @@ STEPS = [
      " var lg=q('#sh_log'); rep({step:'logsheet', open:lg.classList.contains('open'), pos:W.getComputedStyle(lg).position,"
      " h:lg.getBoundingClientRect().height, winh:W.innerHeight});"
      " q('#sh_log [data-close]').click(); rep({step:'logclosed', open:q('#sh_log').classList.contains('open')});"
-     " fetch('/set?phase=PUSH&engaged=1');", 700),
-    ("rep({step:'push', up:q('#b_up').disabled, eng:q('#b_eng').disabled, aimTop:q('#aim').style.top});"
-     " fetch('/set?phase=HOVER&engaged=0'); fetch('/dead?1');", 1900),
+     " fetch('/set?phase=PUSH&engaged=1');", 100),
+    ("until(function(){return q('#phase').textContent==='ΩΘΗΣΗ'},3000).then(function(){"
+     " rep({step:'push', up:q('#b_up').disabled, eng:q('#b_eng').disabled, aimTop:q('#aim').style.top, lockdis:q('#b_lock').disabled});"
+     " fetch('/set?phase=HOVER&engaged=0'); fetch('/dead?1'); });", 4800),
     ("rep({step:'dead', cover:q('#cover').classList.contains('on'), done:1});", 0),
 ]
 HARNESS = ("""<!doctype html><html><body><iframe id=f src="/?k=424242" width=390 height=844></iframe><script>
@@ -106,6 +132,10 @@ var f=document.getElementById('f');
 f.onload=function(){ var d=f.contentDocument, W=f.contentWindow, q=function(s){return d.querySelector(s)};
  function pe(el,t){ el.dispatchEvent(new W.PointerEvent(t,{bubbles:true,cancelable:true,pointerId:1,isPrimary:true})); }
  function cmds(){ return fetch('/cmds').then(function(r){return r.json()}); }
+ // wait for a CONDITION, not a fixed time: the Jetson running the real tracker
+ // next to headless Firefox makes fixed waits flaky
+ function until(fn, ms){ return new Promise(function(res){ var t0=Date.now();
+   (function t(){ var ok=false; try{ ok=fn(); }catch(e){} if(ok||Date.now()-t0>ms) res(ok); else setTimeout(t,50); })(); }); }
  var S=%s; var i=0;
  function go(){ if(i>=S.length) return; try{ eval(S[i][0]); }catch(e){ rep({step:'error',err:String(e),at:i}); }
    var w=S[i][1]; i++; setTimeout(go, w); }
@@ -150,6 +180,9 @@ class H(BaseHTTPRequestHandler):
         if p == "/set":
             a = parse_qs(q)
             ST["mission"]["phase"] = a.get("phase", [ST["mission"]["phase"]])[0]
+            ST["mission"]["locked"] = a.get("locked", ["0"])[0] == "1"
+            if "lock_hdg" in a:
+                ST["mission"]["lock_hdg"] = float(a["lock_hdg"][0])
             if "heading" in a:
                 ST["mission"]["heading_deg"] = float(a["heading"][0])
             en = a.get("engaged", ["0"])[0] == "1"
@@ -177,16 +210,33 @@ check("no ABORT button on the page (removed on request)", b.get("abort") is Fals
 check("readiness chip: 'TensorRT 28 fps' in green", b.get("ai", "").startswith("TensorRT 28 fps")
       and "ok" in b.get("aicls", ""), f"{b.get('ai')} [{b.get('aicls')}]")
 check("ENGAGE starts red and says 'ENGAGE'", "go" not in b.get("eng", "go") and "ENGAGE" in b.get("engtxt", ""))
-check("ENGAGE is a SMALL button INSIDE the picture, bottom right",
-      b.get("engInVid") and b.get("engW", 999) <= 80 and 0 <= b.get("engR", -1) <= 20 and 0 <= b.get("engB", -1) <= 20, str(b))
+check("LOCK / ENGAGE sit BESIDE the pad (right of it, level with it), not in the picture",
+      not b.get("engInVid") and b.get("engW", 999) <= 72 and b.get("engRightOfPad") and b.get("engVsPad", 99) <= 12, str(b))
+check("no message bar and no speed/message buttons under the picture; a ☰ menu top-left",
+      b.get("ticker") is False and b.get("tools") is False and b.get("menu") and b.get("menuTL"), str(b))
+check("light theme: light-grey page, black control buttons",
+      b.get("bodyBg") == "rgb(236, 238, 241)" and b.get("btnBg") == "rgb(21, 24, 28)", f"{b.get('bodyBg')} / {b.get('btnBg')}")
 check("no HUMAN/DRONE target button (always DRONE)", b.get("tgtbtn") is False)
-check("the ▲▼⟲⟳ pad is centred on the screen", b.get("padC", 99) <= 2, str(b.get("padC")))
+check("pad + LOCK/ENGAGE centred as a group (so the pad sits a little left)",
+      b.get("grpC", 99) <= 3 and b.get("padC", 0) > 20, f"group {b.get('grpC')}, pad off-centre {b.get('padC')}")
 tp, t3 = R.get("tape", {}), R.get("tape352", {})
 check("compass tape: full width, along the top edge of the picture, ~26 px high",
       abs(tp.get("top", 99)) <= 2 and tp.get("wdiff", 99) <= 3 and 20 <= tp.get("h", 0) <= 30, str(tp))
 check("compass tape draws marks on both sides at 123 deg, and across north at 352 deg",
       min(tp.get("left", 0), tp.get("right", 0), t3.get("left", 0), t3.get("right", 0)) > 25,
       f"{tp} {t3}")
+check("LOCK: a white button of the same size, right above ENGAGE",
+      b.get("lockAbove") and 60 <= b.get("lockW", 0) <= 72 and b.get("lockBg") == "rgb(255, 255, 255)"
+      and b.get("lockTxt") == "LOCK", str({k: b.get(k) for k in ("lockAbove", "lockW", "lockBg", "lockTxt")}))
+lo, ld, lf = R.get("lock_on", {}), R.get("locked", {}), R.get("lock_off", {})
+check("LOCK pressed: sends lock=on", lo.get("cmds") == ["lock=on"], str(lo))
+check("locked: ring on, shows the heading 352°, card says ΚΛΕΙΔΩΜΑ, hint says how to unlock",
+      "on" in ld.get("cls", "") and "352" in ld.get("txt", "") and ld.get("phase") == "ΚΛΕΙΔΩΜΑ"
+      and "LOCK ξανά" in ld.get("hint", ""), str(ld))
+check("LOCK pressed again: sends lock=off (never a blind toggle)", lf.get("cmds") == ["lock=off"], str(lf))
+hd = R.get("held", {}).get("cls", "")
+check("while ▲ is held and the Jetson accepts it: highlighted (held) AND marked sending (tx)",
+      "held" in hd and "tx" in hd, hd)
 h = R.get("hold_up", {})
 check("hold ▲ 1.2 s: ~10 keepalives, then a release, every command with the PIN",
       8 <= h.get("n", 0) <= 14 and h.get("rel") and h.get("pin"), str(h))
@@ -204,7 +254,7 @@ check("after the attempt: still green, still disabled, hint says STAB -> ALT_HOL
 check("pilot STAB -> ALT_HOLD: ENGAGE red and enabled again",
       "go" not in R.get("reset", {}).get("eng", "go") and R.get("reset", {}).get("dis") is False)
 sp = R.get("speeds", {})
-check("ΤΑΧΥΤΗΤΕΣ opens FULL-SCREEN", sp.get("open") and sp.get("pos") == "fixed"
+check("☰ opens ΡΥΘΜΙΣΕΙΣ (the speeds) FULL-SCREEN", sp.get("open") and sp.get("pos") == "fixed"
       and sp.get("h", 0) >= 0.95 * sp.get("winh", 1), str(sp))
 check("a speed button sends lvl=vert:FAST; ✕ closes the page",
       R.get("lvl", {}).get("cmds") == ["lvl=vert:FAST"] and R.get("closed", {}).get("open") is False)
@@ -214,7 +264,7 @@ check("ΜΗΝΥΜΑΤΑ opens FULL-SCREEN (not a pop-up) and ✕ closes it",
       lg.get("open") and lg.get("pos") == "fixed" and lg.get("h", 0) >= 0.95 * lg.get("winh", 1)
       and R.get("logclosed", {}).get("open") is False, str(lg))
 pu = R.get("push", {})
-check("PUSH: ▲ and ENGAGE disabled; the aim mark moves to the centre", pu.get("up") and pu.get("eng")
+check("PUSH: ▲, ENGAGE and LOCK disabled; the aim mark moves to the centre", pu.get("up") and pu.get("eng") and pu.get("lockdis")
       and pu.get("aimTop") == "50%", str(pu))
 check("link dead: the red cover shows", R.get("dead", {}).get("cover") is True)
 print()

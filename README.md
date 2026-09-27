@@ -69,6 +69,7 @@ The pilot arms and takes off in ALT_HOLD, then hovers with the throttle centred.
 | **HOVER** | Jetson sends nothing; the pilot's sticks are live |
 | **CLIMB / DESCEND** | while ▲/▼ is held: throttle only |
 | **SCOUT** | while ⟲/⟳ is held (a tap = a small step): yaw only |
+| **LOCK** *(a flag, not a phase)* | the heading is held where LOCK was pressed, with no time limit, until ENGAGE, ABORT, LOCK again or the pilot's switch |
 | **PUSH** | ENGAGE: fixed nose-down lean, heading and height held. From the first confirmed detection the AI steers yaw/roll/throttle |
 | **AI** | after 1.5 s of PUSH the InterceptLaw also takes the lean (blended in over 0.4 s) |
 | **STOP** | soft stop: eased back to level over 1 s, then every channel is released |
@@ -79,7 +80,36 @@ Behaviour worth knowing:
 - **Target lost during AI.** The drone goes back to the straight PUSH and searches again for 2.5 s. If nothing is confirmed within 4 s of PUSH, it does a soft stop.
 - **Terminal commit.** In the last metre the target fills the frame and the detector drops out. The last command is held for about 1 s, then the drone does a soft stop.
 - **AI floor.** PUSH and AI never descend below 3 m above the arming point.
-- Speed levels (SLOW / MEDIUM / FAST) are set separately for vertical, yaw, push and AI.
+- **Speed levels** (SLOW / MEDIUM / FAST) are set separately for vertical, yaw, push and AI, in ☰ → SETTINGS.
+  - **Defaults:** vertical SLOW, yaw MEDIUM, **PUSH MEDIUM (30°)**, AI MEDIUM.
+  - **AI levels in m/s:** SLOW / MEDIUM / FAST mean ≈11 / 15 / 16 m/s of cruise (the max lean of 12° / 20° / 22°) and a climb ceiling of 8 / 15 / 25 m/s.
+- **What the settings buy** (`tests/sim_sky_wind.py --speed all --push …`, a moving target, incl. at 45°, in gusty wind): touch rate on moving targets in Bf 2–3.
+
+  | AI → | SLOW | MEDIUM | FAST |
+  |---|---|---|---|
+  | PUSH 20° | 48% | **73%** | 69% |
+  | PUSH 30° (default) | 44% | 66% | 61% |
+  | PUSH 40° | 32% | 48% | 45% |
+
+  AI MEDIUM is the best level at every push. A gentler push leaves the AI more frames. The weak spots at any setting: a head-on target at 10 m/s, and a zigzagging one.
+
+#### LOCK — hold the heading
+LOCK holds the **heading**, meaning which way the nose points. It does **not** hold the position: there is no GPS, so in ALT_HOLD the wind still pushes the drone sideways. It keeps looking north while it drifts.
+
+How it behaves:
+- **Correction.** The loop runs on the FC's `ATTITUDE.yaw` at 50 Hz, and a correction is capped at 30°/s.
+- **The FC gets the first go.** ArduPilot's own heading hold already pulls back from a gust. LOCK acts only once the heading has been **still for 1 s at the wrong value**. That is the case the FC cannot fix: a gust stronger than the yaw authority drags the FC's own heading target, and the FC then holds the wrong heading. Correcting during the swing instead fights the FC and overshoots.
+- **No chatter.** On a noisy heading, the smoothed error decides whether to correct, with hysteresis (on at 1°, off at 0.4°). The actual error sets how much.
+- **Moving the lock.** ▲▼ work while locked. ⟲/⟳ also work, and the lock follows to wherever the turn stops. A tap moves the lock by one step.
+- **Repeats are safe.** `lock=on` while already locked changes nothing, so a double tap or a WiFi retry cannot move it.
+- **Clearing.** ENGAGE clears LOCK, and the AI takes the yaw bumplessly. ABORT and the pilot's mode switch clear it too.
+- **Heading lost.** If ATTITUDE goes stale for more than 0.5 s, the yaw command is exactly zero until it returns. LOCK never corrects on an old heading.
+- **The pilot's yaw stick.** While LOCK is on, the Jetson holds the yaw channel, so the pilot's yaw stick does nothing. The mode switch still takes everything back.
+- **Heading estimate.** LOCK holds what the FC *believes* the heading is. Without a compass, that estimate can drift slowly, and nothing on the Jetson can see that.
+
+What the simulation shows (`tests/sim_lock_wind.py`, 600 hovers of 60 s, gusty Bf 0–3, three airframe yaw sensitivities):
+- **Normal conditions.** ArduPilot alone already holds within ~1.5°, and LOCK stays out of the way (same numbers).
+- **Stronger gusts than the yaw motors.** At Bf 3 on a weathervane-prone airframe, the FC alone finished more than 10° off in **15/25** runs. With LOCK it was **3/25**.
 
 ### Phone app — `mjpeg_stream.py` + `mission_ui.html`
 The Jetson flies headless. A phone or laptop on the field WiFi opens:
@@ -91,11 +121,15 @@ The Jetson flies headless. A phone or laptop on the field WiFi opens:
 | `/state` | JSON state (phase, detector, fps, latency) |
 | `/cmd` | commands; **require the operator PIN** |
 
-The page layout, top to bottom:
-- **Status:** the phase card (its colour is the phase) and status tiles (FC mode, arming, heading, target, vibration, detector fps).
-- **Picture:** the 4:3 picture with a compass tape along its top (its width is the camera's 62° field of view). An aim arc runs corner to corner and turns green when the target is on it. A small red **ENGAGE** button sits in the bottom-right corner.
-- **Controls:** the ▲▼⟲⟳ pad, centred.
-- **Pages:** SPEEDS and MESSAGES open full-screen with ✕.
+The look is light grey and white with black controls; orange is used only as the accent. The page layout, top to bottom:
+- **Top bar:** ☰ top-left opens **SETTINGS** (the speeds, and MESSAGES) as full-screen pages with ✕. There are no pop-ups and no message bar. A refusal shows for 4 s in the phase card's hint.
+- **Status:** the phase card (its colour is the phase; it reads **ΚΛΕΙΔΩΜΑ** while locked) and status tiles (FC mode, arming, heading, target, vibration, detector fps).
+- **Picture:** the 4:3 picture.
+  - A compass tape runs along its top. Its width is the camera's 62° field of view, and it carries a white mark at the LOCKed heading.
+  - A thin dashed aim arc runs corner to corner and turns green when the target is on it.
+- **Controls:**
+  - The ▲▼⟲⟳ pad sits a little left of centre. A held button turns orange, and pulses while the Jetson is accepting its keepalives, so you can see the drone is being told. It turns red if the command is refused.
+  - Beside the pad are **LOCK** (white; an orange ring and the heading when on) and **ENGAGE** (red).
 
 The target is always a drone; there is no in-air HUMAN/DRONE switch. The Ubuntu typeface is served from `src/fonts/` by the Jetson itself, since the field has no internet.
 
@@ -223,6 +257,8 @@ cd src
 | `test_recording.py`, `test_sky_mask.py` | segmented recording, sky gate at half resolution |
 | `test_ui_browser.py` | the phone app in headless Firefox |
 | `test_hold_wifi.py` | a held ▲▼⟲⟳ over realistic field WiFi: no stutter, and letting go stops |
+| `test_lock.py` | LOCK under bad conditions: noisy/late heading, across north, heading lost mid-lock, 10 min in gusts, weak yaw motors, the phone's command path |
+| `sim_lock_wind.py` | LOCK vs the FC alone, 600 gusty hovers (not pass/fail) |
 | `sim_sky_wind.py` | sky-mode campaign: moving target × gusty wind Bf 0–3, touch odds and turn overshoot (not pass/fail) |
 | `fc_check.py`, `check_modes.py`, `cameraTest.py` | bench diagnostics against real hardware |
 

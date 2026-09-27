@@ -109,7 +109,7 @@ class MJPEGServer:
 
     # Commands that move the aircraft need the controller lease; ABORT never
     # does (any phone with the PIN may stop it).  Everything needs the PIN.
-    CONTROL_KEYS = ("hold", "release", "step", "engage", "lvl", "mode")
+    CONTROL_KEYS = ("hold", "release", "step", "engage", "lvl", "mode", "lock")
     ALL_KEYS = CONTROL_KEYS + ("abort",)
     LEASE_S = 2.0
 

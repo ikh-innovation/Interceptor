@@ -86,7 +86,8 @@ def build_law():
     stub._SPEED_KEYS = tracker.DroneTracker._SPEED_KEYS
     stub._STAB_KEYS = tracker.DroneTracker._STAB_KEYS
     with contextlib.redirect_stdout(io.StringIO()):
-        tracker.DroneTracker.set_mode(stub, env.get("WASP_MODE_SPEED", "MEDIUM"))
+        tracker.DroneTracker.set_mode(stub, os.environ.get("SIM_SPEED")
+                                      or env.get("WASP_MODE_SPEED", "MEDIUM"))
     return law
 
 
@@ -243,13 +244,16 @@ class Drone:
 
 # ── the enemy ────────────────────────────────────────────────────────────────
 def make_target(kind, speed, p0, own_p, rng):
-    """kind: hover | toward | away | cross | zigzag | climb_cross."""
+    """kind: hover | toward | away | cross | zigzag | climb_cross |
+    angle_in (crossing at 45 deg while closing) | angle_out (45 deg while opening)."""
     dx, dy = own_p[0] - p0[0], own_p[1] - p0[1]
     to_us = math.atan2(dy, dx)
     heading = {"hover": 0.0, "toward": to_us, "away": to_us + math.pi,
                "cross": to_us + math.pi / 2 * rng.choice((-1, 1)),
                "zigzag": to_us + math.pi / 2 * rng.choice((-1, 1)),
-               "climb_cross": to_us + math.pi / 2 * rng.choice((-1, 1))}[kind]
+               "climb_cross": to_us + math.pi / 2 * rng.choice((-1, 1)),
+               "angle_in": to_us + math.pi / 4 * rng.choice((-1, 1)),
+               "angle_out": to_us + math.pi - math.pi / 4 * rng.choice((-1, 1))}[kind]
     period = rng.uniform(1.5, 3.0)
     vz = 1.5 if kind == "climb_cross" else 0.0
 
@@ -279,6 +283,8 @@ def engage(args):
     mp = Mapper()
     wind = Wind(bf, rng)
     m = M.Mission(mp, log=lambda *_a: None, accel_z=2.5, jerk_z=5.0)
+    if os.environ.get("SIM_PUSH"):                  # default: the app's own (MEDIUM, 30 deg)
+        m.set_level("push", os.environ["SIM_PUSH"])
 
     # pilot hovering in ALT_HOLD, trimmed into the MEAN wind (no GPS: by hand)
     wx, wy = wind.mean * math.cos(wind.dir), wind.mean * math.sin(wind.dir)
@@ -459,7 +465,8 @@ def scenarios(n_seeds, vfov_real=VFOV_LAW, hfov_real=HFOV):
     rows = []
     motions = [("hover", 0.0), ("toward", 5.0), ("toward", 10.0), ("away", 3.0),
                ("cross", 3.0), ("cross", 6.0), ("cross", 10.0),
-               ("zigzag", 5.0), ("climb_cross", 5.0)]
+               ("zigzag", 5.0), ("climb_cross", 5.0),
+               ("angle_in", 5.0), ("angle_in", 10.0), ("angle_out", 5.0)]
     for bf in (0, 1, 2, 3):
         for kind, sp in motions:
             for s in range(n_seeds):
@@ -552,12 +559,53 @@ def report_turns(res):
               f"{r['overshoot']:5.1f} deg past, peak yaw {r['peak_yr']:4.0f} d/s, miss {r['best']:.2f} m")
 
 
+def compare_speeds(allres):
+    """One table: every target motion x wind, SLOW / MEDIUM / FAST side by side."""
+    speeds = [sp for sp in ("SLOW", "MEDIUM", "FAST") if sp in allres]
+    print("\n=== AI SPEED COMPARISON: touch rate (< 0.5 m), PUSH at %s ===" % (os.environ.get("SIM_PUSH") or "MEDIUM (the default, 30 deg)"))
+    print(f"  {'target':<22s}" + "".join(f"{'Bf' + str(b):>16s}" for b in (0, 1, 2, 3)))
+    print(f"  {'':<22s}" + "".join(f"{'S / M / F':>16s}" for _ in range(4)))
+    keys = []
+    for r in allres[speeds[0]]:
+        if (r["kind"], r["speed"]) not in keys:
+            keys.append((r["kind"], r["speed"]))
+    for k in keys:
+        cells = []
+        for b in (0, 1, 2, 3):
+            vals = [pct([r["touch"] for r in allres[sp] if (r["kind"], r["speed"]) == k and r["bf"] == b])
+                    for sp in speeds]
+            cells.append(" / ".join(f"{v:3.0f}" for v in vals))
+        print(f"  {k[0]:<12s}{k[1]:4.0f} m/s   " + "".join(f"{c:>16s}" for c in cells))
+    print("  " + "-" * 86)
+    for label, f in (("TOUCH (< 0.5 m)", lambda r: r["touch"]), ("NEAR (< 1.5 m)", lambda r: r["best"] < 1.5),
+                     ("ground / crash", lambda r: r["crashed"])):
+        cells = []
+        for b in (0, 1, 2, 3):
+            vals = [pct([f(r) for r in allres[sp] if r["bf"] == b]) for sp in speeds]
+            cells.append(" / ".join(f"{v:3.0f}" for v in vals))
+        print(f"  {label:<22s}" + "".join(f"{c:>16s}" for c in cells))
+    print()
+    for sp in speeds:
+        rs = allres[sp]
+        ts = sorted(r["t"] for r in rs if r["touch"])
+        st = [r for r in rs if r["steered"]]
+        print(f"  {sp:<6s}: touch {pct([r['touch'] for r in rs]):4.0f}%  near {pct([r['best'] < 1.5 for r in rs]):4.0f}%  "
+              f"median time to touch {ts[len(ts) // 2] if ts else float('nan'):4.1f} s  "
+              f"peak bank p95 {q([r['max_bank'] for r in rs], .95):3.0f} deg  "
+              f"bank jump/0.2 s p95 {q([r['bank_jump'] for r in st], .95):3.0f} deg  "
+              f"swing past target p95 {q([r['overshoot'] for r in st if r['kind'] != 'zigzag'], .95):4.1f} deg")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--seeds", type=int, default=None)
     ap.add_argument("--old-seeker", action="store_true",
                     help="the seeker as flown before 2026-09-25: kp_yaw 4.5, yaw up to 182 deg/s")
+    ap.add_argument("--speed", default=None, choices=("SLOW", "MEDIUM", "FAST", "all"),
+                    help="AI speed profile (tracker.DroneTracker.MODES); 'all' compares the three")
+    ap.add_argument("--push", default=None, choices=("SLOW", "MEDIUM", "FAST"),
+                    help="PUSH lean level; default = the app's default (MEDIUM, 30 deg)")
     ap.add_argument("--hfov", type=float, default=None,
                     help="the REAL horizontal FOV, if it differs from the law's 62.2")
     ap.add_argument("--vfov", type=float, default=None,
@@ -566,6 +614,22 @@ def main():
     n = a.seeds or (10 if a.quick else 40)
     if a.old_seeker:
         os.environ["SIM_OLD_SEEKER"] = "1"
+    if a.push:
+        os.environ["SIM_PUSH"] = a.push
+    if a.speed == "all":
+        global _LAW
+        allres = {}
+        for sp in ("SLOW", "MEDIUM", "FAST"):
+            os.environ["SIM_SPEED"] = sp
+            _LAW = None
+            build_law_cached()                       # forked workers inherit it
+            rows = scenarios(n, a.vfov or VFOV_LAW, a.hfov or HFOV)
+            with Pool() as p:
+                allres[sp] = p.map(engage, rows, chunksize=4)
+        compare_speeds(allres)
+        return
+    if a.speed:
+        os.environ["SIM_SPEED"] = a.speed
     law = build_law_cached()
     print("law as flown: tilt %.0f, lean %.0f, PN %.0f, bank %.0f..%.0f, kp_yaw %.1f, "
           "yaw cap %.0f deg/s, climb_gain %.0f, climb_los %s, slew %.1f" % (

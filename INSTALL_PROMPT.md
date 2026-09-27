@@ -210,18 +210,23 @@ systemctl --user is-enabled wasp-tracker.service   # enabled
 cd src
 for t in test_control_law test_intercept test_acro_dual test_schedule test_yaw_circles \
          test_mission test_mission_mavlink test_field_sequence test_simulated_fc \
-         test_recording test_sky_mask test_hold_wifi; do
+         test_recording test_sky_mask test_hold_wifi test_lock; do
   printf "%-22s " $t; timeout 600 ../.env/yolo/bin/python tests/$t.py 2>&1 | tail -1
 done
 timeout 300 ../.env/yolo/bin/python tests/test_ui_browser.py 2>&1 | tail -1     # needs firefox
 ../.env/yolo/bin/python tests/sim_sky_wind.py --quick                            # the odds, not pass/fail
+../.env/yolo/bin/python tests/sim_lock_wind.py --quick                           # LOCK vs gusts, the odds
 ```
 - Every test should end with `all passed`. `test_field_sequence` ends with `PASSES END TO END`.
-- For reference, the full `sim_sky_wind.py` run on the reference machine gives:
-  - touch 82 / 83 / 79 / 78% at Bf 0 / 1 / 2 / 3
+- For reference, the full `sim_sky_wind.py` run (defaults: AI MEDIUM, PUSH MEDIUM 30°, 12 target motions including 45° ones) on the reference machine gives:
+  - touch 73 / 75 / 74 / 66% at Bf 0 / 1 / 2 / 3
   - AI takes over 99%
   - no ground contact
   - peak yaw rate ≤ 40°/s
+- The full `sim_lock_wind.py` gives:
+  - LOCK and the FC alone within ~1.5° in normal conditions
+  - at Bf 3 / HIGH sensitivity, "ends >10°": FC only 15/25, LOCK 3/25
+  - LOCK's own command never above 30°/s
 
   Numbers far from these mean the environment differs. Report them.
 
