@@ -218,8 +218,8 @@ check("ENGAGE refused while climbing", r.m.request_engage() != "")
 r.run_until(1.0)
 r.mp.pilot.update(pitch=r.mp.phys_to_pwm("pitch", -2.0),
                   roll=r.mp.phys_to_pwm("roll", 3.0))
-check("the shipped default push is MEDIUM = 30 deg (the operator's choice)",
-      r.m.level["push"] == "MEDIUM" and r.m.push_deg() == 30.0)
+check("the shipped default push is SLOW = 20 deg (the operator's choice)",
+      r.m.level["push"] == "SLOW" and r.m.push_deg() == 20.0)
 r.m.set_level("push", "MEDIUM")
 check("ENGAGE accepted from HOVER", r.m.request_engage() == "")
 o = r.step()
@@ -322,7 +322,17 @@ check(f"roll glides monotonically to the AI's value, max step <= {_lim} us per 2
 print("=== A8. soft stops ===")
 q = push_rig()
 q.run_until(4.1)
-check("PUSH with no target for 4 s: STOP (soft)", q.m.phase == "STOP")
+check("PUSH with no target for 4 s (the default search): STOP (soft)", q.m.phase == "STOP")
+for lv, secs in (("MEDIUM", 6.0), ("FAST", 8.0)):
+    qs = Rig(min_conf=0.20); qs.ctx["height"] = 10.0; qs.step()
+    check(f"search {lv} accepted", qs.m.set_level("search", lv) == "")
+    qs.m.request_engage(); qs.step()
+    qs.run_until(secs - 0.2)
+    still = qs.m.phase
+    qs.run_until(0.3)
+    check(f"search {lv}: still pushing at {secs - 0.2:.1f} s, soft stop at {secs:.0f} s",
+          still == "PUSH" and qs.m.phase == "STOP", f"{still} -> {qs.m.phase}")
+check("the shipped default search is 4 s", Rig().m.search_s() == 4.0)
 p0 = phys(q.mp, q.out, "pitch")
 q.run_until(0.5)
 p1 = phys(q.mp, q.out, "pitch")
@@ -536,17 +546,69 @@ r.run_until(1.0, hold="up")
 check("▲ while locked: climbs AND keeps the heading", "throttle" in r.out and "yaw" in r.out
       and r.m.lock_hdg is not None)
 r.m.request_release("s1"); r.run_until(1.5)
-# a held ⟳ moves the lock
+# a held ⟳ turns it away; let go and it comes BACK to the locked heading
+held_lock = r.m.lock_hdg
 r.run_until(1.0, hold="yawr", session="s2")
-r.m.request_release("s2"); r.run_until(1.5)
-check("hold ⟳ while locked, let go: re-locked where it stopped (not snapped back)",
-      r.m.lock_hdg is not None and 10.0 < r.m.lock_hdg < 60.0
-      and abs(herr(hdg(r), r.m.lock_hdg)) < 1.0, f"lock {r.m.lock_hdg:.1f}, heading {hdg(r):.1f}")
-before = r.m.lock_hdg
-r.m.request_step(-1); r.run_until(3.0)
-check("a tap ⟲ while locked moves the lock by one step and turns there",
-      abs(herr(r.m.lock_hdg, before - r.m.step_deg())) < 0.1 and abs(herr(hdg(r), r.m.lock_hdg)) < 1.0,
-      f"{before:.1f} -> {r.m.lock_hdg:.1f}, heading {hdg(r):.1f}")
+away = hdg(r)
+check("hold ⟳ while locked: it really turns (SCOUT), the lock itself stays put",
+      abs(herr(away, held_lock)) > 10.0 and r.m.phase == "SCOUT"
+      and abs(herr(r.m.lock_hdg, held_lock)) < 1e-6, f"heading {away:.1f}, lock {r.m.lock_hdg:.1f}")
+r.m.request_release("s2"); r.run_until(4.0)
+check("...let go: turns back to the LOCKED heading on its own and holds it",
+      abs(herr(r.m.lock_hdg, held_lock)) < 1e-6 and abs(herr(hdg(r), held_lock)) < 1.0
+      and r.m.phase == "HOVER", f"lock {r.m.lock_hdg:.1f}, heading {hdg(r):.1f}")
+r.m.request_step(-1); r.run_until(0.3)
+tapped = hdg(r)
+r.run_until(4.0)
+check("a tap ⟲ while locked: a small turn, then back to the locked heading (lock unchanged)",
+      herr(tapped, held_lock) < -1.0 and abs(herr(r.m.lock_hdg, held_lock)) < 1e-6
+      and abs(herr(hdg(r), held_lock)) < 1.0, f"tap {tapped:.1f}, now {hdg(r):.1f}, lock {r.m.lock_hdg:.1f}")
+r.run_until(1.0, hold="down", session="s3")
+check("▼ while locked: descends AND keeps the heading", "throttle" in r.out and "yaw" in r.out
+      and abs(herr(hdg(r), held_lock)) < 1.0 and abs(herr(r.m.lock_hdg, held_lock)) < 1e-6)
+r.m.request_release("s3"); r.run_until(1.5)
+r.m.request_lock(True); r.step()
+check("LOCK on again while locked: nothing moves (idempotent)", abs(herr(r.m.lock_hdg, held_lock)) < 1e-6)
+
+print("=== A11b. LOCK at a picked heading (the degree scroll) ===")
+q = Rig(); q.step()
+q.ctx["att"]["yaw"] = math.radians(300.0)
+check("lock at 313 accepted", q.m.request_lock(True, 313) == "")
+q.step()
+check("lock_hdg = 313 at once, the drone turning toward it",
+      abs(herr(q.m.lock_hdg, 313.0)) < 1e-6 and phys(q.mp, q.out, "yaw") is not None)
+q.run_until(3.0)
+check("...reaches 313 and holds it", abs(herr(hdg(q), 313.0)) < 1.0, f"now {hdg(q):.1f}")
+q.ctx["att"]["yaw"] = math.radians(340.0)            # a gust: 27 deg right
+peak = []
+for _ in range(250):
+    q.step(); peak.append(abs(phys(q.mp, q.out, "yaw")))
+check("a gust turns it to 340: back to 313, no spin, and it STAYS",
+      abs(herr(hdg(q), 313.0)) < 1.0 and max(peak) <= q.m.LOCK_MAX_DPS + 0.5, f"now {hdg(q):.1f}")
+q.run_until(20.0)
+check("20 s later: still at 313 (no drift)", abs(herr(hdg(q), 313.0)) < 1.0, f"now {hdg(q):.1f}")
+check("pick another heading while locked (200): the lock moves there, the long turn capped",
+      q.m.request_lock(True, 200) == "")
+peak = []
+for _ in range(600):
+    q.step(); peak.append(abs(phys(q.mp, q.out, "yaw")))
+check("...turns 113 deg the short way to 200 at <= the LOCK cap and holds",
+      abs(herr(hdg(q), 200.0)) < 1.0 and max(peak) <= q.m.LOCK_MAX_DPS + 0.5, f"now {hdg(q):.1f}")
+q.m.request_lock(True, 355); q.run_until(15.0)
+check("across north: lock at 5 from 355 accepted", q.m.request_lock(True, 5) == "")
+path = []
+for _ in range(250):
+    q.step(); path.append(herr(hdg(q), 355.0))
+check("...turns +10 the short way (never heads off to the left), and holds 5",
+      min(path) > -1.0 and abs(herr(hdg(q), 5.0)) < 1.0, f"min {min(path):.1f}, now {hdg(q):.1f}")
+check("a bad heading is refused", q.m.request_lock(True, "x") != "" and q.m.request_lock(True, float("nan")) != "")
+check("lock=360 is north", q.m.request_lock(True, 360) == "" and (q.step() or True) and abs(q.m.lock_hdg) < 1e-6)
+q.m.request_lock(False); q.run_until(1.0)
+check("LOCK off: released, the yaw goes back to the pilot", q.m.lock_hdg is None and "yaw" not in q.out)
+qq = Rig(); qq.step(); qq.m.request_engage(); qq.step()
+check("a picked heading is refused during PUSH", qq.m.request_lock(True, 90) != "")
+
+r.m.request_lock(True); r.step()
 r.m.request_lock(False); r.run_until(1.0)
 check("LOCK pressed again: off, the yaw channel goes back to the pilot",
       r.m.lock_hdg is None and "yaw" not in r.out, str(r.out))

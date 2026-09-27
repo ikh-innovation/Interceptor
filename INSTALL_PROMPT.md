@@ -218,7 +218,7 @@ timeout 300 ../.env/yolo/bin/python tests/test_ui_browser.py 2>&1 | tail -1     
 ../.env/yolo/bin/python tests/sim_lock_wind.py --quick                           # LOCK vs gusts, the odds
 ```
 - Every test should end with `all passed`. `test_field_sequence` ends with `PASSES END TO END`.
-- For reference, the full `sim_sky_wind.py` run (defaults: AI MEDIUM, PUSH MEDIUM 30°, 12 target motions including 45° ones) on the reference machine gives:
+- For reference, the full `sim_sky_wind.py` run (AI MEDIUM, `--push MEDIUM` 30° — the default is now SLOW 20°, 12 target motions including 45° ones) on the reference machine gives:
   - touch 73 / 75 / 74 / 66% at Bf 0 / 1 / 2 / 3
   - AI takes over 99%
   - no ground contact

@@ -283,7 +283,7 @@ def engage(args):
     mp = Mapper()
     wind = Wind(bf, rng)
     m = M.Mission(mp, log=lambda *_a: None, accel_z=2.5, jerk_z=5.0)
-    if os.environ.get("SIM_PUSH"):                  # default: the app's own (MEDIUM, 30 deg)
+    if os.environ.get("SIM_PUSH"):                  # default: the app's own (SLOW, 20 deg)
         m.set_level("push", os.environ["SIM_PUSH"])
 
     # pilot hovering in ALT_HOLD, trimmed into the MEAN wind (no GPS: by hand)
@@ -562,7 +562,7 @@ def report_turns(res):
 def compare_speeds(allres):
     """One table: every target motion x wind, SLOW / MEDIUM / FAST side by side."""
     speeds = [sp for sp in ("SLOW", "MEDIUM", "FAST") if sp in allres]
-    print("\n=== AI SPEED COMPARISON: touch rate (< 0.5 m), PUSH at %s ===" % (os.environ.get("SIM_PUSH") or "MEDIUM (the default, 30 deg)"))
+    print("\n=== AI SPEED COMPARISON: touch rate (< 0.5 m), PUSH at %s ===" % (os.environ.get("SIM_PUSH") or "SLOW (the default, 20 deg)"))
     print(f"  {'target':<22s}" + "".join(f"{'Bf' + str(b):>16s}" for b in (0, 1, 2, 3)))
     print(f"  {'':<22s}" + "".join(f"{'S / M / F':>16s}" for _ in range(4)))
     keys = []
@@ -605,7 +605,7 @@ def main():
     ap.add_argument("--speed", default=None, choices=("SLOW", "MEDIUM", "FAST", "all"),
                     help="AI speed profile (tracker.DroneTracker.MODES); 'all' compares the three")
     ap.add_argument("--push", default=None, choices=("SLOW", "MEDIUM", "FAST"),
-                    help="PUSH lean level; default = the app's default (MEDIUM, 30 deg)")
+                    help="PUSH lean level; default = the app's default (SLOW, 20 deg)")
     ap.add_argument("--hfov", type=float, default=None,
                     help="the REAL horizontal FOV, if it differs from the law's 62.2")
     ap.add_argument("--vfov", type=float, default=None,

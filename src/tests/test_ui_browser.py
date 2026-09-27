@@ -37,15 +37,15 @@ if not shutil.which("firefox"):
 ST = dict(linked=True, armed=True, fc_mode="ALT_HOLD", target="DRONE", tilt_deg=30.0,
           detector="TensorRT", fps=28.0,
           mission=dict(app="mission", phase="HOVER", engaged=False, ai_steering=False,
-                       levels=dict(vert="SLOW", yaw="MEDIUM", push="SLOW", ai="MEDIUM"),
-                       speeds=dict(climb=1.0, descent=0.5, yaw=20, step=5, push=20), min_conf=0.2,
+                       levels=dict(vert="SLOW", yaw="MEDIUM", push="SLOW", ai="MEDIUM", search="SLOW"),
+                       speeds=dict(climb=1.0, descent=0.5, yaw=20, step=5, push=20, search=4), min_conf=0.2,
                        height_m=10.2, climb_mps=0.0, heading_deg=123,
                        vibe=dict(x=9, y=8, z=14, clip=0), det_conf=0.62, det_age_s=0.05,
                        target_fresh=True, target_az_deg=1.2, target_el_deg=-18.5),
           console_seq=2)
 CONSOLE = [[1, "12:00:00", "[MISSION] PILOT -> HOVER  (armed in ALT_HOLD)"],
            [2, "12:00:01", "[FC] override CONFIRMED"]]
-CMDS, REP = [], []
+CMDS, REP, SIMPOLLS = [], [], []
 SLOW, DEAD = {"on": False}, {"on": False}
 
 # Each step: JS run in the harness, then a wait (ms).  rep(...) sends a report.
@@ -64,7 +64,11 @@ STEPS = [
      " grpC:Math.abs((q('.pad').getBoundingClientRect().left+q('#b_eng').getBoundingClientRect().right)/2-W.innerWidth/2),"
      " lockAbove:q('#b_lock').getBoundingClientRect().bottom<=q('#b_eng').getBoundingClientRect().top,"
      " lockW:q('#b_lock').getBoundingClientRect().width, lockBg:W.getComputedStyle(q('#b_lock')).backgroundColor,"
-     " lockTxt:q('#b_lock').textContent,"
+     " lockTxt:q('#b_lock').textContent, pill:q('#c_lock').textContent, pillCls:q('#c_lock').className,"
+     " pillTop:q('#c_lock').getBoundingClientRect().top, pillR:q('#c_lock').getBoundingClientRect().right,"
+     " dialL:q('#dial').getBoundingClientRect().left, vbR:q('#vbox').getBoundingClientRect().right, dialH:q('#dial').getBoundingClientRect().height,"
+     " dialOff:q('#dial').classList.contains('off'), vbL:q('#vbox').getBoundingClientRect().left,"
+     " vbH:q('#vbox').getBoundingClientRect().height, vbW:q('#vbox').getBoundingClientRect().width,"
      " padC:Math.abs((q('.pad').getBoundingClientRect().left+q('.pad').getBoundingClientRect().right)/2-W.innerWidth/2)}); fetch('/reset');", 400),
     ("var cv=q('#tape'), vb=q('#vbox').getBoundingClientRect(), r=cv.getBoundingClientRect();"
      " window._ink=function(x0,x1){var c=cv.getContext('2d'), d=c.getImageData(Math.round(cv.width*x0),0,"
@@ -78,10 +82,39 @@ STEPS = [
      " fetch('/set?phase=HOVER&locked=1&lock_hdg=352');});", 800),
     ("until(function(){return q('#b_lock').classList.contains('on')},3000).then(function(){"
      " rep({step:'locked', cls:q('#b_lock').className, txt:q('#locktxt').textContent, phase:q('#phase').textContent,"
-     " hint:q('#hint').textContent}); fetch('/reset').then(function(){ pe(q('#b_lock'),'pointerdown'); }); });", 3600),
+     " hint:q('#hint').textContent, pill:q('#c_lock').textContent, pillCls:q('#c_lock').className});"
+     " fetch('/reset').then(function(){ pe(q('#b_lock'),'pointerdown'); }); });", 3600),
     ("cmds().then(function(c){rep({step:'lock_off', cmds:c.map(function(x){return x.replace(/k=\\d+&c=\\w+&/,'')})});"
      " fetch('/set?phase=HOVER&locked=0').then(function(){ fetch('/reset'); });});", 400),
     ("until(function(){return !q('#b_lock').classList.contains('on') && !q('#b_yl').disabled},3000);", 3100),
+    ("rep({step:'unlocked', pill:q('#c_lock').textContent, pillCls:q('#c_lock').className}); fetch('/reset');", 300),
+    # the degree scroll: drag up 60 px in slow steps, lift -> the YES / NO pop-up
+    ("var dl=q('#dial'); pey(dl,'pointerdown',500);"
+     " [1,2,3,4,5,6].forEach(function(k){ setTimeout(function(){ pey(dl,'pointermove',500-10*k); }, 80*k); });"
+     " setTimeout(function(){ rep({step:'dragging', ask:q('#ask').classList.contains('on'), drag:dl.classList.contains('drag')});"
+     " pey(dl,'pointerup',440); }, 600);", 900),
+    ("cmds().then(function(c){ rep({step:'asked', ask:q('#ask').classList.contains('on'), deg:q('#ask_deg').textContent,"
+     " sub:q('#ask_sub').textContent, cmds:c}); q('#ask_yes').click(); });", 500),
+    ("cmds().then(function(c){rep({step:'ask_yes', ask:q('#ask').classList.contains('on'),"
+     " cmds:c.map(function(x){return x.replace(/k=\\d+&c=\\w+&/,'')})}); return fetch('/reset'); }).then(function(){"
+     " var dl=q('#dial'); pey(dl,'pointerdown',500); setTimeout(function(){ pey(dl,'pointermove',540); },80);"
+     " setTimeout(function(){ pey(dl,'pointermove',580); },160); setTimeout(function(){ pey(dl,'pointerup',580); },240); });", 700),
+    ("rep({step:'asked_down', deg:q('#ask_deg').textContent}); q('#ask_no').click();"
+     " setTimeout(function(){ cmds().then(function(c){ rep({step:'ask_no', ask:q('#ask').classList.contains('on'), cmds:c}); fetch('/reset'); }); }, 300);", 700),
+    ("var dl=q('#dial'); pey(dl,'pointerdown',500); pey(dl,'pointerup',500);"
+     " setTimeout(function(){ rep({step:'dial_tap', ask:q('#ask').classList.contains('on')}); }, 200);", 400),
+    # ΔΟΚΙΜΗ: the same screen drives the pretend drone at /sim/...
+    ("fetch('/set?phase=HOVER&armed=0').then(function(){ return until(function(){return !q('#t_sim').disabled},3000); })"
+     ".then(function(){ fetch('/reset'); q('#t_menu').click(); setTimeout(function(){ rep({step:'sim_menu', dis:q('#t_sim').disabled});"
+     " q('#t_sim').click(); }, 200); });", 3400),
+    ("until(function(){return d.body.classList.contains('sim')},3000).then(function(){ setTimeout(function(){"
+     " rep({step:'sim_on', bar:W.getComputedStyle(q('#simbar')).display, img:W.getComputedStyle(q('#v')).visibility,"
+     " canv:W.getComputedStyle(q('#simv')).display, sheet:q('#sh_speed').classList.contains('open')});"
+     " fetch('/reset').then(function(){ pe(q('#b_lock'),'pointerdown'); q('#s_gr').click(); q('#s_wind').click(); }); }, 700); });", 1900),
+    ("cmds().then(function(c){ rep({step:'sim_cmds', cmds:c}); q('#s_exit').click();"
+     " setTimeout(function(){ rep({step:'sim_off', sim:d.body.classList.contains('sim'), bar:W.getComputedStyle(q('#simbar')).display}); fetch('/reset'); }, 300); });", 900),
+    ("fetch('/set?phase=HOVER&armed=1'); until(function(){return q('#t_sim').disabled},3000).then(function(){"
+     " rep({step:'sim_armed', dis:q('#t_sim').disabled}); });", 3200),
     ("until(function(){return !q('#b_up').disabled},3000).then(function(){ return fetch('/reset'); })"
      ".then(function(){ pe(q('#b_up'),'pointerdown'); setTimeout(function(){"
      " rep({step:'held', cls:q('#b_up').className}); pe(q('#b_up'),'pointerup'); },1200); });", 4600),
@@ -111,8 +144,10 @@ STEPS = [
     ("until(function(){return !q('#b_eng').classList.contains('go')},3000);", 3100),
     ("rep({step:'reset', eng:q('#b_eng').className, dis:q('#b_eng').disabled}); q('#t_menu').click();", 400),
     ("var sh=q('#sh_speed'), cs=W.getComputedStyle(sh); rep({step:'speeds', open:sh.classList.contains('open'),"
-     " pos:cs.position, h:sh.getBoundingClientRect().height, winh:W.innerHeight});"
-     " q('.seg[data-g=vert] button[data-lv=FAST]').click();", 500),
+     " pos:cs.position, h:sh.getBoundingClientRect().height, winh:W.innerHeight,"
+     " search:[].map.call(d.querySelectorAll('.seg[data-g=search] button'),function(x){return x.textContent}),"
+     " searchOn:(q('.seg[data-g=search] button.on')||{}).textContent});"
+     " q('.seg[data-g=vert] button[data-lv=FAST]').click(); q('.seg[data-g=search] button[data-lv=FAST]').click();", 500),
     ("cmds().then(function(c){rep({step:'lvl', cmds:c.map(function(x){return x.replace(/k=\\d+&c=\\w+&/,'')})});"
      " q('#sh_speed [data-close]').click(); rep({step:'closed', open:q('#sh_speed').classList.contains('open')}); fetch('/reset');});", 400),
     ("q('#t_log').click();", 400),
@@ -123,7 +158,9 @@ STEPS = [
      " fetch('/set?phase=PUSH&engaged=1');", 100),
     ("until(function(){return q('#phase').textContent==='ΩΘΗΣΗ'},3000).then(function(){"
      " rep({step:'push', up:q('#b_up').disabled, eng:q('#b_eng').disabled, aimTop:q('#aim').style.top, lockdis:q('#b_lock').disabled});"
-     " fetch('/set?phase=HOVER&engaged=0'); fetch('/dead?1'); });", 4800),
+     " rep({step:'push_dial', off:q('#dial').classList.contains('off')}); var dl=q('#dial'); pey(dl,'pointerdown',500);"
+     " pey(dl,'pointermove',400); pey(dl,'pointerup',400); setTimeout(function(){ rep({step:'push_dial2', ask:q('#ask').classList.contains('on')});"
+     " fetch('/set?phase=HOVER&engaged=0'); fetch('/dead?1'); }, 200); });", 4800),
     ("rep({step:'dead', cover:q('#cover').classList.contains('on'), done:1});", 0),
 ]
 HARNESS = ("""<!doctype html><html><body><iframe id=f src="/?k=424242" width=390 height=844></iframe><script>
@@ -131,6 +168,8 @@ function rep(o){fetch('/report?'+encodeURIComponent(JSON.stringify(o)));}
 var f=document.getElementById('f');
 f.onload=function(){ var d=f.contentDocument, W=f.contentWindow, q=function(s){return d.querySelector(s)};
  function pe(el,t){ el.dispatchEvent(new W.PointerEvent(t,{bubbles:true,cancelable:true,pointerId:1,isPrimary:true})); }
+ function pey(el,t,y){ var r=el.getBoundingClientRect(); el.dispatchEvent(new W.PointerEvent(t,{bubbles:true,cancelable:true,
+   pointerId:2,isPrimary:true,clientX:r.left+r.width/2,clientY:y})); }
  function cmds(){ return fetch('/cmds').then(function(r){return r.json()}); }
  // wait for a CONDITION, not a fixed time: the Jetson running the real tracker
  // next to headless Firefox makes fixed waits flaky
@@ -168,6 +207,14 @@ class H(BaseHTTPRequestHandler):
         if p == "/state":
             if SLOW["on"]: time.sleep(0.8)
             return self._j(dict(ST, control="you"))
+        if p == "/sim/state":
+            SIMPOLLS.append(1)
+            return self._j(dict(ST, control="you", real_armed=False, sim=dict(bf=2)))
+        if p == "/sim/console":
+            return self._j([])
+        if p == "/sim/cmd":
+            CMDS.append("SIM " + "&".join(x for x in q.split("&") if not x.startswith(("k=", "c="))))
+            return self._j(dict(ST, control="you", refused="", real_armed=False, sim=dict(bf=2)))
         if p == "/cmd":
             CMDS.append(q)
             if parse_qs(q).get("k", [""])[0] != TOKEN: return self._j(dict(error="bad PIN"), 403)
@@ -180,6 +227,8 @@ class H(BaseHTTPRequestHandler):
         if p == "/set":
             a = parse_qs(q)
             ST["mission"]["phase"] = a.get("phase", [ST["mission"]["phase"]])[0]
+            if "armed" in a:
+                ST["armed"] = a["armed"][0] == "1"
             ST["mission"]["locked"] = a.get("locked", ["0"])[0] == "1"
             if "lock_hdg" in a:
                 ST["mission"]["lock_hdg"] = float(a["lock_hdg"][0])
@@ -234,6 +283,49 @@ check("locked: ring on, shows the heading 352°, card says ΚΛΕΙΔΩΜΑ, hin
       "on" in ld.get("cls", "") and "352" in ld.get("txt", "") and ld.get("phase") == "ΚΛΕΙΔΩΜΑ"
       and "LOCK ξανά" in ld.get("hint", ""), str(ld))
 check("LOCK pressed again: sends lock=off (never a blind toggle)", lf.get("cmds") == ["lock=off"], str(lf))
+check("no vibration anywhere in the page", b"vibrate" not in PAGE)
+check("lock state always on top: 'ΞΕΚΛΕΙΔΩΤΟ' in the top bar, grey",
+      "ΞΕΚΛΕΙΔΩΤΟ" in b.get("pill", "") and " on" not in b.get("pillCls", " on") and b.get("pillTop", 99) < 60, str(b.get("pill")))
+check("locked: the top shows 'ΚΛΕΙΔΩΜΑ 352°' in orange", "ΚΛΕΙΔΩΜΑ 352°" in ld.get("pill", "")
+      and "on" in ld.get("pillCls", "").split(), str(ld))
+un = R.get("unlocked", {})
+check("unlocked again: back to 'ΞΕΚΛΕΙΔΩΤΟ'", "ΞΕΚΛΕΙΔΩΤΟ" in un.get("pill", "") and "on" not in un.get("pillCls", "").split(), str(un))
+check("the top bar fits the phone (pill inside the 390 px width)", b.get("pillR", 999) <= 390, str(b.get("pillR")))
+check("degree scroll: RIGHT of the picture, full picture height, active while hovering",
+      b.get("dialL", 0) >= b.get("vbR", 999) and abs(b.get("dialH", 0) - b.get("vbH", 0)) <= 3 and not b.get("dialOff"),
+      str({k: b.get(k) for k in ("dialL", "vbR", "dialH", "vbH", "dialOff")}))
+check("the picture stays 4:3 next to it", abs(b.get("vbW", 0) / max(1, b.get("vbH", 1)) - 4 / 3) < 0.02,
+      f"{b.get('vbW')} x {b.get('vbH')}")
+dg, ak, ay = R.get("dragging", {}), R.get("asked", {}), R.get("ask_yes", {})
+check("while dragging: no pop-up yet, the scroll highlighted", dg.get("ask") is False and dg.get("drag"), str(dg))
+try:
+    picked = int(ak.get("deg", "x").rstrip("°"))
+except ValueError:
+    picked = None
+check("finger up: the pop-up asks 'ΚΛΕΙΔΩΜΑ ΣΤΙΣ <deg>?', dragged UP = more degrees (from 123)",
+      ak.get("ask") and picked is not None and 130 <= picked <= 160 and "στροφή" in ak.get("sub", ""), str(ak))
+check("nothing is sent while scrolling or asking", ak.get("cmds") == [], str(ak.get("cmds")))
+check("ΝΑΙ: sends lock=<that heading>, the pop-up closes",
+      ay.get("cmds") == [f"lock={picked}"] and ay.get("ask") is False, str(ay))
+ad, an = R.get("asked_down", {}), R.get("ask_no", {})
+try:
+    down = int(ad.get("deg", "x").rstrip("°"))
+except ValueError:
+    down = None
+check("dragged DOWN = fewer degrees", down is not None and 80 <= down < 123, str(ad))
+check("ΟΧΙ: nothing sent, the pop-up closes", an.get("cmds") == [] and an.get("ask") is False, str(an))
+check("a touch on the scroll without moving asks nothing", R.get("dial_tap", {}).get("ask") is False, str(R.get("dial_tap")))
+check("PUSH: the degree scroll is off and a drag asks nothing",
+      R.get("push_dial", {}).get("off") and R.get("push_dial2", {}).get("ask") is False,
+      f"{R.get('push_dial')} {R.get('push_dial2')}")
+so, sc, sf = R.get("sim_on", {}), R.get("sim_cmds", {}), R.get("sim_off", {})
+check("☰ → ΔΟΚΙΜΗ (drone disarmed): allowed; the menu closes, a striped ΔΟΚΙΜΗ bar, a drawn view instead of the camera",
+      R.get("sim_menu", {}).get("dis") is False and so.get("bar") == "flex" and so.get("img") == "hidden"
+      and so.get("canv") == "block" and so.get("sheet") is False and len(SIMPOLLS) > 2, f"{so} polls {len(SIMPOLLS)}")
+check("in ΔΟΚΙΜΗ the buttons go to the pretend drone ONLY (/sim/cmd): LOCK, a gust, the wind",
+      sc.get("cmds") == ["SIM lock=on", "SIM gust=r", "SIM wind=3"], str(sc))
+check("ΕΞΟΔΟΣ: back to the real drone, the bar gone", sf.get("sim") is False and sf.get("bar") == "none", str(sf))
+check("drone armed: ΔΟΚΙΜΗ cannot be opened", R.get("sim_armed", {}).get("dis") is True, str(R.get("sim_armed")))
 hd = R.get("held", {}).get("cls", "")
 check("while ▲ is held and the Jetson accepts it: highlighted (held) AND marked sending (tx)",
       "held" in hd and "tx" in hd, hd)
@@ -257,7 +349,10 @@ sp = R.get("speeds", {})
 check("☰ opens ΡΥΘΜΙΣΕΙΣ (the speeds) FULL-SCREEN", sp.get("open") and sp.get("pos") == "fixed"
       and sp.get("h", 0) >= 0.95 * sp.get("winh", 1), str(sp))
 check("a speed button sends lvl=vert:FAST; ✕ closes the page",
-      R.get("lvl", {}).get("cmds") == ["lvl=vert:FAST"] and R.get("closed", {}).get("open") is False)
+      R.get("lvl", {}).get("cmds", [None])[0] == "lvl=vert:FAST" and R.get("closed", {}).get("open") is False)
+check("ΑΝΑΖΗΤΗΣΗ: 4 s / 6 s / 8 s with the distance at PUSH 20°, 4 s selected; 8 s sends lvl=search:FAST",
+      sp.get("search") == ["4 s~19 m", "6 s~42 m", "8 s~69 m"] and sp.get("searchOn") == "4 s~19 m"
+      and R.get("lvl", {}).get("cmds") == ["lvl=vert:FAST", "lvl=search:FAST"], f"{sp.get('search')} {sp.get('searchOn')} {R.get('lvl')}")
 check("console shows the tracker's printed lines", len(R.get("console", {}).get("lines", [])) == 2)
 lg = R.get("logsheet", {})
 check("ΜΗΝΥΜΑΤΑ opens FULL-SCREEN (not a pop-up) and ✕ closes it",

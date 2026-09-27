@@ -88,6 +88,7 @@ from huggingface_hub import hf_hub_download
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fc_control import AcroCommander, ControlLaw, commander_from_env
 from mjpeg_stream import MJPEGServer
+import mission as mission_mod
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1411,29 +1412,13 @@ class DroneTracker:
         m = getattr(self.ap, "mission", None)
         if m is None:
             return "mission app not running (WASP_APP=mission, FC linked?)"
-        now = perf_counter()
-        if key == "hold":
-            kind, _, session = value.partition(":")
-            return m.request_hold(kind.strip().lower(), session.strip() or "?", now)
-        if key == "release":
-            m.request_release(value.strip())
-            return ""
-        if key == "step":
-            return m.request_step(-1 if value.strip().lower().startswith("l") else 1)
-        if key == "engage":
-            return m.request_engage()
-        if key == "lock":                   # lock=on | lock=off (idempotent)
-            return m.request_lock(value.strip().lower() in ("1", "on", "true"))
-        if key == "abort":
-            return m.request_abort()
-        # lvl=<group>:<LEVEL>, groups vert / yaw / push / ai
-        group, _, level = value.partition(":")
-        group, level = group.strip().lower(), level.strip().upper()
-        if group == "ai":
-            if level not in self.MODES:
-                return "unknown speed"
-            self.set_mode(level)
-        return m.set_level(group, level)
+        if key == "lvl":
+            group, _, level = str(value).partition(":")
+            if group.strip().lower() == "ai":
+                if level.strip().upper() not in self.MODES:
+                    return "unknown speed"
+                self.set_mode(level.strip().upper())
+        return mission_mod.phone_command(m, key, value, perf_counter())
 
     # ── master draw ──────────────────────────────────────────────────────────────
 

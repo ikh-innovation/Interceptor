@@ -39,12 +39,20 @@
   .burger{flex:0 0 auto;width:42px;height:42px;border-radius:12px;border:1px solid var(--line);background:var(--bg2);
           display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:0}
   .burger i{display:block;width:18px;height:2px;border-radius:2px;background:var(--ink)}
-  .brand{flex:1;font:700 15px/1 var(--sans);letter-spacing:.22em;color:var(--ink)}
+  .brand{flex:1;min-width:0;overflow:hidden;white-space:nowrap;font:700 15px/1 var(--sans);letter-spacing:.22em;color:var(--ink)}
   .brand span{color:var(--acc);font-weight:500;letter-spacing:.14em;margin-left:6px;font-size:11px}
   .pill{font:500 11px/1 var(--cond);letter-spacing:.08em;padding:7px 10px;border-radius:999px;
         border:1px solid var(--line);background:var(--bg2);color:var(--dim);text-transform:uppercase}
   .pill.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink)}
   .pill.warn{background:var(--warn);border-color:var(--warn);color:#1a1400}
+  /* LOCK state, always on screen (no vibration anywhere): grey = free,
+     orange = locked + the heading it holds */
+  .lockst{display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .lockst svg{width:11px;height:13px;flex:0 0 auto}
+  .lockst .shk{fill:none;stroke:currentColor;stroke-width:2}
+  .lockst .bd{fill:currentColor}
+  .lockst.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink);font-weight:700}
+  .lockst:not(.on) .shk{transform:translate(4px,-2px)}
 
   /* ── phase card ──────────────────────────────────────────────────────── */
   /* no colour fade: the phase colour is a safety cue and must change at once */
@@ -75,10 +83,17 @@
   .tile .v.on:before{background:var(--acc)}
 
   /* ── video + overlays (overlays stay dark: they sit on the picture) ──── */
-  .vidwrap{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center}
+  .vidwrap{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;gap:6px}
+  /* the degree scroll, RIGHT of the picture: drag up = more degrees.  It
+     only PICKS a heading; lifting the finger asks whether to LOCK there. */
+  .dial{flex:0 0 46px;align-self:stretch;position:relative;border-radius:12px;overflow:hidden;touch-action:none;
+        background:var(--ink);border:1px solid var(--ink);box-shadow:0 2px 8px rgba(16,19,23,.2)}
+  .dial canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .dial.off{opacity:.3}
+  .dial.drag{border-color:var(--acc);box-shadow:0 0 0 3px rgba(255,122,0,.45)}
   /* 4:3, the camera's true shape (mode 3, 1280x960).  The overlay maths is
      proportional to the box, so it stays exact at any size. */
-  .vbox{position:relative;height:100%;max-width:100%;aspect-ratio:4/3;border-radius:var(--r);overflow:hidden;
+  .vbox{position:relative;height:100%;max-width:calc(100% - 52px);aspect-ratio:4/3;border-radius:var(--r);overflow:hidden;
         background:#000;border:1px solid var(--line);box-shadow:0 4px 16px rgba(16,19,23,.2)}
   .vbox img{width:100%;height:100%;display:block;object-fit:fill}
   /* the aim indication: an ARC from the bottom-left corner, over the aim
@@ -166,6 +181,33 @@
   .log .ln{padding:6px 0;border-bottom:1px solid var(--line)}.log .t{color:var(--faint)}
   .log .m{color:#1f4f99}.log .r{color:#b44a00}.log .e{color:var(--bad)}
 
+  /* ΔΟΚΙΜΗ (test) mode: a pretend drone on the Jetson; striped so it can
+     never be mistaken for the real one */
+  .simbar{flex:0 0 auto;display:none;align-items:center;gap:6px;padding:6px 8px;border-radius:12px;color:#fff;
+          background:repeating-linear-gradient(135deg,#5b21b6 0 14px,#6d28d9 14px 28px)}
+  body.sim .simbar{display:flex}
+  .simbar b{flex:1;min-width:0;font:700 12.5px/1.1 var(--sans);letter-spacing:.08em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .simbar button{flex:0 0 auto;border:0;border-radius:9px;padding:9px 8px;background:rgba(255,255,255,.95);color:#2e1065;
+                 font:700 11.5px/1 var(--sans);letter-spacing:.04em}
+  .simbar button.x{background:#15181c;color:#fff}
+  body.sim .vbox{border-color:#6d28d9;box-shadow:0 0 0 2px #6d28d9}
+  .simv{position:absolute;inset:0;width:100%;height:100%;display:none}
+  body.sim .simv{display:block}
+  body.sim #v{visibility:hidden}
+  .row:disabled{opacity:.4}
+  .row small{display:block;font:11px/1.3 var(--sans);letter-spacing:0;color:var(--faint);margin-top:6px;text-align:left}
+  /* the one pop-up: LOCK at the heading just picked on the degree scroll? */
+  .ask{position:fixed;inset:0;z-index:8;display:none;align-items:center;justify-content:center;
+       background:rgba(16,19,23,.55);padding:20px}
+  .ask.on{display:flex}
+  .ask > div{background:var(--bg2);border-radius:18px;padding:22px 20px 18px;width:100%;max-width:340px;text-align:center;
+             box-shadow:0 12px 40px rgba(16,19,23,.35)}
+  .ask .q{font:700 15px/1.2 var(--sans);letter-spacing:.12em;color:var(--dim)}
+  .ask .deg{font:700 56px/1.05 var(--mono);color:var(--ink);margin:8px 0 4px}
+  .ask .sub{font-size:13.5px;color:var(--dim);min-height:1.3em}
+  .ask button{display:block;width:100%;margin-top:10px;padding:16px;border-radius:12px;font:700 16px/1 var(--sans);letter-spacing:.1em}
+  .ask .yes{border:0;background:var(--acc);color:var(--acc-ink);margin-top:18px}
+  .ask .no{border:2px solid var(--ink);background:#fff;color:var(--ink)}
   .cover{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;
          background:rgba(170,20,24,.95);color:#fff;z-index:9;text-align:center;padding:24px}
   .cover.on{display:flex}.cover b{font:700 26px/1.2 var(--sans);letter-spacing:.06em}.cover p{font-size:15px;max-width:22em;opacity:.92}
@@ -182,9 +224,17 @@
     .hint{font-size:12px;margin-top:4px}.tile{padding:5px 7px 6px}
     .btn{height:50px;padding-bottom:11px}.btn small{bottom:5px}.rbtn{width:60px;height:60px}.acts{gap:10px}
   }
+  @media (max-width:420px){ .brand span{display:none} }
   @media (max-width:370px){
     .app{padding-left:10px;padding-right:10px}.tiles{gap:5px}.ctl{gap:12px}
     .tile .v{font-size:11.5px}.tile .k{font-size:10px;letter-spacing:.06em}
+  }
+  /* true 4:3 whatever the phone: the picture is as big as fits beside the
+     scroll, and the scroll is exactly as tall as the picture */
+  @supports (width:1cqw){
+    .vidwrap{container-type:size}
+    .vbox{height:auto;max-width:none;width:min(100cqw - 52px, 100cqh * 4 / 3)}
+    .dial{align-self:center;height:min(100cqh, (100cqw - 52px) * 3 / 4)}
   }
 </style></head>
 <body><div class="app">
@@ -192,8 +242,13 @@
   <div class="top">
     <button class="burger" id="t_menu" aria-label="ρυθμίσεις"><i></i><i></i><i></i></button>
     <div class="brand">WASP<span>INTERCEPTOR</span></div>
+    <span class="pill lockst" id="c_lock"><svg viewBox="0 0 11 13" aria-hidden="true"><path class="shk" d="M2.5,6V4a3,3 0 0 1 6,0v2"/><rect class="bd" x="0" y="6" width="11" height="7" rx="1.5"/></svg><span id="c_locktxt">ΞΕΚΛΕΙΔΩΤΟ</span></span>
     <span class="pill" id="c_ctl">--</span>
   </div>
+  <div class="simbar" id="simbar"><b>ΔΟΚΙΜΗ · ΔΕΝ ΠΕΤΑΕΙ</b>
+    <button id="s_gl">ΡΙΠΗ ⟲</button><button id="s_gr">ΡΙΠΗ ⟳</button>
+    <button id="s_wind">ΑΕΡΑΣ 2</button><button id="s_reset" aria-label="από την αρχή">↺</button>
+    <button class="x" id="s_exit">ΕΞΟΔΟΣ</button></div>
 
   <div class="card" id="hdr">
     <div class="row1">
@@ -213,14 +268,14 @@
   </div>
 
   <div class="vidwrap"><div class="vbox" id="vbox">
-    <img id="v" src="/stream.mjpg" alt="">
+    <img id="v" src="/stream.mjpg" alt=""><canvas class="simv" id="simv"></canvas>
     <svg class="arc" id="arc" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
       <path class="sh" id="arc_sh" d="M0,100 Q50,40 100,100"/><path class="fg" id="arc_fg" d="M0,100 Q50,40 100,100"/></svg>
     <div class="aim" id="aim"></div><div class="tgt" id="tgt"></div>
     <canvas class="tape" id="tape"></canvas>
     <div class="badge" id="badge" style="display:none"></div>
     <div class="offs" id="offs" style="display:none"></div>
-  </div></div>
+  </div><div class="dial off" id="dial" aria-label="επιλογή μοιρών"><canvas id="dialc"></canvas></div></div>
 
   <div class="ctl">
     <div class="pad">
@@ -249,8 +304,11 @@
     <div class="grp"><div class="lbl">⟲⟳ ΣΤΡΟΦΗ — κράτημα / ένα άγγιγμα</div><div class="seg" data-g="yaw"></div></div>
     <div class="grp"><div class="lbl">ΩΘΗΣΗ — κλίση μπροστά</div><div class="seg" data-g="push"></div></div>
     <div class="grp"><div class="lbl">AI — προσέγγιση</div><div class="seg" data-g="ai"></div></div>
+    <div class="grp"><div class="lbl">ΑΝΑΖΗΤΗΣΗ — μετά το ENGAGE, πριν το ομαλό σταμάτημα</div><div class="seg" data-g="search"></div></div>
     <div class="sec" style="margin-top:22px">ΚΑΤΑΓΡΑΦΗ</div>
     <button class="row" id="t_log">ΜΗΝΥΜΑΤΑ <span>›</span></button>
+    <div class="sec" style="margin-top:22px">ΔΟΚΙΜΗ</div>
+    <button class="row" id="t_sim"><div>ΔΟΚΙΜΗ ΧΩΡΙΣ ΠΤΗΣΗ<small id="t_simtxt">Ένα εικονικό drone στο Jetson, με αέρα: δοκίμασε κουμπιά, LOCK και μοίρες. Ποτέ στο FC · μόνο με το drone αφοπλισμένο.</small></div><span>›</span></button>
   </div>
 </div>
 <div class="sheet" id="sh_log">
@@ -258,6 +316,13 @@
   <div class="body" id="logbody"><div class="log" id="log"></div></div>
 </div>
 
+<div class="ask" id="ask"><div>
+  <div class="q">ΚΛΕΙΔΩΜΑ ΣΤΙΣ</div>
+  <div class="deg" id="ask_deg">---°</div>
+  <div class="sub" id="ask_sub"></div>
+  <button class="yes" id="ask_yes">ΝΑΙ, ΚΛΕΙΔΩΜΑ</button>
+  <button class="no" id="ask_no">ΟΧΙ</button>
+</div></div>
 <div class="cover" id="cover"><b>ΧΑΘΗΚΕ Η ΣΥΝΔΕΣΗ</b>
   <p>Το Jetson σταματά κάθε κίνηση μόνο του σε 0,3 s. Ο πιλότος έχει τον έλεγχο με τον διακόπτη.</p></div>
 <div class="pin" id="pin"><div>
@@ -297,6 +362,10 @@
   };
   var LEVELS = ["SLOW", "MEDIUM", "FAST"];
   var LAST = null, lastOk = 0, consoleSeq = 0, HDG = null, LOCKHDG = null;
+  var SIM = false;         // ΔΟΚΙΜΗ: everything goes to /sim/..., the pretend drone
+  function base() { return SIM ? "/sim" : ""; }
+  var SEL = null;          // the heading picked on the degree scroll (while dragging / asking)
+  var CANLOCK = false;     // LOCK allowed right now (the server's phase)
 
   // ── transport: polls may be skipped, commands never ────────────────────
   var polling = false;
@@ -307,19 +376,25 @@
     // after 1.2 s and ask again (the red cover still shows a dead link)
     var ac = window.AbortController ? new AbortController() : null;
     var to = ac ? setTimeout(function () { ac.abort(); }, 1200) : null;
-    fetch("/state?c=" + C, {cache: "no-store", signal: ac ? ac.signal : undefined}).then(function (r) {
+    var wasSim = SIM;
+    fetch(base() + "/state?c=" + C, {cache: "no-store", signal: ac ? ac.signal : undefined}).then(function (r) {
+      if (wasSim && r.status === 404) { simMissing(); throw new Error("no sim"); }
       if (!r.ok) throw new Error(r.status); return r.json();
-    }).then(function (j) { lastOk = Date.now(); paint(j); })
+    }).then(function (j) { if (wasSim !== SIM) return; lastOk = Date.now(); paint(j); })
       .catch(function () {}).then(function () { clearTimeout(to); polling = false; });
   }
   function cmd(q, quiet) {
     if (VIEW) { if (!quiet) note("μόνο προβολή: βάλε κωδικό", true); return Promise.resolve(null); }
-    return fetch("/cmd?k=" + encodeURIComponent(K) + "&c=" + C + "&" + q, {cache: "no-store"})
+    var wasSim = SIM;
+    return fetch(base() + "/cmd?k=" + encodeURIComponent(K) + "&c=" + C + "&" + q, {cache: "no-store"})
       .then(function (r) {
         if (r.status === 403) { VIEW = true; $("pin").classList.add("on"); note("λάθος κωδικός", true); return null; }
+        if (r.status === 404 && wasSim) { simMissing(); return null; }
+        if (r.status === 409 && wasSim) { setSim(false); note("✗ το αληθινό drone είναι οπλισμένο: έξοδος από ΔΟΚΙΜΗ", true); return null; }
         if (r.status === 409) { if (!quiet) note("άλλο κινητό έχει τον έλεγχο", true); return null; }
         return r.ok ? r.json() : null;
       }).then(function (j) {
+        if (j && wasSim !== SIM) return null;
         if (j) { lastOk = Date.now(); if (j.refused && !quiet) note("✗ " + j.refused, true); paint(j); }
         return j;
       }).catch(function () { return null; });
@@ -369,7 +444,6 @@
     el.addEventListener("pointerdown", function (e) {
       if (el.disabled) return;
       e.preventDefault(); try { el.setPointerCapture(e.pointerId); } catch (x) {}
-      if (navigator.vibrate) navigator.vibrate(15);
       st = {session: rid(), live: false, inflight: 0};
       el.classList.add("held");
       if (tap) st.delay = setTimeout(start, 250); else start();
@@ -393,7 +467,6 @@
     e.preventDefault();
     var fill = $("engfill"); fill.style.opacity = ".6";
     setTimeout(function () { fill.style.opacity = "0"; }, 180);
-    if (navigator.vibrate) navigator.vibrate([60, 40, 120]);
     cmd("engage=1");
   });
 
@@ -403,10 +476,55 @@
     var el = $("b_lock");
     if (el.disabled) return;
     e.preventDefault();
-    if (navigator.vibrate) navigator.vibrate(40);
     var on = !(LAST && LAST.mission && LAST.mission.locked);
     cmd("lock=" + (on ? "on" : "off"));
   });
+
+  // ── the degree scroll: pick a heading, then YES / NO to LOCK there ─────
+  // Dragging only moves the number (nothing is sent); a slow drag is 1 deg
+  // per 4 px, a fast flick up to ~4x that.  Drag up = more degrees.
+  var dial = $("dial"), drag = null;
+  dial.addEventListener("pointerdown", function (e) {
+    if (!CANLOCK || $("ask").classList.contains("on")) return;
+    e.preventDefault(); try { dial.setPointerCapture(e.pointerId); } catch (x) {}
+    var from = HDG !== null ? HDG : (LOCKHDG !== null ? LOCKHDG : 0);
+    drag = {y: e.clientY, t: performance.now(), v: wrap(Math.round(from)), acc: 0, moved: false};
+    SEL = drag.v; dial.classList.add("drag");
+  });
+  dial.addEventListener("pointermove", function (e) {
+    if (!drag) return;
+    var now = performance.now(), dy = drag.y - e.clientY, dt = Math.max(1, now - drag.t);
+    var speed = Math.abs(dy) / dt;                     // px per ms
+    drag.acc += dy / 4 * Math.min(4, 1 + speed * 1.5);
+    drag.y = e.clientY; drag.t = now;
+    var whole = drag.acc < 0 ? Math.ceil(drag.acc) : Math.floor(drag.acc);
+    if (whole !== 0) { drag.acc -= whole; drag.v = wrap(drag.v + whole); drag.moved = true; SEL = drag.v; }
+  });
+  function dialEnd(ask) {
+    if (!drag) return;
+    var d = drag; drag = null; dial.classList.remove("drag");
+    if (ask && d.moved && CANLOCK) openAsk(d.v); else SEL = null;
+  }
+  dial.addEventListener("pointerup", function () { dialEnd(true); });
+  dial.addEventListener("pointercancel", function () { dialEnd(false); });
+  dial.addEventListener("lostpointercapture", function () { dialEnd(true); });
+  function openAsk(deg) {
+    SEL = deg;
+    T("ask_deg", ("00" + deg).slice(-3) + "°");
+    var sub = "";
+    if (HDG !== null) {
+      var d = Math.round(adiff(deg, HDG));
+      sub = "Τώρα " + ("00" + Math.round(wrap(HDG)) % 360).slice(-3) + "° · στροφή " + (d > 0 ? "⟳ +" : d < 0 ? "⟲ " : "") + d + "° αργά, και μένει εκεί.";
+    }
+    T("ask_sub", sub);
+    $("ask").classList.add("on");
+  }
+  function closeAsk() { $("ask").classList.remove("on"); SEL = null; }
+  $("ask_yes").addEventListener("click", function () {
+    var deg = SEL; closeAsk();
+    if (deg !== null) cmd("lock=" + deg);
+  });
+  $("ask_no").addEventListener("click", closeAsk);
 
   // ── full-screen pages ──────────────────────────────────────────────────
   // ☰ opens ΡΥΘΜΙΣΕΙΣ (speeds); ΜΗΝΥΜΑΤΑ opens on top of it, ✕ goes back
@@ -430,6 +548,35 @@
     });
   });
 
+  // ── ΔΟΚΙΜΗ: the same screen, driving a pretend drone on the Jetson ─────
+  var WIND = 2;
+  function setSim(on) {
+    releaseAll();
+    if (drag) dialEnd(false);
+    if ($("ask").classList.contains("on")) closeAsk();
+    SIM = !!on; LAST = null; NOTE = null;
+    document.body.classList.toggle("sim", SIM);
+    consoleSeq = 0; $("log").innerHTML = "";
+    document.querySelectorAll(".sheet").forEach(function (x) { x.classList.remove("open"); });
+    poll(); pullConsole();
+  }
+  // an older tracker process (started before ΔΟΚΙΜΗ existed) serves this
+  // page but not /sim: say so instead of showing "connection lost"
+  function simMissing() {
+    if (!SIM) return;
+    setSim(false);
+    note("✗ η ΔΟΚΙΜΗ δεν υπάρχει σε αυτό το Jetson ακόμα: επανεκκίνησε το tracker", true);
+  }
+  $("t_sim").onclick = function () {
+    if (LAST && LAST.armed && !SIM) { note("✗ το drone είναι οπλισμένο: ΔΟΚΙΜΗ μόνο αφοπλισμένο", true); return; }
+    setSim(true); cmd("reset=1", true);
+  };
+  $("s_exit").onclick = function () { setSim(false); };
+  $("s_gl").onclick = function () { cmd("gust=l", true); };
+  $("s_gr").onclick = function () { cmd("gust=r", true); };
+  $("s_reset").onclick = function () { releaseAll(); cmd("reset=1", true); };
+  $("s_wind").onclick = function () { WIND = (WIND + 1) % 4; cmd("wind=" + WIND, true); };
+
   // ── PIN ────────────────────────────────────────────────────────────────
   if (VIEW) $("pin").classList.add("on");
   $("pin_ok").onclick = function () {
@@ -441,20 +588,26 @@
   function fmt(x, d) { return (x === null || x === undefined) ? "--" : Number(x).toFixed(d); }
   function paint(j) {
     LAST = j;
+    if (SIM && j.real_armed) { setSim(false); note("✗ το αληθινό drone οπλίστηκε: έξοδος από ΔΟΚΙΜΗ", true); return; }
+    if (SIM && j.sim) { WIND = j.sim.bf; T("s_wind", "ΑΕΡΑΣ " + WIND); }
+    if (!SIM) $("t_sim").disabled = !!j.armed || VIEW;
     var m = j.mission || {}, ph = m.phase || "PILOT", spec = PH[ph] || PH.PILOT;
     $("hdr").style.background = spec.c;
     $("hdr").className = "card" + (spec.ink ? " ink" : "");
     T("phase", spec.t);
     var hint = spec.h;
     if (ph === "PUSH" && m.push_s !== null && m.push_s !== undefined)
-      hint = "ΩΘΗΣΗ " + fmt(m.speeds && m.speeds.push, 0) + "° · " + fmt(m.push_s, 1) + " s · AI μόλις δει στόχο ≥ " + fmt(m.min_conf, 2);
+      hint = "ΩΘΗΣΗ " + fmt(m.speeds && m.speeds.push, 0) + "° · " + fmt(m.push_s, 1) + " / " + fmt(m.speeds && m.speeds.search, 0) + " s · AI μόλις δει στόχο ≥ " + fmt(m.min_conf, 2);
     if (ph === "PILOT" && j.mission && m.gate_why) hint = "Ο πιλότος έχει τον έλεγχο (" + m.gate_why + ").";
     if ((ph === "HOVER" || ph === "SCOUT") && m.engaged) hint = "Έγινε μία προσπάθεια. Για νέα: ο πιλότος STAB → ALT_HOLD.";
     var locked = !!m.locked;
     LOCKHDG = locked && m.lock_hdg !== null && m.lock_hdg !== undefined ? Number(m.lock_hdg) : null;
     if (locked && (ph === "HOVER" || ph === "CLIMB" || ph === "DESCEND")) {
       if (ph === "HOVER") T("phase", "ΚΛΕΙΔΩΜΑ");
-      hint = "Κρατά κατεύθυνση " + fmt(m.lock_hdg, 0) + "° μόνο του, και με αέρα. ENGAGE όταν θέλεις · LOCK ξανά = ξεκλείδωμα.";
+      hint = "Κρατά " + fmt(m.lock_hdg, 0) + "° μόνο του, και με αέρα. ▲▼⟲⟳ δουλεύουν· άφησε = γυρνά στις " + fmt(m.lock_hdg, 0) + "°. LOCK ξανά = ξεκλείδωμα.";
+    }
+    if (locked && ph === "SCOUT") {
+      hint = "Στρίβεις με το χέρι· άφησε = γυρνά αργά στις " + fmt(m.lock_hdg, 0) + "° (κλειδωμένο).";
     }
     if (!j.mission || m.app === "auto") hint = "Η εφαρμογή αποστολής δεν τρέχει (WASP_APP).";
     if (NOTE && Date.now() < NOTE.until) { T("hint", NOTE.s); $("hint").className = "hint refuse"; }
@@ -497,6 +650,12 @@
     $("engtxt").innerHTML = !done ? (ph === "PUSH" ? "ΩΘΗΣΗ" : "ENGAGE")
       : (ph === "AI" || ph === "PUSH") ? "AI ✓" : "ΕΓΙΝΕ ✓";
 
+    var lh = locked && LOCKHDG !== null ? ("00" + Math.round(LOCKHDG) % 360).slice(-3) + "°" : "";
+    $("c_lock").className = "pill lockst" + (locked ? " on" : "");
+    T("c_locktxt", locked ? "ΚΛΕΙΔΩΜΑ " + lh : "ΞΕΚΛΕΙΔΩΤΟ");
+    CANLOCK = ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other";
+    dial.classList.toggle("off", !CANLOCK);
+    if (!CANLOCK) { if (drag) dialEnd(false); if ($("ask").classList.contains("on")) closeAsk(); }
     var lk = $("b_lock");
     lk.className = "rbtn lock" + (locked ? " on" : "");
     lk.disabled = !(["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other");
@@ -504,7 +663,7 @@
 
     // aim mark: where the target must sit NOW so it is centred once leaning
     TILT = (j.tilt_deg !== undefined && j.tilt_deg !== null) ? j.tilt_deg : TILT;
-    var push = (m.speeds && m.speeds.push) || 30;
+    var push = (m.speeds && m.speeds.push) || 20;
     var aimEl = (ph === "PUSH" || ph === "AI" || ph === "STOP") ? 0 : -Math.min(push, 20);
     var ty = function (el) { return 50 - 50 * Math.tan(el * Math.PI / 180) / Math.tan(VFOV / 2 * Math.PI / 180); };
     var tx = function (az) { return 50 + 50 * Math.tan(az * Math.PI / 180) / Math.tan(HFOV / 2 * Math.PI / 180); };
@@ -543,6 +702,11 @@
                push: function (L) { return {SLOW: "20°", MEDIUM: "30°", FAST: "40°"}[L]; },
                // cruise speed at the profile's max lean (tracker MODES 12/20/22 deg,
                // ~15 m/s at 20 deg as in flight_config's cruise_mps), and the climb ceiling
+               // straight-line distance flown in that time at the chosen PUSH
+               // lean (the sim's drag model: ~15 m/s top speed at 20 deg)
+               search: function (L) {
+                 var D = {20: [19, 42, 69], 30: [28, 61, 97], 40: [39, 80, 125]}[sp.push] || [19, 42, 69];
+                 return "~" + D[LEVELS.indexOf(L)] + " m"; },
                ai: function (L) { return {SLOW: "≈11 m/s ↑8", MEDIUM: "≈15 m/s ↑15", FAST: "≈16 m/s ↑25"}[L]; }};
     document.querySelectorAll(".seg").forEach(function (seg) {
       var g = seg.getAttribute("data-g");
@@ -550,6 +714,7 @@
         var L = b.getAttribute("data-lv");
         b.classList.toggle("on", lv[g] === L);
         b.querySelector("i").textContent = val[g](L);
+        if (g === "search") b.firstChild.textContent = {SLOW: "4 s", MEDIUM: "6 s", FAST: "8 s"}[L];
       });
     });
     if (j.console_seq !== undefined && j.console_seq > consoleSeq) pullConsole();
@@ -559,8 +724,10 @@
   var pulling = false;
   function pullConsole() {
     if (pulling) return; pulling = true;
-    fetch("/console?since=" + consoleSeq, {cache: "no-store"}).then(function (r) { return r.ok ? r.json() : []; })
+    var wasSim = SIM;
+    fetch(base() + "/console?since=" + consoleSeq, {cache: "no-store"}).then(function (r) { return r.ok ? r.json() : []; })
       .then(function (rows) {
+        if (wasSim !== SIM) return;
         var L = $("log"), B = $("logbody"), atEnd = (B.scrollTop + B.clientHeight + 40 >= B.scrollHeight);
         rows.forEach(function (x) {
           consoleSeq = Math.max(consoleSeq, x[0]);
@@ -582,7 +749,81 @@
   var CARD = {0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW"};
   function wrap(a) { a %= 360; return a < 0 ? a + 360 : a; }
   function adiff(a, b) { var d = wrap(a - b); return d > 180 ? d - 360 : d; }
-  function drawTape(now) { renderTape(now); requestAnimationFrame(drawTape); }
+  function drawTape(now) { renderTape(now); renderDial(); renderSim(); requestAnimationFrame(drawTape); }
+  var simv = $("simv"), sctx = simv.getContext("2d"), simKey = "";
+  function renderSim() {
+    if (!SIM) return;
+    var dpr = window.devicePixelRatio || 1, w = simv.clientWidth, h = simv.clientHeight;
+    var key = (hdgDisp === null ? "n" : hdgDisp.toFixed(2)) + "|" + w + "|" + h;
+    if (key === simKey) return;
+    simKey = key;
+    if (simv.width !== Math.round(w * dpr) || simv.height !== Math.round(h * dpr)) {
+      simv.width = Math.round(w * dpr); simv.height = Math.round(h * dpr);
+    }
+    var c = sctx, hz = h * 0.62, half = Math.tan(HFOV / 2 * Math.PI / 180);
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var g = c.createLinearGradient(0, 0, 0, hz); g.addColorStop(0, "#4a78b8"); g.addColorStop(1, "#a9c4e4");
+    c.fillStyle = g; c.fillRect(0, 0, w, hz);
+    c.fillStyle = "#4b5d45"; c.fillRect(0, hz, w, h - hz);
+    if (hdgDisp === null) return;
+    c.textAlign = "center"; c.textBaseline = "bottom";
+    for (var b = Math.floor((hdgDisp - 40) / 10) * 10; b <= hdgDisp + 40; b += 10) {
+      var off = adiff(b, hdgDisp);
+      if (Math.abs(off) > HFOV / 2 + 2) continue;
+      var x = w * (0.5 + 0.5 * Math.tan(off * Math.PI / 180) / half), bb = wrap(b), big = bb % 30 === 0;
+      c.strokeStyle = "rgba(255,255,255,.9)"; c.lineWidth = big ? 2 : 1;
+      c.beginPath(); c.moveTo(x, hz); c.lineTo(x, hz - (big ? h * 0.14 : h * 0.06)); c.stroke();
+      if (big) { c.fillStyle = "#fff"; c.font = "700 14px U, sans-serif"; c.fillText(CARD[bb] || String(bb), x, hz - h * 0.15); }
+    }
+    c.fillStyle = "rgba(255,255,255,.85)"; c.font = "700 12px U, sans-serif"; c.textAlign = "left"; c.textBaseline = "bottom";
+    c.fillText("ΔΟΚΙΜΗ · εικονικό drone", 10, h - 8);
+  }
+  var dialc = $("dialc"), dctx = dialc.getContext("2d"), dialKey = "";
+  function renderDial() {
+    // idle: follows the drone's heading; dragging / asking: the picked one
+    var val = SEL !== null ? SEL : (hdgDisp !== null ? hdgDisp : null);
+    var dpr = window.devicePixelRatio || 1, w = dialc.clientWidth, h = dialc.clientHeight;
+    var key = (val === null ? "n" : val.toFixed(1)) + "|" + w + "|" + h + "|" + dpr + "|" + LOCKHDG + "|" + (SEL !== null);
+    if (key === dialKey) return;
+    dialKey = key;
+    if (dialc.width !== Math.round(w * dpr) || dialc.height !== Math.round(h * dpr)) {
+      dialc.width = Math.round(w * dpr); dialc.height = Math.round(h * dpr);
+    }
+    var c = dctx, PX = 4;                 // px per degree on the dial
+    c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h);
+    if (val === null) {
+      c.fillStyle = "rgba(255,255,255,.5)"; c.font = "11px UC, sans-serif"; c.textAlign = "center";
+      c.textBaseline = "middle"; c.fillText("---", w / 2, h / 2); return;
+    }
+    c.textAlign = "right"; c.textBaseline = "middle";
+    var span = h / 2 / PX + 5;
+    for (var b = Math.floor((val - span) / 5) * 5; b <= val + span; b += 5) {
+      var y = h / 2 + (b - val) * PX, bb = wrap(b), major = bb % 15 === 0;
+      c.strokeStyle = major ? "rgba(255,255,255,.85)" : "rgba(255,255,255,.35)"; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(w, y); c.lineTo(w - (major ? 9 : 5), y); c.stroke();
+      if (major && Math.abs(y - h / 2) > 14) {
+        var card = CARD[bb];
+        c.font = card ? "700 11px U, sans-serif" : "10.5px UC, sans-serif";
+        c.fillStyle = card ? "#ff8a1f" : "rgba(255,255,255,.75)";
+        c.fillText(card || String(bb), w - 12, y);
+      }
+    }
+    // the locked heading on the dial: a white notch at the left edge
+    if (LOCKHDG !== null) {
+      var lo = adiff(LOCKHDG, val), ly = h / 2 + lo * PX;
+      c.fillStyle = "#fff"; c.beginPath();
+      if (Math.abs(lo) * PX < h / 2 - 4) { c.moveTo(0, ly - 6); c.lineTo(8, ly); c.lineTo(0, ly + 6); }
+      else if (lo > 0) { c.moveTo(4, h - 3); c.lineTo(14, h - 3); c.lineTo(9, h - 11); }
+      else { c.moveTo(4, 3); c.lineTo(14, 3); c.lineTo(9, 11); }
+      c.closePath(); c.fill();
+    }
+    // centre readout
+    var txt = ("00" + Math.round(wrap(val)) % 360).slice(-3);
+    c.fillStyle = SEL !== null ? "#ff8a1f" : "#fff";
+    c.fillRect(2, h / 2 - 11, w - 4, 22);
+    c.fillStyle = SEL !== null ? "#1a0d00" : "#15181c"; c.textAlign = "center";
+    c.font = "700 13px UM, monospace"; c.fillText(txt + "°", w / 2, h / 2 + 1);
+  }
   function renderTape(now) {
     var dt = tPrev ? Math.min(0.2, (now - tPrev) / 1000) : 0; tPrev = now;
     if (HDG === null) hdgDisp = null;
@@ -591,7 +832,7 @@
     else hdgDisp = wrap(hdgDisp + adiff(HDG, hdgDisp) * (1 - Math.exp(-dt / 0.12)));
     var dpr = window.devicePixelRatio || 1, w = tape.clientWidth, h = tape.clientHeight;
     // redraw only when something moved: an idle tape costs the phone nothing
-    var key = (hdgDisp === null ? "n" : hdgDisp.toFixed(2)) + "|" + w + "|" + h + "|" + dpr + "|" + LOCKHDG;
+    var key = (hdgDisp === null ? "n" : hdgDisp.toFixed(2)) + "|" + w + "|" + h + "|" + dpr + "|" + LOCKHDG + "|" + SEL;
     if (key === lastKey) return;
     lastKey = key;
     if (tape.width !== Math.round(w * dpr) || tape.height !== Math.round(h * dpr)) {
@@ -627,6 +868,17 @@
       } else if (lo > 0) { c.moveTo(w - 2, h / 2); c.lineTo(w - 11, h / 2 - 6); c.lineTo(w - 11, h / 2 + 6); }
       else { c.moveTo(2, h / 2); c.lineTo(11, h / 2 - 6); c.lineTo(11, h / 2 + 6); }
       c.closePath(); c.fill(); c.stroke();
+    }
+    // the heading being picked on the degree scroll: an orange line
+    if (hdgDisp !== null && SEL !== null) {
+      var so = adiff(SEL, hdgDisp);
+      c.strokeStyle = "#ff8a1f"; c.lineWidth = 2; c.beginPath();
+      if (Math.abs(so) <= HFOV / 2) {
+        var sx = w * (0.5 + 0.5 * Math.tan(so * Math.PI / 180) / half);
+        c.moveTo(sx, 0); c.lineTo(sx, h);
+      } else if (so > 0) { c.moveTo(w - 3, 3); c.lineTo(w - 3, h - 3); }
+      else { c.moveTo(3, 3); c.lineTo(3, h - 3); }
+      c.stroke();
     }
     // centre: pointer + readout
     var txt = hdgDisp === null ? "---°" : ("00" + Math.round(wrap(hdgDisp)) % 360).slice(-3) + "°";
