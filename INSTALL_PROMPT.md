@@ -43,7 +43,7 @@ Make this Jetson run WASP exactly like the reference Jetson: same camera mode, s
 | Repo path | `/home/iknowhow/Documents/Interceptor` |
 | Service | systemd **user** unit `wasp-tracker.service`, GDM autologin |
 | Logs | `~/wasp-logs/wasp-tracker.log`, per-run files in `src/data/` |
-| Phone app | `http://<jetson-ip>:8080/`, PIN in `~/.wasp_ui_token` |
+| Phone app | `http://<jetson-ip>:8080/` (no PIN) |
 
 Different versions are **not automatically wrong**, but every difference goes in the final report. JetPack and TensorRT decide whether an engine from elsewhere can run. You rebuild it here anyway (phase 4).
 
@@ -202,7 +202,7 @@ systemctl --user is-enabled wasp-tracker.service   # enabled
   AutomaticLoginEnable=true
   AutomaticLogin=<user>
   ```
-- **Phone PIN:** created on the first run in `~/.wasp_ui_token`. Give it to the human.
+- **Phone:** no PIN. Any phone on the field WiFi can command, one at a time, so the WiFi must be private.
 
 ## Phase 9 — Tests (no hardware in the loop)
 
@@ -264,7 +264,7 @@ FC:                 <firmware> <version>, override verified <yes/no>, ALT_HOLD r
 FC params to fix:   <list, or none>
 flight_config:      MODE <..>, tilt <..>, target width <..>, commit chan <..>
 Service:            enabled <yes/no>, autologin <yes/no>, starts at boot <verified / awaiting reboot>
-Phone:              http://<ip>:8080/?k=<PIN>
+Phone:              http://<ip>:8080/
 Tests:              <n>/<n> passed  [failures: ...]
 Sim (quick):        touch Bf0-3 <..>%, AI takeover <..>%, crashes <..>
 Open items:         <anything that needs the human>

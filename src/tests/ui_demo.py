@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The phone app on a desk: no drone, no FC, no camera.
 
-    ../.env/yolo/bin/python tests/ui_demo.py [--port 8090] [--pin 1234]
+    ../.env/yolo/bin/python tests/ui_demo.py [--port 8090]
 
 Open the printed link, then ☰ → ΔΟΚΙΜΗ ΧΩΡΙΣ ΠΤΗΣΗ: the same test mode the
 Jetson serves (desk_sim.py: the real mission code against a model of
@@ -44,13 +44,12 @@ def lan_ip():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8090)
-    ap.add_argument("--pin", default="1234")
     a = ap.parse_args()
     srv = mjpeg_stream.MJPEGServer(port=a.port, state_get=lambda: dict(IDLE),
                                    command=lambda k, v: "desk: no FC -- use ☰ → ΔΟΚΙΜΗ",
-                                   console_get=lambda since: [], token=a.pin).start()
-    print(f"\n  phone app on the desk:\n    http://{lan_ip()}:{a.port}/?k={a.pin}\n"
-          f"    http://127.0.0.1:{a.port}/?k={a.pin}\n  then ☰ → ΔΟΚΙΜΗ ΧΩΡΙΣ ΠΤΗΣΗ.  Ctrl-C stops.\n")
+                                   console_get=lambda since: []).start()
+    print(f"\n  phone app on the desk:\n    http://{lan_ip()}:{a.port}/\n"
+          f"    http://127.0.0.1:{a.port}/\n  then ☰ → ΔΟΚΙΜΗ ΧΩΡΙΣ ΠΤΗΣΗ.  Ctrl-C stops.\n")
     try:
         while True:
             time.sleep(1)

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="el"><head><meta charset="utf-8">
+<html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#eceef1">
 <title>WASP</title>
@@ -161,7 +161,11 @@
   .sheet{position:fixed;inset:0;z-index:7;display:none;flex-direction:column;background:var(--bg);
          padding:calc(12px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom))}
   .sheet.open{display:flex}
-  #sh_log{z-index:8}
+  .sheet.sub{z-index:8}
+  .sheet .txt{font-size:14.5px;line-height:1.45;color:var(--dim);margin:0 0 12px}
+  .sheet .go{display:block;width:100%;margin-top:10px;padding:18px;border:0;border-radius:14px;background:#6d28d9;color:#fff;
+             font:700 16px/1 var(--sans);letter-spacing:.12em}
+  .sheet .go:disabled{opacity:.35}
   .sheet h3{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;margin:0 0 14px;
             font:700 20px/1 var(--sans);letter-spacing:.14em;color:var(--ink)}
   .sheet h3 small{display:block;font:11px/1 var(--cond);letter-spacing:.1em;color:var(--faint);margin-top:6px}
@@ -181,7 +185,7 @@
   .log .ln{padding:6px 0;border-bottom:1px solid var(--line)}.log .t{color:var(--faint)}
   .log .m{color:#1f4f99}.log .r{color:#b44a00}.log .e{color:var(--bad)}
 
-  /* ΔΟΚΙΜΗ (test) mode: a pretend drone on the Jetson; striped so it can
+  /* TEST mode: a pretend drone on the Jetson; striped so it can
      never be mistaken for the real one */
   .simbar{flex:0 0 auto;display:none;align-items:center;gap:6px;padding:6px 8px;border-radius:12px;color:#fff;
           background:repeating-linear-gradient(135deg,#5b21b6 0 14px,#6d28d9 14px 28px)}
@@ -211,13 +215,6 @@
   .cover{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;
          background:rgba(170,20,24,.95);color:#fff;z-index:9;text-align:center;padding:24px}
   .cover.on{display:flex}.cover b{font:700 26px/1.2 var(--sans);letter-spacing:.06em}.cover p{font-size:15px;max-width:22em;opacity:.92}
-  .pin{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(236,238,241,.96);z-index:8}
-  .pin.on{display:flex}.pin > div{background:var(--bg2);border:1px solid var(--line);padding:20px;border-radius:16px;width:84%;max-width:330px;
-         box-shadow:0 8px 30px rgba(16,19,23,.15)}
-  .pin .ttl{font:700 16px/1 var(--sans);letter-spacing:.12em;margin-bottom:12px;color:var(--ink)}
-  .pin input{width:100%;font:28px/1 var(--mono);padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg3);color:var(--ink);
-             text-align:center;letter-spacing:.3em;-webkit-user-select:text;user-select:text}
-  .pin button{margin-top:10px;width:100%;padding:13px;font:700 15px/1 var(--sans);letter-spacing:.1em;border-radius:10px;border:0}
   /* smaller phones: give the picture the room, keep every word whole */
   @media (max-height:780px){
     .app{gap:6px}.card{padding:8px 12px}.phase,.alt .h{font-size:26px}
@@ -240,31 +237,31 @@
 <body><div class="app">
 
   <div class="top">
-    <button class="burger" id="t_menu" aria-label="ρυθμίσεις"><i></i><i></i><i></i></button>
+    <button class="burger" id="t_menu" aria-label="menu"><i></i><i></i><i></i></button>
     <div class="brand">WASP<span>INTERCEPTOR</span></div>
-    <span class="pill lockst" id="c_lock"><svg viewBox="0 0 11 13" aria-hidden="true"><path class="shk" d="M2.5,6V4a3,3 0 0 1 6,0v2"/><rect class="bd" x="0" y="6" width="11" height="7" rx="1.5"/></svg><span id="c_locktxt">ΞΕΚΛΕΙΔΩΤΟ</span></span>
+    <span class="pill lockst" id="c_lock"><svg viewBox="0 0 11 13" aria-hidden="true"><path class="shk" d="M2.5,6V4a3,3 0 0 1 6,0v2"/><rect class="bd" x="0" y="6" width="11" height="7" rx="1.5"/></svg><span id="c_locktxt">UNLOCKED</span></span>
     <span class="pill" id="c_ctl">--</span>
   </div>
-  <div class="simbar" id="simbar"><b>ΔΟΚΙΜΗ · ΔΕΝ ΠΕΤΑΕΙ</b>
-    <button id="s_gl">ΡΙΠΗ ⟲</button><button id="s_gr">ΡΙΠΗ ⟳</button>
-    <button id="s_wind">ΑΕΡΑΣ 2</button><button id="s_reset" aria-label="από την αρχή">↺</button>
-    <button class="x" id="s_exit">ΕΞΟΔΟΣ</button></div>
+  <div class="simbar" id="simbar"><b>TEST · NOT FLYING</b>
+    <button id="s_gl">GUST ⟲</button><button id="s_gr">GUST ⟳</button>
+    <button id="s_wind">WIND 2</button><button id="s_reset" aria-label="start over">↺</button>
+    <button class="x" id="s_exit">EXIT</button></div>
 
   <div class="card" id="hdr">
     <div class="row1">
       <div class="phase" id="phase">--</div>
       <div class="alt"><div class="h" id="alt">--</div><div class="v" id="vs">&nbsp;</div></div>
     </div>
-    <div class="hint" id="hint">σύνδεση…</div>
+    <div class="hint" id="hint">connecting…</div>
   </div>
 
   <div class="tiles">
-    <div class="tile"><span class="k">Λειτουργία FC</span><span class="v" id="c_mode">--</span></div>
-    <div class="tile"><span class="k">Όπλιση</span><span class="v" id="c_arm">--</span></div>
-    <div class="tile"><span class="k">Πορεία</span><span class="v" id="c_hdg">--</span></div>
-    <div class="tile"><span class="k">Στόχος (drone)</span><span class="v" id="c_det">--</span></div>
-    <div class="tile"><span class="k">Δόνηση</span><span class="v" id="c_vib">--</span></div>
-    <div class="tile"><span class="k" id="c_ai_k">Ανιχνευτής</span><span class="v" id="c_ai">--</span></div>
+    <div class="tile"><span class="k">FC mode</span><span class="v" id="c_mode">--</span></div>
+    <div class="tile"><span class="k">Armed</span><span class="v" id="c_arm">--</span></div>
+    <div class="tile"><span class="k">Heading</span><span class="v" id="c_hdg">--</span></div>
+    <div class="tile"><span class="k">Target (drone)</span><span class="v" id="c_det">--</span></div>
+    <div class="tile"><span class="k">Vibration</span><span class="v" id="c_vib">--</span></div>
+    <div class="tile"><span class="k" id="c_ai_k">Detector</span><span class="v" id="c_ai">--</span></div>
   </div>
 
   <div class="vidwrap"><div class="vbox" id="vbox">
@@ -275,18 +272,18 @@
     <canvas class="tape" id="tape"></canvas>
     <div class="badge" id="badge" style="display:none"></div>
     <div class="offs" id="offs" style="display:none"></div>
-  </div><div class="dial off" id="dial" aria-label="επιλογή μοιρών"><canvas id="dialc"></canvas></div></div>
+  </div><div class="dial off" id="dial" aria-label="pick a heading"><canvas id="dialc"></canvas></div></div>
 
   <div class="ctl">
     <div class="pad">
       <div></div>
-      <button class="btn" id="b_up" data-hold="up">▲<small>ΑΝΟΔΟΣ</small></button>
+      <button class="btn" id="b_up" data-hold="up">▲<small>CLIMB</small></button>
       <div></div>
-      <button class="btn" id="b_yl" data-hold="yawl" data-tap="l">⟲<small>ΑΡΙΣΤΕΡΑ</small></button>
+      <button class="btn" id="b_yl" data-hold="yawl" data-tap="l">⟲<small>LEFT</small></button>
       <div class="mid" id="padmid">--</div>
-      <button class="btn" id="b_yr" data-hold="yawr" data-tap="r">⟳<small>ΔΕΞΙΑ</small></button>
+      <button class="btn" id="b_yr" data-hold="yawr" data-tap="r">⟳<small>RIGHT</small></button>
       <div></div>
-      <button class="btn" id="b_dn" data-hold="down">▼<small>ΚΑΘΟΔΟΣ</small></button>
+      <button class="btn" id="b_dn" data-hold="down">▼<small>DESCEND</small></button>
       <div></div>
     </div>
     <div class="acts">
@@ -296,41 +293,47 @@
   </div>
 </div>
 
-<div class="sheet" id="sh_speed">
-  <h3><span>ΡΥΘΜΙΣΕΙΣ<small>ΙΣΧΥΟΥΝ ΑΜΕΣΩΣ</small></span><button data-close aria-label="κλείσιμο">&#x2715;</button></h3>
+<div class="sheet" id="sh_menu">
+  <h3><span>MENU</span><button data-close aria-label="close">&#x2715;</button></h3>
   <div class="body">
-    <div class="sec">ΤΑΧΥΤΗΤΕΣ</div>
-    <div class="grp"><div class="lbl">▲▼ ΥΨΟΣ — ανάβαση / κάθοδος</div><div class="seg" data-g="vert"></div></div>
-    <div class="grp"><div class="lbl">⟲⟳ ΣΤΡΟΦΗ — κράτημα / ένα άγγιγμα</div><div class="seg" data-g="yaw"></div></div>
-    <div class="grp"><div class="lbl">ΩΘΗΣΗ — κλίση μπροστά</div><div class="seg" data-g="push"></div></div>
-    <div class="grp"><div class="lbl">AI — προσέγγιση</div><div class="seg" data-g="ai"></div></div>
-    <div class="grp"><div class="lbl">ΑΝΑΖΗΤΗΣΗ — μετά το ENGAGE, πριν το ομαλό σταμάτημα</div><div class="seg" data-g="search"></div></div>
-    <div class="sec" style="margin-top:22px">ΚΑΤΑΓΡΑΦΗ</div>
-    <button class="row" id="t_log">ΜΗΝΥΜΑΤΑ <span>›</span></button>
-    <div class="sec" style="margin-top:22px">ΔΟΚΙΜΗ</div>
-    <button class="row" id="t_sim"><div>ΔΟΚΙΜΗ ΧΩΡΙΣ ΠΤΗΣΗ<small id="t_simtxt">Ένα εικονικό drone στο Jetson, με αέρα: δοκίμασε κουμπιά, LOCK και μοίρες. Ποτέ στο FC · μόνο με το drone αφοπλισμένο.</small></div><span>›</span></button>
+    <button class="row" id="t_par"><div>PARAMETERS<small>Speeds, push lean, AI, search time</small></div><span>›</span></button>
+    <button class="row" id="t_log"><div>MESSAGES<small>What the Jetson reports</small></div><span>›</span></button>
+    <button class="row" id="t_test"><div>TEST<small>A pretend drone: try the buttons without flying</small></div><span>›</span></button>
   </div>
 </div>
-<div class="sheet" id="sh_log">
-  <h3><span>ΜΗΝΥΜΑΤΑ<small>ΑΠΟ ΤΟ JETSON</small></span><button data-close aria-label="κλείσιμο">&#x2715;</button></h3>
+<div class="sheet sub" id="sh_speed">
+  <h3><span>PARAMETERS<small>APPLIED AT ONCE</small></span><button data-close aria-label="close">&#x2715;</button></h3>
+  <div class="body">
+    <div class="grp"><div class="lbl">▲▼ HEIGHT — climb / descent</div><div class="seg" data-g="vert"></div></div>
+    <div class="grp"><div class="lbl">⟲⟳ TURN — hold / one tap</div><div class="seg" data-g="yaw"></div></div>
+    <div class="grp"><div class="lbl">PUSH — forward lean</div><div class="seg" data-g="push"></div></div>
+    <div class="grp"><div class="lbl">AI — approach</div><div class="seg" data-g="ai"></div></div>
+    <div class="grp"><div class="lbl">SEARCH — after ENGAGE, before the soft stop</div><div class="seg" data-g="search"></div></div>
+  </div>
+</div>
+<div class="sheet sub" id="sh_log">
+  <h3><span>MESSAGES<small>FROM THE JETSON</small></span><button data-close aria-label="close">&#x2715;</button></h3>
   <div class="body" id="logbody"><div class="log" id="log"></div></div>
 </div>
-
+<div class="sheet sub" id="sh_test">
+  <h3><span>TEST<small>WITHOUT FLYING</small></span><button data-close aria-label="close">&#x2715;</button></h3>
+  <div class="body">
+    <p class="txt">The whole screen drives a pretend drone on the Jetson, with wind. It runs the same code as the real flight
+      (LOCK, the heading scroll, ▲▼⟲⟳, ENGAGE, the parameters), and nothing is ever sent to the FC.</p>
+    <p class="txt">Only while the real drone is <b>disarmed</b>. If it arms, the test ends at once.</p>
+    <button class="go" id="t_sim">START TEST</button>
+    <p class="txt" id="t_simtxt"></p>
+  </div>
+</div>
 <div class="ask" id="ask"><div>
-  <div class="q">ΚΛΕΙΔΩΜΑ ΣΤΙΣ</div>
+  <div class="q">LOCK AT</div>
   <div class="deg" id="ask_deg">---°</div>
   <div class="sub" id="ask_sub"></div>
-  <button class="yes" id="ask_yes">ΝΑΙ, ΚΛΕΙΔΩΜΑ</button>
-  <button class="no" id="ask_no">ΟΧΙ</button>
+  <button class="yes" id="ask_yes">YES, LOCK</button>
+  <button class="no" id="ask_no">NO</button>
 </div></div>
-<div class="cover" id="cover"><b>ΧΑΘΗΚΕ Η ΣΥΝΔΕΣΗ</b>
-  <p>Το Jetson σταματά κάθε κίνηση μόνο του σε 0,3 s. Ο πιλότος έχει τον έλεγχο με τον διακόπτη.</p></div>
-<div class="pin" id="pin"><div>
-  <div class="ttl">ΚΩΔΙΚΟΣ ΧΕΙΡΙΣΤΗ</div>
-  <input id="pin_in" inputmode="numeric" autocomplete="off">
-  <button id="pin_ok" style="background:var(--acc);color:var(--acc-ink)">ΕΛΕΓΧΟΣ</button>
-  <button id="pin_view" style="background:var(--ink);color:#fff">ΜΟΝΟ ΠΡΟΒΟΛΗ</button>
-</div></div>
+<div class="cover" id="cover"><b>CONNECTION LOST</b>
+  <p>The Jetson stops every move on its own within 0.3 s. The pilot has control with the switch.</p></div>
 
 <script>
 (function () {
@@ -341,28 +344,25 @@
   function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
   function rid() { return Math.random().toString(36).slice(2, 10); }
 
-  // ── identity: the PIN (token) and this page's client id ────────────────
-  var qs = new URLSearchParams(location.search);
-  var K = qs.get("k") || store("wasp_k") || "";
-  if (qs.get("k")) store("wasp_k", K);
+  // ── identity: this page's client id (no password: the field WiFi is the gate)
   var C = rid();
-  var VIEW = !K;
+  var VIEW = false;        // every phone may command (the controller lease still picks one)
 
   var HFOV = 62.2, VFOV = 48.8, TILT = 30;
   // c = card colour, ink = dark text on a light card
   var PH = {
-    PILOT:   {t: "ΧΕΙΡΙΣΤΗΣ", c: "var(--pilot)", h: "Ο πιλότος: όπλιση και απογείωση σε ALT_HOLD, αιώρηση 1–2 m, γκάζι στο κέντρο."},
-    HOVER:   {t: "ΑΙΩΡΗΣΗ",   c: "var(--hover)", h: "▲▼ ύψος · ⟲⟳ κατεύθυνση · στόχος κάτω από την κορυφή του τόξου · μετά ENGAGE."},
-    CLIMB:   {t: "ΑΝΟΔΟΣ",    c: "var(--vert)",  h: "Όσο κρατάς ▲ ανεβαίνει. Άφησε = κρατά ύψος."},
-    DESCEND: {t: "ΚΑΘΟΔΟΣ",   c: "var(--vert)",  h: "Όσο κρατάς ▼ κατεβαίνει. Άφησε = κρατά ύψος."},
-    SCOUT:   {t: "ΑΝΙΧΝΕΥΣΗ", c: "var(--scout)", h: "Κράτημα = στροφή · ένα άγγιγμα = μικρό βήμα."},
-    PUSH:    {t: "ΩΘΗΣΗ",     c: "var(--push)",  h: "Κλίση μπροστά, ίδια κατεύθυνση και ύψος. AI σε λίγο.", ink: true},
-    AI:      {t: "AI",        c: "var(--ai)",    h: "Το AI κυνηγά τον στόχο. Στοπ: ο πιλότος σε STAB."},
-    STOP:    {t: "ΣΤΑΜΑΤΑ",   c: "var(--stop)",  h: "Ομαλή επαναφορά σε αιώρηση.", ink: true}
+    PILOT:   {t: "PILOT", c: "var(--pilot)", h: "The pilot: arm and take off in ALT_HOLD, hover at 1–2 m, throttle centred."},
+    HOVER:   {t: "HOVER",     c: "var(--hover)", h: "▲▼ height · ⟲⟳ heading · target under the top of the arc · then ENGAGE."},
+    CLIMB:   {t: "CLIMB",     c: "var(--vert)",  h: "Climbs while you hold ▲. Let go = holds height."},
+    DESCEND: {t: "DESCEND",   c: "var(--vert)",  h: "Descends while you hold ▼. Let go = holds height."},
+    SCOUT:   {t: "SCOUT",     c: "var(--scout)", h: "Hold = turn · one tap = a small step."},
+    PUSH:    {t: "PUSH",      c: "var(--push)",  h: "Leaning forward, same heading and height. The AI takes over shortly.", ink: true},
+    AI:      {t: "AI",        c: "var(--ai)",    h: "The AI is chasing the target. To stop: the pilot to STAB."},
+    STOP:    {t: "STOP",      c: "var(--stop)",  h: "Easing back to a hover.", ink: true}
   };
   var LEVELS = ["SLOW", "MEDIUM", "FAST"];
   var LAST = null, lastOk = 0, consoleSeq = 0, HDG = null, LOCKHDG = null;
-  var SIM = false;         // ΔΟΚΙΜΗ: everything goes to /sim/..., the pretend drone
+  var SIM = false;         // TEST: everything goes to /sim/..., the pretend drone
   function base() { return SIM ? "/sim" : ""; }
   var SEL = null;          // the heading picked on the degree scroll (while dragging / asking)
   var CANLOCK = false;     // LOCK allowed right now (the server's phase)
@@ -384,14 +384,12 @@
       .catch(function () {}).then(function () { clearTimeout(to); polling = false; });
   }
   function cmd(q, quiet) {
-    if (VIEW) { if (!quiet) note("μόνο προβολή: βάλε κωδικό", true); return Promise.resolve(null); }
     var wasSim = SIM;
-    return fetch(base() + "/cmd?k=" + encodeURIComponent(K) + "&c=" + C + "&" + q, {cache: "no-store"})
+    return fetch(base() + "/cmd?c=" + C + "&" + q, {cache: "no-store"})
       .then(function (r) {
-        if (r.status === 403) { VIEW = true; $("pin").classList.add("on"); note("λάθος κωδικός", true); return null; }
         if (r.status === 404 && wasSim) { simMissing(); return null; }
-        if (r.status === 409 && wasSim) { setSim(false); note("✗ το αληθινό drone είναι οπλισμένο: έξοδος από ΔΟΚΙΜΗ", true); return null; }
-        if (r.status === 409) { if (!quiet) note("άλλο κινητό έχει τον έλεγχο", true); return null; }
+        if (r.status === 409 && wasSim) { setSim(false); note("✗ the real drone is armed: leaving TEST", true); return null; }
+        if (r.status === 409) { if (!quiet) note("another phone has control", true); return null; }
         return r.ok ? r.json() : null;
       }).then(function (j) {
         if (j && wasSim !== SIM) return null;
@@ -400,9 +398,9 @@
       }).catch(function () { return null; });
   }
   // Messages never pop up: one line under the picture, the full list on its
-  // own full-screen page (ΜΗΝΥΜΑΤΑ).
+  // own full-screen page (MESSAGES).
   // No message bar: a refusal shows in the phase card's hint for 4 s (never
-  // a pop-up); everything else is in ☰ → ΜΗΝΥΜΑΤΑ.
+  // a pop-up); everything else is in ☰ → MESSAGES.
   var NOTE = null;
   function note(s, bad) {
     if (!bad) return;
@@ -514,7 +512,7 @@
     var sub = "";
     if (HDG !== null) {
       var d = Math.round(adiff(deg, HDG));
-      sub = "Τώρα " + ("00" + Math.round(wrap(HDG)) % 360).slice(-3) + "° · στροφή " + (d > 0 ? "⟳ +" : d < 0 ? "⟲ " : "") + d + "° αργά, και μένει εκεί.";
+      sub = "Now " + ("00" + Math.round(wrap(HDG)) % 360).slice(-3) + "° · turns " + (d > 0 ? "⟳ +" : d < 0 ? "⟲ " : "") + d + "° slowly, then stays there.";
     }
     T("ask_sub", sub);
     $("ask").classList.add("on");
@@ -527,14 +525,16 @@
   $("ask_no").addEventListener("click", closeAsk);
 
   // ── full-screen pages ──────────────────────────────────────────────────
-  // ☰ opens ΡΥΘΜΙΣΕΙΣ (speeds); ΜΗΝΥΜΑΤΑ opens on top of it, ✕ goes back
+  // ☰ opens the MENU: PARAMETERS, MESSAGES, TEST, each a page on top; ✕ goes back
   function openSheet(id) {
     releaseAll();
     $(id).classList.add("open");
     if (id === "sh_log") { var B = $("logbody"); B.scrollTop = B.scrollHeight; }
   }
-  $("t_menu").onclick = function () { openSheet("sh_speed"); };
+  $("t_menu").onclick = function () { openSheet("sh_menu"); };
+  $("t_par").onclick = function () { openSheet("sh_speed"); };
   $("t_log").onclick = function () { openSheet("sh_log"); };
+  $("t_test").onclick = function () { openSheet("sh_test"); };
   document.querySelectorAll("[data-close]").forEach(function (b) {
     b.onclick = function () { b.closest(".sheet").classList.remove("open"); };
   });
@@ -548,7 +548,7 @@
     });
   });
 
-  // ── ΔΟΚΙΜΗ: the same screen, driving a pretend drone on the Jetson ─────
+  // ── TEST: the same screen, driving a pretend drone on the Jetson ─────
   var WIND = 2;
   function setSim(on) {
     releaseAll();
@@ -560,15 +560,15 @@
     document.querySelectorAll(".sheet").forEach(function (x) { x.classList.remove("open"); });
     poll(); pullConsole();
   }
-  // an older tracker process (started before ΔΟΚΙΜΗ existed) serves this
+  // an older tracker process (started before TEST existed) serves this
   // page but not /sim: say so instead of showing "connection lost"
   function simMissing() {
     if (!SIM) return;
     setSim(false);
-    note("✗ η ΔΟΚΙΜΗ δεν υπάρχει σε αυτό το Jetson ακόμα: επανεκκίνησε το tracker", true);
+    note("✗ TEST is not on this Jetson yet: restart the tracker", true);
   }
   $("t_sim").onclick = function () {
-    if (LAST && LAST.armed && !SIM) { note("✗ το drone είναι οπλισμένο: ΔΟΚΙΜΗ μόνο αφοπλισμένο", true); return; }
+    if (LAST && LAST.armed && !SIM) { note("✗ the drone is armed: TEST only while disarmed", true); return; }
     setSim(true); cmd("reset=1", true);
   };
   $("s_exit").onclick = function () { setSim(false); };
@@ -577,48 +577,45 @@
   $("s_reset").onclick = function () { releaseAll(); cmd("reset=1", true); };
   $("s_wind").onclick = function () { WIND = (WIND + 1) % 4; cmd("wind=" + WIND, true); };
 
-  // ── PIN ────────────────────────────────────────────────────────────────
-  if (VIEW) $("pin").classList.add("on");
-  $("pin_ok").onclick = function () {
-    K = $("pin_in").value.trim(); store("wasp_k", K); VIEW = !K; $("pin").classList.remove("on");
-  };
-  $("pin_view").onclick = function () { VIEW = true; $("pin").classList.remove("on"); };
 
   // ── paint: ONLY from the server's reply ────────────────────────────────
   function fmt(x, d) { return (x === null || x === undefined) ? "--" : Number(x).toFixed(d); }
   function paint(j) {
     LAST = j;
-    if (SIM && j.real_armed) { setSim(false); note("✗ το αληθινό drone οπλίστηκε: έξοδος από ΔΟΚΙΜΗ", true); return; }
-    if (SIM && j.sim) { WIND = j.sim.bf; T("s_wind", "ΑΕΡΑΣ " + WIND); }
-    if (!SIM) $("t_sim").disabled = !!j.armed || VIEW;
+    if (SIM && j.real_armed) { setSim(false); note("✗ the real drone armed: leaving TEST", true); return; }
+    if (SIM && j.sim) { WIND = j.sim.bf; T("s_wind", "WIND " + WIND); }
+    if (!SIM) {
+      $("t_sim").disabled = !!j.armed || VIEW;
+      T("t_simtxt", j.armed ? "The drone is ARMED: disarm it to test." : "");
+    }
     var m = j.mission || {}, ph = m.phase || "PILOT", spec = PH[ph] || PH.PILOT;
     $("hdr").style.background = spec.c;
     $("hdr").className = "card" + (spec.ink ? " ink" : "");
     T("phase", spec.t);
     var hint = spec.h;
     if (ph === "PUSH" && m.push_s !== null && m.push_s !== undefined)
-      hint = "ΩΘΗΣΗ " + fmt(m.speeds && m.speeds.push, 0) + "° · " + fmt(m.push_s, 1) + " / " + fmt(m.speeds && m.speeds.search, 0) + " s · AI μόλις δει στόχο ≥ " + fmt(m.min_conf, 2);
-    if (ph === "PILOT" && j.mission && m.gate_why) hint = "Ο πιλότος έχει τον έλεγχο (" + m.gate_why + ").";
-    if ((ph === "HOVER" || ph === "SCOUT") && m.engaged) hint = "Έγινε μία προσπάθεια. Για νέα: ο πιλότος STAB → ALT_HOLD.";
+      hint = "PUSH " + fmt(m.speeds && m.speeds.push, 0) + "° · " + fmt(m.push_s, 1) + " / " + fmt(m.speeds && m.speeds.search, 0) + " s · AI as soon as it sees a target ≥ " + fmt(m.min_conf, 2);
+    if (ph === "PILOT" && j.mission && m.gate_why) hint = "The pilot has control (" + m.gate_why + ").";
+    if ((ph === "HOVER" || ph === "SCOUT") && m.engaged) hint = "One attempt made. For another: the pilot STAB → ALT_HOLD.";
     var locked = !!m.locked;
     LOCKHDG = locked && m.lock_hdg !== null && m.lock_hdg !== undefined ? Number(m.lock_hdg) : null;
     if (locked && (ph === "HOVER" || ph === "CLIMB" || ph === "DESCEND")) {
-      if (ph === "HOVER") T("phase", "ΚΛΕΙΔΩΜΑ");
-      hint = "Κρατά " + fmt(m.lock_hdg, 0) + "° μόνο του, και με αέρα. ▲▼⟲⟳ δουλεύουν· άφησε = γυρνά στις " + fmt(m.lock_hdg, 0) + "°. LOCK ξανά = ξεκλείδωμα.";
+      if (ph === "HOVER") T("phase", "LOCKED");
+      hint = "Holds " + fmt(m.lock_hdg, 0) + "° on its own, in wind too. ▲▼⟲⟳ work; let go = back to " + fmt(m.lock_hdg, 0) + "°. LOCK again = unlock.";
     }
     if (locked && ph === "SCOUT") {
-      hint = "Στρίβεις με το χέρι· άφησε = γυρνά αργά στις " + fmt(m.lock_hdg, 0) + "° (κλειδωμένο).";
+      hint = "Turning by hand; let go = slowly back to " + fmt(m.lock_hdg, 0) + "° (locked).";
     }
-    if (!j.mission || m.app === "auto") hint = "Η εφαρμογή αποστολής δεν τρέχει (WASP_APP).";
+    if (!j.mission || m.app === "auto") hint = "The mission app is not running (WASP_APP).";
     if (NOTE && Date.now() < NOTE.until) { T("hint", NOTE.s); $("hint").className = "hint refuse"; }
     else { NOTE = null; T("hint", hint); $("hint").className = "hint"; }
     T("alt", m.height_m === null || m.height_m === undefined ? "-- m" : fmt(m.height_m, 1) + " m");
-    T("vs", m.climb_mps === null || m.climb_mps === undefined ? "ύψος άγνωστο"
+    T("vs", m.climb_mps === null || m.climb_mps === undefined ? "height unknown"
         : (m.climb_mps >= 0 ? "↑ " : "↓ ") + fmt(Math.abs(m.climb_mps), 1) + " m/s");
 
     var arm = !!j.armed;
-    S("c_arm", arm ? "ΟΠΛΙΣΜΕΝΟ" : "ΑΦΟΠΛΙΣΜΕΝΟ", arm ? "on" : "");
-    S("c_mode", j.linked ? (j.fc_mode || "?") : "ΧΩΡΙΣ FC", !j.linked ? "bad" : j.fc_mode === "ALT_HOLD" ? "ok" : "warn");
+    S("c_arm", arm ? "ARMED" : "DISARMED", arm ? "on" : "");
+    S("c_mode", j.linked ? (j.fc_mode || "?") : "NO FC", !j.linked ? "bad" : j.fc_mode === "ALT_HOLD" ? "ok" : "warn");
     S("c_hdg", m.heading_deg === null || m.heading_deg === undefined ? "--°" : fmt(m.heading_deg, 0) + "°", "");
     var hadHdg = HDG !== null;
     HDG = (m.heading_deg === null || m.heading_deg === undefined) ? null : Number(m.heading_deg);
@@ -629,14 +626,14 @@
       S("c_vib", fmt(vmax, 0) + (vb.clip ? " · CLIP " + vb.clip : ""), vb.clip || vmax >= 60 ? "bad" : vmax >= 30 ? "warn" : "ok");
     } else S("c_vib", "--", "");
     var conf = m.det_conf, fresh = m.det_age_s !== null && m.det_age_s !== undefined && m.det_age_s < 0.5;
-    S("c_det", fresh ? "ΝΑΙ · " + fmt(conf, 2) : "ΟΧΙ", fresh ? (conf >= (m.min_conf || 0.2) ? "ok" : "warn") : "");
+    S("c_det", fresh ? "YES · " + fmt(conf, 2) : "NO", fresh ? (conf >= (m.min_conf || 0.2) ? "ok" : "warn") : "");
     // Readiness: the detector really in use, and the frame rate it holds.
     // Green = TensorRT at >= 20 fps; amber = slower; red = the PyTorch fallback.
     var trt = j.detector === "TensorRT", fps_ = j.fps || 0;
-    T("c_ai_k", (j.detector || "Ανιχνευτής") + (j.lat_ms ? " · " + j.lat_ms + " ms" : ""));
+    T("c_ai_k", (j.detector || "Detector") + (j.lat_ms ? " · " + j.lat_ms + " ms" : ""));
     S("c_ai", fmt(fps_, 0) + " fps", !trt ? "bad" : fps_ >= 20 ? "ok" : "warn");
     var ctl = j.control || "free";
-    T("c_ctl", VIEW ? "ΠΡΟΒΟΛΗ" : ctl === "you" ? "ΕΣΥ ΕΛΕΓΧΕΙΣ" : ctl === "other" ? "ΑΛΛΟΣ ΕΛΕΓΧΕΙ" : "ΕΛΕΥΘΕΡΟ");
+    T("c_ctl", VIEW ? "VIEW" : ctl === "you" ? "YOU CONTROL" : ctl === "other" ? "OTHER PHONE" : "FREE");
     $("c_ctl").className = "pill" + (ctl === "other" || VIEW ? " warn" : ctl === "you" ? " on" : "");
 
     // which buttons can act right now (the server decides; this only mirrors it)
@@ -647,12 +644,12 @@
     var eng = $("b_eng"), done = !!m.engaged || !!m.ai_steering;
     eng.className = "rbtn eng" + (done ? " go" : ph === "PUSH" ? " push" : "");
     eng.disabled = done || !((ph === "HOVER" || ph === "SCOUT") && !VIEW && ctl !== "other");
-    $("engtxt").innerHTML = !done ? (ph === "PUSH" ? "ΩΘΗΣΗ" : "ENGAGE")
-      : (ph === "AI" || ph === "PUSH") ? "AI ✓" : "ΕΓΙΝΕ ✓";
+    $("engtxt").innerHTML = !done ? (ph === "PUSH" ? "PUSH" : "ENGAGE")
+      : (ph === "AI" || ph === "PUSH") ? "AI ✓" : "DONE ✓";
 
     var lh = locked && LOCKHDG !== null ? ("00" + Math.round(LOCKHDG) % 360).slice(-3) + "°" : "";
     $("c_lock").className = "pill lockst" + (locked ? " on" : "");
-    T("c_locktxt", locked ? "ΚΛΕΙΔΩΜΑ " + lh : "ΞΕΚΛΕΙΔΩΤΟ");
+    T("c_locktxt", locked ? "LOCKED " + lh : "UNLOCKED");
     CANLOCK = ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other";
     dial.classList.toggle("off", !CANLOCK);
     if (!CANLOCK) { if (drag) dialEnd(false); if ($("ask").classList.contains("on")) closeAsk(); }
@@ -683,14 +680,14 @@
       var dy = el - aimEl, good = (dx_s * dx_s) / (AIM_RX * AIM_RX) + (dy_s * dy_s) / (AIM_RY * AIM_RY) <= 1;
       aim.classList.toggle("good", good); $("arc").classList.toggle("good", good);
       bd.style.display = "block"; bd.className = "badge" + (good ? " good" : "");
-      bd.textContent = good ? ((ph === "HOVER" || ph === "SCOUT") ? "ΣΤΟΝ ΣΤΟΧΟ ✓  ENGAGE" : "ΣΤΟΧΟΣ ΣΤΟ ΚΕΝΤΡΟ ✓") :
-        (Math.abs(dx_s) > AIM_RX * 0.7 ? (az > 0 ? "⟳ δεξιά " : "⟲ αριστερά ") + fmt(Math.abs(az), 0) + "°  " : "") +
-        (Math.abs(dy_s) > AIM_RY * 0.7 ? (dy > 0 ? "▲ ψηλότερα " : "▼ χαμηλότερα ") + fmt(Math.abs(dy), 0) + "°" : "");
+      bd.textContent = good ? ((ph === "HOVER" || ph === "SCOUT") ? "ON TARGET ✓  ENGAGE" : "TARGET CENTRED ✓") :
+        (Math.abs(dx_s) > AIM_RX * 0.7 ? (az > 0 ? "⟳ right " : "⟲ left ") + fmt(Math.abs(az), 0) + "°  " : "") +
+        (Math.abs(dy_s) > AIM_RY * 0.7 ? (dy > 0 ? "▲ higher " : "▼ lower ") + fmt(Math.abs(dy), 0) + "°" : "");
       of.style.display = "block"; of.textContent = "az " + fmt(az, 1) + "°  el " + fmt(el, 1) + "°";
     } else {
       tg.style.display = "none"; aim.classList.remove("good"); $("arc").classList.remove("good"); of.style.display = "none";
       bd.style.display = (ph === "HOVER" || ph === "SCOUT") ? "block" : "none"; bd.className = "badge";
-      bd.textContent = "κανένας στόχος";
+      bd.textContent = "no target";
     }
 
     // speeds: the pad's centre and the speeds page
@@ -732,7 +729,7 @@
         rows.forEach(function (x) {
           consoleSeq = Math.max(consoleSeq, x[0]);
           var d = document.createElement("div"), s = x[2];
-          d.className = "ln " + (/refused|ΑΠΟΡ|!!|REFUSED/.test(s) ? "r" : /ABORT|ERROR|FAIL|Traceback/.test(s) ? "e" : /^\[MISSION\]/.test(s) ? "m" : "");
+          d.className = "ln " + (/refused|!!|REFUSED/.test(s) ? "r" : /ABORT|ERROR|FAIL|Traceback/.test(s) ? "e" : /^\[MISSION\]/.test(s) ? "m" : "");
           d.innerHTML = '<span class="t">' + x[1] + "</span> "; d.appendChild(document.createTextNode(s));
           L.appendChild(d);
           if (/^\[MISSION\]|^\[FC\]\[MODE\]|REFUSED/.test(s)) note(s, /refused|REFUSED/.test(s));
@@ -776,7 +773,7 @@
       if (big) { c.fillStyle = "#fff"; c.font = "700 14px U, sans-serif"; c.fillText(CARD[bb] || String(bb), x, hz - h * 0.15); }
     }
     c.fillStyle = "rgba(255,255,255,.85)"; c.font = "700 12px U, sans-serif"; c.textAlign = "left"; c.textBaseline = "bottom";
-    c.fillText("ΔΟΚΙΜΗ · εικονικό drone", 10, h - 8);
+    c.fillText("TEST · pretend drone", 10, h - 8);
   }
   var dialc = $("dialc"), dctx = dialc.getContext("2d"), dialKey = "";
   function renderDial() {

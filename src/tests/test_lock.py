@@ -263,7 +263,7 @@ check("lock=313 (the degree scroll) locks at 313", r_deg == "" and st.ap.mission
 check("lock=<junk> is refused, lock unchanged",
       tracker.DroneTracker._mission_command(st, "lock", "abc") != ""
       and abs(st.ap.mission.lock_hdg - 313.0) < 1e-6)
-check("lock needs the controller lease and the PIN, like every move command",
+check("lock needs the controller lease, like every move command",
       "lock" in mjpeg_stream.MjpegServer.CONTROL_KEYS if hasattr(mjpeg_stream, "MjpegServer")
       else any("lock" in getattr(v, "CONTROL_KEYS", ()) for v in vars(mjpeg_stream).values()))
 

@@ -52,7 +52,6 @@ import cv2
 _BOUNDARY = "waspframe"
 
 import os
-import random
 from pathlib import Path
 
 # The phone app lives in its own file so it can be read and edited as HTML.
@@ -72,29 +71,6 @@ def _load_page():
                 ).encode("utf-8")
 
 
-def load_token():
-    """The operator PIN every /cmd must carry.  WASP_UI_TOKEN wins; otherwise
-    ~/.wasp_ui_token, created once with a random 6-digit PIN.  This page moves
-    the aircraft, so an unauthenticated phone on the field WiFi may WATCH but
-    never command."""
-    t = os.environ.get("WASP_UI_TOKEN", "").strip()
-    if t:
-        return t
-    f = Path.home() / ".wasp_ui_token"
-    try:
-        t = f.read_text().strip()
-    except OSError:
-        t = ""
-    if not t:
-        t = f"{random.SystemRandom().randrange(10 ** 6):06d}"
-        try:
-            f.write_text(t + "\n")
-            os.chmod(f, 0o600)
-        except OSError:
-            pass
-    return t
-
-
 
 class MJPEGServer:
     """Serves the latest published frame as MJPEG over HTTP.
@@ -108,14 +84,15 @@ class MJPEGServer:
     """
 
     # Commands that move the aircraft need the controller lease; ABORT never
-    # does (any phone with the PIN may stop it).  Everything needs the PIN.
+    # does (any phone may stop it).  No PIN (the operator's choice,
+    # 2026-09-27): the field WiFi itself is the only gate.
     CONTROL_KEYS = ("hold", "release", "step", "engage", "lvl", "mode", "lock")
     ALL_KEYS = CONTROL_KEYS + ("abort",)
     LEASE_S = 2.0
 
     def __init__(self, port: int = 8080, quality: int = 70,
                  fps: float = 15.0, host: str = "0.0.0.0",
-                 state_get=None, command=None, console_get=None, token=None):
+                 state_get=None, command=None, console_get=None):
         # state_get()      -> dict of what the tracker is ACTUALLY doing.
         # command(k, v)    -> applies an operator command, returns nothing.
         # Both are None when nothing is wired, and the dashboard then 503s
@@ -123,7 +100,6 @@ class MJPEGServer:
         self.state_get = state_get
         self.command = command
         self.console_get = console_get
-        self.token = load_token() if token is None else str(token)
         self._lease = None            # (client_id, last_seen)
         self._lease_lock = threading.Lock()
         self.port    = int(port)
@@ -233,9 +209,6 @@ class MJPEGServer:
                     self.send_error(503, "no tracker wired")
                     return
                 q = parse_qs(urlparse(self.path).query)
-                if server.token and (q.get("k") or [""])[0] != server.token:
-                    self._json(dict(error="bad PIN"), code=403)
-                    return
                 client = (q.get("c") or [""])[0]
                 keys = [k for k in server.ALL_KEYS if k in q]
                 if any(k in server.CONTROL_KEYS for k in keys):
@@ -260,8 +233,8 @@ class MJPEGServer:
 
             def _sim(self, what):
                 """ΔΟΚΙΜΗ (test) mode: a pretend drone running the real
-                mission code (desk_sim.py).  Never the FC.  Commands need the
-                PIN and are refused while the REAL drone is armed."""
+                mission code (desk_sim.py).  Never the FC.  Commands are
+                refused while the REAL drone is armed."""
                 sim = server._desk_sim()
                 q = parse_qs(urlparse(self.path).query)
                 real = self._read_state() or {}
@@ -274,9 +247,6 @@ class MJPEGServer:
                     self._json([list(r) for r in sim.console_get(since)])
                     return
                 if what == "cmd":
-                    if server.token and (q.get("k") or [""])[0] != server.token:
-                        self._json(dict(error="bad PIN"), code=403)
-                        return
                     if real_armed:
                         self._json(dict(error="the real drone is armed: no test mode"), code=409)
                         return
@@ -375,10 +345,6 @@ class MJPEGServer:
 
         for url in self.urls():
             print("[STREAM] seeker view -> " + url)
-        if self.token:
-            print(f"[STREAM] operator PIN {self.token}  (open "
-                  f"{self.urls()[0]}?k={self.token} to control; without it "
-                  f"the page is view-only)")
         print("[STREAM] MJPEG q=%d cap=%.0f fps - encodes only while a viewer "
               "is connected" % (self.quality, 1.0 / self.min_dt))
         return self

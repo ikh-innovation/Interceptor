@@ -291,6 +291,48 @@ try:
         YAW["run"] = False
         th.join(timeout=1)
 
+    print("=== 7c. the phone's SETTINGS reach the flying code (tracker command path) ===")
+    with contextlib.redirect_stdout(io.StringIO()):
+        import tracker as _tr
+    ph = type("Phone", (), {})()
+    ph.ap, ph.MODES, ph.mode_name = c, _tr.DroneTracker.MODES, "MEDIUM"
+    ph._SPEED_KEYS, ph._STAB_KEYS = _tr.DroneTracker._SPEED_KEYS, _tr.DroneTracker._STAB_KEYS
+    ph.set_mode = lambda n: _tr.DroneTracker.set_mode(ph, n)
+    ph._mission_command = lambda k, v: _tr.DroneTracker._mission_command(ph, k, v)
+    fc.mode = 0                              # pilot: STAB -> ALT_HOLD, a fresh attempt
+    sleep(0.6)
+    fc.mode = 2
+    fc.vfr.update(alt=10.0)
+    sleep(0.8)
+    lean0 = law.speed_state()["max_lean_deg"] if hasattr(law, "speed_state") else None
+    r = [_tr.DroneTracker._command(ph, "lvl", v) for v in ("push:FAST", "search:MEDIUM", "ai:FAST")]
+    st = c.mission_state()
+    check("lvl=push:FAST / search:MEDIUM / ai:FAST all accepted", r == ["", "", ""], str(r))
+    check("...and what the phone reads back is what the Jetson holds",
+          st["levels"]["push"] == "FAST" and st["levels"]["search"] == "MEDIUM" and st["levels"]["ai"] == "FAST"
+          and st["speeds"]["push"] == 40.0 and st["speeds"]["search"] == 6.0, str(st["levels"]))
+    lean1 = law.speed_state()["max_lean_deg"] if hasattr(law, "speed_state") else None
+    check("AI FAST really changed the intercept law's profile (max lean)",
+          lean0 is not None and lean1 is not None and lean1 != lean0 and ph.mode_name == "FAST",
+          f"max lean {lean0} -> {lean1}")
+    check("ENGAGE accepted", M.request_engage() == "")
+    t_eng = perf_counter()
+    sleep(1.6)
+    o = dict(fc.overrides)
+    check("the FC receives the NEW push: ch3 = 40 deg nose down (PUSH FAST)",
+          3 in o and abs(ap_norm(o[3]) * 40.0 + 40.0) < 0.3, f"ch3={o.get(3)} -> {ap_norm(o.get(3, 1500)) * 40:.1f} deg")
+    while perf_counter() - t_eng < 5.7:
+        sleep(0.05)
+    at57 = M.phase
+    while perf_counter() - t_eng < 6.4:
+        sleep(0.05)
+    check("the NEW search time: still searching at 5.7 s, soft stop by 6.4 s (was 4 s)",
+          at57 == "PUSH" and M.phase in ("STOP", "HOVER"), f"{at57} -> {M.phase}")
+    sleep(1.3)
+    for v in ("push:SLOW", "search:SLOW", "ai:MEDIUM"):
+        _tr.DroneTracker._command(ph, "lvl", v)
+    fc.vfr.update(alt=2.0)
+
     print("=== 8. the checklist and the log ===")
     rows = c.mission_checklist()
     check("checklist flags RC_OVERRIDE_TIME 3 and ATC_INPUT_TC 0.15 for change",

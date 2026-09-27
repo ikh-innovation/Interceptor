@@ -77,11 +77,11 @@ The pilot arms and takes off in ALT_HOLD, then hovers with the throttle centred.
 Behaviour worth knowing:
 - **Bumpless takeover.** Each channel starts from the pilot's own stick value, and every change is a smoothstep ramp.
 - **Dead-man.** A held button is a stream of keepalives. If none arrives for 0.3 s, the axis ramps back to zero. A lost message stops the drone instead of flying it away.
-- **Target lost during AI.** The drone goes back to the straight PUSH and searches again for 2.5 s. If nothing is confirmed within the search time of PUSH (4 s by default, ☰ → SETTINGS), it does a soft stop.
+- **Target lost during AI.** The drone goes back to the straight PUSH and searches again for 2.5 s. If nothing is confirmed within the search time of PUSH (4 s by default, ☰ → PARAMETERS), it does a soft stop.
 - **Terminal commit.** In the last metre the target fills the frame and the detector drops out. The last command is held for about 1 s, then the drone does a soft stop.
 - **AI floor.** PUSH and AI never descend below 3 m above the arming point.
-- **Speed levels** (SLOW / MEDIUM / FAST) are set separately for vertical, yaw, push and AI, in ☰ → SETTINGS.
-- **Search time after ENGAGE** (☰ → SETTINGS → ΑΝΑΖΗΤΗΣΗ): **4 s** (default), 6 s or 8 s. This is how long the PUSH looks for a target before the soft stop. Longer means farther out: at PUSH 20° that is about 19 / 42 / 69 m (at 30°, 28 / 61 / 97 m).
+- **Speed levels** (SLOW / MEDIUM / FAST) are set separately for vertical, yaw, push and AI, in ☰ → PARAMETERS.
+- **Search time after ENGAGE** (☰ → PARAMETERS → SEARCH): **4 s** (default), 6 s or 8 s. This is how long the PUSH looks for a target before the soft stop. Longer means farther out: at PUSH 20° that is about 19 / 42 / 69 m (at 30°, 28 / 61 / 97 m).
   - **Defaults:** vertical SLOW, yaw MEDIUM, **PUSH SLOW (20°)**, AI MEDIUM.
   - **AI levels in m/s:** SLOW / MEDIUM / FAST mean ≈11 / 15 / 16 m/s of cruise (the max lean of 12° / 20° / 22°) and a climb ceiling of 8 / 15 / 25 m/s.
 - **What the settings buy** (`tests/sim_sky_wind.py --speed all --push …`, a moving target, incl. at 45°, in gusty wind): touch rate on moving targets in Bf 2–3.
@@ -102,9 +102,9 @@ How it behaves:
 - **The FC gets the first go.** ArduPilot's own heading hold already pulls back from a gust. LOCK acts only once the heading has been **still for 1 s at the wrong value**. That is the case the FC cannot fix: a gust stronger than the yaw authority drags the FC's own heading target, and the FC then holds the wrong heading. Correcting during the swing instead fights the FC and overshoots.
 - **No chatter.** On a noisy heading, the smoothed error decides whether to correct, with hysteresis (on at 1°, off at 0.4°). The actual error sets how much.
 - **Moving the drone while locked.** ▲▼ work while locked, and the heading stays. ⟲/⟳ (held, or a tap) also turn the drone. Let go and it turns back slowly to the **locked** heading. The lock itself never moves with them.
-- **Changing the lock.** Use the **degree scroll** right of the picture. Drag it (up = more degrees). Nothing is sent while you drag. Lift your finger and a pop-up asks **ΚΛΕΙΔΩΜΑ ΣΤΙΣ 313°?**
-  - **ΝΑΙ** sends `lock=313`. The drone turns there slowly (15°/s at most) and holds it. This works whether or not it was already locked.
-  - **ΟΧΙ** sends nothing.
+- **Changing the lock.** Use the **degree scroll** right of the picture. Drag it (up = more degrees). Nothing is sent while you drag. Lift your finger and a pop-up asks **LOCK AT 313°?**
+  - **YES** sends `lock=313`. The drone turns there slowly (15°/s at most) and holds it. This works whether or not it was already locked.
+  - **NO** sends nothing.
 - **Repeats are safe.** `lock=on` while already locked changes nothing, so a double tap or a WiFi retry cannot move it.
 - **Clearing.** ENGAGE clears LOCK, and the AI takes the yaw bumplessly. ABORT and the pilot's mode switch clear it too.
 - **Heading lost.** If ATTITUDE goes stale for more than 0.5 s, the yaw command is exactly zero until it returns. LOCK never corrects on an old heading.
@@ -123,13 +123,13 @@ The Jetson flies headless. A phone or laptop on the field WiFi opens:
 | `http://<jetson-ip>:8080/` | live annotated seeker view + mission controls |
 | `/snapshot.jpg` | a single frame |
 | `/state` | JSON state (phase, detector, fps, latency) |
-| `/cmd` | commands; **require the operator PIN** |
+| `/cmd` | commands (no PIN; one phone at a time holds control) |
 
 The look is light grey and white with black controls; orange is used only as the accent. The page layout, top to bottom:
-- **Top bar:** ☰ top-left opens **SETTINGS** (the speeds, and MESSAGES) as full-screen pages with ✕. There is no message bar. A refusal shows for 4 s in the phase card's hint. The only pop-up is the degree scroll's YES / NO.
-  - ☰ → **ΔΟΚΙΜΗ ΧΩΡΙΣ ΠΤΗΣΗ** (only while the drone is disarmed): the same screen drives a pretend drone on the Jetson. It runs the real mission code (`desk_sim.py`) against a model of ArduPilot's yaw hold and gusty wind, and never touches the FC. A striped bar offers ΡΙΠΗ ⟲/⟳ (a gust stronger than the motors), ΑΕΡΑΣ 0–3, ↺ and ΕΞΟΔΟΣ. If the real drone arms, the page leaves test mode at once.
-  - The lock state is always shown at the top: **ΞΕΚΛΕΙΔΩΤΟ** (grey) or **ΚΛΕΙΔΩΜΑ 313°** (orange). The phone never vibrates.
-- **Status:** the phase card (its colour is the phase; it reads **ΚΛΕΙΔΩΜΑ** while locked) and status tiles (FC mode, arming, heading, target, vibration, detector fps).
+- **Top bar:** ☰ top-left opens the **MENU** with three sections, each a full-screen page with ✕: **PARAMETERS** (all the SLOW / MEDIUM / FAST settings and the search time), **MESSAGES** (what the Jetson reports) and **TEST**. The whole app is in English. There is no message bar. A refusal shows for 4 s in the phase card's hint. The only pop-up is the degree scroll's YES / NO.
+  - ☰ → **TEST** → START TEST (only while the drone is disarmed): the same screen drives a pretend drone on the Jetson. It runs the real mission code (`desk_sim.py`) against a model of ArduPilot's yaw hold and gusty wind, and never touches the FC. A striped bar offers GUST ⟲/⟳ (a gust stronger than the motors), WIND 0–3, ↺ and EXIT. If the real drone arms, the page leaves test mode at once.
+  - The lock state is always shown at the top: **UNLOCKED** (grey) or **LOCKED 313°** (orange). The phone never vibrates.
+- **Status:** the phase card (its colour is the phase; it reads **LOCKED** while locked) and status tiles (FC mode, arming, heading, target, vibration, detector fps).
 - **Picture:** the 4:3 picture, with the **degree scroll** on its right. When idle, the scroll follows the heading and shows the locked heading as a white notch. While you drag it, the picked heading also shows as an orange line on the compass tape.
   - A compass tape runs along its top. Its width is the camera's 62° field of view, and it carries a white mark at the LOCKed heading.
   - A thin dashed aim arc runs corner to corner and turns green when the target is on it.
@@ -139,7 +139,7 @@ The look is light grey and white with black controls; orange is used only as the
 
 The target is always a drone; there is no in-air HUMAN/DRONE switch. The Ubuntu typeface is served from `src/fonts/` by the Jetson itself, since the field has no internet.
 
-The PIN comes from `WASP_UI_TOKEN`, or from `~/.wasp_ui_token`, which is created once with a random 6-digit PIN. Without the PIN a phone can watch but never command. The server is not otherwise authenticated, so use it only on a private field network. Frames are JPEG-encoded only while someone is watching.
+There is **no PIN**: any phone on the field WiFi can command, one at a time (the controller lease). The field WiFi is the only gate, so keep it private. Frames are JPEG-encoded only while someone is watching.
 
 ---
 
@@ -264,7 +264,7 @@ cd src
 | `test_ui_browser.py` | the phone app in headless Firefox |
 | `test_hold_wifi.py` | a held ▲▼⟲⟳ over realistic field WiFi: no stutter, and letting go stops |
 | `test_lock.py` | LOCK under bad conditions: noisy/late heading, across north, heading lost mid-lock, 10 min in gusts, weak yaw motors; locked at 313° through a gust stronger than the motors, steady torque, ⟲/⟳/▲ while locked; never over 15°/s or 30°/s²; the phone's command path |
-| `ui_demo.py` | the phone app on a desk (no drone): `tests/ui_demo.py`, open the printed link (PIN 1234), then ☰ → ΔΟΚΙΜΗ |
+| `ui_demo.py` | the phone app on a desk (no drone): `tests/ui_demo.py`, open the printed link, then ☰ → TEST |
 | `sim_lock_wind.py` | LOCK vs the FC alone, 600 gusty hovers (not pass/fail) |
 | `sim_sky_wind.py` | sky-mode campaign: moving target × gusty wind Bf 0–3, touch odds and turn overshoot (not pass/fail) |
 | `fc_check.py`, `check_modes.py`, `cameraTest.py` | bench diagnostics against real hardware |
