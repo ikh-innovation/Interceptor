@@ -15,12 +15,11 @@
   /* light: white / grey surfaces, black controls, orange only as the accent */
   :root{
     --bg:#eceef1; --bg2:#ffffff; --bg3:#f5f6f8; --line:#d5d9df;
-    --txt:#101317; --dim:#56606b; --faint:#8b939d;
-    --ink:#15181c; --ink2:#2a2f36;
+    --txt:#262b31; --dim:#5b646e; --faint:#8b939d;
+    /* neutral greys, no black: --ink = dark-grey text, --ctl = the controls'
+       fill (white on it is 6.6:1), --ctl-sub = the small labels on them */
+    --ink:#30353c; --ink2:#454b53; --ctl:#565d66; --ctl-sub:#d9dde2;
     --acc:#ff7a00; --acc-ink:#1a0d00;
-    /* phase colours: the colour IS the phase */
-    --pilot:#3a4048; --hover:#15181c; --vert:#2f3540; --scout:#2f3540;
-    --push:#ff7a00; --ai:#d62828; --stop:#e0a400;
     --ok:#16a34a; --warn:#e8a200; --bad:#dc2626;
     --r:14px;
     --sans:"U",-apple-system,"Segoe UI",Roboto,system-ui,sans-serif;
@@ -60,11 +59,11 @@
   .vidwrap{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:6px}
   /* under the picture: the heading bar (drag it) and the height, same look */
   .belt{flex:0 0 46px;width:100%;display:flex;gap:6px}
-  .hbox{flex:0 0 76px;border-radius:12px;background:var(--ink);border:1px solid var(--ink);color:#fff;
+  .hbox{flex:0 0 76px;border-radius:12px;background:var(--ctl);border:1px solid var(--ctl);color:#fff;
         display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
         box-shadow:0 2px 8px rgba(16,19,23,.2);font-variant-numeric:tabular-nums}
   .hbox b{font:700 15px/1 var(--mono)}
-  .hbox span{font:10.5px/1 var(--mono);color:#aeb5bd}
+  .hbox span{font:10.5px/1 var(--mono);color:var(--ctl-sub)}
   /* a refusal: 4 s over the bottom of the picture (the phase card is gone) */
   .toast{position:absolute;left:8px;right:8px;bottom:8px;display:none;padding:7px 10px;border-radius:9px;
          background:rgba(185,28,28,.92);color:#fff;font:500 13px/1.3 var(--sans);text-align:center}
@@ -72,7 +71,7 @@
   /* the degree scroll, RIGHT of the picture: drag up = more degrees.  It
      only PICKS a heading; lifting the finger asks whether to LOCK there. */
   .dial{flex:1 1 auto;min-width:0;position:relative;border-radius:12px;overflow:hidden;touch-action:none;
-        background:var(--ink);border:1px solid var(--ink);box-shadow:0 2px 8px rgba(16,19,23,.2)}
+        background:var(--ctl);border:1px solid var(--ctl);box-shadow:0 2px 8px rgba(16,19,23,.2)}
   .dial canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   .dial.off{opacity:.3}
   .dial.drag{border-color:var(--acc);box-shadow:0 0 0 3px rgba(255,122,0,.45)}
@@ -114,10 +113,10 @@
   .pad{display:grid;grid-template-columns:repeat(3,clamp(64px,19vw,84px));gap:7px}
   .pad .mid{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
             font:11.5px/1.35 var(--mono);color:var(--dim);white-space:pre-line}
-  .btn{border:0;border-radius:var(--r);background:var(--ink);color:#fff;
+  .btn{border:0;border-radius:var(--r);background:var(--ctl);color:#fff;
        font:700 clamp(22px,6.4vw,27px)/1 var(--sans);height:clamp(54px,7.4vh,64px);touch-action:none;
        position:relative;padding:0 0 12px;box-shadow:0 2px 6px rgba(16,19,23,.25);transition:transform .06s}
-  .btn small{position:absolute;left:0;right:0;bottom:6px;font:10px/1 var(--cond);letter-spacing:.1em;color:#aeb5bd}
+  .btn small{position:absolute;left:0;right:0;bottom:6px;font:10px/1 var(--cond);letter-spacing:.1em;color:var(--ctl-sub)}
   /* HELD = orange at once; SENDING (the Jetson accepted a keepalive) = a
      pulsing ring too, so what the drone is being told is visible */
   .btn.held{background:var(--acc);color:var(--acc-ink);transform:scale(.96)}
@@ -130,7 +129,7 @@
   .rbtn{width:74px;height:74px;border-radius:50%;padding:0;touch-action:none;position:relative;overflow:hidden;
         font:700 10.5px/1.15 var(--sans);letter-spacing:.06em}
   /* LOCK: white, black ring.  On = orange ring + the heading */
-  .lock{background:#fff;color:var(--ink);border:3px solid var(--ink);box-shadow:0 2px 6px rgba(16,19,23,.2)}
+  .lock{background:#fff;color:var(--ink);border:3px solid var(--ctl);box-shadow:0 2px 6px rgba(16,19,23,.2)}
   .lock small{display:block;font:11px/1.1 var(--mono);letter-spacing:0;color:var(--acc);margin-top:2px}
   .lock.on{border-color:var(--acc);box-shadow:0 0 0 4px rgba(255,122,0,.45)}
   /* ENGAGE: red */
@@ -180,7 +179,7 @@
   .simbar b{flex:1;min-width:0;font:700 12.5px/1.1 var(--sans);letter-spacing:.08em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .simbar button{flex:0 0 auto;border:0;border-radius:9px;padding:9px 8px;background:rgba(255,255,255,.95);color:#2e1065;
                  font:700 11.5px/1 var(--sans);letter-spacing:.04em}
-  .simbar button.x{background:#15181c;color:#fff}
+  .simbar button.x{background:var(--ctl);color:#fff}
   body.sim .vbox{border-color:#6d28d9;box-shadow:0 0 0 2px #6d28d9}
   .simv{position:absolute;inset:0;width:100%;height:100%;display:none}
   body.sim .simv{display:block}
@@ -198,7 +197,7 @@
   .ask .sub{font-size:13.5px;color:var(--dim);min-height:1.3em}
   .ask button{display:block;width:100%;margin-top:10px;padding:16px;border-radius:12px;font:700 16px/1 var(--sans);letter-spacing:.1em}
   .ask .yes{border:0;background:var(--acc);color:var(--acc-ink);margin-top:18px}
-  .ask .no{border:2px solid var(--ink);background:#fff;color:var(--ink)}
+  .ask .no{border:2px solid var(--ctl);background:#fff;color:var(--ink)}
   .cover{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;
          background:rgba(170,20,24,.95);color:#fff;z-index:9;text-align:center;padding:24px}
   .cover.on{display:flex}.cover b{font:700 26px/1.2 var(--sans);letter-spacing:.06em}.cover p{font-size:15px;max-width:22em;opacity:.92}
@@ -771,7 +770,7 @@
     c.fillStyle = SEL !== null ? "#ff8a1f" : "#fff";
     if (c.roundRect) { c.beginPath(); c.roundRect(w / 2 - 28, h / 2 - 12, 56, 24, 6); c.fill(); }
     else c.fillRect(w / 2 - 28, h / 2 - 12, 56, 24);
-    c.fillStyle = SEL !== null ? "#1a0d00" : "#15181c"; c.textAlign = "center"; c.textBaseline = "middle";
+    c.fillStyle = SEL !== null ? "#1a0d00" : "#30353c"; c.textAlign = "center"; c.textBaseline = "middle";
     c.font = "700 14px UM, monospace"; c.fillText(txt + "°", w / 2, h / 2 + 1);
   }
   function renderTape(now) {

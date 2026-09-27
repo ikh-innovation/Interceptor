@@ -281,8 +281,12 @@ check("both a bit bigger: 74 px round (was 66)", 72 <= b.get("engW", 0) <= 76 an
       f"{b.get('engW')} / {b.get('lockW')}")
 check("no message bar and no speed/message buttons under the picture; a ☰ menu top-left",
       b.get("ticker") is False and b.get("tools") is False and b.get("menu") and b.get("menuTL"), str(b))
-check("light theme: light-grey page, black control buttons",
-      b.get("bodyBg") == "rgb(236, 238, 241)" and b.get("btnBg") == "rgb(21, 24, 28)", f"{b.get('bodyBg')} / {b.get('btnBg')}")
+check("light theme: light-grey page; controls, heading bar and height box a neutral GREY (no black)",
+      b.get("bodyBg") == "rgb(236, 238, 241)" and b.get("btnBg") == "rgb(86, 93, 102)"
+      and b.get("dialBg") == b.get("btnBg") and b.get("hbBg") == b.get("btnBg"),
+      f"{b.get('bodyBg')} / {b.get('btnBg')} / {b.get('dialBg')} / {b.get('hbBg')}")
+check("no pure black left in the page's styles (the video's own background aside)",
+      b"#15181c" not in PAGE and b"#101317" not in PAGE and PAGE.count(b"#000") == 1)
 check("no HUMAN/DRONE target button (always DRONE)", b.get("tgtbtn") is False)
 check("the pad sits at the left edge, the buttons at the right edge",
       b.get("padL", 99) <= 16 and b.get("engR", 0) >= 390 - 20, f"pad left {b.get('padL')}, ENGAGE right {b.get('engR')}")
