@@ -82,6 +82,15 @@ from datetime import datetime
 # there is no internet: an install attempt at startup is a hang, not a fix.
 os.environ.setdefault("YOLO_AUTOINSTALL", "false")
 from ultralytics import YOLO
+# Importing ultralytics runs cv2.setNumThreads(0) (for its training DataLoader),
+# which puts EVERY cv2 call in this loop on one core: the 1280x960 -> 640x640
+# display resize measured 6.5 ms/frame in the field [PROF] against 2.2 ms with
+# 4 threads.  The output is bit-identical (checked on resize and both sky-mask
+# scales), so detection, the sky gate and the steering see the same pixels.
+# 4, not 6: past 4 the resize gets no faster, and the other two cores stay free
+# for the GStreamer capture thread and the FC tx thread.  getNumThreads() still
+# reports 6 while it is serialised, so do not trust it to check this.
+cv2.setNumThreads(int(os.environ.get("CV_THREADS", "4")))
 from dataclasses import dataclass
 from huggingface_hub import hf_hub_download
 
