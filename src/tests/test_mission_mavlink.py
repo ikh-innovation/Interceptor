@@ -156,11 +156,11 @@ try:
           o.get(4) == 1500 and o.get(1) == 1500 and o.get(2) == 1500, str(o))
     check("the FC echo confirms the override", c.override_confirmed is True)
     check("holds are refused during PUSH", M.request_hold("up", "z", perf_counter()) != "")
-    fc.vfr.update(alt=2.0)                   # dropped under the 3 m AI floor
+    fc.vfr.update(alt=2.0)                   # low: no ground check any more
     sleep(0.4)
     got = fc.overrides.get(1)
-    check("AI floor over MAVLink: at 2 m the push CLIMBS (ch1 -> +1 m/s), never descends",
-          got is not None and abs(ap_climb(got) - 1.0) < 0.1, f"ch1={got} -> {ap_climb(got or 1500):+.2f} m/s")
+    check("no AI floor over MAVLink: at 2 m the push just holds height (ch1 1500), no forced climb",
+          got == 1500, f"ch1={got}")
     fc.vfr.update(alt=10.0)
     sleep(0.3)
 

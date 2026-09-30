@@ -118,6 +118,7 @@ check("...lands on zero and hands the throttle back to the pilot",
 
 r = Rig()
 r.step()
+r.m.set_level("vert", "SLOW")              # written for the 1 m/s climb
 r.run_until(0.6, hold="up")
 r.m.request_release("s1")
 r.run_until(0.12)
@@ -155,7 +156,7 @@ o = r.step(hold="up")
 check("pilot at +0.4 m/s: first climb command is 0.4, not 0",
       abs(phys(r.mp, o, "throttle") - 0.4) < 0.02, f"{phys(r.mp, o, 'throttle'):.2f}")
 
-print("=== A4. ceiling, floor, unknown height ===")
+print("=== A4. ceiling, NO ground check, unknown height ===")
 r = Rig(ceiling_m=30.0)
 r.ctx["height"] = 29.5
 r.step()
@@ -170,18 +171,19 @@ r.run_until(0.1, hold="up")
 check("FAST climb 10 m under the ceiling: already easing off (stop distance "
       f"{M.stop_distance(8.0, 5.0, 5.0, 0.5):.1f} m)",
       phys(r.mp, r.out, "throttle") < 8.0)
-r = Rig(floor_m=0.5)
-r.ctx["height"] = 0.8
-r.step()
-r.run_until(0.3, hold="down")
-check("near the floor: ▼ refused", r.out == {} and "floor" in r.m.event)
-r = Rig(floor_m=0.5)
+for h in (0.8, 0.0, -0.5):
+    r = Rig()
+    r.ctx["height"] = h
+    r.step()
+    r.run_until(0.6, hold="down")
+    check(f"no ground check: ▼ at {h:+.1f} m still descends (the operator lowers it as far as they like)",
+          "throttle" in r.out and phys(r.mp, r.out, "throttle") < -0.5 and "floor" not in r.m.event,
+          f"{r.out} {r.m.event}")
+r = Rig()
 r.step()
 r.m.set_level("vert", "FAST")
-r.run_until(0.3, hold="down")
-check("FAST descent at 2 m: refused (stop distance "
-      f"{M.stop_distance(2.5, 5.0, 5.0, 0.5):.1f} m + margin > 1.5 m of room)",
-      r.out == {} and "floor" in r.m.event)
+r.run_until(0.6, hold="down")
+check("FAST descent at 2 m: allowed too", "throttle" in r.out and phys(r.mp, r.out, "throttle") < -2.0)
 r = Rig()
 r.ctx["height"] = None
 r.step()
@@ -218,8 +220,9 @@ check("ENGAGE refused while climbing", r.m.request_engage() != "")
 r.run_until(1.0)
 r.mp.pilot.update(pitch=r.mp.phys_to_pwm("pitch", -2.0),
                   roll=r.mp.phys_to_pwm("roll", 3.0))
-check("the shipped default push is SLOW = 20 deg (the operator's choice)",
-      r.m.level["push"] == "SLOW" and r.m.push_deg() == 20.0)
+check("the shipped defaults are all MEDIUM: PUSH 30 deg, search 6 s, height 3 m/s, turn 20 deg/s",
+      all(v == "MEDIUM" for v in r.m.level.values()) and r.m.push_deg() == 30.0 and r.m.search_s() == 6.0
+      and r.m.climb_rate() == 3.0 and r.m.yaw_rate() == 20.0, str(r.m.level))
 r.m.set_level("push", "MEDIUM")
 check("ENGAGE accepted from HOVER", r.m.request_engage() == "")
 o = r.step()
@@ -254,6 +257,7 @@ def push_rig():
     q.ctx["height"] = 10.0                    # the real flow engages at ~10 m
     q.step()
     q.m.set_level("push", "MEDIUM")           # these checks are written for 30 deg
+    q.m.set_level("search", "SLOW")           # ...and for the 4 s search
     q.m.request_engage()
     q.step()
     return q
@@ -320,10 +324,13 @@ check(f"roll glides monotonically to the AI's value, max step <= {_lim} us per 2
       f"max {max(d)} us, final {rolls[-1]}")
 
 print("=== A8. soft stops ===")
-q = push_rig()
-q.run_until(4.1)
-check("PUSH with no target for 4 s (the default search): STOP (soft)", q.m.phase == "STOP")
-for lv, secs in (("MEDIUM", 6.0), ("FAST", 8.0)):
+q = Rig(min_conf=0.20); q.ctx["height"] = 10.0; q.step()
+q.m.request_engage(); q.step()                # the shipped default search
+q.run_until(5.8)
+check("PUSH with no target: still pushing at 5.8 s (the default search is 6 s)", q.m.phase == "PUSH")
+q.run_until(0.3)
+check("...soft stop at 6 s", q.m.phase == "STOP")
+for lv, secs in (("SLOW", 4.0), ("FAST", 8.0)):
     qs = Rig(min_conf=0.20); qs.ctx["height"] = 10.0; qs.step()
     check(f"search {lv} accepted", qs.m.set_level("search", lv) == "")
     qs.m.request_engage(); qs.step()
@@ -332,7 +339,7 @@ for lv, secs in (("MEDIUM", 6.0), ("FAST", 8.0)):
     qs.run_until(0.3)
     check(f"search {lv}: still pushing at {secs - 0.2:.1f} s, soft stop at {secs:.0f} s",
           still == "PUSH" and qs.m.phase == "STOP", f"{still} -> {qs.m.phase}")
-check("the shipped default search is 4 s", Rig().m.search_s() == 4.0)
+check("the shipped default search is 6 s", Rig().m.search_s() == 6.0)
 p0 = phys(q.mp, q.out, "pitch")
 q.run_until(0.5)
 p1 = phys(q.mp, q.out, "pitch")
@@ -458,12 +465,12 @@ q.run_until(0.1)
 check("0.5 s with no real detection: back to the straight push (not a spin, not a stop)",
       q.m.phase == "PUSH", q.m.phase)
 
-print("=== A8c. the AI floor: never chase a target down into the ground ===")
+print("=== A8c. no AI floor: the AI may descend toward a low target at any height ===")
 DOWN = {"pwm": {"roll": 1500, "pitch": 1350, "yaw": 1500, "throttle": 1450}}   # AI wants -5 m/s
-for h, vz, want, label in ((12.0, 0.0, "free", "high up (12 m): the AI's descent passes"),
-                           (3.8, -2.5, "hold", "3.8 m descending at 2.5 m/s: no further descent"),
-                           (2.5, 0.0, "hold", "2.5 m (under the 3 m AI floor): no descent"),
-                           (1.5, 0.0, "climb", "1.5 m (under the floor band): climbs gently")):
+for h, vz, want, label in ((12.0, 0.0, "free", "12 m: the AI's descent passes"),
+                           (3.8, -2.5, "free", "3.8 m descending at 2.5 m/s: still passes"),
+                           (2.5, 0.0, "free", "2.5 m (the old floor): passes"),
+                           (1.5, 0.0, "free", "1.5 m: passes (no climb forced)")):
     q = push_rig()
     q.ctx.update(height=h, climb=vz)
     q.run_until(1.52)

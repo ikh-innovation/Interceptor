@@ -183,8 +183,8 @@ class Mission:
     YAW_RAMP_S = 0.30         # scout yaw in / out
     PUSH_RAMP_S = 1.20        # lean eased in at PUSH start
     PUSH_MIN_S = 1.50         # the detector cannot hand over before this
-    PUSH_MAX_S = 4.00         # default search: no confirmed target by then -> soft stop
-                              # (the phone's ΑΝΑΖΗΤΗΣΗ setting, SPEEDS["search"])
+    PUSH_MAX_S = 6.00         # default search: no confirmed target by then -> soft stop
+                              # (the phone's SEARCH setting, SPEEDS["search"])
     # PUSH -> AI blend.  Sim, 96 engagements each (6 directions, 2 speeds,
     # 4 winds): blend/lock-ramp 1.0/0.5 s -> 65 touches, mean bank in the
     # first second 11.1 deg, sideways-speed jump p95 4.5 m/s; 1.5/1.0 s -> 67,
@@ -243,27 +243,23 @@ class Mission:
     # lean, heading and height held) and look for it again for this long;
     # a new confirmed detection hands straight back to the AI.
     REACQ_S = 2.50
-    # AI FLOOR.  Sim campaign 2026-09-26: after a near miss the AI kept chasing
-    # a target that was now behind and BELOW, descending at up to 2.5 m/s --
-    # 31 flights lost > 1 m, the worst 10.9 m from a 10 m start: the ground.
-    # The phone's ▼ had a floor; PUSH / AI did not.  Now, below this height
-    # (above the arming point, plus the stop distance) the AI may not descend,
-    # and below it by FLOOR_CLIMB_BAND it climbs gently.
-    AI_FLOOR_M = 3.0
-    FLOOR_CLIMB_BAND = 1.0
-    FLOOR_CLIMB_MPS = 1.0
+    # NO GROUND CHECK (operator, 2026-09-30): neither ▼ nor PUSH / AI is
+    # stopped near the ground any more.  The field flights were low (the
+    # height read 0-2 m above the arming point) and the old 3 m AI floor
+    # blocked the AI from descending toward the target 20 times in one
+    # session; the ▼ floor (0.5 m) refused 8 times.  The pilot's mode switch
+    # is the only guard against the ground.
     # In the last metre the target fills the frame and the detector drops out;
     # the law FREEZES the sticks there and flies through ("terminal commit",
     # held 1 s).  Soft-stopping on that loss would abort the touch itself.
     TERMINAL_GRACE_S = 1.20
     DET_FRESH_S = 0.25        # a handover detection must be this recent
 
-    def __init__(self, mapper, min_conf=0.20, ceiling_m=30.0, floor_m=0.5,
+    def __init__(self, mapper, min_conf=0.20, ceiling_m=30.0,
                  accel_z=5.0, jerk_z=5.0, log=print):
         self.mapper = mapper
         self.min_conf = float(min_conf)
         self.ceiling_m = float(ceiling_m)
-        self.floor_m = float(floor_m)
         self.accel_z = float(accel_z)       # PILOT_ACCEL_Z, m/s^2
         self.jerk_z = float(jerk_z)         # PSC_JERK_Z, m/s^3
         self.log = log
@@ -284,12 +280,10 @@ class Mission:
         self._lock_still = 0.0              # s the yaw has been still
         self._req_engage = False
         self._req_abort = False
+        # Every setting MEDIUM by default: height 3 / 1.5 m/s, turn 20 deg/s,
+        # PUSH 30 deg, AI MEDIUM, search 6 s -- the best in the field
+        # (operator, 2026-09-30).  The sims use the same defaults.
         self.level = {g: "MEDIUM" for g in GROUPS}
-        self.level["vert"] = "SLOW"         # "slowly and as steady as possible"
-        # PUSH at SLOW (20 deg) by default: the operator's choice
-        # (2026-09-27).  The sims use the same default; tests/sim_sky_wind.py.
-        self.level["push"] = "SLOW"
-        self.level["search"] = "SLOW"       # 4 s, as before (PUSH_MAX_S)
 
         self.phase = "PILOT"
         self.phase_t = 0.0
@@ -313,7 +307,6 @@ class Mission:
         self._steer_t = None
         self._t_last = None
         self._height = self._climb = None
-        self._floor_noted = False
         self.last_handover = None           # (conf, t_in_push)
         # ONE attempt per pilot mode cycle.  Latched the moment the AI takes
         # any channel; cleared only when the pilot leaves ALT_HOLD (STAB) and
@@ -445,7 +438,6 @@ class Mission:
         self._push_steer = False
         self._steer_t = None
         self._last_out = {}
-        self._floor_noted = False
 
     def _unlock(self, why=None, now=None):
         if getattr(self, "lock_hdg", None) is not None and why:
@@ -539,8 +531,6 @@ class Mission:
                                        self.jerk_z, self.THR_RAMP_S) + 0.3
                 if sign > 0 and height + margin >= self.ceiling_m:
                     self._refuse(f"ceiling {self.ceiling_m:.0f} m", now)
-                elif sign < 0 and height - margin <= self.floor_m:
-                    self._refuse(f"floor {self.floor_m:.1f} m", now)
                 else:
                     want_thr = v
                     self.refusal = ""
@@ -737,31 +727,6 @@ class Mission:
         self._mix[axis] = (self._last_out.get(axis), now)
         self._src[axis] = src
 
-    def _floor_guard(self, out):
-        """Clamp the throttle PWM so PUSH / AI never descend into the ground."""
-        h = self._height
-        if h is None or "throttle" not in out:
-            return out
-        climb = self.mapper.pwm_to_phys("throttle", out["throttle"])
-        # the MEASURED descent (VFR_HUD) sets the stop margin; the commanded
-        # one only when there is no measurement.  A commanded -5 m/s from a
-        # hover is not a 5 m/s descent yet (PILOT_ACCEL_Z, PSC_JERK_Z).
-        v_dn = max(0.0, -(self._climb if self._climb is not None else climb))
-        margin = stop_distance(v_dn, self.accel_z, self.jerk_z, 0.0)
-        if h - margin <= self.AI_FLOOR_M - self.FLOOR_CLIMB_BAND:
-            want = max(climb, self.FLOOR_CLIMB_MPS)
-        elif h - margin <= self.AI_FLOOR_M:
-            want = max(climb, 0.0)
-        else:
-            return out
-        if want != climb:
-            if not self._floor_noted:
-                self._floor_noted = True
-                self.log(f"[MISSION] AI floor: height {h:.1f} m, no further descent")
-            out = dict(out)
-            out["throttle"] = self.mapper.phys_to_pwm("throttle", want)
-        return out
-
     def _mixed_output(self, now, ai):
         out = {}
         for axis in ("roll", "pitch", "yaw", "throttle"):
@@ -778,7 +743,6 @@ class Mission:
                 else:
                     target = int(round((1.0 - w) * frm[0] + w * target))
             out[axis] = int(target)
-        out = self._floor_guard(out)
         self._last_out = out
         return out
 
@@ -913,7 +877,7 @@ class Mission:
                         step=SPEEDS["step"][lv["yaw"]],
                         push=SPEEDS["push"][lv["push"]],
                         search=SPEEDS["search"][lv["search"]]),
-            ceiling_m=self.ceiling_m, floor_m=self.floor_m,
+            ceiling_m=self.ceiling_m,
             min_conf=self.min_conf,
             push_s=(round(now - self._push_t, 1) if self._push_t is not None
                     and self.phase == "PUSH" else None),

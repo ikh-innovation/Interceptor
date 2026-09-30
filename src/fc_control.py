@@ -3104,7 +3104,6 @@ class AcroCommander:
                  mission=False,
                  mission_min_conf=0.20,
                  mission_ceiling_m=30.0,
-                 mission_floor_m=0.5,
                  mission_require_airborne=True):
         self.conn = conn
         # The Hover -> Scout -> Engage app (mission.py).  Off = the original
@@ -3112,8 +3111,7 @@ class AcroCommander:
         self.mission_enabled = bool(mission)
         self.mission = None
         self._mission_cfg = dict(min_conf=float(mission_min_conf),
-                                 ceiling_m=float(mission_ceiling_m),
-                                 floor_m=float(mission_floor_m))
+                                 ceiling_m=float(mission_ceiling_m))
         self.mission_require_airborne = bool(mission_require_airborne)
         self._mission_out = {}
         self._mission_why = ""
@@ -3562,7 +3560,6 @@ class AcroCommander:
         self.mission = _mission_mod.Mission(
             self, min_conf=self._mission_cfg["min_conf"],
             ceiling_m=self._mission_cfg["ceiling_m"],
-            floor_m=self._mission_cfg["floor_m"],
             accel_z=getattr(b, "accel_z", 2.5) or 2.5,
             jerk_z=getattr(b, "jerk_z", 5.0) or 5.0,
             log=lambda m: print(m, flush=True))
@@ -3571,8 +3568,8 @@ class AcroCommander:
         print("               Nothing moves unless ARMED + ALT_HOLD + a button"
               " on the phone.")
         print(f"               handover conf >= {self.mission.min_conf:.2f}, "
-              f"ceiling {self.mission.ceiling_m:.0f} m, floor "
-              f"{self.mission.floor_m:.1f} m above the arming point")
+              f"ceiling {self.mission.ceiling_m:.0f} m above the arming point, "
+              f"no ground check")
         for line in self.mission_checklist():
             print("  FC " + line)
         print("-" * 74, flush=True)
@@ -4373,7 +4370,6 @@ def _intercept_from_env(log_dir=None, verbose=True):
         mission=os.environ.get("WASP_APP", "mission").strip().lower() == "mission",
         mission_min_conf=_env_f("ENGAGE_MIN_CONF", 0.20),
         mission_ceiling_m=_env_f("MISSION_CEILING_M", 30.0),
-        mission_floor_m=_env_f("MISSION_FLOOR_M", 0.5),
         # 0 only for the props-OFF bench check, where the drone never flies.
         mission_require_airborne=_env_b("MISSION_REQUIRE_AIRBORNE", True),
         verbose=verbose,

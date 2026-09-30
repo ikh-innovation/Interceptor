@@ -77,19 +77,19 @@ The pilot arms and takes off in ALT_HOLD, then hovers with the throttle centred.
 Behaviour worth knowing:
 - **Bumpless takeover.** Each channel starts from the pilot's own stick value, and every change is a smoothstep ramp.
 - **Dead-man.** A held button is a stream of keepalives. If none arrives for 0.3 s, the axis ramps back to zero. A lost message stops the drone instead of flying it away.
-- **Target lost during AI.** The drone goes back to the straight PUSH and searches again for 2.5 s. If nothing is confirmed within the search time of PUSH (4 s by default, ☰ → PARAMETERS), it does a soft stop.
+- **Target lost during AI.** The drone goes back to the straight PUSH and searches again for 2.5 s. If nothing is confirmed within the search time of PUSH (6 s by default, ☰ → PARAMETERS), it does a soft stop.
 - **Terminal commit.** In the last metre the target fills the frame and the detector drops out. The last command is held for about 1 s, then the drone does a soft stop.
-- **AI floor.** PUSH and AI never descend below 3 m above the arming point.
+- **No ground check.** Neither ▼ nor PUSH / AI is stopped near the ground (removed 2026-09-30: the field flights were low and the old floors blocked the descent). The pilot's mode switch is the only guard against the ground.
 - **Speed levels** (SLOW / MEDIUM / FAST) are set separately for vertical, yaw, push and AI, in ☰ → PARAMETERS.
-- **Search time after ENGAGE** (☰ → PARAMETERS → SEARCH): **4 s** (default), 6 s or 8 s. This is how long the PUSH looks for a target before the soft stop. Longer means farther out: at PUSH 20° that is about 19 / 42 / 69 m (at 30°, 28 / 61 / 97 m).
-  - **Defaults:** vertical SLOW, yaw MEDIUM, **PUSH SLOW (20°)**, AI MEDIUM.
+- **Search time after ENGAGE** (☰ → PARAMETERS → SEARCH): 4 s, **6 s** (default) or 8 s. This is how long the PUSH looks for a target before the soft stop. Longer means farther out: at PUSH 20° that is about 19 / 42 / 69 m (at 30°, 28 / 61 / 97 m).
+  - **Defaults: everything MEDIUM** (the field's best, 2026-09-30): height 3 / 1.5 m/s, turn 20°/s, **PUSH 30°**, AI MEDIUM, **search 6 s**.
   - **AI levels in m/s:** SLOW / MEDIUM / FAST mean ≈11 / 15 / 16 m/s of cruise (the max lean of 12° / 20° / 22°) and a climb ceiling of 8 / 15 / 25 m/s.
 - **What the settings buy** (`tests/sim_sky_wind.py --speed all --push …`, a moving target, incl. at 45°, in gusty wind): touch rate on moving targets in Bf 2–3.
 
   | AI → | SLOW | MEDIUM | FAST |
   |---|---|---|---|
-  | PUSH 20° (default) | 48% | **73%** | 69% |
-  | PUSH 30° | 44% | 66% | 61% |
+  | PUSH 20° | 48% | **73%** | 69% |
+  | PUSH 30° (default) | 44% | 66% | 61% |
   | PUSH 40° | 32% | 48% | 45% |
 
   AI MEDIUM is the best level at every push. A gentler push leaves the AI more frames. The weak spots at any setting: a head-on target at 10 m/s, and a zigzagging one.
