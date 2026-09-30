@@ -229,3 +229,6 @@ src/captures/
 #   yolo export model=runs/detect/v0/weights/best.pt format=engine half=True imgsz=640
 runs/**/*.engine
 runs/**/*.onnx
+
+# rendered side-by-side replays (tests/render_replay.py): large, local only
+replays/

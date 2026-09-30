@@ -70,6 +70,8 @@ class DeskSim:
 
     def __init__(self, bf=2, seed=None):
         self.bf = bf
+        self.sky_gate = True                # the SKY GATE switch (no camera here: shown only)
+        self.follower = True                # the FOLLOWER switch (shown only, like the sky gate)
         self._lk = threading.Lock()
         self._thread = None
         self._touch = 0.0
@@ -155,6 +157,7 @@ class DeskSim:
             seq = self.seq
         return dict(linked=True, armed=True, fc_mode="ALT_HOLD", detector="TensorRT", fps=15.0,
                     lat_ms=None, tilt_deg=30.0, target="DRONE", mission=snap, console_seq=seq,
+                    sky_gate=self.sky_gate, follower=self.follower,
                     sim=dict(bf=self.bf))
 
     def command(self, key, value):
@@ -177,6 +180,20 @@ class DeskSim:
                     return "bad wind"
                 self.bf = bf
                 self._log(f"[SIM] wind Bf {bf}")
+                return ""
+            if key == "sky":
+                v = str(value).strip().lower()
+                if v not in ("on", "off", "1", "0", "true", "false"):
+                    return "bad SKY GATE value"
+                self.sky_gate = v in ("on", "1", "true")
+                self._log(f"[SIM] sky gate {'ON' if self.sky_gate else 'OFF'}")
+                return ""
+            if key == "follow":
+                v = str(value).strip().lower()
+                if v not in ("on", "off", "1", "0", "true", "false"):
+                    return "bad FOLLOWER value"
+                self.follower = v in ("on", "1", "true")
+                self._log(f"[SIM] follower {'ON' if self.follower else 'OFF'}")
                 return ""
             if key == "reset":
                 bf = self.bf

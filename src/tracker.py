@@ -89,6 +89,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fc_control import AcroCommander, ControlLaw, commander_from_env
 from mjpeg_stream import MJPEGServer
 import mission as mission_mod
+from follower import TargetFollower, search_radius
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -460,6 +461,14 @@ class DroneTracker:
         self.full_w = self.full_h = None
 
         self.MISS_TO_PREDICT = 2
+        # The follower (follower.py): once the detector has found the target,
+        # it is followed by its own picture on every frame the detector
+        # misses, so a 10 px drone is not dropped between detections.
+        # FOLLOW=0 starts with it off; the phone's FOLLOWER switch
+        # (set_follower) turns it on / off in flight.
+        self.follower        = TargetFollower()
+        self.use_follower    = os.environ.get("FOLLOW", "1") != "0"
+        self.follow_hits     = 0
         self._gate_rejects   = 0
         self.gated_total     = 0
         self.gate_note       = ""
@@ -632,11 +641,32 @@ class DroneTracker:
         self.mode_name = key
         return key
 
+    def set_sky_gate(self, value):
+        """The phone's SKY GATE switch: on = detections over the ground are
+        rejected and the search covers the sky only; off = the whole frame.
+        One bool store; the next frame's _process picks it up."""
+        v = str(value).strip().lower()
+        if v not in ("on", "off", "1", "0", "true", "false"):
+            return "bad SKY GATE value"
+        on = v in ("on", "1", "true")
+        if on != self.use_sky_mask:
+            self.use_sky_mask = on
+            print(f"[SKY] sky gate {'ON' if on else 'OFF: detecting on the whole frame'}")
+        return ""
 
-
-
-
-
+    def set_follower(self, value):
+        """The phone's FOLLOWER switch: on = the follower holds the target
+        between detections; off = the detector alone (the Kalman coast
+        guides the search, never the steering).  One bool store, like the
+        SKY GATE; _process drops the follower's pictures on its own thread."""
+        v = str(value).strip().lower()
+        if v not in ("on", "off", "1", "0", "true", "false"):
+            return "bad FOLLOWER value"
+        on = v in ("on", "1", "true")
+        if on != self.use_follower:
+            self.use_follower = on
+            print(f"[FOLLOW] follower {'ON' if on else 'OFF: detector only'}")
+        return ""
     def state_snapshot(self):
         """Everything the dashboard shows, read off the live objects."""
         ap = getattr(self, "ap", None)
@@ -659,6 +689,8 @@ class DroneTracker:
             armed=(bool(getattr(ap, "armed", False)) if ap else False),
             linked=(bool(getattr(ap, "linked", False)) if ap else False),
             steering=bool(self._last_sent),
+            sky_gate=bool(self.use_sky_mask),
+            follower=bool(self.use_follower),
         )
         if hasattr(ap, "mission_state"):
             try:
@@ -741,10 +773,8 @@ class DroneTracker:
         """
         if not self.GATE_ENABLE or kf_pred is None or det is None:
             return True
-        dt = dt if (dt and dt > 1e-3) else (1.0 / 30.0)
         jump = math.hypot(det[0] - kf_pred[0], det[1] - kf_pred[1])
-        size = max(self.last_bbox[2], self.last_bbox[3]) if self.last_bbox else 0
-        allow = self.GATE_PX_PER_S * dt + self.GATE_FLOOR_PX + 0.5 * size
+        allow = self._gate_allow(dt)
         if jump <= allow:
             self._gate_rejects = 0
             return True
@@ -756,6 +786,82 @@ class DroneTracker:
         self.gate_note = f"GATE {jump:.0f}px"
         self.gated_total += 1
         return False
+
+    def _gate_allow(self, dt):
+        """How far, px, a real target's centre can plausibly move from the
+        Kalman prediction in one frame (the track gate's radius)."""
+        dt = dt if (dt and dt > 1e-3) else (1.0 / 30.0)
+        size = max(self.last_bbox[2], self.last_bbox[3]) if self.last_bbox else 0
+        return self.GATE_PX_PER_S * dt + self.GATE_FLOOR_PX + 0.5 * size
+
+    # ── the follower: hard to take, impossible to steal ─────────────────────
+    VERIFY_MIN    = 0.50   # a detection away from the track must look this much like the target
+    VERIFY_BETTER = 0.10   # ...and, to overrule a follower hit, this much MORE than it does
+    YIELD_MISSES  = 2      # follower misses in a row before an unlike, near detection is taken
+
+    def _follow(self, frame_disp, kf_pred, now):
+        vx, vy = self.kalman.velocity()
+        mx, my = self._rotation_margin()
+        return self.follower.track(frame_disp, kf_pred[0], kf_pred[1],
+                                   search_radius(self.missed, math.hypot(vx, vy), max(mx, my)),
+                                   now)
+
+    def _adjudicate(self, frame_disp, det, kf_pred, dt, now):
+        """A detection while the follower holds a confirmed target.  Returns
+        (detection or None, follower hit or None); at most one is not None.
+
+        The target cannot be in two places.  A detection where the follower
+        is (or where the filter predicts) confirms the target and re-seeds
+        the follower.  A detection ELSEWHERE is a second object -- a bird, a
+        cloud edge, the airframe, a bench-test ceiling speck -- unless it
+        LOOKS like the target the follower holds (verify, against the
+        anchor: the detector's own pictures, never the follower's).  It is
+        never believed just for insisting: while the follower holds, there
+        is no REACQ count.
+
+        And never from where the target cannot be.  The picture can only
+        jump by what the target can fly in a frame (the track gate) plus
+        what the airframe's own rotation moves it (the gyro).  A detection
+        beyond that -- the top corner while the target sat in the middle --
+        is not the target however much it looks like one: a second drone,
+        say.  Only losing the target for MISS_TO_SEARCH frames frees it.
+        """
+        size = max(self.last_bbox[2], self.last_bbox[3]) if self.last_bbox else 10
+        agree = max(8.0, float(size))
+        jump = math.hypot(det[0] - kf_pred[0], det[1] - kf_pred[1])
+        if jump <= agree:
+            self._gate_rejects = 0
+            return det, None                        # right where it should be
+        fol = self._follow(frame_disp, kf_pred, now)
+        if fol is not None and math.hypot(det[0] - fol[0], det[1] - fol[1]) <= agree:
+            self._gate_rejects = 0
+            return det, None                        # both on it: the detector's box
+        allow = self._gate_allow(dt) + max(self._rotation_margin())
+        if jump > allow:
+            self.gate_note = f"DISTRACT {jump:.0f}px"
+            self.gated_total += 1
+            return None, fol                        # physically impossible
+        like = self.follower.verify(frame_disp, det[0], det[1])
+        if fol is not None:
+            # Two places.  The follower SEES the target: the detection wins
+            # only if it is plausible AND clearly more like the target than
+            # the follower's own spot (the follower had slid off).
+            if (like >= self.VERIFY_MIN
+                    and like >= (self.follower.a_score or 0.0) + self.VERIFY_BETTER):
+                self.gate_note = "DET>FOLLOW"
+                return det, None
+            self.gate_note = f"DISTRACT {jump:.0f}px"
+            self.gated_total += 1
+            return None, fol
+        # The follower lost it this frame: a plausible detection that looks
+        # like the target is taken; an unlike one only once the follower
+        # has lost it YIELD_MISSES frames in a row (its look changed).
+        if like >= self.VERIFY_MIN or self.follower.misses >= self.YIELD_MISSES:
+            self._gate_rejects = 0
+            return det, None
+        self.gate_note = f"DISTRACT {jump:.0f}px"
+        self.gated_total += 1
+        return None, None
 
     def _target_is_small(self):
         """True when the last known target is small/distant (→ zoom + CLAHE),
@@ -877,7 +983,12 @@ class DroneTracker:
             track_imgsz = self.IMGSZ_TRACK if small else self.IMGSZ_CLOSE
             yolo_det = self._detect_region(frame_full, self._roi_disp_to_native(roi),
                                            track_imgsz, enhance=(self.USE_CLAHE and small))
-            if yolo_det is None and not _alt:
+            # The follower HOLDS a confirmed target (it or the detector found
+            # it last frame): no second, whole-sky call on a ROI miss.  It
+            # would cost a model pass for nothing -- the follower looks for
+            # the target itself -- and could only bring a distractor.
+            _hold = (self.use_follower and self.follower.armed and self.missed == 0)
+            if yolo_det is None and not _alt and not _hold:
                 sky_bbox = self._sky_bbox_native()
                 if sky_bbox is not None:
                     srch_imgsz = self.IMGSZ_SEARCH if small else self.IMGSZ_TRACK
@@ -897,8 +1008,23 @@ class DroneTracker:
         self._t_last_frame = _now
         if _dt is not None and 0.0 < _dt < 1.0:
             self._frame_dt = _dt
-        if yolo_det is not None and not self._gate_detection(yolo_det, kf_pred, _dt):
-            yolo_det = None          # treat as a miss: coast on the filter
+        # The follower (follower.py).  Once it holds a CONFIRMED target, every
+        # detection is judged against it (_adjudicate): the same place
+        # confirms it; somewhere else it must look like the target, and a
+        # detection that merely insists never takes the track.  Otherwise
+        # the track gate as before.
+        fol_hit = None
+        if not self.use_follower and self.follower.active:
+            self.follower.reset()        # switched off: a later ON starts afresh
+        armed = (self.use_follower and self.follower.armed and kf_pred is not None
+                 and self.state != "SEARCH")
+        if armed and yolo_det is not None:
+            yolo_det, fol_hit = self._adjudicate(frame_disp, yolo_det, kf_pred, _dt, _now)
+        else:
+            if yolo_det is not None and not self._gate_detection(yolo_det, kf_pred, _dt):
+                yolo_det = None          # treat as a miss: coast on the filter
+            if armed and yolo_det is None:
+                fol_hit = self._follow(frame_disp, kf_pred, _now)
 
         if yolo_det:
             cx, cy, x1, y1, w, h, conf = yolo_det
@@ -910,6 +1036,19 @@ class DroneTracker:
             self.conf      = float(conf)
             self.layer     = (f"ZOOM {conf:.2f}" if small else f"CLOSE {conf:.2f}")
             self.gate_note = ""
+            if self.use_follower:
+                self.follower.seed(frame_disp, cx, cy, w, h, _now)
+        elif fol_hit:
+            fx, fy, fw_, fh_, score = fol_hit
+            cx, cy = int(round(fx)), int(round(fy))
+            self.kalman.update(cx, cy)
+            self.last_bbox = (int(round(fx - fw_ / 2)), int(round(fy - fh_ / 2)),
+                              max(1, int(round(fw_))), max(1, int(round(fh_))))
+            self.missed    = 0
+            self.state     = "LOCK"
+            fused          = (cx, cy)
+            self.follow_hits += 1
+            self.layer     = f"FOLLOW {score:.2f}"     # self.conf: the detector's last
         elif kf_pred and self.state != "SEARCH":
             self.missed += 1
             if self.missed >= self.MISS_TO_SEARCH:
@@ -926,7 +1065,7 @@ class DroneTracker:
             self.layer = "GROUND-REJ" if self._ground_rejected else "LOST"
 
         self.pos = fused
-        return fused, t_kf, t_yolo, roi, (yolo_det is not None)
+        return fused, t_kf, t_yolo, roi, (yolo_det is not None or fol_hit is not None)
 
     def _reset(self):
         self.state     = "SEARCH"
@@ -937,6 +1076,7 @@ class DroneTracker:
         self.conf      = None
         self._gate_rejects = 0
         self.gate_note = ""
+        self.follower.reset()
 
     # ──────────────────────────────────────────────────────────────────────────
     # VISUALISATION  (unchanged)
@@ -1400,6 +1540,10 @@ class DroneTracker:
             m = getattr(self.ap, "mission", None)
             if m is not None:
                 m.set_level("ai", self.mode_name)
+        elif key == "sky":
+            return self.set_sky_gate(value)
+        elif key == "follow":
+            return self.set_follower(value)
         elif key in ("hold", "release", "step", "engage", "abort", "lvl", "lock"):
             return self._mission_command(key, str(value))
         else:

@@ -34,7 +34,7 @@ if not shutil.which("firefox"):
     sys.exit(0)
 
 ST = dict(linked=True, armed=True, fc_mode="ALT_HOLD", target="DRONE", tilt_deg=30.0,
-          detector="TensorRT", fps=28.0,
+          detector="TensorRT", fps=28.0, follower=True,
           mission=dict(app="mission", phase="HOVER", engaged=False, ai_steering=False,
                        levels=dict(vert="SLOW", yaw="MEDIUM", push="SLOW", ai="MEDIUM", search="SLOW"),
                        speeds=dict(climb=1.0, descent=0.5, yaw=20, step=5, push=20, search=4), min_conf=0.2,
@@ -157,9 +157,13 @@ STEPS = [
     ("var sh=q('#sh_speed'), cs=W.getComputedStyle(sh); rep({step:'speeds', open:sh.classList.contains('open'),"
      " pos:cs.position, h:sh.getBoundingClientRect().height, winh:W.innerHeight,"
      " search:[].map.call(d.querySelectorAll('.seg[data-g=search] button'),function(x){return x.textContent}),"
-     " searchOn:(q('.seg[data-g=search] button.on')||{}).textContent});"
+     " searchOn:(q('.seg[data-g=search] button.on')||{}).textContent,"
+     " fol:[].map.call(d.querySelectorAll('#folseg button'),function(x){return x.textContent}),"
+     " folOn:(q('#folseg button.on')||{}).textContent});"
      " q('.seg[data-g=vert] button[data-lv=FAST]').click(); q('.seg[data-g=search] button[data-lv=FAST]').click();", 500),
     ("cmds().then(function(c){rep({step:'lvl', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
+     " fetch('/reset').then(function(){ q('#folseg [data-fol=off]').click(); });});", 400),
+    ("cmds().then(function(c){rep({step:'fol', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
      " q('#sh_speed [data-close]').click(); rep({step:'closed', open:q('#sh_speed').classList.contains('open')}); fetch('/reset');});", 400),
     ("q('#t_log').click();", 400),
     ("rep({step:'console', lines:[].map.call(d.querySelectorAll('#log .ln'),function(l){return l.textContent})});"
@@ -380,6 +384,9 @@ check("a speed button sends lvl=vert:FAST; ✕ closes the page",
 check("SEARCH: 4 s / 6 s / 8 s with the distance at PUSH 20°, 4 s selected; 8 s sends lvl=search:FAST",
       sp.get("search") == ["4 s~19 m", "6 s~42 m", "8 s~69 m"] and sp.get("searchOn") == "4 s~19 m"
       and R.get("lvl", {}).get("cmds") == ["lvl=vert:FAST", "lvl=search:FAST"], f"{sp.get('search')} {sp.get('searchOn')} {R.get('lvl')}")
+check("FOLLOWER: ON / OFF after the SKY GATE, ON lit from the status; OFF sends follow=off",
+      sp.get("fol") == ["ONdetector + follower", "OFFdetector only"] and sp.get("folOn") == "ONdetector + follower"
+      and R.get("fol", {}).get("cmds") == ["follow=off"], f"{sp.get('fol')} {sp.get('folOn')} {R.get('fol')}")
 check("console shows the tracker's printed lines", len(R.get("console", {}).get("lines", [])) == 2)
 lg = R.get("logsheet", {})
 check("MESSAGES opens FULL-SCREEN (not a pop-up) and ✕ closes it",

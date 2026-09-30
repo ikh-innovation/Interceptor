@@ -86,7 +86,7 @@ class MJPEGServer:
     # Commands that move the aircraft need the controller lease; ABORT never
     # does (any phone may stop it).  No PIN (the operator's choice,
     # 2026-09-27): the field WiFi itself is the only gate.
-    CONTROL_KEYS = ("hold", "release", "step", "engage", "lvl", "mode", "lock")
+    CONTROL_KEYS = ("hold", "release", "step", "engage", "lvl", "mode", "lock", "sky", "follow")
     ALL_KEYS = CONTROL_KEYS + ("abort",)
     LEASE_S = 2.0
 

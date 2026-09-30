@@ -276,7 +276,7 @@
 <div class="sheet" id="sh_menu">
   <h3><span>MENU</span><button data-close aria-label="close">&#x2715;</button></h3>
   <div class="body">
-    <button class="row" id="t_par"><div>PARAMETERS<small>Speeds, push lean, AI, search time</small></div><span>›</span></button>
+    <button class="row" id="t_par"><div>PARAMETERS<small>Speeds, push lean, AI, search time, sky gate, follower</small></div><span>›</span></button>
     <button class="row" id="t_log"><div>MESSAGES<small>What the Jetson reports</small></div><span>›</span></button>
     <button class="row" id="t_test"><div>TEST<small>A pretend drone: try the buttons without flying</small></div><span>›</span></button>
   </div>
@@ -289,6 +289,10 @@
     <div class="grp"><div class="lbl">PUSH — forward lean</div><div class="seg" data-g="push"></div></div>
     <div class="grp"><div class="lbl">AI — approach</div><div class="seg" data-g="ai"></div></div>
     <div class="grp"><div class="lbl">SEARCH — after ENGAGE, before the soft stop</div><div class="seg" data-g="search"></div></div>
+    <div class="grp"><div class="lbl">SKY GATE — ignore detections over the ground</div><div class="seg" id="skyseg">
+      <button data-sky="on">ON<i>sky only</i></button><button data-sky="off">OFF<i>whole frame</i></button></div></div>
+    <div class="grp"><div class="lbl">FOLLOWER — hold the target between detections</div><div class="seg" id="folseg">
+      <button data-fol="on">ON<i>detector + follower</i></button><button data-fol="off">OFF<i>detector only</i></button></div></div>
   </div>
 </div>
 <div class="sheet sub" id="sh_log">
@@ -510,7 +514,7 @@
   document.querySelectorAll("[data-close]").forEach(function (b) {
     b.onclick = function () { b.closest(".sheet").classList.remove("open"); };
   });
-  document.querySelectorAll(".seg").forEach(function (seg) {
+  document.querySelectorAll(".seg[data-g]").forEach(function (seg) {
     var g = seg.getAttribute("data-g");
     LEVELS.forEach(function (lv) {
       var b = document.createElement("button"); b.setAttribute("data-lv", lv);
@@ -518,6 +522,12 @@
       b.onclick = function () { cmd("lvl=" + g + ":" + lv); };
       seg.appendChild(b);
     });
+  });
+  document.querySelectorAll("[data-sky]").forEach(function (b) {
+    b.onclick = function () { cmd("sky=" + b.getAttribute("data-sky")); };
+  });
+  document.querySelectorAll("[data-fol]").forEach(function (b) {
+    b.onclick = function () { cmd("follow=" + b.getAttribute("data-fol")); };
   });
 
   // ── TEST: the same screen, driving a pretend drone on the Jetson ─────
@@ -656,7 +666,13 @@
                  var D = {20: [19, 42, 69], 30: [28, 61, 97], 40: [39, 80, 125]}[sp.push] || [19, 42, 69];
                  return "~" + D[LEVELS.indexOf(L)] + " m"; },
                ai: function (L) { return {SLOW: "≈11 m/s ↑8", MEDIUM: "≈15 m/s ↑15", FAST: "≈16 m/s ↑25"}[L]; }};
-    document.querySelectorAll(".seg").forEach(function (seg) {
+    document.querySelectorAll("[data-sky]").forEach(function (x) {
+      x.classList.toggle("on", j.sky_gate !== undefined && (x.getAttribute("data-sky") === "on") === !!j.sky_gate);
+    });
+    document.querySelectorAll("[data-fol]").forEach(function (x) {
+      x.classList.toggle("on", j.follower !== undefined && (x.getAttribute("data-fol") === "on") === !!j.follower);
+    });
+    document.querySelectorAll(".seg[data-g]").forEach(function (seg) {
       var g = seg.getAttribute("data-g");
       seg.querySelectorAll("button").forEach(function (b) {
         var L = b.getAttribute("data-lv");
