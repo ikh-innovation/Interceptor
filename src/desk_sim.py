@@ -25,6 +25,14 @@ ANG_P, ERR_MAX, RATE_MAX = 4.5, 120.0 / 4.5, 202.5
 RATE_BW, RATE_I, I_MAX, ACC_MAX = 8.0, 4.0, 60.0, 150.0
 BEAUFORT = {0: (0.0, 0.0), 1: (1.0, 0.4), 2: (2.5, 0.8), 3: (4.4, 1.3)}   # mean, sigma m/s
 SENS = 40.0                     # deg/s^2 of yaw push from a 5 m/s broadside wind
+# A pretend drone for the picture: a fixed point in the world at this compass
+# bearing and this elevation below the camera's axis when level, so in HOVER it
+# sits just under the aim line.  ENGAGE leans the nose down by the PUSH angle,
+# the camera tilts with it, and the target climbs the picture by exactly the
+# lean.  Shown only: the mission never gets a detection from it, so nothing
+# the AI would do is faked.
+TGT_BRG, TGT_EL0 = 140.0, -18.0
+LEAN_TAU = 0.25                 # s, the airframe settling onto a lean command
 
 
 def wrap180(a):
@@ -80,7 +88,8 @@ class DeskSim:
     # ── life cycle ─────────────────────────────────────────────────────────
     def _reset(self, seed=None):
         self.rng = random.Random(seed)
-        self.yaw = _Yaw(self.rng.uniform(0, 360))
+        self.yaw = _Yaw(TGT_BRG)            # facing the pretend drone
+        self.lean = 0.0                     # deg of pitch, negative = nose down
         self.mp = _Mapper()
         self.lines, self.seq = [], 0
         self.m = M.Mission(self.mp, log=self._log)
@@ -125,6 +134,8 @@ class DeskSim:
         self.out = self.m.cycle(now, ctx)
         stick = self.mp.pwm_to_phys("yaw", self.out["yaw"]) if "yaw" in self.out else 0.0
         vz_cmd = self.mp.pwm_to_phys("throttle", self.out["throttle"]) if "throttle" in self.out else 0.0
+        lean_cmd = self.mp.pwm_to_phys("pitch", self.out["pitch"]) if "pitch" in self.out else 0.0
+        self.lean += (lean_cmd - self.lean) * 0.02 / LEAN_TAU
         mean, sig = BEAUFORT[self.bf]
         r = self.rng
         for i in range(10):
@@ -152,8 +163,9 @@ class DeskSim:
             snap = self.m.snapshot(time.perf_counter() - self.t0)
             snap.update(app="mission", gate_why="", height_m=round(self.h, 2), climb_mps=round(self.vz, 2),
                         heading_deg=round(self.yaw.psi % 360.0), vibe=dict(x=8.0, y=9.0, z=12.0, clip=0),
-                        det_age_s=None, det_conf=None, target_fresh=False, target_az_deg=None,
-                        target_el_deg=None, pwm=dict(self.out))
+                        det_age_s=None, det_conf=None, target_fresh=True,
+                        target_az_deg=round(wrap180(TGT_BRG - self.yaw.psi), 1),
+                        target_el_deg=round(TGT_EL0 - self.lean, 1), pwm=dict(self.out))
             seq = self.seq
         return dict(linked=True, armed=True, fc_mode="ALT_HOLD", detector="TensorRT", fps=15.0,
                     lat_ms=None, tilt_deg=30.0, target="DRONE", mission=snap, console_seq=seq,
