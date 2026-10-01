@@ -27,11 +27,13 @@ BEAUFORT = {0: (0.0, 0.0), 1: (1.0, 0.4), 2: (2.5, 0.8), 3: (4.4, 1.3)}   # mean
 SENS = 40.0                     # deg/s^2 of yaw push from a 5 m/s broadside wind
 # A pretend drone for the picture: a fixed point in the world at this compass
 # bearing and this elevation below the camera's axis when level, so in HOVER it
-# sits just under the aim line.  ENGAGE leans the nose down by the PUSH angle,
+# sits just under the aim line.  The test starts facing START_HDG, 30 deg off
+# it, so the user turns onto it with the heading bar (or the pad) themselves.  ENGAGE leans the nose down by the PUSH angle,
 # the camera tilts with it, and the target climbs the picture by exactly the
 # lean.  Shown only: the mission never gets a detection from it, so nothing
 # the AI would do is faked.
-TGT_BRG, TGT_EL0 = 110.0, -18.0
+TGT_BRG, TGT_EL0 = 140.0, -18.0
+START_HDG = 110.0
 LEAN_TAU = 0.25                 # s, the airframe settling onto a lean command
 
 
@@ -88,7 +90,7 @@ class DeskSim:
     # ── life cycle ─────────────────────────────────────────────────────────
     def _reset(self, seed=None):
         self.rng = random.Random(seed)
-        self.yaw = _Yaw(TGT_BRG)            # facing the pretend drone
+        self.yaw = _Yaw(START_HDG)          # 30 deg off the pretend drone
         self.lean = 0.0                     # deg of pitch, negative = nose down
         self.mp = _Mapper()
         self.lines, self.seq = [], 0

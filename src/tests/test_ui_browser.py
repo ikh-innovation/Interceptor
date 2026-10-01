@@ -119,11 +119,15 @@ STEPS = [
      " return Math.round(rg.getBoundingClientRect().left-x.getBoundingClientRect().left)})});"
      " q('#t_sim').click(); }, 200); });", 3400),
     ("until(function(){return d.body.classList.contains('sim')},3000).then(function(){ setTimeout(function(){"
-     " rep({step:'sim_on', bar:W.getComputedStyle(q('#simbar')).display, img:W.getComputedStyle(q('#v')).visibility,"
+     " var vb=q('#vbox').getBoundingClientRect(), gl=q('#s_gl').getBoundingClientRect(), gr=q('#s_gr').getBoundingClientRect(), x=q('#s_exit').getBoundingClientRect();"
+     " rep({step:'sim_on', bar:W.getComputedStyle(q('#simctl')).display, img:W.getComputedStyle(q('#v')).visibility,"
+     " inPic:q('#vbox').contains(q('#simctl')) && q('#vbox').contains(q('#s_exit')),"
+     " wind:[gl.left-vb.left, gl.top-vb.top, gr.left-gl.right, gl.width], exit:[vb.right-x.right, x.top-vb.top, q('#s_exit').textContent],"
+     " old:!!q('#simbar') || !!q('#s_wind') || !!q('#s_reset'), svg:!!q('#s_gl svg') && !!q('#s_gr svg'),"
      " canv:W.getComputedStyle(q('#simv')).display, sheet:q('#sh_test').classList.contains('open') || q('#sh_menu').classList.contains('open')});"
-     " fetch('/reset').then(function(){ pe(q('#b_lock'),'pointerdown'); q('#s_gr').click(); q('#s_wind').click(); }); }, 700); });", 1900),
+     " fetch('/reset').then(function(){ pe(q('#b_lock'),'pointerdown'); q('#s_gr').click(); }); }, 700); });", 1900),
     ("cmds().then(function(c){ rep({step:'sim_cmds', cmds:c}); q('#s_exit').click();"
-     " setTimeout(function(){ rep({step:'sim_off', sim:d.body.classList.contains('sim'), bar:W.getComputedStyle(q('#simbar')).display}); fetch('/reset'); }, 300); });", 900),
+     " setTimeout(function(){ rep({step:'sim_off', sim:d.body.classList.contains('sim'), bar:W.getComputedStyle(q('#simctl')).display, x:W.getComputedStyle(q('#s_exit')).display}); fetch('/reset'); }, 300); });", 900),
     ("fetch('/set?phase=HOVER&armed=1'); until(function(){return q('#t_sim').disabled},3000).then(function(){"
      " rep({step:'sim_armed', dis:q('#t_sim').disabled}); });", 3200),
     ("until(function(){return !q('#b_up').disabled},3000).then(function(){ return fetch('/reset'); })"
@@ -216,6 +220,10 @@ class H(BaseHTTPRequestHandler):
         p, _, q = self.path.partition("?")
         if p == "/h": return self._raw(HARNESS)
         if p == "/": return self._raw(PAGE)
+        if p == "/img/ikd-logo.svg":
+            b = open(os.path.join(HERE, "img", "ikd-logo.svg"), "rb").read()
+            self.send_response(200); self.send_header("Content-Type", "image/svg+xml")
+            self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b); return
         if p == "/stream.mjpg": return self.send_error(404)
         if DEAD["on"] and p in ("/state", "/cmd", "/console"):
             time.sleep(4); return
@@ -351,12 +359,21 @@ check("☰ = a MENU with three sections: PARAMETERS, MESSAGES, TEST; TEST opens 
       sm.get("rows") == ["PARAMETERS", "MESSAGES", "TEST"] and sm.get("menu") and sm.get("test"), str(sm))
 check("menu rows: the text starts at the LEFT of each row (not centred)",
       sm.get("indent") and all(0 <= x <= 24 for x in sm.get("indent")), str(sm.get("indent")))
-check("TEST → START TEST (drone disarmed): allowed; the menu closes, a striped TEST bar, a drawn view instead of the camera",
+check("TEST → START TEST (drone disarmed): allowed; the menu closes, the TEST keys show, a drawn view instead of the camera",
       R.get("sim_menu", {}).get("dis") is False and so.get("bar") == "flex" and so.get("img") == "hidden"
       and so.get("canv") == "block" and so.get("sheet") is False and len(SIMPOLLS) > 2, f"{so} polls {len(SIMPOLLS)}")
-check("in TEST the buttons go to the pretend drone ONLY (/sim/cmd): LOCK, a gust, the wind",
-      sorted(sc.get("cmds", [])) == ["SIM gust=r", "SIM lock=on", "SIM wind=3"], str(sc))   # sent together: any order
-check("EXIT: back to the real drone, the bar gone", sf.get("sim") is False and sf.get("bar") == "none", str(sf))
+check("TEST: no bar over the picture any more (no GUST / WIND 0-3 / ↺ buttons)", so.get("old") is False, str(so.get("old")))
+wd, ex = so.get("wind", [99, 99, 99, 0]), so.get("exit", [99, 99, ""])
+check("TEST: two small WIND keys with icons INSIDE the picture, top-left under the compass tape",
+      so.get("inPic") and so.get("svg") and 0 <= wd[0] <= 16 and 26 <= wd[1] <= 44 and 0 <= wd[2] <= 10 and 30 <= wd[3] <= 44, str(wd))
+check("TEST: EXIT (just EXIT) inside the picture, top-right", so.get("inPic") and 0 <= ex[0] <= 16 and 26 <= ex[1] <= 44
+      and ex[2].replace("\u2715", "").strip() == "EXIT", str(ex))
+check("TEST look: plain black (no stripes, no purple); no az / el readout, no 'pretend drone' label",
+      b"repeating-linear-gradient" not in PAGE and not any(c in PAGE for c in (b"#6d28d9", b"#5b21b6", b"#2e1065", b"#facc15"))
+      and b'id="offs"' not in PAGE and b"TEST \xc2\xb7 pretend drone" not in PAGE)
+check("in TEST the buttons go to the pretend drone ONLY (/sim/cmd): LOCK, a wind gust",
+      sorted(sc.get("cmds", [])) == ["SIM gust=r", "SIM lock=on"], str(sc))   # sent together: any order
+check("EXIT: back to the real drone, the TEST keys gone", sf.get("sim") is False and sf.get("bar") == "none" and sf.get("x") == "none", str(sf))
 check("drone armed: TEST cannot be started", R.get("sim_armed", {}).get("dis") is True, str(R.get("sim_armed")))
 hd = R.get("held", {}).get("cls", "")
 check("while ▲ is held and the Jetson accepts it: highlighted (held) AND marked sending (tx)",
@@ -409,7 +426,7 @@ function box(e){var r=e.getBoundingClientRect();return {l:r.left,t:r.top,r:r.rig
  (function ready(){ if(!d.body.getAttribute('data-phase')) return setTimeout(ready,50);
   setTimeout(function(){ var all=[].map.call(d.querySelectorAll('.app button, .tile, #vbox, .belt'), box);
    rep({step:'layout_'+f.id, vw:W.innerWidth, vh:W.innerHeight, vb:box(q('#vbox')), tiles:box(q('.tiles')), ctl:box(q('.ctl')),
-     tile0:box(q('.tile')), tile5:box(d.querySelectorAll('.tile')[5]), btn:box(q('#b_up')), eng:box(q('#b_eng')), pad:box(q('.pad')), lock:box(q('#b_lock')), keys:['#b_up','#b_dn','#b_yl','#b_yr'].map(function(k){return box(q(k));}), belt:box(q('.belt')), top:box(q('.top')), inVb:q('#vbox').contains(q('.ctl')), plates:[W.getComputedStyle(q('.pad')).backgroundColor, W.getComputedStyle(q('.acts')).backgroundColor],
+     tile0:box(q('.tile')), tile5:box(d.querySelectorAll('.tile')[5]), btn:box(q('#b_up')), eng:box(q('#b_eng')), pad:box(q('.pad')), lock:box(q('#b_lock')), keys:['#b_up','#b_dn','#b_yl','#b_yr'].map(function(k){return box(q(k));}), belt:box(q('.belt')), top:box(q('.brand')), logo:box(q('.logo')), logoOk:q('.logo').complete && q('.logo').naturalWidth+q('.logo').naturalHeight>0, logoNat:[q('.logo').complete,q('.logo').naturalWidth,q('.logo').naturalHeight], inVb:q('#vbox').contains(q('.ctl')), plates:[W.getComputedStyle(q('.pad')).backgroundColor, W.getComputedStyle(q('.acts')).backgroundColor],
      out:all.filter(function(r){return r.l<-1||r.t<-1||r.r>W.innerWidth+1||r.b>W.innerHeight+1;}).length,
      sw:d.documentElement.scrollWidth});
   }, 400); })(); }; });
@@ -436,8 +453,11 @@ for i, (name, w, h) in enumerate(SIZES):
     check(f"{name}: the picture stays 4:3", abs(vb["w"] / vb["h"] - 4 / 3) < 0.02, f"{vb['w']:.0f}x{vb['h']:.0f}")
     pad, eng, lk, ks = L["pad"], L["eng"], L["lock"], L["keys"]
     check(f"{name}: one line on top: ☰ + name, then the six status cells in one row; the picture under it",
-          abs(L["tile0"]["t"] - L["tile5"]["t"]) < 1 and tl["l"] >= L["top"]["r"] and abs(tl["t"] - L["top"]["t"]) < 2
+          abs(L["tile0"]["t"] - L["tile5"]["t"]) < 1 and tl["l"] >= L["top"]["r"] and abs((tl["t"] + tl["b"]) - (L["top"]["t"] + L["top"]["b"])) < 4
           and tl["b"] <= vb["t"], f"top right {L['top']['r']:.0f}, tiles {tl['l']:.0f}..{tl['r']:.0f}")
+    check(f"{name}: the IKnowHow Defence logo loads, at the far right of the top line",
+          L["logoOk"] and L["logo"]["l"] >= tl["r"] and L["logo"]["r"] <= w and abs((L["logo"]["t"] + L["logo"]["b"]) - (tl["t"] + tl["b"])) < 4,
+          f"logo {L['logo']['l']:.0f}..{L['logo']['r']:.0f} t{L['logo']['t']:.0f}-{L['logo']['b']:.0f}, tiles t{tl['t']:.0f}-{tl['b']:.0f} end {tl['r']:.0f} nat {L['logoNat']}")
     check(f"{name}: the picture as big as it fits (full width or full height)",
           vb["w"] >= w - 50 or vb["b"] >= h - 120, f"{vb['w']:.0f}x{vb['h']:.0f} of {w}x{h}")
     check(f"{name}: the heading bar right under the picture", 0 <= L["belt"]["t"] - vb["b"] <= 10, f"{L['belt']['t'] - vb['b']:.0f}")

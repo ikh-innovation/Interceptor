@@ -61,6 +61,9 @@ _UI_FILE = Path(__file__).resolve().parent / "mission_ui.html"
 _FONT_DIR = Path(__file__).resolve().parent / "fonts"
 _FONTS = ("Ubuntu-R.ttf", "Ubuntu-M.ttf", "Ubuntu-B.ttf", "Ubuntu-C.ttf",
           "UbuntuMono-B.ttf")
+# Its images (the IKnowHow Defence logo), same rule: only these names.
+_IMG_DIR = Path(__file__).resolve().parent / "img"
+_IMGS = ("ikd-logo.svg",)
 
 
 def _load_page():
@@ -154,6 +157,8 @@ class MJPEGServer:
                     self._sim(path[5:])
                 elif path.startswith("/font/") and path[6:] in _FONTS:
                     self._send_font(path[6:])
+                elif path.startswith("/img/") and path[5:] in _IMGS:
+                    self._send_img(path[5:])
                 else:
                     self.send_error(404)
 
@@ -274,15 +279,22 @@ class MJPEGServer:
                 self.wfile.write(page)
 
             def _send_font(self, name):
+                self._send_file(_FONT_DIR / name, "font/ttf", "max-age=31536000, immutable")
+
+            def _send_img(self, name):
+                # an hour, not a year: a new logo file shows up the same day
+                self._send_file(_IMG_DIR / name, "image/svg+xml", "max-age=3600")
+
+            def _send_file(self, path, ctype, cache):
                 try:
-                    body = (_FONT_DIR / name).read_bytes()
+                    body = path.read_bytes()
                 except OSError:
                     self.send_error(404)
                     return
                 self.send_response(200)
-                self.send_header("Content-Type", "font/ttf")
+                self.send_header("Content-Type", ctype)
                 self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "max-age=31536000, immutable")
+                self.send_header("Cache-Control", cache)
                 self.end_headers()
                 self.wfile.write(body)
 

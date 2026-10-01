@@ -3,6 +3,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#eceef1">
 <title>WASP</title>
+<link rel="icon" type="image/svg+xml" href="/img/ikd-logo.svg">
 <style>
   /* The typeface is served by the Jetson itself (/font/...): the field has no
      internet, so a CDN font would silently fall back. */
@@ -40,6 +41,13 @@
   .burger i{display:block;width:18px;height:2px;border-radius:2px;background:var(--ink)}
   .brand{flex:1;min-width:0;overflow:hidden;white-space:nowrap;font:700 15px/1 var(--sans);letter-spacing:.22em;color:var(--ink)}
   .brand span{color:var(--acc);font-weight:500;letter-spacing:.14em;margin-left:6px;font-size:11px}
+  /* the IKnowHow Defence logo: top right, its own navy / maroon on the light bar.
+     Fixed box (348:238, the artwork's shape) so the bar never jumps while it loads */
+  .logo{flex:0 0 auto;display:block;height:38px;width:56px;object-fit:contain}
+  /* the menu page signs off with it, bigger */
+  .byline{display:flex;flex-direction:column;align-items:center;gap:10px;margin:34px 0 10px}
+  .byline img{display:block;height:96px;width:140px;object-fit:contain}
+  .byline span{font:11px/1 var(--cond);letter-spacing:.24em;color:var(--faint)}
 
   /* ── status tiles ────────────────────────────────────────────────────── */
   .tiles{flex:0 0 auto;display:grid;grid-template-columns:1fr 1.15fr .95fr;gap:6px}
@@ -108,8 +116,6 @@
          font:500 13px/1.2 var(--sans);color:#fff;background:rgba(12,14,17,.78);border:1px solid rgba(255,255,255,.15);
          white-space:nowrap}
   .badge.good{background:#22c55e;border-color:#22c55e;color:#03220f}
-  .offs{position:absolute;left:8px;bottom:8px;background:rgba(12,14,17,.78);padding:4px 8px;border-radius:8px;
-        font:12px/1 var(--mono);color:#cfd5dc}
 
   /* ── controls: the pad on the left, LOCK above ENGAGE on the right ──── */
   .ctl{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;padding:0 4px 0 0}
@@ -150,7 +156,7 @@
   .sheet.open{display:flex}
   .sheet.sub{z-index:8}
   .sheet .txt{font-size:14.5px;line-height:1.45;color:var(--dim);margin:0 0 12px}
-  .sheet .go{display:block;width:100%;margin-top:10px;padding:18px;border:0;border-radius:14px;background:#6d28d9;color:#fff;
+  .sheet .go{display:block;width:100%;margin-top:10px;padding:18px;border:0;border-radius:14px;background:#15171a;color:#fff;
              font:700 16px/1 var(--sans);letter-spacing:.12em}
   .sheet .go:disabled{opacity:.35}
   .sheet h3{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;margin:0 0 14px;
@@ -176,14 +182,24 @@
 
   /* TEST mode: a pretend drone on the Jetson; striped so it can
      never be mistaken for the real one */
-  .simbar{flex:0 0 auto;display:none;align-items:center;gap:6px;padding:6px 8px;border-radius:12px;color:#fff;
-          background:repeating-linear-gradient(135deg,#5b21b6 0 14px,#6d28d9 14px 28px)}
-  body.sim .simbar{display:flex}
-  .simbar b{flex:1;min-width:0;font:700 12.5px/1.1 var(--sans);letter-spacing:.08em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .simbar button{flex:0 0 auto;border:0;border-radius:9px;padding:9px 8px;background:rgba(255,255,255,.95);color:#2e1065;
-                 font:700 11.5px/1 var(--sans);letter-spacing:.04em}
-  .simbar button.x{background:var(--ctl);color:#fff}
-  body.sim .vbox{border-color:#6d28d9;box-shadow:0 0 0 2px #6d28d9}
+  /* TEST: inside the picture.  Top-left two small WIND keys (a gust that
+     pushes the nose left / right), top-right EXIT TEST, striped so the test
+     can never be mistaken for the real drone; the picture gets a black frame */
+  .simctl{position:absolute;left:8px;top:34px;z-index:3;display:none;gap:6px}
+  body.sim .simctl{display:flex}
+  .simctl button{width:38px;height:38px;padding:0;border-radius:10px;color:#fff;display:flex;align-items:center;justify-content:center;
+                 background:rgba(14,17,21,.55);border:1px solid rgba(255,255,255,.18);
+                 -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:0 2px 8px rgba(0,0,0,.3)}
+  .simctl button:active{background:var(--acc);color:var(--acc-ink);border-color:var(--acc)}
+  .simctl svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .simctl .r svg{transform:scaleX(-1)}
+  .simx{position:absolute;right:8px;top:34px;z-index:3;display:none;height:38px;padding:0 14px;border-radius:10px;
+        color:#fff;font:700 12px/1 var(--sans);letter-spacing:.1em;white-space:nowrap;
+        background:#15171a;border:1px solid rgba(255,255,255,.22);box-shadow:0 2px 8px rgba(0,0,0,.35)}
+  body.sim .simx{display:block}
+  /* the badge drops under the TEST keys so the three never overlap */
+  body.sim .badge{top:80px}
+  body.sim .vbox{border-color:#15171a;box-shadow:0 0 0 3px #15171a}
   .simv{position:absolute;inset:0;width:100%;height:100%;display:none}
   body.sim .simv{display:block}
   body.sim #v{visibility:hidden}
@@ -246,9 +262,13 @@
      picture box only at these widths; every behaviour is the phone's. ═══ */
   @media (min-width:700px){
     .app{display:grid;padding-left:20px;padding-right:20px;column-gap:20px;row-gap:12px;
-         grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr);
-         grid-template-areas:"top tiles" "sim sim" "vid vid"}
-    .top{grid-area:top;height:50px}.tiles{grid-area:tiles}.simbar{grid-area:sim;height:42px}
+         grid-template-columns:auto auto minmax(0,1fr) auto;grid-template-rows:auto minmax(0,1fr);
+         grid-template-areas:"bur brand tiles logo" "vid vid vid vid"}
+    /* the top line: ☰, the name, the status strip, the logo at the far right */
+    .top{display:contents}
+    .burger{grid-area:bur;align-self:center}.brand{grid-area:brand;align-self:center;margin-left:-8px}
+    .logo{grid-area:logo;align-self:center;height:46px;width:67px}
+    .tiles{grid-area:tiles}
     .vidwrap{grid-area:vid;justify-content:center}
     .brand{font-size:17px}
     /* status: one strip, cells split by hairlines */
@@ -277,7 +297,7 @@
     .rbtn{width:calc(var(--K) * 1.16);height:calc(var(--K) * 1.16);font-size:calc(var(--K) * .14)}
     .lock small{font-size:calc(var(--K) * .15)}
     /* what used to sit bottom-left of the picture moves out of the plates' way */
-    .offs{bottom:auto;top:34px}
+    body.sim .badge{top:34px}
     /* off (no FC, PUSH, ...) must still read as a key on the dark plate */
     .vbox .btn:disabled{opacity:1;background:#3b4148;color:rgba(255,255,255,.38)}
     .vbox .btn:disabled small{color:rgba(255,255,255,.3)}
@@ -289,6 +309,8 @@
   /* a narrow tablet: the name alone, so the six status cells keep their words */
   @media (min-width:700px) and (max-width:1000px){
     .brand span{display:none}
+    .tile{padding:7px 8px}.tile .v{font-size:12.5px;gap:4px}
+    .logo{height:40px;width:58px}
     .toast{left:50%;right:auto;transform:translateX(-50%);max-width:42%;bottom:calc(var(--K) * .4)}
   }
 </style></head>
@@ -297,11 +319,8 @@
   <div class="top">
     <button class="burger" id="t_menu" aria-label="menu"><i></i><i></i><i></i></button>
     <div class="brand">WASP<span>INTERCEPTOR</span></div>
+    <img class="logo" src="/img/ikd-logo.svg" alt="IKnowHow Defence">
   </div>
-  <div class="simbar" id="simbar"><b>TEST · NOT FLYING</b>
-    <button id="s_gl">GUST ⟲</button><button id="s_gr">GUST ⟳</button>
-    <button id="s_wind">WIND 2</button><button id="s_reset" aria-label="start over">↺</button>
-    <button class="x" id="s_exit">EXIT</button></div>
 
   <div class="tiles">
     <div class="tile"><span class="k">FC mode</span><span class="v" id="c_mode">--</span></div>
@@ -319,8 +338,12 @@
     <div class="aim" id="aim"></div><div class="tgt" id="tgt"></div>
     <canvas class="tape" id="tape"></canvas>
     <div class="badge" id="badge" style="display:none"></div>
-    <div class="offs" id="offs" style="display:none"></div>
     <div class="toast" id="toast"></div>
+    <div class="simctl" id="simctl">
+      <button id="s_gl" title="Wind: push the nose LEFT" aria-label="wind left"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.6 4.6A2 2 0 1 1 11 8H5"/><path d="M12.6 19.4A2 2 0 1 0 14 16H5"/><path d="M17.7 7.7A2.5 2.5 0 1 1 19.5 12H2"/><path d="M5 9l-3 3 3 3"/></svg></button>
+      <button class="r" id="s_gr" title="Wind: push the nose RIGHT" aria-label="wind right"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.6 4.6A2 2 0 1 1 11 8H5"/><path d="M12.6 19.4A2 2 0 1 0 14 16H5"/><path d="M17.7 7.7A2.5 2.5 0 1 1 19.5 12H2"/><path d="M5 9l-3 3 3 3"/></svg></button>
+    </div>
+    <button class="simx" id="s_exit">&#x2715; EXIT</button>
   </div>
   <div class="belt">
     <div class="dial off" id="dial" aria-label="pick a heading"><canvas id="dialc"></canvas></div>
@@ -352,6 +375,7 @@
     <button class="row" id="t_par"><div>PARAMETERS<small>Speeds, push lean, AI, search time, sky gate, follower</small></div><span>›</span></button>
     <button class="row" id="t_log"><div>MESSAGES<small>What the Jetson reports</small></div><span>›</span></button>
     <button class="row" id="t_test"><div>TEST<small>A pretend drone: try the buttons without flying</small></div><span>›</span></button>
+    <div class="byline"><img src="/img/ikd-logo.svg" alt="IKnowHow Defence"><span>WASP INTERCEPTOR</span></div>
   </div>
 </div>
 <div class="sheet sub" id="sh_speed">
@@ -616,7 +640,6 @@
   });
 
   // ── TEST: the same screen, driving a pretend drone on the Jetson ─────
-  var WIND = 2;
   function setSim(on) {
     releaseAll();
     if (drag) dialEnd(false);
@@ -641,8 +664,6 @@
   $("s_exit").onclick = function () { setSim(false); };
   $("s_gl").onclick = function () { cmd("gust=l", true); };
   $("s_gr").onclick = function () { cmd("gust=r", true); };
-  $("s_reset").onclick = function () { releaseAll(); cmd("reset=1", true); };
-  $("s_wind").onclick = function () { WIND = (WIND + 1) % 4; cmd("wind=" + WIND, true); };
 
 
   // ── paint: ONLY from the server's reply ────────────────────────────────
@@ -650,7 +671,6 @@
   function paint(j) {
     LAST = j;
     if (SIM && j.real_armed) { setSim(false); note("✗ the real drone armed: leaving TEST", true); return; }
-    if (SIM && j.sim) { WIND = j.sim.bf; T("s_wind", "WIND " + WIND); }
     if (!SIM) {
       $("t_sim").disabled = !!j.armed || VIEW;
       T("t_simtxt", j.armed ? "The drone is ARMED: disarm it to test." : "");
@@ -716,7 +736,7 @@
     var AIM_RY_ = 10 * 4 / 3, apex = Math.max(2, ty(aimEl) - AIM_RY_);
     var dArc = "M0," + apex.toFixed(2) + " L100," + apex.toFixed(2);
     $("arc_sh").setAttribute("d", dArc); $("arc_fg").setAttribute("d", dArc);
-    var az = m.target_az_deg, el = m.target_el_deg, tg = $("tgt"), bd = $("badge"), of = $("offs");
+    var az = m.target_az_deg, el = m.target_el_deg, tg = $("tgt"), bd = $("badge");
     if (m.target_fresh && az !== null && el !== null) {
       tg.style.display = "block"; tg.style.left = tx(az) + "%"; tg.style.top = ty(el) + "%";
       // green = the target is inside the aim circle (not drawn any more: the
@@ -729,9 +749,8 @@
       bd.textContent = good ? ((ph === "HOVER" || ph === "SCOUT") ? "ON TARGET ✓  ENGAGE" : "TARGET CENTRED ✓") :
         (Math.abs(dx_s) > AIM_RX * 0.7 ? (az > 0 ? "⟳ right " : "⟲ left ") + fmt(Math.abs(az), 0) + "°  " : "") +
         (Math.abs(dy_s) > AIM_RY * 0.7 ? (dy > 0 ? "▲ higher " : "▼ lower ") + fmt(Math.abs(dy), 0) + "°" : "");
-      of.style.display = "block"; of.textContent = "az " + fmt(az, 1) + "°  el " + fmt(el, 1) + "°";
     } else {
-      tg.style.display = "none"; aim.classList.remove("good"); $("arc").classList.remove("good"); of.style.display = "none";
+      tg.style.display = "none"; aim.classList.remove("good"); $("arc").classList.remove("good");
       bd.style.display = (ph === "HOVER" || ph === "SCOUT") ? "block" : "none"; bd.className = "badge";
       bd.textContent = "no target";
     }
@@ -824,8 +843,6 @@
       c.beginPath(); c.moveTo(x, hz); c.lineTo(x, hz - (big ? h * 0.14 : h * 0.06)); c.stroke();
       if (big) { c.fillStyle = "#fff"; c.font = "700 14px U, sans-serif"; c.fillText(CARD[bb] || String(bb), x, hz - h * 0.15); }
     }
-    c.fillStyle = "rgba(255,255,255,.85)"; c.font = "700 12px U, sans-serif"; c.textAlign = "left"; c.textBaseline = "bottom";
-    c.fillText("TEST · pretend drone", 10, h - 8);
   }
   var dialc = $("dialc"), dctx = dialc.getContext("2d"), dialKey = "";
   function renderDial() {

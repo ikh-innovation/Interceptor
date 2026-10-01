@@ -131,7 +131,7 @@ The look is light grey and white with black controls; orange is used only as the
 
 The page layout on a phone, top to bottom:
 - **Top bar:** ☰ top-left opens the **MENU** with three sections, each a full-screen page with ✕: **PARAMETERS** (all the SLOW / MEDIUM / FAST settings and the search time), **MESSAGES** (what the Jetson reports) and **TEST**. The whole app is in English. There is no message bar. A refusal shows for 4 s over the bottom of the picture. The only pop-up is the heading bar's YES / NO.
-  - ☰ → **TEST** → START TEST (only while the drone is disarmed): the same screen drives a pretend drone on the Jetson. It runs the real mission code (`desk_sim.py`) against a model of ArduPilot's yaw hold and gusty wind, and never touches the FC. The pretend drone starts facing 110°, with a pretend target there. A striped bar offers GUST ⟲/⟳ (a gust stronger than the motors), WIND 0–3, ↺ and EXIT. If the real drone arms, the page leaves test mode at once.
+  - ☰ → **TEST** → START TEST (only while the drone is disarmed): the same screen drives a pretend drone on the Jetson. It runs the real mission code (`desk_sim.py`) against a model of ArduPilot's yaw hold and gusty wind, and never touches the FC. The test starts facing 110°, and a pretend drone hangs at 140°, so you turn onto it yourself with the heading bar or ⟳. The test controls are inside the picture: two small wind keys top-left (a gust stronger than the motors, pushing the nose left or right) and a black ✕ EXIT top-right. The picture also gets a black frame, so the test is never mistaken for the real drone. If the real drone arms, the page leaves test mode at once.
 - **Status:** the status tiles (FC mode, arming, heading, target, vibration, detector fps). There is no phase card, so the picture gets the room. The phase shows on ENGAGE (PUSH / AI ✓ / DONE ✓), and the lock state on the LOCK button and as a white notch on the heading bar. The top bar holds only ☰ and the name.
 - **Picture:** the 4:3 picture, as wide as the screen. Under it are the **heading bar** and, on its right, a box with the **height** and climb rate, in the same style. When idle, the bar follows the heading and shows the locked heading as a white notch. While you drag it, the picked heading also shows as an orange line on the compass tape.
   - A compass tape runs along its top. Its width is the camera's 62° field of view, and it carries a white mark at the LOCKed heading.
@@ -140,7 +140,7 @@ The page layout on a phone, top to bottom:
   - The ▲▼⟲⟳ pad sits at the left. A held button turns orange, and pulses while the Jetson is accepting its keepalives, so you can see the drone is being told. It turns red if the command is refused.
   - On the right, one above the other, are **LOCK** (white; an orange ring and the heading when on) and **ENGAGE** (red), 74 px round.
 
-The target is always a drone; there is no in-air HUMAN/DRONE switch. The Ubuntu typeface is served from `src/fonts/` by the Jetson itself, since the field has no internet.
+The target is always a drone; there is no in-air HUMAN/DRONE switch. The Ubuntu typeface is served from `src/fonts/` by the Jetson itself, since the field has no internet. So is the IKnowHow Defence logo (`src/img/ikd-logo.svg`, at `/img/ikd-logo.svg`). It sits at the right end of the top line, and is also the browser-tab icon and the sign-off at the bottom of the MENU page.
 
 There is **no PIN**: any phone on the field WiFi can command, one at a time (the controller lease). The field WiFi is the only gate, so keep it private. Frames are JPEG-encoded only while someone is watching.
 
@@ -163,6 +163,7 @@ src/
   mission.py          Hover → Scout → Engage state machine (pure logic, testable)
   mjpeg_stream.py     HTTP server: seeker stream, state, phone commands
   mission_ui.html     the phone app
+  img/                the IKnowHow Defence logo, served to the app
   flight_config.py    THE file to edit: mode, mount tilt, target width, gains
   flight_report.py    post-flight analysis from the control CSV
   start-wasp.sh       boot launcher (reads flight_config.py)
