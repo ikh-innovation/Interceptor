@@ -31,7 +31,7 @@ SENS = 40.0                     # deg/s^2 of yaw push from a 5 m/s broadside win
 # the camera tilts with it, and the target climbs the picture by exactly the
 # lean.  Shown only: the mission never gets a detection from it, so nothing
 # the AI would do is faked.
-TGT_BRG, TGT_EL0 = 140.0, -18.0
+TGT_BRG, TGT_EL0 = 110.0, -18.0
 LEAN_TAU = 0.25                 # s, the airframe settling onto a lean command
 
 

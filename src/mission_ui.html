@@ -221,6 +221,55 @@
     .vbox{height:auto;max-width:none;width:min(100cqw, (100cqh - 52px) * 4 / 3)}
     .belt{width:min(100cqw, (100cqh - 52px) * 4 / 3)}
   }
+  /* the pages (menu, parameters, messages, test) read as a centred column on
+     anything wider than a phone, not rows stretched across a desktop */
+  .sheet > *{width:100%;max-width:760px;align-self:center}
+  @media (hover:hover){
+    button{cursor:pointer}
+    .btn:not(:disabled):not(.held):hover,.row:not(:disabled):hover,.seg button:hover{filter:brightness(1.06)}
+  }
+
+  /* ── tablet, upright: the phone layout, bigger and one row of tiles ──── */
+  @media (min-width:700px){
+    .app{padding-left:20px;padding-right:20px;gap:10px}
+    .tiles{grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+    .tile{padding:8px 10px 9px}.tile .k{font-size:11.5px}.tile .v{font-size:14px}
+    .brand{font-size:17px}
+    /* a tablet is held in two hands: bigger keys, and the picture sits in
+       the middle of the room left over instead of leaving a gap */
+    .vidwrap{justify-content:center}
+    .pad{grid-template-columns:repeat(3,clamp(92px,12vw,120px));gap:10px}
+    .pad .mid{font-size:13px}
+    .btn{height:clamp(68px,7vh,86px);font-size:31px}
+    .btn small{font-size:11px;bottom:8px}
+    .rbtn{width:clamp(88px,11vw,112px);height:clamp(88px,11vw,112px);font-size:13px}.acts{gap:16px}
+    .ctl{padding:14px 18px;border-radius:18px;background:var(--bg2);border:1px solid var(--line)}
+  }
+
+  /* ── tablet sideways / desktop: the picture on the left, status and the
+     controls in a column on the right, so the 4:3 picture gets the height.
+     Same elements, only placed by the grid. ─────────────────────────────── */
+  @media (min-width:900px) and (min-height:560px) and (min-aspect-ratio:5/4){
+    /* no wider than the picture the height allows plus the side column, so
+       a short laptop screen keeps the two together instead of a gap between */
+    .app{display:grid;margin:0 auto;column-gap:16px;row-gap:10px;
+         max-width:min(1760px, (100vh - 176px) * 4 / 3 + 16px + clamp(330px,30vw,420px) + 40px);
+         grid-template-columns:minmax(0,1fr) clamp(330px,30vw,420px);
+         grid-template-rows:auto auto minmax(0,1fr) auto;
+         grid-template-areas:"top top" "sim sim" "vid tiles" "vid ctl"}
+    .top{grid-area:top}.simbar{grid-area:sim}.tiles{grid-area:tiles}.ctl{grid-area:ctl}
+    .vidwrap{grid-area:vid;justify-content:center}
+    .tiles{grid-template-columns:1fr 1fr;align-content:start;gap:8px}
+    .vidwrap{align-items:flex-end}
+    .tile{padding:10px 12px 11px}.tile .k{font-size:12px}.tile .v{font-size:15px;margin-top:6px}
+    .tile .v:before{flex-basis:8px;height:8px}
+    .ctl{padding:14px;border-radius:18px;background:var(--bg2);border:1px solid var(--line);gap:12px}
+    .pad{grid-template-columns:repeat(3,clamp(68px,6.4vw,92px));gap:8px}
+    .btn{height:clamp(58px,8vh,74px);font-size:clamp(24px,2.2vw,30px)}
+    .rbtn{width:clamp(70px,6.4vw,90px);height:clamp(70px,6.4vw,90px);font-size:clamp(10.5px,.9vw,12.5px)}
+    .acts{gap:14px}
+    .toast{left:50%;right:auto;transform:translateX(-50%);max-width:70%}
+  }
 </style></head>
 <body><div class="app">
 

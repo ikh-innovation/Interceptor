@@ -396,6 +396,53 @@ pu = R.get("push", {})
 check("PUSH: ▲, ENGAGE and LOCK disabled; the aim mark moves to the centre", pu.get("up") and pu.get("eng") and pu.get("lockdis")
       and pu.get("aimTop") == "50%", str(pu))
 check("link dead: the red cover shows", R.get("dead", {}).get("cover") is True)
+
+# ── the same page on a tablet and a desktop: one frame per screen size ─────
+DEAD["on"] = False
+SIZES = [("tablet upright", 820, 1180), ("tablet sideways", 1180, 820), ("laptop", 1366, 657), ("desktop", 1920, 1080)]
+LAYOUT = ("""<!doctype html><html><body style="margin:0">%s<script>
+function rep(o){fetch('/report?'+encodeURIComponent(JSON.stringify(o)));}
+function box(e){var r=e.getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom,w:r.width,h:r.height};}
+[].forEach.call(document.querySelectorAll('iframe'), function(f){ f.onload=function(){ var d=f.contentDocument, W=f.contentWindow,
+ q=function(s){return d.querySelector(s)};
+ (function ready(){ if(!d.body.getAttribute('data-phase')) return setTimeout(ready,50);
+  setTimeout(function(){ var all=[].map.call(d.querySelectorAll('.app button, .tile, #vbox, .belt'), box);
+   rep({step:'layout_'+f.id, vw:W.innerWidth, vh:W.innerHeight, vb:box(q('#vbox')), tiles:box(q('.tiles')), ctl:box(q('.ctl')),
+     tile0:box(q('.tile')), tile5:box(d.querySelectorAll('.tile')[5]), btn:box(q('#b_up')), eng:box(q('#b_eng')),
+     out:all.filter(function(r){return r.l<-1||r.t<-1||r.r>W.innerWidth+1||r.b>W.innerHeight+1;}).length,
+     sw:d.documentElement.scrollWidth});
+  }, 400); })(); }; });
+</script></body></html>""" % "".join(f'<iframe id=f{i} src="/" width={w} height={h} style="border:0;display:block"></iframe>'
+                                     for i, (_, w, h) in enumerate(SIZES))).encode()
+HARNESS = LAYOUT
+REP.clear()
+prof = tempfile.mkdtemp()
+ff = subprocess.Popen(["firefox", "--headless", "--no-remote", "--profile", prof, "--window-size", "1920,1080",
+                       "http://127.0.0.1:8199/h"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+t0 = time.time()
+while time.time() - t0 < 90 and len({r.get("step") for r in REP if r.get("step", "").startswith("layout_")}) < len(SIZES):
+    time.sleep(0.3)
+ff.kill(); shutil.rmtree(prof, ignore_errors=True)
+R = {r["step"]: r for r in REP}
+print("=== the same page on a tablet and a desktop ===")
+for i, (name, w, h) in enumerate(SIZES):
+    L = R.get(f"layout_f{i}")
+    if not L:
+        check(f"{name} {w}x{h}: page ran", False); continue
+    vb, ctl, tl = L["vb"], L["ctl"], L["tiles"]
+    check(f"{name} {w}x{h}: every control, tile and the picture inside the screen, no sideways scroll",
+          L["out"] == 0 and L["sw"] <= w, f"out {L['out']} scrollW {L['sw']}")
+    check(f"{name}: the picture stays 4:3", abs(vb["w"] / vb["h"] - 4 / 3) < 0.02, f"{vb['w']:.0f}x{vb['h']:.0f}")
+    key = 60 if name.startswith("tablet") else 48          # a thumb on a tablet, a mouse on a laptop
+    check(f"{name}: keys big enough (▲ >= {key} px tall, ENGAGE >= 70 px)",
+          L["btn"]["h"] >= key and L["eng"]["w"] >= 70, f"▲ {L['btn']['h']:.0f}  ENGAGE {L['eng']['w']:.0f}")
+    if w > h:
+        check(f"{name}: status and controls in a column RIGHT of the picture, which gets most of the height",
+              tl["l"] >= vb["r"] and ctl["l"] >= vb["r"] and vb["h"] >= 0.6 * h,
+              f"vbox right {vb['r']:.0f}, tiles left {tl['l']:.0f}, ctl left {ctl['l']:.0f}, vbox h {vb['h']:.0f}")
+    else:
+        check(f"{name}: the six tiles in ONE row, the controls under the picture",
+              abs(L["tile0"]["t"] - L["tile5"]["t"]) < 1 and ctl["t"] >= vb["b"], f"{L['tile0']['t']} {L['tile5']['t']}")
 print()
 if FAILED:
     print(f"{len(FAILED)} FAILED:")
