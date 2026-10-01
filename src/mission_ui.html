@@ -204,6 +204,15 @@
   .cover{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;
          background:rgba(170,20,24,.95);color:#fff;z-index:9;text-align:center;padding:24px}
   .cover.on{display:flex}.cover b{font:700 26px/1.2 var(--sans);letter-spacing:.06em}.cover p{font-size:15px;max-width:22em;opacity:.92}
+  /* phone: the same dark plates as on a tablet, behind the pad and behind
+     LOCK / ENGAGE, so each group reads as one control */
+  .pad,.acts{padding:8px;border-radius:18px;background:#2f343a;border:1px solid rgba(255,255,255,.08);
+             box-shadow:0 4px 14px rgba(16,19,23,.25)}
+  .pad .mid{color:#e4e8ec}
+  .btn:disabled{opacity:1;background:#454b52;color:rgba(255,255,255,.38)}
+  .btn:disabled small{color:rgba(255,255,255,.3)}
+  .rbtn:disabled{opacity:.6}
+  .ctl{padding:0}
   /* smaller phones: give the picture the room, keep every word whole */
   @media (max-height:780px){
     .app{gap:6px}.tile{padding:5px 7px 6px}
@@ -229,46 +238,58 @@
     .btn:not(:disabled):not(.held):hover,.row:not(:disabled):hover,.seg button:hover{filter:brightness(1.06)}
   }
 
-  /* ── tablet, upright: the phone layout, bigger and one row of tiles ──── */
+  /* ══ TABLET / LAPTOP / DESKTOP: its own layout; the phone layout above is
+     untouched.  One line on top (☰, the name, the status), the picture as
+     big as it fits, the heading bar under it, and the controls INSIDE the
+     picture: the pad bottom-left, LOCK / ENGAGE bottom-right, each on a dark
+     glass plate so they read on any sky.  The script moves .ctl into the
+     picture box only at these widths; every behaviour is the phone's. ═══ */
   @media (min-width:700px){
-    .app{padding-left:20px;padding-right:20px;gap:10px}
-    .tiles{grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
-    .tile{padding:8px 10px 9px}.tile .k{font-size:11.5px}.tile .v{font-size:14px}
-    .brand{font-size:17px}
-    /* a tablet is held in two hands: bigger keys, and the picture sits in
-       the middle of the room left over instead of leaving a gap */
-    .vidwrap{justify-content:center}
-    .pad{grid-template-columns:repeat(3,clamp(92px,12vw,120px));gap:10px}
-    .pad .mid{font-size:13px}
-    .btn{height:clamp(68px,7vh,86px);font-size:31px}
-    .btn small{font-size:11px;bottom:8px}
-    .rbtn{width:clamp(88px,11vw,112px);height:clamp(88px,11vw,112px);font-size:13px}.acts{gap:16px}
-    .ctl{padding:14px 18px;border-radius:18px;background:var(--bg2);border:1px solid var(--line)}
-  }
-
-  /* ── tablet sideways / desktop: the picture on the left, status and the
-     controls in a column on the right, so the 4:3 picture gets the height.
-     Same elements, only placed by the grid. ─────────────────────────────── */
-  @media (min-width:900px) and (min-height:560px) and (min-aspect-ratio:5/4){
-    /* no wider than the picture the height allows plus the side column, so
-       a short laptop screen keeps the two together instead of a gap between */
-    .app{display:grid;margin:0 auto;column-gap:16px;row-gap:10px;
-         max-width:min(1760px, (100vh - 176px) * 4 / 3 + 16px + clamp(330px,30vw,420px) + 40px);
-         grid-template-columns:minmax(0,1fr) clamp(330px,30vw,420px);
-         grid-template-rows:auto auto minmax(0,1fr) auto;
-         grid-template-areas:"top top" "sim sim" "vid tiles" "vid ctl"}
-    .top{grid-area:top}.simbar{grid-area:sim}.tiles{grid-area:tiles}.ctl{grid-area:ctl}
+    .app{display:grid;padding-left:20px;padding-right:20px;column-gap:20px;row-gap:12px;
+         grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr);
+         grid-template-areas:"top tiles" "sim sim" "vid vid"}
+    .top{grid-area:top;height:50px}.tiles{grid-area:tiles}.simbar{grid-area:sim;height:42px}
     .vidwrap{grid-area:vid;justify-content:center}
-    .tiles{grid-template-columns:1fr 1fr;align-content:start;gap:8px}
-    .vidwrap{align-items:flex-end}
-    .tile{padding:10px 12px 11px}.tile .k{font-size:12px}.tile .v{font-size:15px;margin-top:6px}
-    .tile .v:before{flex-basis:8px;height:8px}
-    .ctl{padding:14px;border-radius:18px;background:var(--bg2);border:1px solid var(--line);gap:12px}
-    .pad{grid-template-columns:repeat(3,clamp(68px,6.4vw,92px));gap:8px}
-    .btn{height:clamp(58px,8vh,74px);font-size:clamp(24px,2.2vw,30px)}
-    .rbtn{width:clamp(70px,6.4vw,90px);height:clamp(70px,6.4vw,90px);font-size:clamp(10.5px,.9vw,12.5px)}
-    .acts{gap:14px}
-    .toast{left:50%;right:auto;transform:translateX(-50%);max-width:70%}
+    .brand{font-size:17px}
+    /* status: one strip, cells split by hairlines */
+    .tiles{display:flex;gap:0;height:50px;background:var(--bg2);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+    .tile{flex:1 1 0;min-width:0;border:0;border-left:1px solid var(--line);border-radius:0;background:none;
+          padding:7px 12px;display:flex;flex-direction:column;justify-content:center}
+    .tile:first-child{border-left:0}
+    .tile .k{font-size:11px}.tile .v{font-size:clamp(12.5px,1.1vw,15px);margin-top:4px}
+
+    /* the controls over the picture.  K = one key: a tenth of the picture's
+       height (the picture is min(container height - bar, width * 3/4)) */
+    .vbox{--K:clamp(48px, min(11cqh - 6px, 8.6cqw), 90px)}
+    .ctl{position:absolute;left:0;right:0;bottom:0;z-index:2;display:flex;justify-content:space-between;
+         align-items:flex-end;padding:0 calc(var(--K) * .22) calc(var(--K) * .22);pointer-events:none}
+    .pad,.acts{pointer-events:auto;padding:calc(var(--K) * .14);border-radius:calc(var(--K) * .32);
+               background:rgba(14,17,21,.5);border:1px solid rgba(255,255,255,.14);
+               -webkit-backdrop-filter:blur(10px) saturate(1.2);backdrop-filter:blur(10px) saturate(1.2);
+               box-shadow:0 6px 24px rgba(0,0,0,.35)}
+    /* all four arrows the same square; the speeds read in the middle cell */
+    .pad{grid-template-columns:repeat(3,var(--K));grid-template-rows:repeat(3,var(--K));gap:calc(var(--K) * .1)}
+    .btn{height:var(--K);padding:0 0 calc(var(--K) * .18);font-size:calc(var(--K) * .36);border-radius:calc(var(--K) * .2);
+         box-shadow:0 1px 3px rgba(0,0,0,.4)}
+    .btn small{bottom:calc(var(--K) * .09);font-size:calc(var(--K) * .125)}
+    .pad .mid{font-size:calc(var(--K) * .135);color:#e4e8ec;line-height:1.35}
+    .acts{display:flex;flex-direction:column;gap:calc(var(--K) * .2)}
+    .rbtn{width:calc(var(--K) * 1.16);height:calc(var(--K) * 1.16);font-size:calc(var(--K) * .14)}
+    .lock small{font-size:calc(var(--K) * .15)}
+    /* what used to sit bottom-left of the picture moves out of the plates' way */
+    .offs{bottom:auto;top:34px}
+    /* off (no FC, PUSH, ...) must still read as a key on the dark plate */
+    .vbox .btn:disabled{opacity:1;background:#3b4148;color:rgba(255,255,255,.38)}
+    .vbox .btn:disabled small{color:rgba(255,255,255,.3)}
+    .vbox .rbtn:disabled{opacity:.6}
+  }
+  /* upright tablet: the picture is as wide as the screen, so it sits right
+     under the status line instead of floating in the middle */
+  @media (min-width:700px) and (orientation:portrait){ .vidwrap{justify-content:flex-start} }
+  /* a narrow tablet: the name alone, so the six status cells keep their words */
+  @media (min-width:700px) and (max-width:1000px){
+    .brand span{display:none}
+    .toast{left:50%;right:auto;transform:translateX(-50%);max-width:42%;bottom:calc(var(--K) * .4)}
   }
 </style></head>
 <body><div class="app">
@@ -387,6 +408,18 @@
   var HFOV = 62.2, VFOV = 48.8, TILT = 30;
   var LEVELS = ["SLOW", "MEDIUM", "FAST"];
   var LAST = null, lastOk = 0, consoleSeq = 0, HDG = null, LOCKHDG = null;
+  // tablet / desktop: the controls live INSIDE the picture box (see the CSS);
+  // the phone keeps them under it.  Moving the node keeps every handler.
+  (function () {
+    var mq = window.matchMedia("(min-width:700px)"), ctl = document.querySelector(".ctl"),
+        app = document.querySelector(".app"), vbox = $("vbox");
+    function place() {
+      var into = mq.matches ? vbox : app;
+      if (ctl.parentNode !== into) into.appendChild(ctl);
+    }
+    place();
+    if (mq.addEventListener) mq.addEventListener("change", place); else mq.addListener(place);
+  })();
   var SIM = false;         // TEST: everything goes to /sim/..., the pretend drone
   function base() { return SIM ? "/sim" : ""; }
   var SEL = null;          // the heading picked on the degree scroll (while dragging / asking)

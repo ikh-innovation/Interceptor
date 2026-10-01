@@ -126,9 +126,8 @@ The Jetson flies headless. A phone or laptop on the field WiFi opens:
 | `/cmd` | commands (no PIN; one phone at a time holds control) |
 
 The look is light grey and white with black controls; orange is used only as the accent. The same page fits every screen:
-- **Phone:** everything in one column, as described below.
-- **Tablet held upright:** the same column, with the six status tiles in one row and bigger keys on a white card.
-- **Tablet sideways, or a desktop:** the picture on the left, using the full height. The status tiles sit at the top of a column on the right, and the controls at its bottom. On a short laptop screen the two stay side by side, without a gap between them.
+- **Phone:** everything in one column, as described below. The pad and LOCK / ENGAGE each sit on a dark plate.
+- **Tablet or desktop (700 px wide and up):** one line on top with ☰, the name and the six status cells. The picture sits under it, as big as it fits, with the heading bar and height box under the picture. The controls are **inside** the picture: the ▲▼⟲⟳ pad bottom-left and LOCK above ENGAGE bottom-right, each on a dark glass plate so they read against any sky. The four arrows are equal squares, sized to a tenth of the picture height. The script moves the controls into the picture only at these widths; they behave exactly as on the phone.
 
 The page layout on a phone, top to bottom:
 - **Top bar:** ☰ top-left opens the **MENU** with three sections, each a full-screen page with ✕: **PARAMETERS** (all the SLOW / MEDIUM / FAST settings and the search time), **MESSAGES** (what the Jetson reports) and **TEST**. The whole app is in English. There is no message bar. A refusal shows for 4 s over the bottom of the picture. The only pop-up is the heading bar's YES / NO.

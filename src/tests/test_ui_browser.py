@@ -292,8 +292,8 @@ check("light theme: light-grey page; controls, heading bar and height box a neut
 check("no pure black left in the page's styles (the video's own background aside)",
       b"#15181c" not in PAGE and b"#101317" not in PAGE and PAGE.count(b"#000") == 1)
 check("no HUMAN/DRONE target button (always DRONE)", b.get("tgtbtn") is False)
-check("the pad sits at the left edge, the buttons at the right edge",
-      b.get("padL", 99) <= 16 and b.get("engR", 0) >= 390 - 20, f"pad left {b.get('padL')}, ENGAGE right {b.get('engR')}")
+check("the pad sits at the left edge, the buttons at the right edge (inside their 8 px plate)",
+      b.get("padL", 99) <= 16 and b.get("engR", 0) >= 390 - 24, f"pad left {b.get('padL')}, ENGAGE right {b.get('engR')}")
 tp, t3 = R.get("tape", {}), R.get("tape352", {})
 check("compass tape: full width, along the top edge of the picture, ~26 px high",
       abs(tp.get("top", 99)) <= 2 and tp.get("wdiff", 99) <= 3 and 20 <= tp.get("h", 0) <= 30, str(tp))
@@ -399,7 +399,8 @@ check("link dead: the red cover shows", R.get("dead", {}).get("cover") is True)
 
 # ── the same page on a tablet and a desktop: one frame per screen size ─────
 DEAD["on"] = False
-SIZES = [("tablet upright", 820, 1180), ("tablet sideways", 1180, 820), ("laptop", 1366, 657), ("desktop", 1920, 1080)]
+SIZES = [("tablet upright", 820, 1180), ("tablet upright small", 768, 1024), ("tablet sideways", 1180, 820),
+         ("tablet sideways small", 1024, 768), ("laptop", 1366, 657), ("desktop", 1920, 1080)]
 LAYOUT = ("""<!doctype html><html><body style="margin:0">%s<script>
 function rep(o){fetch('/report?'+encodeURIComponent(JSON.stringify(o)));}
 function box(e){var r=e.getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom,w:r.width,h:r.height};}
@@ -408,7 +409,7 @@ function box(e){var r=e.getBoundingClientRect();return {l:r.left,t:r.top,r:r.rig
  (function ready(){ if(!d.body.getAttribute('data-phase')) return setTimeout(ready,50);
   setTimeout(function(){ var all=[].map.call(d.querySelectorAll('.app button, .tile, #vbox, .belt'), box);
    rep({step:'layout_'+f.id, vw:W.innerWidth, vh:W.innerHeight, vb:box(q('#vbox')), tiles:box(q('.tiles')), ctl:box(q('.ctl')),
-     tile0:box(q('.tile')), tile5:box(d.querySelectorAll('.tile')[5]), btn:box(q('#b_up')), eng:box(q('#b_eng')),
+     tile0:box(q('.tile')), tile5:box(d.querySelectorAll('.tile')[5]), btn:box(q('#b_up')), eng:box(q('#b_eng')), pad:box(q('.pad')), lock:box(q('#b_lock')), keys:['#b_up','#b_dn','#b_yl','#b_yr'].map(function(k){return box(q(k));}), belt:box(q('.belt')), top:box(q('.top')), inVb:q('#vbox').contains(q('.ctl')), plates:[W.getComputedStyle(q('.pad')).backgroundColor, W.getComputedStyle(q('.acts')).backgroundColor],
      out:all.filter(function(r){return r.l<-1||r.t<-1||r.r>W.innerWidth+1||r.b>W.innerHeight+1;}).length,
      sw:d.documentElement.scrollWidth});
   }, 400); })(); }; });
@@ -433,16 +434,25 @@ for i, (name, w, h) in enumerate(SIZES):
     check(f"{name} {w}x{h}: every control, tile and the picture inside the screen, no sideways scroll",
           L["out"] == 0 and L["sw"] <= w, f"out {L['out']} scrollW {L['sw']}")
     check(f"{name}: the picture stays 4:3", abs(vb["w"] / vb["h"] - 4 / 3) < 0.02, f"{vb['w']:.0f}x{vb['h']:.0f}")
-    key = 60 if name.startswith("tablet") else 48          # a thumb on a tablet, a mouse on a laptop
-    check(f"{name}: keys big enough (▲ >= {key} px tall, ENGAGE >= 70 px)",
-          L["btn"]["h"] >= key and L["eng"]["w"] >= 70, f"▲ {L['btn']['h']:.0f}  ENGAGE {L['eng']['w']:.0f}")
-    if w > h:
-        check(f"{name}: status and controls in a column RIGHT of the picture, which gets most of the height",
-              tl["l"] >= vb["r"] and ctl["l"] >= vb["r"] and vb["h"] >= 0.6 * h,
-              f"vbox right {vb['r']:.0f}, tiles left {tl['l']:.0f}, ctl left {ctl['l']:.0f}, vbox h {vb['h']:.0f}")
-    else:
-        check(f"{name}: the six tiles in ONE row, the controls under the picture",
-              abs(L["tile0"]["t"] - L["tile5"]["t"]) < 1 and ctl["t"] >= vb["b"], f"{L['tile0']['t']} {L['tile5']['t']}")
+    pad, eng, lk, ks = L["pad"], L["eng"], L["lock"], L["keys"]
+    check(f"{name}: one line on top: ☰ + name, then the six status cells in one row; the picture under it",
+          abs(L["tile0"]["t"] - L["tile5"]["t"]) < 1 and tl["l"] >= L["top"]["r"] and abs(tl["t"] - L["top"]["t"]) < 2
+          and tl["b"] <= vb["t"], f"top right {L['top']['r']:.0f}, tiles {tl['l']:.0f}..{tl['r']:.0f}")
+    check(f"{name}: the picture as big as it fits (full width or full height)",
+          vb["w"] >= w - 50 or vb["b"] >= h - 120, f"{vb['w']:.0f}x{vb['h']:.0f} of {w}x{h}")
+    check(f"{name}: the heading bar right under the picture", 0 <= L["belt"]["t"] - vb["b"] <= 10, f"{L['belt']['t'] - vb['b']:.0f}")
+    check(f"{name}: the pad INSIDE the picture, bottom-left",
+          L["inVb"] and pad["l"] >= vb["l"] and pad["l"] - vb["l"] <= 40 and pad["b"] <= vb["b"] and vb["b"] - pad["b"] <= 40,
+          f"pad {pad['l'] - vb['l']:.0f} from the left, {vb['b'] - pad['b']:.0f} from the bottom")
+    check(f"{name}: LOCK above ENGAGE INSIDE the picture, bottom-right",
+          eng["r"] <= vb["r"] and vb["r"] - eng["r"] <= 50 and eng["b"] <= vb["b"] and vb["b"] - eng["b"] <= 50
+          and lk["b"] <= eng["t"] and abs(lk["l"] - eng["l"]) <= 1, f"engage {vb['r'] - eng['r']:.0f} from the right")
+    check(f"{name}: ▲ ▼ ⟲ ⟳ all the SAME size (square), big enough ({'>= 60' if w < h or name.startswith('tablet') else '>= 48'} px)",
+          max(k["w"] for k in ks) - min(k["w"] for k in ks) < 1 and max(k["h"] for k in ks) - min(k["h"] for k in ks) < 1
+          and abs(ks[0]["w"] - ks[0]["h"]) < 1 and ks[0]["h"] >= (60 if name.startswith("tablet") else 48),
+          " ".join(f"{k['w']:.0f}x{k['h']:.0f}" for k in ks))
+    check(f"{name}: a dark plate behind the pad and behind LOCK / ENGAGE",
+          all(c.startswith("rgba(14, 17, 21") for c in L["plates"]), str(L["plates"]))
 print()
 if FAILED:
     print(f"{len(FAILED)} FAILED:")
