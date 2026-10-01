@@ -124,6 +124,8 @@ STEPS = [
      " inPic:q('#vbox').contains(q('#simctl')) && q('#vbox').contains(q('#s_exit')),"
      " wind:[gl.left-vb.left, gl.top-vb.top, gr.left-gl.right, gl.width], exit:[vb.right-x.right, x.top-vb.top, q('#s_exit').textContent],"
      " old:!!q('#simbar') || !!q('#s_wind') || !!q('#s_reset'), svg:!!q('#s_gl svg') && !!q('#s_gr svg'),"
+     " sky:(function(){ var cv=q('#simv'), p=cv.getContext('2d').getImageData(Math.round(cv.width/2),Math.round(cv.height*0.2),1,1).data; return [p[0],p[1],p[2],p[3]]; })(),"
+     " words:W.getComputedStyle(q('#badge')).display,"
      " canv:W.getComputedStyle(q('#simv')).display, sheet:q('#sh_test').classList.contains('open') || q('#sh_menu').classList.contains('open')});"
      " fetch('/reset').then(function(){ pe(q('#b_lock'),'pointerdown'); q('#s_gr').click(); }); }, 700); });", 1900),
     ("cmds().then(function(c){ rep({step:'sim_cmds', cmds:c}); q('#s_exit').click();"
@@ -362,6 +364,9 @@ check("menu rows: the text starts at the LEFT of each row (not centred)",
 check("TEST → START TEST (drone disarmed): allowed; the menu closes, the TEST keys show, a drawn view instead of the camera",
       R.get("sim_menu", {}).get("dis") is False and so.get("bar") == "flex" and so.get("img") == "hidden"
       and so.get("canv") == "block" and so.get("sheet") is False and len(SIMPOLLS) > 2, f"{so} polls {len(SIMPOLLS)}")
+sk = so.get("sky", [0, 0, 0, 0])
+check("TEST: a drawn sky in the picture (blue, not black), and no words over it (no badge)",
+      sk[3] == 255 and sk[2] > sk[0] + 40 and sk[2] > 120 and so.get("words") == "none", f"{sk} badge {so.get('words')}")
 check("TEST: no bar over the picture any more (no GUST / WIND 0-3 / ↺ buttons)", so.get("old") is False, str(so.get("old")))
 wd, ex = so.get("wind", [99, 99, 99, 0]), so.get("exit", [99, 99, ""])
 check("TEST: two small WIND keys with icons INSIDE the picture, top-left under the compass tape",

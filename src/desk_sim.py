@@ -25,15 +25,26 @@ ANG_P, ERR_MAX, RATE_MAX = 4.5, 120.0 / 4.5, 202.5
 RATE_BW, RATE_I, I_MAX, ACC_MAX = 8.0, 4.0, 60.0, 150.0
 BEAUFORT = {0: (0.0, 0.0), 1: (1.0, 0.4), 2: (2.5, 0.8), 3: (4.4, 1.3)}   # mean, sigma m/s
 SENS = 40.0                     # deg/s^2 of yaw push from a 5 m/s broadside wind
-# A pretend drone for the picture: a fixed point in the world at this compass
-# bearing and this elevation below the camera's axis when level, so in HOVER it
-# sits just under the aim line.  The test starts facing START_HDG, 30 deg off
-# it, so the user turns onto it with the heading bar (or the pad) themselves.  ENGAGE leans the nose down by the PUSH angle,
-# the camera tilts with it, and the target climbs the picture by exactly the
-# lean.  Shown only: the mission never gets a detection from it, so nothing
-# the AI would do is faked.
-TGT_BRG, TGT_EL0 = 140.0, -18.0
-START_HDG = 110.0
+# The pretend ENEMY drone: a point in the world, TGT_RANGE m out at compass
+# bearing TGT_BRG from where the test starts, TGT_ELEV0 deg above the horizon
+# seen from the start height, bobbing a little as a hovering drone does.  The
+# test starts ON THE GROUND (tree tops round the field at the bottom of the
+# picture) facing START_HDG, 30 deg off it, so a newcomer does what the real
+# flight needs: climb toward the clouds, turn to find it, bring it under the
+# aim line, ENGAGE.  Everything the picture shows follows from this geometry:
+# climbing moves it (and the clouds) down the picture, turning moves it
+# across, the PUSH lean tilts the whole view down, flying at it makes it grow.
+#
+# After ENGAGE, while it is in the camera's view, the pretend airframe chases
+# it as the AI would (yaw onto it, climb / sink to its height): the REAL
+# mission never gets a detection from it, so the phone shows PUSH, not AI.
+# Within HIT_R it is hit; RESTART_S later the test starts over by itself.
+TGT_BRG, TGT_RANGE, TGT_ELEV0, TGT_SPAN = 140.0, 60.0, 20.0, 0.8   # deg, m, deg, m across
+START_HDG, START_H = 110.0, 0.5      # on the ground, just off it
+TILT = 30.0                     # deg, the camera's up-tilt (flight_config's sky mount)
+HFOV, VFOV = 62.2, 48.8
+HIT_R, RESTART_S = 2.0, 3.5     # m; s after a hit, or after a miss has played out
+V_K, V_DRAG = 20.6, 0.5         # forward speed: ~15 m/s at a 20 deg lean, ~24 at 30
 LEAN_TAU = 0.25                 # s, the airframe settling onto a lean command
 
 
@@ -95,7 +106,15 @@ class DeskSim:
         self.mp = _Mapper()
         self.lines, self.seq = [], 0
         self.m = M.Mission(self.mp, log=self._log)
-        self.h, self.vz = 6.0, 0.0
+        self.h, self.vz = START_H, 0.0
+        self.x = self.y = self.v = self.odo = 0.0          # m east, m north, m/s forward, m flown
+        b = math.radians(TGT_BRG)
+        self.tx, self.ty = TGT_RANGE * math.sin(b), TGT_RANGE * math.cos(b)
+        self.talt = START_H + TGT_RANGE * math.tan(math.radians(TGT_ELEV0))
+        self.hit_t = self.end_t = None
+        self.attempt = False
+        self.geo = self._geo(0.0)
+        self.rate = dict(brg=0.0, elw=0.0, rng=0.0)
         self.wdir = self.rng.uniform(0, 2 * math.pi)
         self.g = self.gd = self.turb = 0.0
         self.kick_until, self.kick_acc = 0.0, 0.0
@@ -121,6 +140,17 @@ class DeskSim:
         with self._lk:
             return [r for r in self.lines if r[0] > since]
 
+    def _geo(self, now):
+        """Where the enemy is from here: bearing, elevation above the horizon,
+        range; and where that puts it in the camera (az / el off its axis)."""
+        dx, dy = self.tx - self.x, self.ty - self.y
+        dz = self.talt + 0.4 * math.sin(1.3 * now) - self.h
+        dh = math.hypot(dx, dy)
+        brg = math.degrees(math.atan2(dx, dy)) % 360.0
+        elw = math.degrees(math.atan2(dz, dh))
+        return dict(brg=brg, elw=elw, rng=math.sqrt(dh * dh + dz * dz), dz=dz,
+                    az=wrap180(brg - self.yaw.psi), el=elw - TILT - self.lean)
+
     # ── 50 Hz, like the Jetson's TX thread ─────────────────────────────────
     def _run(self):
         t_next = time.perf_counter()
@@ -138,6 +168,16 @@ class DeskSim:
         vz_cmd = self.mp.pwm_to_phys("throttle", self.out["throttle"]) if "throttle" in self.out else 0.0
         lean_cmd = self.mp.pwm_to_phys("pitch", self.out["pitch"]) if "pitch" in self.out else 0.0
         self.lean += (lean_cmd - self.lean) * 0.02 / LEAN_TAU
+        # after ENGAGE, with the enemy in view: chase it as the AI would
+        g = self.geo
+        ph = self.m.phase
+        if ph in ("PUSH", "AI"):
+            self.attempt = True
+        if (ph in ("PUSH", "AI") and self.hit_t is None
+                and abs(g["az"]) < HFOV / 2 and abs(g["el"]) < VFOV / 2):
+            stick += max(-40.0, min(40.0, 3.0 * g["az"]))
+            tgo = g["rng"] / max(self.v, 3.0)
+            vz_cmd += max(-6.0, min(6.0, g["dz"] / max(tgo, 0.5)))
         mean, sig = BEAUFORT[self.bf]
         r = self.rng
         for i in range(10):
@@ -157,6 +197,35 @@ class DeskSim:
             self.yaw.step(stick, dist, DT)
         self.vz += (vz_cmd - self.vz) * 0.1
         self.h = max(0.5, self.h + self.vz * 0.02)
+        # forward flight from the lean (nose down = negative lean)
+        a = V_K * math.tan(math.radians(max(0.0, -self.lean))) - V_DRAG * self.v
+        self.v = max(0.0, self.v + a * 0.02)
+        psi = math.radians(self.yaw.psi)
+        self.x += self.v * math.sin(psi) * 0.02
+        self.y += self.v * math.cos(psi) * 0.02
+        self.odo += self.v * 0.02
+        g2 = self._geo(now)
+        for k in self.rate:                  # smoothed rates: the phone extrapolates between polls
+            d = (wrap180(g2[k] - g[k]) if k == "brg" else g2[k] - g[k]) / 0.02
+            self.rate[k] += (d - self.rate[k]) * 0.2
+        self.geo = g2
+        if self.hit_t is None and g2["rng"] < HIT_R:
+            self.hit_t = now
+            self._log("[SIM] HIT: the pretend enemy drone is down")
+        if self.attempt and self.end_t is None and self.hit_t is None and ph not in ("PUSH", "AI", "STOP"):
+            self.end_t = now                  # a miss has played out
+        t_end = self.hit_t if self.hit_t is not None else self.end_t
+        if t_end is not None and now - t_end > RESTART_S:
+            self._restart()
+
+    def _restart(self):
+        """Start over (after a hit or a miss), keeping the wind and the
+        PARAMETERS the user picked."""
+        bf, lv = self.bf, dict(self.m.level)
+        self._reset()
+        self.bf = bf
+        self.m.level.update(lv)
+        self._log("[SIM] again: facing 110, the enemy at 140")
 
     # ── what the phone sees / sends ────────────────────────────────────────
     def state(self):
@@ -165,14 +234,26 @@ class DeskSim:
             snap = self.m.snapshot(time.perf_counter() - self.t0)
             snap.update(app="mission", gate_why="", height_m=round(self.h, 2), climb_mps=round(self.vz, 2),
                         heading_deg=round(self.yaw.psi % 360.0), vibe=dict(x=8.0, y=9.0, z=12.0, clip=0),
-                        det_age_s=None, det_conf=None, target_fresh=True,
-                        target_az_deg=round(wrap180(TGT_BRG - self.yaw.psi), 1),
-                        target_el_deg=round(TGT_EL0 - self.lean, 1), pwm=dict(self.out))
+                        det_age_s=None, det_conf=None,
+                        target_fresh=self.hit_t is None,
+                        target_az_deg=round(self.geo["az"], 1),
+                        target_el_deg=round(self.geo["el"], 1), pwm=dict(self.out))
+            now = time.perf_counter() - self.t0
+            g, r = self.geo, self.rate
+            # what the phone draws: the enemy (world bearing / elevation /
+            # range and their rates, to extrapolate between polls), the lean,
+            # the speed and distance flown (the ground rushing by), a gust
+            scene = dict(brg=round(g["brg"], 2), elw=round(g["elw"], 2), rng=round(g["rng"], 2),
+                         brg_r=round(r["brg"], 2), elw_r=round(r["elw"], 2), rng_r=round(r["rng"], 2),
+                         span=TGT_SPAN, lean=round(self.lean, 2), spd=round(self.v, 2), odo=round(self.odo, 2),
+                         x=round(self.x, 2), y=round(self.y, 2),
+                         hit=None if self.hit_t is None else round(now - self.hit_t, 2),
+                         gust=(0 if now >= self.kick_until else (-1 if self.kick_acc < 0 else 1)))
             seq = self.seq
         return dict(linked=True, armed=True, fc_mode="ALT_HOLD", detector="TensorRT", fps=15.0,
                     lat_ms=None, tilt_deg=30.0, target="DRONE", mission=snap, console_seq=seq,
                     sky_gate=self.sky_gate, follower=self.follower,
-                    sim=dict(bf=self.bf))
+                    sim=dict(bf=self.bf, scene=scene))
 
     def command(self, key, value):
         """The phone's commands, plus the test-only ones: gust=l|r, wind=0..3,
