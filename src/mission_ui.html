@@ -141,6 +141,14 @@
   .lock{background:#fff;color:var(--ink);border:3px solid var(--ctl);box-shadow:0 2px 6px rgba(16,19,23,.2)}
   .lock small{display:block;font:11px/1.1 var(--mono);letter-spacing:0;color:var(--acc);margin-top:2px}
   .lock.on{border-color:var(--acc);box-shadow:0 0 0 4px rgba(255,122,0,.45)}
+  /* AUTO: a pill above LOCK (three round keys would not fit beside the pad).
+     Grey like the pad; orange while AUTO flies, with what it is doing */
+  .rbtn.auto{height:38px;border-radius:19px;background:var(--ctl);color:#fff;border:2px solid var(--ctl)}
+  .auto small{display:block;font:9.5px/1.1 var(--mono);letter-spacing:0;color:var(--ctl-sub);margin-top:2px}
+  .auto.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink);box-shadow:0 0 0 3px rgba(255,122,0,.35)}
+  .auto.on small{color:var(--acc-ink)}
+  .auto span{position:relative;display:block}
+  .auto.run:disabled{opacity:1}       /* the straight line / AI of an AUTO run */
   /* ENGAGE: red */
   .eng{border:3px solid #fff;background:#d62828;color:#fff;box-shadow:0 0 0 2px #d62828,0 3px 8px rgba(16,19,23,.3)}
   .eng .fill{position:absolute;inset:0;background:#fff;opacity:0;transition:opacity .18s}
@@ -171,6 +179,33 @@
        border-radius:12px;padding:16px 2px 12px;font:700 15px/1 var(--sans);letter-spacing:.04em}
   .seg button i{display:block;font:normal 11px/1 var(--mono);color:var(--faint);margin-top:6px}
   .seg button.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink)}.seg button.on i{color:var(--acc-ink)}
+  /* PARAMETERS: a page of category cards, each opening its own page */
+  .sheet.sub2{z-index:9}
+  .cat{display:flex;align-items:center;gap:14px;width:100%;margin:0 0 10px;padding:14px 14px 14px 12px;border-radius:16px;
+       border:1px solid var(--line);background:var(--bg2);color:var(--ink);text-align:left;box-shadow:0 1px 2px rgba(16,19,23,.06)}
+  .cat .ico{flex:0 0 auto;width:46px;height:46px;border-radius:13px;display:flex;align-items:center;justify-content:center;
+            background:var(--ctl);color:#fff;font:700 17px/1 var(--sans)}
+  .cat .ico svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .cat.auto .ico{background:var(--acc);color:var(--acc-ink)}
+  .cat > div{flex:1;min-width:0}
+  .cat b{display:block;font:700 15px/1.1 var(--sans);letter-spacing:.12em}
+  .cat small{display:block;font:12.5px/1.35 var(--sans);color:var(--dim);margin-top:5px;letter-spacing:0}
+  .cat .chev{flex:0 0 auto;color:var(--faint);font-size:22px}
+  .tag{flex:0 0 auto;padding:5px 9px;border-radius:999px;font:700 11px/1 var(--sans);letter-spacing:.1em;
+       background:var(--bg3);color:var(--faint);border:1px solid var(--line)}
+  .tag.on{background:var(--ok);color:#fff;border-color:var(--ok)}
+  .phint{font:12.5px/1.45 var(--sans);color:var(--dim);background:var(--bg3);border:1px solid var(--line);
+         border-radius:12px;padding:10px 12px;margin:0 0 16px}
+  .phint b{color:var(--ink)}
+  /* one setting: its name, what it does, the choices */
+  .grp .help{font:12.5px/1.35 var(--sans);color:var(--faint);margin:-3px 0 9px}
+  .pcard{background:var(--bg2);border:1px solid var(--line);border-radius:16px;padding:14px 12px 2px;margin:0 0 14px}
+  .pcard > .sec{margin:0 0 12px;color:var(--acc);font-weight:700}
+  .seg button .dflt{display:block;font:normal 9.5px/1 var(--sans);letter-spacing:.08em;color:var(--faint);margin-top:5px}
+  .seg button.on .dflt{color:var(--acc-ink)}
+  .seg button:disabled{opacity:.45}
+  .reset{display:block;width:100%;margin:4px 0 18px;padding:15px;border-radius:14px;border:1px dashed var(--faint);
+         background:none;color:var(--dim);font:700 13px/1 var(--sans);letter-spacing:.12em}
   .row{display:flex;justify-content:space-between;align-items:center;width:100%;margin-top:6px;padding:16px;border-radius:12px;
        border:1px solid var(--line);background:var(--bg2);color:var(--ink);font:700 15px/1 var(--sans);letter-spacing:.1em}
   .row span{color:var(--faint);font-size:20px}
@@ -200,6 +235,19 @@
   body.sim .vbox{border-color:#15171a;box-shadow:0 0 0 3px #15171a}
   .simv{position:absolute;inset:0;width:100%;height:100%;display:none}
   body.sim .simv{display:block}
+  /* TEST only, during an AUTO run: which step it is on, in words, so someone
+     watching can follow it.  The drawn world itself stays wordless. */
+  .simcap{position:absolute;left:50%;top:80px;transform:translateX(-50%);z-index:3;display:none;align-items:center;gap:10px;
+          width:max-content;max-width:calc(100% - 24px);padding:8px 14px 8px 8px;border-radius:14px;color:#fff;
+          background:rgba(14,17,21,.72);border:1px solid rgba(255,255,255,.18);box-shadow:0 2px 10px rgba(0,0,0,.35);
+          -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+  body.sim .simcap.on{display:flex}
+  .simcap .n{flex:0 0 auto;width:30px;height:30px;border-radius:50%;background:var(--acc);color:var(--acc-ink);
+             display:flex;align-items:center;justify-content:center;font:700 15px/1 var(--sans)}
+  .simcap .n:empty{display:none}
+  .simcap.hit .n{background:var(--ok);color:#fff}
+  .simcap b{display:block;font:700 13px/1.2 var(--sans);letter-spacing:.06em}
+  .simcap small{display:block;font:12px/1.3 var(--sans);color:#d9dde2;margin-top:2px}
   body.sim #v{visibility:hidden}
   .row:disabled{opacity:.4}
   .row small{display:block;font:11px/1.3 var(--sans);letter-spacing:0;color:var(--faint);margin-top:6px;text-align:left}
@@ -231,6 +279,7 @@
   @media (max-height:780px){
     .app{gap:6px}.tile{padding:5px 7px 6px}
     .btn{height:50px;padding-bottom:11px}.btn small{bottom:5px}.rbtn{width:66px;height:66px}.acts{gap:10px}
+    .rbtn.auto{height:34px}
   }
   @media (max-width:420px){ .brand span{display:none} }
   @media (max-width:370px){
@@ -294,6 +343,9 @@
     .acts{display:flex;flex-direction:column;gap:calc(var(--K) * .2)}
     .rbtn{width:calc(var(--K) * 1.16);height:calc(var(--K) * 1.16);font-size:calc(var(--K) * .14)}
     .lock small{font-size:calc(var(--K) * .15)}
+    .rbtn.auto{height:calc(var(--K) * .5);border-radius:calc(var(--K) * .25)}
+    .auto small{font-size:calc(var(--K) * .11)}
+    .acts{gap:calc(var(--K) * .16)}
     /* what used to sit bottom-left of the picture moves out of the plates' way */
     /* off (no FC, PUSH, ...) must still read as a key on the dark plate */
     .vbox .btn:disabled{opacity:1;background:#3b4148;color:rgba(255,255,255,.38)}
@@ -341,6 +393,7 @@
       <button class="r" id="s_gr" title="Wind: push the nose RIGHT" aria-label="wind right"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.6 4.6A2 2 0 1 1 11 8H5"/><path d="M12.6 19.4A2 2 0 1 0 14 16H5"/><path d="M17.7 7.7A2.5 2.5 0 1 1 19.5 12H2"/><path d="M5 9l-3 3 3 3"/></svg></button>
     </div>
     <button class="simx" id="s_exit">&#x2715; EXIT</button>
+    <div class="simcap" id="simcap"><div class="n" id="simcap_n"></div><div><b id="simcap_t"></b><small id="simcap_s"></small></div></div>
   </div>
   <div class="belt">
     <div class="dial off" id="dial" aria-label="pick a heading"><canvas id="dialc"></canvas></div>
@@ -360,6 +413,7 @@
       <div></div>
     </div>
     <div class="acts">
+      <button class="rbtn auto" id="b_auto" aria-label="AUTO"><span id="autotxt">AUTO</span></button>
       <button class="rbtn lock" id="b_lock" aria-label="LOCK"><span id="locktxt">LOCK</span></button>
       <button class="rbtn eng" id="b_eng" aria-label="ENGAGE"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE</span></button>
     </div>
@@ -369,7 +423,7 @@
 <div class="sheet" id="sh_menu">
   <h3><span>MENU</span><button data-close aria-label="close">&#x2715;</button></h3>
   <div class="body">
-    <button class="row" id="t_par"><div>PARAMETERS<small>Speeds, push lean, AI, search time, sky gate, follower</small></div><span>›</span></button>
+    <button class="row" id="t_par"><div>PARAMETERS<small>Flight, ENGAGE, AUTO and detection settings</small></div><span>›</span></button>
     <button class="row" id="t_log"><div>MESSAGES<small>What the Jetson reports</small></div><span>›</span></button>
     <button class="row" id="t_test"><div>TEST<small>A pretend drone: try the buttons without flying</small></div><span>›</span></button>
     <div class="byline"><img src="/img/ikd-logo.svg" alt="IKnowHow Defence"><span>WASP INTERCEPTOR</span></div>
@@ -378,14 +432,48 @@
 <div class="sheet sub" id="sh_speed">
   <h3><span>PARAMETERS<small>APPLIED AT ONCE</small></span><button data-close aria-label="close">&#x2715;</button></h3>
   <div class="body">
-    <div class="grp"><div class="lbl">▲▼ HEIGHT — climb / descent</div><div class="seg" data-g="vert"></div></div>
-    <div class="grp"><div class="lbl">⟲⟳ TURN — hold / one tap</div><div class="seg" data-g="yaw"></div></div>
-    <div class="grp"><div class="lbl">PUSH — forward lean</div><div class="seg" data-g="push"></div></div>
-    <div class="grp"><div class="lbl">AI — approach</div><div class="seg" data-g="ai"></div></div>
-    <div class="grp"><div class="lbl">SEARCH — after ENGAGE, before the soft stop</div><div class="seg" data-g="search"></div></div>
-    <div class="grp"><div class="lbl">SKY GATE — ignore detections over the ground</div><div class="seg" id="skyseg">
+    <button class="cat" data-open="sh_p_flight"><span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v18M7 8l5-5 5 5M7 16l5 5 5-5"/></svg></span>
+      <div><b>FLIGHT</b><small id="sum_flight">height and turn speeds</small></div><span class="chev">›</span></button>
+    <button class="cat" data-open="sh_p_engage"><span class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg></span>
+      <div><b>ENGAGE</b><small id="sum_engage">push lean, AI, search time</small></div><span class="chev">›</span></button>
+    <button class="cat auto" data-open="sh_p_auto"><span class="ico">A</span>
+      <div><b>AUTO</b><small id="sum_auto">one button: up, find, line up, go</small></div><span class="tag" id="autotag">OFF</span><span class="chev">›</span></button>
+    <button class="cat" data-open="sh_p_det"><span class="ico"><svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
+      <div><b>DETECTION</b><small id="sum_det">sky gate, follower</small></div><span class="chev">›</span></button>
+  </div>
+</div>
+<div class="sheet sub sub2" id="sh_p_flight">
+  <h3><span>FLIGHT<small>THE ▲▼ ⟲⟳ PAD</small></span><button data-close aria-label="back">&#x2715;</button></h3>
+  <div class="body">
+    <div class="grp"><div class="lbl">▲▼ HEIGHT</div><div class="help">climb / descent while ▲ ▼ is held</div><div class="seg" data-g="vert"></div></div>
+    <div class="grp"><div class="lbl">⟲⟳ TURN</div><div class="help">turn rate while held · the size of one tap</div><div class="seg" data-g="yaw"></div></div>
+  </div>
+</div>
+<div class="sheet sub sub2" id="sh_p_engage">
+  <h3><span>ENGAGE<small>PUSH, THEN THE AI</small></span><button data-close aria-label="back">&#x2715;</button></h3>
+  <div class="body">
+    <div class="grp"><div class="lbl">PUSH — FORWARD LEAN</div><div class="help">the straight line after ENGAGE · less lean leaves the AI more to see</div><div class="seg" data-g="push"></div></div>
+    <div class="grp"><div class="lbl">AI — APPROACH SPEED</div><div class="help">how fast the AI flies at it · MAX is the fastest, best head-on</div><div class="seg" data-g="ai"></div></div>
+    <div class="grp"><div class="lbl">SEARCH</div><div class="help">after ENGAGE, how long PUSH looks for a target before the soft stop</div><div class="seg" data-g="search"></div></div>
+    <div class="phint">Sim, 960 runs each: <b>PUSH 20° + AI MEDIUM</b> hit most (77%). <b>AI MAX</b> is fastest and best against a drone coming straight at you.</div>
+  </div>
+</div>
+<div class="sheet sub sub2" id="sh_p_auto">
+  <h3><span>AUTO<small>UP · FIND · LINE UP · GO</small></span><button data-close aria-label="back">&#x2715;</button></h3>
+  <div class="body">
+    <div class="grp"><div class="lbl">AUTO BUTTON</div><div class="help">OFF at every power-up · OFF = the button above LOCK is greyed out</div><div class="seg" id="autoseg">
+      <button data-autoen="on">ON<i>usable</i></button><button data-autoen="off">OFF<i>greyed out</i></button></div></div>
+    <div id="autoparams"></div>
+    <button class="reset" id="autoreset">RESET AUTO SETTINGS TO DEFAULTS</button>
+    <div class="phint">Saved on the Jetson: they stay after a reboot. They cannot be changed while AUTO is flying.</div>
+  </div>
+</div>
+<div class="sheet sub sub2" id="sh_p_det">
+  <h3><span>DETECTION<small>WHAT COUNTS AS A TARGET</small></span><button data-close aria-label="back">&#x2715;</button></h3>
+  <div class="body">
+    <div class="grp"><div class="lbl">SKY GATE</div><div class="help">ignore detections over the ground</div><div class="seg" id="skyseg">
       <button data-sky="on">ON<i>sky only</i></button><button data-sky="off">OFF<i>whole frame</i></button></div></div>
-    <div class="grp"><div class="lbl">FOLLOWER — hold the target between detections</div><div class="seg" id="folseg">
+    <div class="grp"><div class="lbl">FOLLOWER</div><div class="help">hold the target between detections</div><div class="seg" id="folseg">
       <button data-fol="on">ON<i>detector + follower</i></button><button data-fol="off">OFF<i>detector only</i></button></div></div>
   </div>
 </div>
@@ -549,6 +637,15 @@
     cmd("engage=1");
   });
 
+  // ── AUTO: up, find, line up, go.  auto=on / auto=off, never a blind
+  // toggle, like LOCK. ──────────────────────────────────────────────────────
+  $("b_auto").addEventListener("pointerdown", function (e) {
+    var el = $("b_auto");
+    if (el.disabled) return;
+    e.preventDefault();
+    cmd("auto=" + (LAST && LAST.mission && LAST.mission.auto ? "off" : "on"));
+  });
+
   // ── LOCK: hold the heading where it is.  lock=on / lock=off, never a blind
   // toggle, so a retried request cannot undo itself. ──────────────────────
   $("b_lock").addEventListener("pointerdown", function (e) {
@@ -615,6 +712,53 @@
   }
   $("t_menu").onclick = function () { openSheet("sh_menu"); };
   $("t_par").onclick = function () { openSheet("sh_speed"); };
+  document.querySelectorAll("[data-open]").forEach(function (b) {
+    b.onclick = function () { openSheet(b.getAttribute("data-open")); };
+  });
+
+  // ── PARAMETERS -> AUTO: every setting, as choices.  The keys, choices and
+  // defaults are mission.Mission.AUTO_SETTINGS' (tests/test_ui_browser.py
+  // checks they agree); this adds only the words. ─────────────────────────
+  var AUTO_UI = [
+    {sec: "LEG 1 · CLIMB AND WATCH"},
+    {k: "height", t: "HEIGHT", h: "climbs straight up to this, then holds and watches", c: [5, 10, 15, 20], d: 15, f: function (v) { return v + " m"; }},
+    {k: "climb", t: "CLIMB SPEED", h: "how fast it goes up", c: [2, 3, 5], d: 3, f: function (v) { return v + " m/s"; }},
+    {sec: "LINING UP · AFTER THE FIRST DETECTION"},
+    {k: "turn", t: "TURN SPEED", h: "the fastest it turns to centre the drone", c: [20, 30, 45], d: 30, f: function (v) { return v + "°/s"; }},
+    {k: "adjust", t: "HEIGHT ADJUST", h: "the fastest it climbs to put the drone on the aim line", c: [3, 5, 8], d: 5, f: function (v) { return v + " m/s"; }},
+    {k: "window", t: "READY WINDOW", h: "how close to the aim mark counts as lined up", c: [3, 5, 8], d: 5, f: function (v) { return "±" + v + "°"; }},
+    {k: "ready", t: "HOLD, THEN GO", h: "lined up this long, then it goes", c: [0.25, 0.5, 1], d: 0.25, f: function (v) { return v + " s"; }},
+    {k: "giveup", t: "GO ANYWAY AFTER", h: "not lined up by then, but near the nose: it goes", c: [1, 2, 3, 5], d: 2, f: function (v) { return v + " s"; }},
+    {k: "closing", t: "GO AT ONCE IF CLOSING", h: "a drone this close in time goes at once, lined up or not", c: [0, 2, 3, 4], d: 3, f: function (v) { return v ? "< " + v + " s" : "OFF"; }},
+    {k: "floor", t: "LOWEST", h: "lining up never descends below this", c: [2, 3, 5], d: 3, f: function (v) { return v + " m"; }},
+    {sec: "LEG 2 · THE RUN"},
+    {k: "line", t: "STRAIGHT-LINE LEAN", h: "nose-down lean of the straight line · more = faster", c: [0, 20, 30, 40], d: 30, f: function (v) { return v ? v + "°" : "= PUSH"; }},
+    {k: "ai", t: "AI SPEED", h: "the AI level the run hands over to · MAX ≈ 21 m/s, the fastest", c: ["SAME", "MEDIUM", "FAST", "MAX"], d: "MAX", f: function (v) { return v === "SAME" ? "= AI" : v; }},
+    {k: "steer", t: "AI STEERS AFTER", h: "the AI's first steering, after the straight line starts", c: [0, 0.3, 0.6], d: 0.6, f: function (v) { return v + " s"; }}
+  ];
+  (function buildAuto() {
+    var box = $("autoparams"), card = null;
+    AUTO_UI.forEach(function (p) {
+      if (p.sec) {
+        card = document.createElement("div"); card.className = "pcard";
+        var h = document.createElement("div"); h.className = "sec"; h.textContent = p.sec;
+        card.appendChild(h); box.appendChild(card); return;
+      }
+      var g = document.createElement("div"); g.className = "grp";
+      g.innerHTML = '<div class="lbl"></div><div class="help"></div><div class="seg"></div>';
+      g.firstChild.textContent = p.t; g.children[1].textContent = p.h;
+      p.c.forEach(function (v) {
+        var b = document.createElement("button");
+        b.setAttribute("data-ap", p.k); b.setAttribute("data-av", String(v));
+        b.textContent = p.f(v);
+        if (v === p.d) { var i = document.createElement("span"); i.className = "dflt"; i.textContent = "DEFAULT"; b.appendChild(i); }
+        b.onclick = function () { cmd("autop=" + p.k + ":" + v); };
+        g.children[2].appendChild(b);
+      });
+      card.appendChild(g);
+    });
+  })();
+  $("autoreset").onclick = function () { cmd("autoreset=1"); };
   $("t_log").onclick = function () { openSheet("sh_log"); };
   $("t_test").onclick = function () { openSheet("sh_test"); };
   document.querySelectorAll("[data-close]").forEach(function (b) {
@@ -622,12 +766,15 @@
   });
   document.querySelectorAll(".seg[data-g]").forEach(function (seg) {
     var g = seg.getAttribute("data-g");
-    LEVELS.forEach(function (lv) {
+    (g === "ai" ? LEVELS.concat(["MAX"]) : LEVELS).forEach(function (lv) {
       var b = document.createElement("button"); b.setAttribute("data-lv", lv);
       b.innerHTML = lv + "<i>&nbsp;</i>";
       b.onclick = function () { cmd("lvl=" + g + ":" + lv); };
       seg.appendChild(b);
     });
+  });
+  document.querySelectorAll("[data-autoen]").forEach(function (b) {
+    b.onclick = function () { cmd("autoen=" + b.getAttribute("data-autoen")); };
   });
   document.querySelectorAll("[data-sky]").forEach(function (b) {
     b.onclick = function () { cmd("sky=" + b.getAttribute("data-sky")); };
@@ -635,6 +782,30 @@
   document.querySelectorAll("[data-fol]").forEach(function (b) {
     b.onclick = function () { cmd("follow=" + b.getAttribute("data-fol")); };
   });
+
+  // ── TEST: during an AUTO run, which step it is on (words only here) ────
+  var capRun = false;
+  function simCaption(m, ph, run) {
+    var el = $("simcap");
+    if (!SIM) { capRun = false; el.className = "simcap"; return; }
+    var hit = !!SC && SC.hit !== null && SC.hit !== undefined;
+    if (run) capRun = true;
+    else if (ph === "HOVER" && !hit) capRun = false;
+    var push = m.line_deg || (m.speeds && m.speeds.push) || 30, lv = m.ai_now || (m.levels && m.levels.ai) || "MEDIUM";
+    var spd = SC ? Math.round(SC.spd) : 0, cap = null;
+    if (capRun && hit) cap = ["✓", "HIT", "the enemy drone is down · the test starts again"];
+    else if (capRun) cap = {
+      AUTO_CLIMB: ["1", "CLIMBING STRAIGHT UP TO " + Math.round(m.auto_height_m || 10) + " m", "heading locked · watching for a drone"],
+      AUTO_HOLD: ["2", "WATCHING", "holding height and heading · waiting for a drone to show up"],
+      AUTO_ALIGN: ["3", "DRONE FOUND · LINING IT UP", "turning and climbing to put it on the aim line"],
+      PUSH: ["4", "STRAIGHT LINE AT IT", "nose down " + push + "° · full speed"],
+      AI: ["5", "THE AI STEERS IT IN", spd + " m/s · AI " + lv],
+      STOP: ["", "MISSED · SOFT STOP", "back to level, then the pilot's sticks"]}[ph] || null;
+    else if (ph === "HOVER" && m.auto_enabled && !hit && !VIEW)
+      cap = ["", "PRESS AUTO", "one press: it climbs, finds the drone, lines it up and goes"];
+    el.className = "simcap" + (cap ? " on" : "") + (cap && cap[0] === "✓" ? " hit" : "");
+    if (cap) { T("simcap_n", cap[0]); T("simcap_t", cap[1]); T("simcap_s", cap[2]); }
+  }
 
   // ── TEST: the same screen, driving a pretend drone on the Jetson ─────
   function setSim(on) {
@@ -709,17 +880,31 @@
     // which buttons can act right now (the server decides; this only mirrors it)
     var manual = ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other";
     ["b_up", "b_dn", "b_yl", "b_yr"].forEach(function (id) { $(id).disabled = !manual; });
+    // AUTO climbing / watching: ⟲ ⟳ turn it to look around (the lock follows)
+    if ((ph === "AUTO_CLIMB" || ph === "AUTO_HOLD") && !VIEW && ctl !== "other") {
+      $("b_yl").disabled = false; $("b_yr").disabled = false;
+    }
     // ENGAGE: red = ready; orange = pushing; green = the AI has (or had) the
     // drone, until the pilot's STAB -> ALT_HOLD resets it for the next try.
     var eng = $("b_eng"), done = !!m.engaged || !!m.ai_steering;
     eng.className = "rbtn eng" + (done ? " go" : ph === "PUSH" ? " push" : "");
-    eng.disabled = done || !((ph === "HOVER" || ph === "SCOUT") && !VIEW && ctl !== "other");
+    var AUTOPH = ["AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN"], inAuto = AUTOPH.indexOf(ph) >= 0;
+    eng.disabled = done || !((ph === "HOVER" || ph === "SCOUT" || inAuto) && !VIEW && ctl !== "other");
     $("engtxt").innerHTML = !done ? (ph === "PUSH" ? "PUSH" : "ENGAGE")
       : (ph === "AI" || ph === "PUSH") ? "AI ✓" : "DONE ✓";
 
     CANLOCK = ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other";
     dial.classList.toggle("off", !CANLOCK);
     if (!CANLOCK) { if (drag) dialEnd(false); if ($("ask").classList.contains("on")) closeAsk(); }
+    // AUTO stays lit (GO / AI) through the straight line and the AI of a run
+    var au = $("b_auto"), autoRun = !!m.auto_run && ["PUSH", "AI", "STOP"].indexOf(ph) >= 0;
+    au.className = "rbtn auto" + (inAuto || autoRun ? " on" : "") + (autoRun ? " run" : "");
+    // OFF in PARAMETERS = greyed out (a running AUTO can still be stopped)
+    au.disabled = !((inAuto || (manual && !done && m.auto_enabled)) && !VIEW && ctl !== "other");
+    $("autotxt").innerHTML = "AUTO" + ({AUTO_CLIMB: "<small>UP " + Math.round(m.auto_height_m || 10) + " m</small>",
+      AUTO_HOLD: "<small>WATCHING</small>", AUTO_ALIGN: "<small>LINING UP</small>"}[ph] ||
+      (autoRun ? "<small>" + ({PUSH: "GO", AI: "AI", STOP: "DONE"}[ph]) + "</small>" : ""));
+    simCaption(m, ph, inAuto || !!m.auto_run);
     var lk = $("b_lock");
     lk.className = "rbtn lock" + (locked ? " on" : "");
     lk.disabled = !(["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other");
@@ -752,7 +937,7 @@
         (Math.abs(dy_s) > AIM_RY * 0.7 ? (dy > 0 ? "▲ higher " : "▼ lower ") + fmt(Math.abs(dy), 0) + "°" : "");
     } else {
       tg.style.display = "none"; aim.classList.remove("good"); $("arc").classList.remove("good");
-      bd.style.display = (ph === "HOVER" || ph === "SCOUT") ? "block" : "none"; bd.className = "badge";
+      bd.style.display = (ph === "HOVER" || ph === "SCOUT" || ph === "AUTO_CLIMB" || ph === "AUTO_HOLD") ? "block" : "none"; bd.className = "badge";
       bd.textContent = "no target";
     }
 
@@ -763,14 +948,31 @@
     var val = {vert: function (L) { return {SLOW: "1 / 0.5", MEDIUM: "3 / 1.5", FAST: "8 / 2.5"}[L] + " m/s"; },
                yaw: function (L) { return {SLOW: "10°/s · 2°", MEDIUM: "20°/s · 5°", FAST: "45°/s · 10°"}[L]; },
                push: function (L) { return {SLOW: "20°", MEDIUM: "30°", FAST: "40°"}[L]; },
-               // cruise speed at the profile's max lean (tracker MODES 12/20/22 deg,
+               // cruise speed at the profile's max lean (tracker MODES 12/20/22/35 deg,
                // ~15 m/s at 20 deg as in flight_config's cruise_mps), and the climb ceiling
                // straight-line distance flown in that time at the chosen PUSH
                // lean (the sim's drag model: ~15 m/s top speed at 20 deg)
                search: function (L) {
                  var D = {20: [19, 42, 69], 30: [28, 61, 97], 40: [39, 80, 125]}[sp.push] || [19, 42, 69];
                  return "~" + D[LEVELS.indexOf(L)] + " m"; },
-               ai: function (L) { return {SLOW: "≈11 m/s ↑8", MEDIUM: "≈15 m/s ↑15", FAST: "≈16 m/s ↑25"}[L]; }};
+               ai: function (L) { return {SLOW: "≈11 m/s ↑8", MEDIUM: "≈15 m/s ↑15", FAST: "≈16 m/s ↑25", MAX: "≈21 m/s ↑25"}[L]; }};
+    var ap = m.auto_params || {}, flying = inAuto || autoRun;
+    document.querySelectorAll("[data-ap]").forEach(function (x) {
+      var k = x.getAttribute("data-ap"), v = x.getAttribute("data-av");
+      x.classList.toggle("on", ap[k] !== undefined && String(ap[k]) === v);
+      x.disabled = flying;
+    });
+    $("autoreset").disabled = flying;
+    var spd = m.speeds || {};
+    T("sum_flight", spd.climb !== undefined ? "▲ " + spd.climb + " m/s · ▼ " + spd.descent + " m/s · turn " + spd.yaw + "°/s" : "height and turn speeds");
+    T("sum_engage", spd.push !== undefined ? "PUSH " + spd.push + "° · AI " + (lv.ai || "--") + " · search " + spd.search + " s" : "push lean, AI, search time");
+    T("sum_auto", ap.height !== undefined ? "up to " + ap.height + " m · line " + (ap.line ? ap.line + "°" : "= PUSH")
+      + " · AI " + (ap.ai === "SAME" ? "= AI" : ap.ai) + " · window ±" + ap.window + "°" : "one button: up, find, line up, go");
+    T("sum_det", "sky gate " + (j.sky_gate ? "ON" : "OFF") + " · follower " + (j.follower ? "ON" : "OFF"));
+    var tag = $("autotag"); tag.textContent = m.auto_enabled ? "ON" : "OFF"; tag.className = "tag" + (m.auto_enabled ? " on" : "");
+    document.querySelectorAll("[data-autoen]").forEach(function (x) {
+      x.classList.toggle("on", m.auto_enabled !== undefined && (x.getAttribute("data-autoen") === "on") === !!m.auto_enabled);
+    });
     document.querySelectorAll("[data-sky]").forEach(function (x) {
       x.classList.toggle("on", j.sky_gate !== undefined && (x.getAttribute("data-sky") === "on") === !!j.sky_gate);
     });
@@ -836,14 +1038,14 @@
     return out;
   })();
   // trees round the field (world-fixed, m east / north of the start), none
-  // on the way to the enemy (bearing 120..160), so a newcomer starting on the
+  // on the way to the enemy (bearing 120..185: it flies in from ~178), so a newcomer starting on the
   // ground sees their tops, and sees them sink away when climbing
   var TREES = (function () {
     var r = 11, out = [];
     function rnd() { r = (r * 16807) % 2147483647; return r / 2147483647; }
     while (out.length < 90) {
       var b = rnd() * 360;
-      if (b > 118 && b < 162) continue;
+      if (b > 118 && b < 185) continue;
       var d = 28 + rnd() * 60, br = b * Math.PI / 180;
       out.push({x: d * Math.sin(br), y: d * Math.cos(br), H: 9 + rnd() * 11, W: 3 + rnd() * 3.5, k: rnd()});
     }

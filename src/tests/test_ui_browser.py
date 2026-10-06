@@ -29,6 +29,22 @@ def check(label, ok, detail=""):
         FAILED.append(label)
 
 
+# The page's AUTO settings must be the mission's: same keys, choices, defaults.
+sys.path.insert(0, HERE)
+import re                                                          # noqa: E402
+import mission as _M                                               # noqa: E402
+_ui = {}
+for mm in re.finditer(r'\{k: "(\w+)".*?c: \[([^\]]*)\], d: ("?\w+(?:\.\d+)?"?)', PAGE.decode()):
+    ch = [x.strip().strip('"') for x in mm.group(2).split(",")]
+    _ui[mm.group(1)] = (ch, mm.group(3).strip('"'))
+_ms = {k: ([str(c) for c in ch], str(getattr(_M.Mission, a[0]))) for k, a, ch in _M.Mission.AUTO_SETTINGS}
+_norm = lambda xs: [x if not x.replace(".", "").isdigit() else str(float(x)) for x in xs]
+print("=== the page's AUTO settings vs mission.Mission.AUTO_SETTINGS ===")
+check("same settings on the page as in the mission", sorted(_ui) == sorted(_ms), f"{sorted(_ui)} vs {sorted(_ms)}")
+check("same choices and the same default for every one",
+      all(_norm(_ui[k][0]) == _norm(_ms[k][0]) and _norm([_ui[k][1]]) == _norm([_ms[k][1]]) for k in _ms if k in _ui),
+      str({k: (_ui.get(k), _ms[k]) for k in _ms if k in _ui and (_norm(_ui[k][0]) != _norm(_ms[k][0]) or _norm([_ui[k][1]]) != _norm([_ms[k][1]]))}))
+
 if not shutil.which("firefox"):
     print("  [SKIP] firefox not installed -- browser test not run")
     sys.exit(0)
@@ -42,6 +58,7 @@ ST = dict(linked=True, armed=True, fc_mode="ALT_HOLD", target="DRONE", tilt_deg=
                        vibe=dict(x=9, y=8, z=14, clip=0), det_conf=0.62, det_age_s=0.05,
                        target_fresh=True, target_az_deg=1.2, target_el_deg=-18.5),
           console_seq=2)
+ST["mission"]["auto_params"] = {k: getattr(_M.Mission, a[0]) for k, a, _c in _M.Mission.AUTO_SETTINGS}
 CONSOLE = [[1, "12:00:00", "[MISSION] PILOT -> HOVER  (armed in ALT_HOLD)"],
            [2, "12:00:01", "[FC] override CONFIRMED"]]
 CMDS, REP, SIMPOLLS = [], [], []
@@ -171,6 +188,44 @@ STEPS = [
      " fetch('/reset').then(function(){ q('#folseg [data-fol=off]').click(); });});", 400),
     ("cmds().then(function(c){rep({step:'fol', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
      " q('#sh_speed [data-close]').click(); rep({step:'closed', open:q('#sh_speed').classList.contains('open')}); fetch('/reset');});", 400),
+    # AUTO: greyed out while OFF in PARAMETERS, sends auto=on when ON, shows
+    # its state while flying; MAX on the AI row; the PARAMETERS switch
+    ("fetch('/set?phase=HOVER&auto=0').then(function(){ return until(function(){return q('#b_auto').disabled},3000); })"
+     ".then(function(){ var a=q('#b_auto').getBoundingClientRect(), l=q('#b_lock').getBoundingClientRect();"
+     " rep({step:'auto_off', dis:q('#b_auto').disabled, above:a.bottom<=l.top, dl:Math.abs(a.left-l.left), w:a.width, h:a.height});"
+     " fetch('/set?phase=HOVER&auto=1'); });", 3200),
+    ("until(function(){return !q('#b_auto').disabled},3000).then(function(){ return fetch('/reset'); })"
+     ".then(function(){ pe(q('#b_auto'),'pointerdown'); });", 3400),
+    ("cmds().then(function(c){rep({step:'auto_tap', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
+     " fetch('/set?phase=AUTO_HOLD&auto=1');});", 400),
+    ("until(function(){return q('#b_auto').classList.contains('on')},3000).then(function(){"
+     " rep({step:'auto_hold', cls:q('#b_auto').className, dis:q('#b_auto').disabled, txt:q('#autotxt').textContent,"
+     " yl:q('#b_yl').disabled, yr:q('#b_yr').disabled, up:q('#b_up').disabled, lock:q('#b_lock').disabled, eng:q('#b_eng').disabled});"
+     " fetch('/set?phase=AUTO_ALIGN&auto=1'); });", 3200),
+    ("until(function(){return q('#autotxt').textContent.indexOf('LINING')>=0},3000).then(function(){"
+     " rep({step:'auto_align', txt:q('#autotxt').textContent, yl:q('#b_yl').disabled});"
+     " fetch('/set?phase=HOVER&auto=1'); });", 3200),
+    ("until(function(){return !q('#b_auto').classList.contains('on')},3000).then(function(){ return fetch('/reset'); })"
+     ".then(function(){ rep({step:'ai_btns', ai:[].map.call(d.querySelectorAll('.seg[data-g=ai] button'),function(x){return x.getAttribute('data-lv')}),"
+     " push:[].map.call(d.querySelectorAll('.seg[data-g=push] button'),function(x){return x.getAttribute('data-lv')}),"
+     " autoseg:[].map.call(d.querySelectorAll('#autoseg button'),function(x){return x.getAttribute('data-autoen')}),"
+     " autoOn:(q('#autoseg button.on')||{getAttribute:function(){return null}}).getAttribute('data-autoen')});"
+     " q('.seg[data-g=ai] button[data-lv=MAX]').click(); q('#autoseg [data-autoen=off]').click(); });", 3400),
+    ("cmds().then(function(c){rep({step:'max_autoen', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})}); fetch('/reset');});", 400),
+    # PARAMETERS: category cards, each opening its own page; AUTO's settings
+    ("q('#t_menu').click(); q('#t_par').click(); setTimeout(function(){"
+     " rep({step:'hub', cats:[].map.call(d.querySelectorAll('#sh_speed .cat b'),function(x){return x.textContent}),"
+     " segsOnHub:d.querySelectorAll('#sh_speed .seg').length, sumAuto:q('#sum_auto').textContent, tag:q('#autotag').textContent});"
+     " q('#sh_speed [data-open=sh_p_auto]').click(); }, 300);", 700),
+    ("rep({step:'autopage', open:q('#sh_p_auto').classList.contains('open'), hubOpen:q('#sh_speed').classList.contains('open'),"
+     " z:[W.getComputedStyle(q('#sh_p_auto')).zIndex, W.getComputedStyle(q('#sh_speed')).zIndex],"
+     " n:d.querySelectorAll('#sh_p_auto [data-ap]').length, secs:[].map.call(d.querySelectorAll('#sh_p_auto .pcard .sec'),function(x){return x.textContent}),"
+     " on:[].map.call(d.querySelectorAll('#sh_p_auto [data-ap].on'),function(x){return x.getAttribute('data-ap')+'='+x.getAttribute('data-av')}),"
+     " dflt:d.querySelectorAll('#sh_p_auto .dflt').length});"
+     " q('#sh_p_auto [data-ap=height][data-av=\"15\"]').click(); q('#autoreset').click();", 400),
+    ("cmds().then(function(c){rep({step:'autoset', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
+     " q('#sh_p_auto [data-close]').click(); rep({step:'autoback', auto:q('#sh_p_auto').classList.contains('open'), hub:q('#sh_speed').classList.contains('open')});"
+     " d.querySelectorAll('.sheet').forEach(function(x){x.classList.remove('open')}); fetch('/reset');});", 400),
     ("q('#t_log').click();", 400),
     ("rep({step:'console', lines:[].map.call(d.querySelectorAll('#log .ln'),function(l){return l.textContent})});"
      " var lg=q('#sh_log'); rep({step:'logsheet', open:lg.classList.contains('open'), pos:W.getComputedStyle(lg).position,"
@@ -258,6 +313,8 @@ class H(BaseHTTPRequestHandler):
                 ST["mission"]["lock_hdg"] = float(a["lock_hdg"][0])
             if "heading" in a:
                 ST["mission"]["heading_deg"] = float(a["heading"][0])
+            if "auto" in a:
+                ST["mission"]["auto_enabled"] = a["auto"][0] == "1"
             en = a.get("engaged", ["0"])[0] == "1"
             ST["mission"]["engaged"] = en
             ST["mission"]["ai_steering"] = en and ST["mission"]["phase"] in ("AI", "PUSH")
@@ -417,6 +474,39 @@ check("MESSAGES opens FULL-SCREEN (not a pop-up) and ✕ closes it",
 pu = R.get("push", {})
 check("PUSH: ▲, ENGAGE and LOCK disabled; the aim mark moves to the centre", pu.get("up") and pu.get("eng") and pu.get("lockdis")
       and pu.get("aimTop") == "50%", str(pu))
+ao, at, ah = R.get("auto_off", {}), R.get("auto_tap", {}), R.get("auto_hold", {})
+check("AUTO: a pill right above LOCK, same column", ao.get("above") is True and ao.get("dl", 99) < 2
+      and (ao.get("w") or 0) >= 60 and 30 <= (ao.get("h") or 0) <= 44, str(ao))
+check("AUTO greyed out while OFF in PARAMETERS", ao.get("dis") is True, str(ao))
+check("AUTO ON: a tap sends auto=on", at.get("cmds") == ["auto=on"], str(at))
+check("AUTO flying: orange, says WATCHING, tap again would stop it (enabled)",
+      "on" in (ah.get("cls") or "") and "WATCHING" in (ah.get("txt") or "") and ah.get("dis") is False, str(ah))
+check("...⟲ ⟳ usable to look around, ▲ and LOCK not; ENGAGE (go now) usable",
+      ah.get("yl") is False and ah.get("yr") is False and ah.get("up") is True and ah.get("lock") is True
+      and ah.get("eng") is False, str(ah))
+check("AUTO lining up: says LINING UP, ⟲ ⟳ off", "LINING UP" in (R.get("auto_align", {}).get("txt") or "")
+      and R.get("auto_align", {}).get("yl") is True, str(R.get("auto_align")))
+ab = R.get("ai_btns", {})
+check("AI row has SLOW / MEDIUM / FAST / MAX; PUSH row has no MAX",
+      ab.get("ai") == ["SLOW", "MEDIUM", "FAST", "MAX"] and ab.get("push") == ["SLOW", "MEDIUM", "FAST"], str(ab))
+check("PARAMETERS has the AUTO ON / OFF switch, showing ON", ab.get("autoseg") == ["on", "off"]
+      and ab.get("autoOn") == "on", str(ab))
+check("MAX sends lvl=ai:MAX; the switch sends autoen=off",
+      R.get("max_autoen", {}).get("cmds") == ["lvl=ai:MAX", "autoen=off"], str(R.get("max_autoen")))
+hb, apg = R.get("hub", {}), R.get("autopage", {})
+check("PARAMETERS: four category cards, no settings crammed on the first page",
+      hb.get("cats") == ["FLIGHT", "ENGAGE", "AUTO", "DETECTION"] and hb.get("segsOnHub") == 0, str(hb))
+check("...each card says what is set (AUTO: height, line, AI, window; the ON tag)",
+      "15 m" in (hb.get("sumAuto") or "") and "±5°" in (hb.get("sumAuto") or "") and "MAX" in (hb.get("sumAuto") or "")
+      and hb.get("tag") == "ON", str(hb))
+check("AUTO page opens over PARAMETERS (back = PARAMETERS)", apg.get("open") is True and apg.get("hubOpen") is True
+      and int(apg["z"][0]) > int(apg["z"][1]) and R.get("autoback", {}).get("auto") is False
+      and R.get("autoback", {}).get("hub") is True, str(apg) + str(R.get("autoback")))
+check("AUTO page: 12 settings in three sections, the current value of each lit, every default marked",
+      apg.get("secs") == ["LEG 1 · CLIMB AND WATCH", "LINING UP · AFTER THE FIRST DETECTION", "LEG 2 · THE RUN"]
+      and apg.get("n", 0) >= 36 and len(apg.get("on", [])) == 12 and apg.get("dflt") == 12, str(apg))
+check("a tap sends autop=height:15; RESET sends autoreset=1",
+      R.get("autoset", {}).get("cmds") == ["autop=height:15", "autoreset=1"], str(R.get("autoset")))
 check("link dead: the red cover shows", R.get("dead", {}).get("cover") is True)
 
 # ── the same page on a tablet and a desktop: one frame per screen size ─────

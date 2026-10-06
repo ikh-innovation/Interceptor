@@ -634,6 +634,208 @@ check("...and it does not come back on its own", r.m.lock_hdg is None)
 r = Rig(); r.step(); r.ctx["att"] = None; r.m.request_lock(True); r.step()
 check("no attitude: LOCK refused, nothing driven", r.m.lock_hdg is None and r.out == {})
 
+print("=== A12. AUTO: up, find, line up, go ===")
+
+
+def auto_rig(h=2.0):
+    q = Rig(min_conf=0.20)
+    q.ctx["height"] = h
+    q.step()
+    q.m.set_level("push", "MEDIUM")           # aim mark -20 deg, push 30 deg
+    q.m.set_auto_enabled(True)
+    # these checks are written for 10 m, the PUSH lean and the AI steering
+    # at once; the operator's defaults are checked in A13
+    for k, v in (("height", 10), ("line", 0), ("ai", "SAME"), ("steer", 0)):
+        q.m.set_auto_param(k, v)
+    return q
+
+
+def fly(q, secs, det=None):
+    """Step with a trivial height plant; `det` = a target seen every frame."""
+    for _ in range(int(round(secs / 0.02))):
+        if det is not None:
+            q.ctx.update(det_t=q.t, det_conf=0.8, ai_cmd=det, ai_t=q.t)
+        q.step()
+        q.ctx["height"] += phys(q.mp, q.out, "throttle") * 0.02 if "throttle" in q.out else 0.0
+
+
+def tgt(az=0.0, el=-20.0, rate=0.0, rng=40.0, closing=0.0):
+    return dict(AI, az_deg=az, el_cam_deg=el, los_az_dps=rate, range_m=rng, closing_mps=closing)
+
+
+q = auto_rig()
+check("AUTO accepted from HOVER", q.m.request_auto(True) == "")
+q.step()
+check("AUTO_CLIMB: throttle and yaw only, heading locked where it was",
+      q.m.phase == "AUTO_CLIMB" and set(q.out) == {"throttle", "yaw"}
+      and q.m.lock_hdg is not None, f"{q.m.phase} {q.out}")
+first = phys(q.mp, q.out, "throttle")
+fly(q, 1.0)
+check("climb ramps in (no step) to the MEDIUM 3 m/s",
+      first < 0.2 and abs(phys(q.mp, q.out, "throttle") - 3.0) < 1e-6,
+      f"{first:.2f} -> {phys(q.mp, q.out, 'throttle'):.2f}")
+fly(q, 6.0)
+check("stops at ~10 m without overshooting, AUTO_HOLD",
+      q.m.phase == "AUTO_HOLD" and 9.0 < q.ctx["height"] <= 10.3, f"{q.m.phase} h {q.ctx['height']:.1f}")
+fly(q, 20.0)
+check("no detection: still holding 20 s later, heading locked, nothing else driven",
+      q.m.phase == "AUTO_HOLD" and set(q.out) == {"throttle", "yaw"}
+      and abs(phys(q.mp, q.out, "throttle")) < 1e-6 and q.m.lock_hdg is not None)
+check("▲ / ▼ refused during AUTO", q.m.request_hold("up", "x", q.t) != "")
+hd0 = q.m.lock_hdg
+for _ in range(50):                            # ⟳ held 1 s while watching
+    q.m.request_hold("yawr", "y1", q.t); fly(q, 0.02)
+check("⟳ held while watching: it turns, still AUTO_HOLD", q.m.phase == "AUTO_HOLD"
+      and phys(q.mp, q.out, "yaw") > 5.0, f"{q.m.phase} {phys(q.mp, q.out, 'yaw'):.1f}")
+q.m.request_release("y1"); fly(q, 1.0)
+stop_hdg = math.degrees(q.ctx["att"]["yaw"]) % 360.0
+fly(q, 3.0)
+check("...let go: it stops and LOCKS where it stopped (no turning back)",
+      abs(M.wrap180(q.m.lock_hdg - stop_hdg)) < 1.5 and abs(M.wrap180(q.m.lock_hdg - hd0)) > 10.0
+      and abs(phys(q.mp, q.out, "yaw")) < 0.5,
+      f"lock {q.m.lock_hdg:.1f}, stopped {stop_hdg:.1f}, was {hd0:.1f}")
+h1 = q.m.lock_hdg
+check("a ⟲ tap while watching: accepted", q.m.request_step(-1) == "")
+fly(q, 3.0)
+check("...turns one step and locks there", abs(M.wrap180(q.m.lock_hdg - (h1 - q.m.step_deg()))) < 1.5,
+      f"{h1:.1f} -> {q.m.lock_hdg:.1f}")
+check("LOCK refused during AUTO", q.m.request_lock(True) != "")
+h0 = q.ctx["height"]
+fly(q, 0.5, det=tgt(az=10.0, el=-5.0))
+check("first detection -> AUTO_ALIGN: turns toward it, climbs to bring it down to the mark",
+      q.m.phase == "AUTO_ALIGN" and phys(q.mp, q.out, "yaw") > 0
+      and phys(q.mp, q.out, "throttle") > 0 and q.m.lock_hdg is None, f"{q.m.phase} {q.out}")
+yaws = []
+for _ in range(25):
+    fly(q, 0.02, det=tgt(az=10.0, el=-5.0)); yaws.append(phys(q.mp, q.out, "yaw"))
+check("ALIGN's yaw is rate-limited and capped (never a snap)",
+      max(abs(b - a) for a, b in zip(yaws, yaws[1:])) <= q.m.AUTO_YAW_ACCEL * 0.02 + 0.5
+      and max(yaws) <= q.m.AUTO_YAW_MAX + 1e-6, f"max {max(yaws):.1f}")
+check("⟲ / ⟳ refused while lining up", q.m.request_hold("yawl", "y2", q.t) != "" and q.m.request_step(1) != "")
+fly(q, 0.3, det=tgt(az=4.0, el=-12.0))
+check("not on the mark yet (8 deg above it): still aligning", q.m.phase == "AUTO_ALIGN")
+before = dict(q.out)
+fly(q, 0.32, det=tgt(az=2.0, el=-18.0))
+check("on the mark for AUTO_READY_S -> the second line: PUSH",
+      q.m.phase == "PUSH", q.m.phase)
+check("...from the same yaw / throttle it was flying (bumpless)",
+      all(abs(q.out[a] - before[a]) <= 30 for a in ("yaw", "throttle")), f"{before} -> {q.out}")
+leans = []
+for _ in range(40):
+    fly(q, 0.02, det=tgt()); leans.append(phys(q.mp, q.out, "pitch"))
+check("...the lean ramps in, no jump", max(abs(b - a) for a, b in zip(leans, leans[1:])) < 1.5
+      and leans[-1] < -5.0, f"{leans[0]:.1f} .. {leans[-1]:.1f}")
+fly(q, 1.5, det=tgt())
+check("...then the AI has it, as after ENGAGE", q.m.phase == "AI" and q.m.engaged)
+
+q = auto_rig(h=12.0)
+q.m.request_auto(True); q.step()
+check("AUTO above 10 m: holds where it is", q.m.phase == "AUTO_HOLD")
+fly(q, 0.3, det=tgt(az=8.0))
+q.ctx.update(ai_cmd=None, ai_t=None)
+fly(q, 0.8)
+check("target lost while aligning: back to holding, heading locked again",
+      q.m.phase == "AUTO_HOLD" and q.m.lock_hdg is not None, q.m.phase)
+q.m.request_auto(False); fly(q, 0.1)
+check("AUTO pressed again: soft stop", q.m.phase == "STOP")
+fly(q, 1.2)
+check("...then HOVER, every channel back to the pilot", q.m.phase == "HOVER" and q.out == {})
+
+q = auto_rig(); q.m.request_auto(True); fly(q, 1.0)
+q.m.request_abort(); q.step()
+check("ABORT in AUTO: instant, every channel to the pilot", q.m.phase == "HOVER" and q.out == {})
+q = auto_rig(); q.m.request_auto(True); fly(q, 1.0)
+q.ctx["gate_ok"] = False; q.step()
+check("the pilot's mode switch in AUTO: PILOT at once", q.m.phase == "PILOT" and q.out == {})
+q = auto_rig(); q.m.request_auto(True); fly(q, 1.0)
+q.m.request_engage(); q.step()
+check("ENGAGE during AUTO: go now, PUSH", q.m.phase == "PUSH")
+
+q = auto_rig(h=3.2); q.m.request_auto(True); q.step()
+fly(q, 1.0, det=tgt(az=0.0, el=-30.0))        # below the mark: would descend
+check("ALIGN never descends to the AUTO floor",
+      q.ctx["height"] > q.m.AUTO_FLOOR_M and phys(q.mp, q.out, "throttle") >= -1e-6,
+      f"h {q.ctx['height']:.2f}")
+q = auto_rig(h=12.0); q.m.request_auto(True); q.step()
+fly(q, 1.0, det=tgt(az=12.0, el=-20.0, rate=-24.0))   # keeps sliding: never on the mark
+check("not lined up after AUTO_ALIGN_MAX_S but near the nose: goes anyway",
+      q.m.phase == "AUTO_ALIGN")
+fly(q, 1.3, det=tgt(az=12.0, el=-20.0, rate=-24.0))
+check("...PUSH", q.m.phase == "PUSH", q.m.phase)
+q = auto_rig(h=12.0); q.m.request_auto(True); q.step()
+fly(q, 0.3, det=tgt(az=12.0, rng=20.0, closing=10.0))
+check("closing fast (2 s to go): not on the first noisy frames", q.m.phase == "AUTO_ALIGN")
+fly(q, 0.4, det=tgt(az=12.0, rng=20.0, closing=10.0))
+check("...but held 0.5 s: goes at once, no time to line up", q.m.phase == "PUSH", q.m.phase)
+
+q = auto_rig(); q.ctx["height"] = None
+q.m.request_auto(True); q.step()
+check("no height: AUTO refused, nothing driven", q.m.phase == "HOVER" and q.out == {})
+q = auto_rig(); q.ctx["att"] = None
+q.m.request_auto(True); q.step()
+check("no attitude: AUTO refused", q.m.phase == "HOVER" and q.out == {})
+q = auto_rig(); q.m.engaged = True
+check("AUTO refused once engaged (one attempt per mode cycle)", q.m.request_auto(True) != "")
+q = Rig(); q.ctx["height"] = 2.0; q.step()
+check("AUTO OFF at power-up: refused until switched on in PARAMETERS",
+      not q.m.auto_enabled and q.m.request_auto(True) != "" and (q.step() or True) and q.m.phase == "HOVER")
+check("phone: autoen=on enables it", M.phone_command(q.m, "autoen", "on", q.t) == ""
+      and q.m.request_auto(True) == "")
+q.step()
+check("...and AUTO runs", q.m.phase == "AUTO_CLIMB")
+M.phone_command(q.m, "autoen", "off", q.t); q.step()
+check("switched OFF while AUTO flies: AUTO stops (soft)", q.m.phase == "STOP")
+check("a bad switch value is refused", M.phone_command(q.m, "autoen", "x", q.t) != "")
+q = auto_rig()
+check("phone: auto=on / auto=off", M.phone_command(q.m, "auto", "on", q.t) == ""
+      and (q.step() or True) and q.m.phase == "AUTO_CLIMB"
+      and M.phone_command(q.m, "auto", "off", q.t) == "")
+print("=== A13. AUTO settings: from the phone, checked, saved ===")
+q = auto_rig()
+check("the operator's defaults: 15 m, a 30 deg line, AI MAX, the AI steering after 0.6 s",
+      M.Mission(FakeMapper(), log=lambda *_: None).auto_params()
+      == dict(height=15.0, climb=3.0, turn=30.0, adjust=5.0, window=5.0, ready=0.25, giveup=2.0,
+              closing=3.0, floor=3.0, line=30.0, ai="MAX", steer=0.6))
+check("every default is one of its own choices",
+      all((getattr(M.Mission, a[0]) in c) for _k, a, c in M.Mission.AUTO_SETTINGS))
+check("autop=height:15 accepted", M.phone_command(q.m, "autop", "height:15", q.t) == ""
+      and q.m.AUTO_HEIGHT_M == 15.0)
+check("a value off the list is refused", M.phone_command(q.m, "autop", "height:12", q.t) != ""
+      and q.m.AUTO_HEIGHT_M == 15.0)
+check("an unknown setting is refused", q.m.set_auto_param("warp", 9) != "")
+check("window sets BOTH the left/right and the up/down tolerance",
+      q.m.set_auto_param("window", 8) == "" and q.m.AUTO_AZ_OK == 8.0 and q.m.AUTO_EL_OK == 8.0)
+check("ai: MAX accepted, 'turbo' refused", q.m.set_auto_param("ai", "max") == ""
+      and q.m.AUTO_AI == "MAX" and q.m.set_auto_param("ai", "turbo") != "")
+check("one Mission's settings never touch another's / the class defaults",
+      M.Mission.AUTO_HEIGHT_M == 15.0 and M.Mission(FakeMapper(), log=lambda *_: None).AUTO_HEIGHT_M == 15.0)
+q.m.set_auto_param("line", 40); q.m.set_auto_param("height", 10)
+check("outside an AUTO run the AI level is the AI setting", q.m.ai_level_now() == q.m.level["ai"])
+q.m.request_auto(True); fly(q, 1.0)
+check("AUTO run: the law is told to fly the run's own AI level (MAX)", q.m.ai_level_now() == "MAX")
+check("settings refused while AUTO flies", q.m.set_auto_param("height", 5) != ""
+      and q.m.reset_auto_params() != "")
+q.ctx["height"] = 12.0
+fly(q, 0.1, det=tgt()); fly(q, 0.4, det=tgt())
+check("the straight line leans the run's own 40 deg (PUSH is 30)", q.m.phase == "PUSH"
+      and abs(q.m._line_deg - 40.0) < 1e-6, f"{q.m.phase} {q.m._line_deg}")
+q.m.request_abort(); q.step()
+check("after the run: back to the AI setting", q.m.ai_level_now() == q.m.level["ai"] and q.m.ai_override is None)
+check("autoreset: every setting back to its default", M.phone_command(q.m, "autoreset", "1", q.t) == ""
+      and q.m.auto_params() == M.Mission(FakeMapper(), log=lambda *_: None).auto_params())
+import tempfile
+tf = os.path.join(tempfile.mkdtemp(), "wasp", "auto.json")
+q.m.set_auto_param("height", 20); q.m.set_auto_param("ai", "FAST")
+check("saved", M.save_auto_params(q.m, tf) and os.path.exists(tf))
+q2 = auto_rig()
+got = M.load_auto_params(q2.m, tf)
+check("...and loaded into a fresh mission (a reboot)", q2.m.AUTO_HEIGHT_M == 20.0 and q2.m.AUTO_AI == "FAST"
+      and got.get("height") == 20.0, str(got))
+open(tf, "w").write('{"height": 999, "ai": "MAX", "junk": 1}')
+q3 = auto_rig()
+check("a bad saved value is skipped, the rest applied, nothing breaks",
+      M.load_auto_params(q3.m, tf) == {"ai": "MAX"} and q3.m.AUTO_HEIGHT_M == 10.0)  # the rig's 10
+check("no saved file: defaults, no error", M.load_auto_params(auto_rig().m, tf + ".none") == {})
 print("=== B. exact PWM vs ArduPilot 4.6's own decode, this FC ===")
 from fc_control import ArduPilotAcro                               # noqa: E402
 

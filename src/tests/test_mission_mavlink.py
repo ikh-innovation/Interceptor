@@ -315,6 +315,16 @@ try:
     check("AI FAST really changed the intercept law's profile (max lean)",
           lean0 is not None and lean1 is not None and lean1 != lean0 and ph.mode_name == "FAST",
           f"max lean {lean0} -> {lean1}")
+    rmax = _tr.DroneTracker._command(ph, "lvl", "ai:MAX")
+    lean_max = law.speed_state()
+    check("lvl=ai:MAX accepted: the law flies 35 deg, easing to 30% near the target",
+          rmax == "" and c.mission_state()["levels"]["ai"] == "MAX" and ph.mode_name == "MAX"
+          and abs(lean_max["max_lean_deg"] - 35.0) < 1e-6 and abs(lean_max["lean_near"] - 0.3) < 1e-6,
+          f"{rmax!r} {lean_max}")
+    check("MAX is the AI's only: lvl=push:MAX refused", _tr.DroneTracker._command(ph, "lvl", "push:MAX") != "")
+    _tr.DroneTracker._command(ph, "lvl", "ai:FAST")
+    check("...and back to FAST: 22 deg, no ease-off", abs(law.speed_state()["max_lean_deg"] - 22.0) < 1e-6
+          and law.speed_state()["lean_near"] == 1.0)
     check("ENGAGE accepted", M.request_engage() == "")
     t_eng = perf_counter()
     sleep(1.6)

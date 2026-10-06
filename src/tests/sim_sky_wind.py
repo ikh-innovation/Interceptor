@@ -47,6 +47,13 @@ CLIMB_UP, CLIMB_DN = 25.0, 2.5        # PILOT_SPEED_UP / _DN on this FC, m/s
 YAW_FULL = math.radians(202.5)
 YAW_ACC = math.radians(297.0)         # ATC_ACCEL_Y_MAX
 TOUCH_M = 0.5
+AUTO = os.environ.get("SIM_AUTO") == "1"      # press AUTO instead of ENGAGE
+GROUND = os.environ.get("SIM_START") == "ground"
+HORIZON = os.environ.get("SIM_START") == "horizon"
+# The pilot's own flow, for comparing with AUTO: ENGAGE pressed this many
+# seconds after the target is first confirmed on screen ("" = at once).
+ENGAGE_ON_DET = os.environ.get("SIM_ENGAGE_ON_DET", "")
+H0 = os.environ.get("SIM_H0", "")                # start height override, m
 TARGET_W = 0.30                       # the enemy, motor tip to tip
 
 # Beaufort -> mean wind, m/s (middle of each band) and gust sigma
@@ -186,6 +193,23 @@ class Wind:
 
 
 # ── the airframe ─────────────────────────────────────────────────────────────
+# ArduCopter's ALT_HOLD (rc_input_to_roll_pitch) limits the TOTAL tilt, not each
+# axis: roll and pitch become one horizontal-thrust vector whose length is held
+# to tan(ANGLE_MAX).  Without this, 35 deg of lean plus 36 of bank flies here as
+# a 46 deg tilt the FC would never give.  SIM_TILT_LIMIT=0 = the old per-axis sim.
+TILT_LIMIT = os.environ.get("SIM_TILT_LIMIT", "1") == "1"
+
+
+def tilt_limit(lean, bank):
+    tx, ty = math.tan(lean), math.tan(bank)
+    n, cap = math.hypot(tx, ty), math.tan(ANGLE_MAX)
+    if n > cap:
+        tx, ty = tx * cap / n, ty * cap / n
+    # back as per-axis angles whose tangents ARE that vector, because step()
+    # turns each angle into g * tan(angle) of horizontal acceleration
+    return math.atan(tx), math.atan(ty)
+
+
 class Drone:
     TAU_ATT, TAU_YAW, TAU_CLIMB = 0.15, 0.12, 0.40
     DRAG = 0.0159                     # ~15 m/s at 20 deg of lean
@@ -203,6 +227,8 @@ class Drone:
         return -math.sin(self.yaw), math.cos(self.yaw)
 
     def step(self, lean_c, bank_c, yr_c, climb_c, wind, dt, rng):
+        if TILT_LIMIT:
+            lean_c, bank_c = tilt_limit(lean_c, bank_c)
         k = dt / (self.TAU_ATT + dt)
         # a gust also knocks the attitude a little before the FC rejects it
         self.lean += k * (lean_c - self.lean) + rng.gauss(0, 0.002) * (1 + abs(wind[0]) + abs(wind[1]))
@@ -245,9 +271,18 @@ class Drone:
 # ── the enemy ────────────────────────────────────────────────────────────────
 def make_target(kind, speed, p0, own_p, rng):
     """kind: hover | toward | away | cross | zigzag | climb_cross |
-    angle_in (crossing at 45 deg while closing) | angle_out (45 deg while opening)."""
+    angle_in (crossing at 45 deg while closing) | angle_out (45 deg while opening) |
+    come<deg> (flying in, <deg> off the line to us: 0 = straight at us, 90 =
+    crossing) | go<deg> (flying away, <deg> off straight away)."""
     dx, dy = own_p[0] - p0[0], own_p[1] - p0[1]
     to_us = math.atan2(dy, dx)
+    if kind.startswith(("come", "go")):
+        off = math.radians(float(kind.lstrip("comego"))) * rng.choice((-1, 1))
+        heading = to_us + off if kind.startswith("come") else to_us + math.pi + off
+
+        def straight(t):
+            return (p0[0] + speed * t * math.cos(heading), p0[1] + speed * t * math.sin(heading), p0[2])
+        return straight
     heading = {"hover": 0.0, "toward": to_us, "away": to_us + math.pi,
                "cross": to_us + math.pi / 2 * rng.choice((-1, 1)),
                "zigzag": to_us + math.pi / 2 * rng.choice((-1, 1)),
@@ -285,6 +320,13 @@ def engage(args):
     m = M.Mission(mp, log=lambda *_a: None, accel_z=2.5, jerk_z=5.0)
     if os.environ.get("SIM_PUSH"):                  # default: the app's own (SLOW, 20 deg)
         m.set_level("push", os.environ["SIM_PUSH"])
+    # the mission's AI level is the one the law was built with; an AUTO run may
+    # ask for its own (ai_level_now), applied below as the tracker does
+    lv_law = os.environ.get("SIM_SPEED") or "MEDIUM"
+    m.set_level("ai", lv_law)
+    for kv in filter(None, os.environ.get("SIM_AUTOP", "").split(",")):
+        k, _, v = kv.partition("=")
+        assert m.set_auto_param(k, v) == "", kv
 
     # pilot hovering in ALT_HOLD, trimmed into the MEAN wind (no GPS: by hand)
     wx, wy = wind.mean * math.cos(wind.dir), wind.mean * math.sin(wind.dir)
@@ -310,6 +352,9 @@ def engage(args):
     a = yaw0 + math.radians(az0)
     hz = rng0 * math.cos(math.radians(el0))
     p0 = (hz * math.cos(a), hz * math.sin(a), h0 + rng0 * math.sin(math.radians(el0)))
+    if H0:                                          # same target, another start height
+        h0 = float(H0)
+        dr.p[2] = h0
     tgt_at = make_target(kind, speed, p0, dr.p, rng)
 
     dt = 0.005
@@ -323,12 +368,23 @@ def engage(args):
     frames_in, frames = 0, 0
     max_bank = 0.0
     engaged_at = 0.0
+    ctx["height"] = h0
     m.cycle(0.0, ctx)                             # PILOT -> HOVER
-    m.request_engage()
+    pressed = True
+    if AUTO:
+        ctx["att"] = dict(roll=dr.bank, pitch=dr.lean, yaw=dr.yaw)
+        m.set_auto_enabled(True)
+        m.request_auto(True)                      # AUTO: climb, find, align, go
+    elif ENGAGE_ON_DET:
+        pressed = False                           # the pilot waits for it on screen
+    else:
+        m.request_engage()
+    t_seen = None                                 # first confirmed detection
     out = {}
-    T_END = 16.0
+    T_END = 45.0 if HORIZON else 30.0 if AUTO else 16.0
     t = 0.0
     phases = set()
+    t_push = None           # when the push began (AUTO: the second line)
     # ── the turn metrics (the field complaint: it turns PAST the target) ──
     t_ai0 = None            # when the AI first steered
     az_ai0 = 0.0            # target bearing off the nose at that instant, deg
@@ -412,11 +468,30 @@ def engage(args):
         # TX thread, 50 Hz
         if t >= next_tx:
             next_tx += 0.02
+            # As AcroCommander._mission_tx: the AI command reaches the mission
+            # only while a real detection is younger than target_timeout
+            # (0.5 s).  Keeping the last one in ctx for ever let a stale
+            # TERMINAL command renew the mission's terminal hold every cycle:
+            # the sim then flew the frozen sticks for many seconds after a
+            # pass, often into the ground -- a crash the real code cannot make.
+            if ctx["det_t"] is not None and t - ctx["det_t"] > 0.5:
+                ctx["ai_cmd"] = ctx["ai_t"] = None
             ctx["height"] = dr.p[2] + rng.gauss(0, 0.25)
             ctx["climb"] = dr.v[2] + rng.gauss(0, 0.2)
+            ctx["att"] = dict(roll=dr.bank, pitch=dr.lean, yaw=dr.yaw + rng.gauss(0, 0.01))
+            if t_seen is None and m._confirmed(t, ctx):
+                t_seen = t
+            if not pressed and t_seen is not None and t >= t_seen + float(ENGAGE_ON_DET):
+                pressed = m.request_engage() == "" or pressed
             out = m.cycle(t, ctx)
             phases.add(m.phase)
-            if m.phase in ("HOVER",) and t > 0.5:
+            lv = m.ai_level_now()
+            if lv != lv_law:                       # the tracker's per-frame sync
+                set_level(law, lv)
+                lv_law = lv
+            if t_push is None and m.phase == "PUSH":
+                t_push = t
+            if m.phase in ("HOVER",) and t > 0.5 and pressed:
                 break                                   # the attempt is over
         wv = wind.step(t, dt)
         if out:
@@ -441,10 +516,29 @@ def engage(args):
                 ai="AI" in phases, vfov=vfov_real, h_end=dr.p[2] - h0,
                 steered=t_ai0 is not None, az_ai0=az_ai0, overshoot=max(0.0, overshoot),
                 peak_yr=peak_yr, sweep=sweep, bank_jump=bank_jump,
-                lost_frac=lost_after / max(1, frames_after), az0=az0)
+                lost_frac=lost_after / max(1, frames_after), az0=az0,
+                t_push=t_push, aligned="AUTO_ALIGN" in phases, t_seen=t_seen,
+                tgt_alt=p0[2])
 
 
 _LAW = None
+
+
+def set_level(law, level):
+    """An AI level onto a live law, exactly as tracker.DroneTracker.set_mode."""
+    import tracker
+
+    class _S:
+        pass
+    st = _S()
+    st.ap = _S()
+    st.ap.law = law
+    st.mode_name = None
+    st.MODES = tracker.DroneTracker.MODES
+    st._SPEED_KEYS = tracker.DroneTracker._SPEED_KEYS
+    st._STAB_KEYS = tracker.DroneTracker._STAB_KEYS
+    with contextlib.redirect_stdout(io.StringIO()):
+        tracker.DroneTracker.set_mode(st, level)
 
 
 def build_law_cached():
@@ -461,6 +555,10 @@ def build_law_cached():
 
 # ── the campaign ─────────────────────────────────────────────────────────────
 def scenarios(n_seeds, vfov_real=VFOV_LAW, hfov_real=HFOV):
+    if HORIZON:
+        return scenarios_horizon(n_seeds, vfov_real, hfov_real)
+    if GROUND:
+        return scenarios_ground(n_seeds, vfov_real, hfov_real)
     rng = random.Random(1234)
     rows = []
     motions = [("hover", 0.0), ("toward", 5.0), ("toward", 10.0), ("away", 3.0),
@@ -473,6 +571,50 @@ def scenarios(n_seeds, vfov_real=VFOV_LAW, hfov_real=HFOV):
                 rows.append((bf, kind, sp, rng.uniform(20, 40), rng.uniform(5, 25),
                              rng.uniform(-28, 28), rng.uniform(4, 8),
                              rng.randrange(10 ** 9), vfov_real, hfov_real))
+    return rows
+
+
+def scenarios_ground(n_seeds, vfov_real=VFOV_LAW, hfov_real=HFOV):
+    """SIM_START=ground: just off the ground (1.5 m), the enemy 25-50 m out
+    and 6-25 m up, within 25 deg of the nose -- often above the frame or too
+    small to detect yet, as when AUTO is pressed in the field."""
+    rng = random.Random(4321)
+    rows = []
+    motions = [("hover", 0.0), ("toward", 5.0), ("toward", 10.0), ("away", 3.0),
+               ("cross", 3.0), ("cross", 6.0), ("cross", 10.0),
+               ("zigzag", 5.0), ("climb_cross", 5.0),
+               ("angle_in", 5.0), ("angle_in", 10.0), ("angle_out", 5.0)]
+    for bf in (0, 1, 2, 3):
+        for kind, sp in motions:
+            for s in range(n_seeds):
+                hz, dz = rng.uniform(25, 50), rng.uniform(6, 25)
+                rows.append((bf, kind, sp, math.hypot(hz, dz), math.degrees(math.atan2(dz, hz)),
+                             rng.uniform(-25, 25), 1.5,
+                             rng.randrange(10 ** 9), vfov_real, hfov_real))
+    return rows
+
+
+HORIZON_ALTS = {"low": (5.0, 12.0), "mid": (15.0, 25.0), "high": (30.0, 45.0)}
+
+
+def scenarios_horizon(n_seeds, vfov_real=VFOV_LAW, hfov_real=HFOV):
+    """SIM_START=horizon: from 1.5 m (SIM_H0 to change), the enemy within 15
+    deg of the nose, at a low / mid / high altitude band above the ground.
+    COMING: it appears 60-80 m out and flies in, 0 / 30 / 60 / 90 deg off the
+    line to us, at 5 / 10 / 15 m/s.  GOING: 20-40 m out, flying away, 0 / 30
+    / 60 deg off straight away, at 5 / 10 m/s."""
+    rng = random.Random(777)
+    rows = []
+    paths = [(f"come{a}", v, (60, 80)) for a in (0, 30, 60, 90) for v in (5.0, 10.0, 15.0)]
+    paths += [(f"go{a}", v, (20, 40)) for a in (0, 30, 60) for v in (5.0, 10.0)]
+    for bf in (0, 1, 2, 3):
+        for kind, sp, (r0, r1) in paths:
+            for band, (z0, z1) in HORIZON_ALTS.items():
+                for s in range(n_seeds):
+                    hz, alt = rng.uniform(r0, r1), rng.uniform(z0, z1)
+                    dz = alt - 1.5
+                    rows.append((bf, kind, sp, math.hypot(hz, dz), math.degrees(math.atan2(dz, hz)),
+                                 rng.uniform(-15, 15), 1.5, rng.randrange(10 ** 9), vfov_real, hfov_real))
     return rows
 
 
@@ -561,10 +703,10 @@ def report_turns(res):
 
 def compare_speeds(allres):
     """One table: every target motion x wind, SLOW / MEDIUM / FAST side by side."""
-    speeds = [sp for sp in ("SLOW", "MEDIUM", "FAST") if sp in allres]
+    speeds = [sp for sp in ("SLOW", "MEDIUM", "FAST", "MAX") if sp in allres]
     print("\n=== AI SPEED COMPARISON: touch rate (< 0.5 m), PUSH at %s ===" % (os.environ.get("SIM_PUSH") or "SLOW (the default, 20 deg)"))
     print(f"  {'target':<22s}" + "".join(f"{'Bf' + str(b):>16s}" for b in (0, 1, 2, 3)))
-    print(f"  {'':<22s}" + "".join(f"{'S / M / F':>16s}" for _ in range(4)))
+    print(f"  {'':<22s}" + "".join(f"{' / '.join(s[0] for s in speeds):>16s}" for _ in range(4)))
     keys = []
     for r in allres[speeds[0]]:
         if (r["kind"], r["speed"]) not in keys:
@@ -602,8 +744,8 @@ def main():
     ap.add_argument("--seeds", type=int, default=None)
     ap.add_argument("--old-seeker", action="store_true",
                     help="the seeker as flown before 2026-09-25: kp_yaw 4.5, yaw up to 182 deg/s")
-    ap.add_argument("--speed", default=None, choices=("SLOW", "MEDIUM", "FAST", "all"),
-                    help="AI speed profile (tracker.DroneTracker.MODES); 'all' compares the three")
+    ap.add_argument("--speed", default=None, choices=("SLOW", "MEDIUM", "FAST", "MAX", "all"),
+                    help="AI speed profile (tracker.DroneTracker.MODES); 'all' compares the four")
     ap.add_argument("--push", default=None, choices=("SLOW", "MEDIUM", "FAST"),
                     help="PUSH lean level; default = the app's default (SLOW, 20 deg)")
     ap.add_argument("--hfov", type=float, default=None,
@@ -619,7 +761,7 @@ def main():
     if a.speed == "all":
         global _LAW
         allres = {}
-        for sp in ("SLOW", "MEDIUM", "FAST"):
+        for sp in ("SLOW", "MEDIUM", "FAST", "MAX"):
             os.environ["SIM_SPEED"] = sp
             _LAW = None
             build_law_cached()                       # forked workers inherit it

@@ -1,0 +1,622 @@
+<title>WASP AUTO Trials</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@400;500;700&family=Ubuntu+Condensed&family=Ubuntu+Mono:wght@400;700&display=swap">
+<style>
+/* Layout: a ground-station sheet. The verdict first, then every scenario's
+   odds before -> after, then the replay deck: pick an engagement, watch it on
+   the map, from the side and through the drone's own camera. */
+:root {
+  --bg: #eceef1; --surface: #ffffff; --surface-2: #f5f6f8; --line: #d5d9df;
+  --ink: #262b31; --dim: #5b646e; --faint: #8b939d;
+  --acc: #ff7a00; --acc-ink: #1a0d00; --acc-soft: #ffe7d1;
+  --ok: #15803d; --ok-soft: #dcfce7; --bad: #c62828; --bad-soft: #fde2e2;
+  --enemy: #c62828; --us: #30353c; --ghost: #9aa3ad;
+  --p-climb: #5f7fb3; --p-hold: #4f8c8c; --p-align: #c98d12; --p-push: #ff7a00;
+  --p-ai: #d4430f; --p-stop: #8b939d; --p-idle: #c3c8ce;
+  --w-never: #a7b0ba; --w-nogo: #7d8a99; --w-line: #c98d12; --w-chase: #e0661f; --w-near: #f2b24b; --w-crash: #6b1d1d;
+  --sky-hi: #b8cde6; --sky-lo: #e4ecf5; --ground-hi: #8f9a7f; --ground-lo: #6f7a61; --hud: #ffffff; --hud-dim: rgba(255,255,255,.72);
+  --sans: "Ubuntu", -apple-system, "Segoe UI", Roboto, system-ui, sans-serif;
+  --cond: "Ubuntu Condensed", "Ubuntu", "Roboto Condensed", "Arial Narrow", sans-serif;
+  --mono: "Ubuntu Mono", ui-monospace, Menlo, Consolas, monospace;
+  --r: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15181c; --surface: #1d2126; --surface-2: #23282e; --line: #333a42;
+    --ink: #e6e9ed; --dim: #a9b1bb; --faint: #7d8691;
+    --acc: #ff8a1f; --acc-ink: #1a0d00; --acc-soft: #3d2610;
+    --ok: #4ade80; --ok-soft: #12301d; --bad: #f87171; --bad-soft: #3a1717;
+    --enemy: #f26b6b; --us: #e6e9ed; --ghost: #5d6670;
+    --p-climb: #7f9fd4; --p-hold: #6fb0b0; --p-align: #e3a93a; --p-push: #ff8a1f;
+    --p-ai: #ff5a26; --p-stop: #7d8691; --p-idle: #444c55;
+    --w-never: #5d6670; --w-nogo: #7d8a99; --w-line: #e3a93a; --w-chase: #ff7a2f; --w-near: #f6c46e; --w-crash: #c25050;
+    --sky-hi: #2b3f5c; --sky-lo: #4a6283; --ground-hi: #3b4433; --ground-lo: #2a3124; --hud: #ffffff; --hud-dim: rgba(255,255,255,.7);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15181c; --surface: #1d2126; --surface-2: #23282e; --line: #333a42;
+  --ink: #e6e9ed; --dim: #a9b1bb; --faint: #7d8691;
+  --acc: #ff8a1f; --acc-ink: #1a0d00; --acc-soft: #3d2610;
+  --ok: #4ade80; --ok-soft: #12301d; --bad: #f87171; --bad-soft: #3a1717;
+  --enemy: #f26b6b; --us: #e6e9ed; --ghost: #5d6670;
+  --p-climb: #7f9fd4; --p-hold: #6fb0b0; --p-align: #e3a93a; --p-push: #ff8a1f;
+  --p-ai: #ff5a26; --p-stop: #7d8691; --p-idle: #444c55;
+  --w-never: #5d6670; --w-nogo: #7d8a99; --w-line: #e3a93a; --w-chase: #ff7a2f; --w-near: #f6c46e; --w-crash: #c25050;
+  --sky-hi: #2b3f5c; --sky-lo: #4a6283; --ground-hi: #3b4433; --ground-lo: #2a3124; --hud: #ffffff; --hud-dim: rgba(255,255,255,.7);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--sans); margin: 0; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 40px; display: flex; flex-direction: column; gap: 28px; }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+h1 { font: 700 28px/1.15 var(--sans); letter-spacing: .02em; }
+h1 .tag { display: inline-block; margin-left: 10px; padding: 3px 9px; border-radius: 999px; font: 500 12px/1.2 var(--cond);
+  letter-spacing: .14em; color: var(--acc-ink); background: var(--acc); vertical-align: middle; }
+h2 { font: 700 19px/1.25 var(--sans); }
+.lede { color: var(--dim); max-width: 70ch; margin: 8px 0 0; }
+.k { font: 12px/1.2 var(--cond); letter-spacing: .12em; text-transform: uppercase; color: var(--faint); }
+.num { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); }
+section { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; }
+
+/* the verdict */
+.verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+.vcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.vcard.main { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc) inset; }
+.vline { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.vline .from { font: 500 20px/1 var(--sans); color: var(--faint); text-decoration: line-through; text-decoration-thickness: 1px; }
+.vline .arrow { color: var(--faint); }
+.vline .to { font: 700 34px/1 var(--sans); }
+.vline .delta { font: 700 14px/1 var(--mono); color: var(--ok); }
+.vcard .sub { color: var(--dim); font-size: 13px; }
+
+/* the matrix */
+.tablebox { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+table { border-collapse: collapse; width: 100%; min-width: 760px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font: 12px/1.2 var(--cond); letter-spacing: .12em; text-transform: uppercase; color: var(--faint); font-weight: 400; background: var(--surface-2); }
+tr.fam td { background: var(--surface-2); font: 700 13px/1.2 var(--cond); letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+tr:last-child td { border-bottom: 0; }
+td.name b { display: block; font: 500 14px/1.25 var(--mono); }
+td.name span { display: block; color: var(--dim); font-size: 12.5px; line-height: 1.35; max-width: 46ch; }
+.bars { display: grid; grid-template-columns: 52px 1fr 92px; align-items: center; gap: 8px; min-width: 250px; }
+.bars + .bars { margin-top: 6px; }
+.bars .sp { font: 13px/1 var(--mono); color: var(--dim); }
+.track { position: relative; height: 12px; background: var(--surface-2); border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
+.track .b { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ghost); opacity: .55; }
+.track .a { position: absolute; left: 0; top: 3px; bottom: 3px; background: var(--acc); border-radius: 3px; }
+.bars .v { font: 13px/1 var(--mono); text-align: right; white-space: nowrap; }
+.bars .v .up { color: var(--ok); } .bars .v .dn { color: var(--bad); }
+.why { display: flex; height: 10px; border-radius: 5px; overflow: hidden; min-width: 120px; background: var(--surface-2); }
+.why i { display: block; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--dim); font-size: 12.5px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 12px; height: 10px; border-radius: 2px; display: inline-block; }
+.whyrows { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.whycard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.whycard .row { display: grid; grid-template-columns: 56px 1fr 48px; gap: 8px; align-items: center; }
+.whycard .row .why { height: 14px; }
+
+/* the replay deck */
+.deck { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 860px) { .deck { grid-template-columns: minmax(0, 1fr); } }
+.picker { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.seg { display: flex; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 3px; }
+.seg button { flex: 1; border: 0; background: transparent; color: var(--dim); font: 500 13px/1 var(--sans); padding: 8px 6px; border-radius: 7px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.seg button:focus-visible, .runs button:focus-visible, .ctrl button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+select { width: 100%; font: 14px/1.2 var(--sans); padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); }
+.scdesc { color: var(--dim); font-size: 13px; margin: 0; }
+.runs { display: flex; flex-direction: column; gap: 6px; max-height: 420px; overflow-y: auto; padding-right: 2px; }
+.runs button { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; text-align: left; border: 1px solid var(--line); background: var(--surface-2);
+  color: var(--ink); border-radius: 9px; padding: 8px 10px; cursor: pointer; font: 13px/1.3 var(--sans); }
+.runs button[aria-pressed="true"] { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc) inset; background: var(--surface); }
+.runs .meta { color: var(--dim); font: 12.5px/1.3 var(--mono); }
+.pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px; font: 700 11px/1.3 var(--cond); letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+.pill.hit { background: var(--ok-soft); color: var(--ok); }
+.pill.miss { background: var(--bad-soft); color: var(--bad); }
+.pills { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.pills .vv { font: 10.5px/1 var(--cond); letter-spacing: .1em; color: var(--faint); text-transform: uppercase; }
+
+.stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.views { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); grid-template-rows: auto auto; gap: 10px; }
+.views .v-map { grid-row: span 2; }
+@media (max-width: 1100px) { .views { grid-template-columns: minmax(0, 1fr); } .views .v-map { grid-row: auto; } }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.panel .ph { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+canvas { display: block; width: 100%; max-width: 100%; border-radius: 8px; }
+.cv-map { aspect-ratio: 1 / 1; background: var(--surface-2); }
+@media (min-width: 1101px) { .v-map .cv-map { flex: 1 1 auto; aspect-ratio: auto; min-height: 320px; } }
+.cv-side { aspect-ratio: 2 / 1; background: var(--surface-2); }
+.cv-eye { aspect-ratio: 4 / 3; background: var(--sky-lo); }
+.readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 6px; }
+.ro { background: var(--surface); border: 1px solid var(--line); border-radius: 9px; padding: 6px 9px; min-width: 0; }
+.ro b { display: block; font: 700 16px/1.2 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ro.phase b { color: var(--acc); }
+.ctrl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; }
+.ctrl button { border: 0; background: var(--ink); color: var(--bg); font: 700 13px/1 var(--sans); padding: 9px 14px; border-radius: 9px; cursor: pointer; min-width: 74px; }
+.ctrl .time { font: 700 14px/1 var(--mono); min-width: 64px; }
+.tl { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.band { position: relative; height: 12px; border-radius: 4px; overflow: hidden; background: var(--surface-2); }
+.band i { position: absolute; top: 0; bottom: 0; }
+.ticks { position: relative; height: 14px; }
+.ticks span { position: absolute; transform: translateX(-50%); font: 10.5px/1 var(--cond); letter-spacing: .06em; color: var(--dim); white-space: nowrap; }
+input[type=range] { width: 100%; accent-color: var(--acc); margin: 0; }
+.speed { width: auto; }
+.note { color: var(--dim); font-size: 13px; max-width: 80ch; }
+.foot { color: var(--faint); font-size: 12.5px; max-width: 90ch; border-top: 1px solid var(--line); padding-top: 14px; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="wrap">
+  <header class="head">
+    <div>
+      <h1>WASP AUTO Trials <span class="tag">SIM</span></h1>
+      <p class="lede" id="lede"></p>
+    </div>
+  </header>
+
+  <section aria-labelledby="h-verdict">
+    <h2 id="h-verdict" class="k" style="font-size:13px">Hit rate, closest approach under 0.5 m</h2>
+    <div class="verdict" id="verdict"></div>
+  </section>
+
+  <section aria-labelledby="h-deck">
+    <div class="head">
+      <h2 id="h-deck">Replay an engagement</h2>
+      <div class="legend" id="phase-legend"></div>
+    </div>
+    <div class="deck">
+      <div class="picker">
+        <div class="seg" role="group" aria-label="Enemy">
+          <button type="button" id="fam-come" data-fam="come" aria-pressed="true">Coming at us</button>
+          <button type="button" id="fam-go" data-fam="go" aria-pressed="false">Going away</button>
+          <button type="button" id="fam-other" data-fam="other" aria-pressed="false">Other</button>
+        </div>
+        <label class="k" for="sc-select">Scenario</label>
+        <select id="sc-select"></select>
+        <p class="scdesc" id="sc-desc"></p>
+        <div class="k">Engagements</div>
+        <div class="runs" id="runs"></div>
+      </div>
+      <div class="stage">
+        <div class="seg" role="group" aria-label="Code version" id="ver-seg">
+          <button type="button" id="ver-before" data-ver="before" aria-pressed="false">Before</button>
+          <button type="button" id="ver-after" data-ver="after" aria-pressed="true">After</button>
+        </div>
+        <div class="views">
+          <div class="panel v-map">
+            <div class="ph"><span class="k">From above · our nose at the start points up</span><span class="k mono" id="map-scale"></span></div>
+            <canvas class="cv-map" id="cv-map" aria-label="Top-down map of both drones"></canvas>
+          </div>
+          <div class="panel">
+            <div class="ph"><span class="k">Through the camera · 30° up, 62 × 49°</span><span class="k" id="eye-state"></span></div>
+            <canvas class="cv-eye" id="cv-eye" aria-label="What the interceptor's camera sees"></canvas>
+          </div>
+          <div class="panel">
+            <div class="ph"><span class="k">From the side · height vs distance ahead</span><span class="k mono" id="side-scale"></span></div>
+            <canvas class="cv-side" id="cv-side" aria-label="Side view: heights of both drones"></canvas>
+          </div>
+        </div>
+        <div class="readouts" id="readouts"></div>
+        <div class="ctrl">
+          <button type="button" id="play">Play</button>
+          <span class="time num" id="time">0.0 s</span>
+          <div class="tl">
+            <div class="band" id="band"></div>
+            <input type="range" id="scrub" min="0" max="1000" value="0" step="1" aria-label="Time">
+            <div class="ticks" id="ticks"></div>
+          </div>
+          <select id="speed" class="speed" aria-label="Playback speed">
+            <option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option>
+          </select>
+        </div>
+        <p class="note" id="outcome"></p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-matrix">
+    <div class="head">
+      <h2 id="h-matrix">Every scenario, before → after</h2>
+      <div class="legend"><span><i style="background:var(--ghost);opacity:.55"></i>before</span><span><i style="background:var(--acc)"></i>after</span></div>
+    </div>
+    <div class="tablebox"><table id="matrix"></table></div>
+  </section>
+
+  <section aria-labelledby="h-why">
+    <div class="head">
+      <h2 id="h-why">Why the misses missed</h2>
+      <div class="legend" id="why-legend"></div>
+    </div>
+    <div class="whyrows" id="whyrows"></div>
+  </section>
+
+  <p class="foot" id="foot"></p>
+</div>
+
+<script>
+const DATA = /*DATA*/null;
+(function () {
+  const $ = id => document.getElementById(id);
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const PH = DATA.phases;
+  const PH_COL = { AUTO_CLIMB: "--p-climb", AUTO_HOLD: "--p-hold", AUTO_ALIGN: "--p-align", PUSH: "--p-push", AI: "--p-ai", STOP: "--p-stop" };
+  const PH_NAME = { AUTO_CLIMB: "climbing", AUTO_HOLD: "watching", AUTO_ALIGN: "lining up", PUSH: "straight line", AI: "the AI", STOP: "soft stop",
+                    HOVER: "pilot", PILOT: "pilot", CLIMB: "climb", DESCEND: "descend", SCOUT: "scout" };
+  const WHY = [["never_seen", "never seen", "--w-never"], ["no_go", "seen, never went", "--w-nogo"], ["lost_line", "lost on the line", "--w-line"],
+               ["lost_chase", "lost in the chase", "--w-chase"], ["near_miss", "passed within 3 m", "--w-near"], ["crash", "ground", "--w-crash"]];
+  const phCol = i => css(PH_COL[PH[i]] || "--p-idle");
+  const pct = (a, b) => (b ? 100 * a / b : 0);
+  const fmt = (x, d = 0) => (x == null || isNaN(x)) ? "–" : x.toFixed(d);
+  const hasBefore = !!DATA.summary.before;
+
+  // ── the verdict ───────────────────────────────────────────────────────
+  $("lede").textContent = DATA.lede;
+  $("foot").textContent = DATA.foot;
+  const vd = $("verdict");
+  for (const c of DATA.verdict) {
+    const d = document.createElement("div");
+    d.className = "vcard" + (c.main ? " main" : "");
+    const delta = (c.before != null) ? c.after - c.before : null;
+    d.innerHTML = `<span class="k">${c.label}</span>
+      <div class="vline">${c.before != null ? `<span class="from num">${fmt(c.before, 1)}%</span><span class="arrow">→</span>` : ""}
+      <span class="to num">${fmt(c.after, 1)}%</span>${delta != null ? `<span class="delta">${delta >= 0 ? "+" : ""}${fmt(delta, 1)}</span>` : ""}</div>
+      <span class="sub">${c.sub}</span>`;
+    vd.appendChild(d);
+  }
+
+  // ── the matrix ────────────────────────────────────────────────────────
+  const tb = $("matrix");
+  tb.innerHTML = `<thead><tr><th>Scenario</th><th>Hit rate by enemy speed</th><th>After: why it missed</th></tr></thead>`;
+  const body = document.createElement("tbody");
+  const famName = { come: "Coming at us", go: "Going away", other: "Other (not in the score)" };
+  for (const fam of ["come", "go", "other"]) {
+    const scs = DATA.scenarios.filter(s => s.family === fam);
+    if (!scs.length) continue;
+    const fr = document.createElement("tr"); fr.className = "fam";
+    fr.innerHTML = `<td colspan="3">${famName[fam]}</td>`; body.appendChild(fr);
+    for (const s of scs) {
+      const tr = document.createElement("tr");
+      let bars = "";
+      for (const r of s.rows) {
+        const a = r.after.hit, b = r.before ? r.before.hit : null;
+        const dd = b != null ? a - b : null;
+        bars += `<div class="bars"><span class="sp">${r.speed} m/s</span><div class="track">
+          ${b != null ? `<span class="b" style="width:${b}%"></span>` : ""}<span class="a" style="width:${a}%"></span></div>
+          <span class="v num">${b != null ? `${fmt(b)} → ` : ""}<b>${fmt(a)}%</b>${dd != null && Math.abs(dd) >= 1 ? ` <span class="${dd > 0 ? "up" : "dn"}">${dd > 0 ? "+" : ""}${fmt(dd)}</span>` : ""}</span></div>`;
+      }
+      const tot = s.rows.reduce((acc, r) => { for (const [k] of WHY) acc[k] = (acc[k] || 0) + r.after.why[k] * r.after.n; acc.n += r.after.n; return acc; }, { n: 0 });
+      let why = `<div class="why" title="after">`;
+      for (const [k, label, col] of WHY) { const p = tot[k] / Math.max(1, tot.n); if (p > 0) why += `<i style="width:${p}%;background:var(${col})" title="${label} ${fmt(p)}%"></i>`; }
+      why += `</div>`;
+      tr.innerHTML = `<td class="name"><b>${s.key}</b><span>${s.desc}</span></td><td>${bars}</td><td>${why}</td>`;
+      body.appendChild(tr);
+    }
+  }
+  tb.appendChild(body);
+
+  // ── why the misses missed (COME / GO, before vs after) ───────────────
+  const wl = $("why-legend");
+  wl.innerHTML = WHY.map(([k, l, c]) => `<span><i style="background:var(${c})"></i>${l}</span>`).join("");
+  const wr = $("whyrows");
+  for (const fam of ["come", "go"]) {
+    const c = document.createElement("div"); c.className = "whycard";
+    let h = `<span class="k">${famName[fam]}: share of all runs</span>`;
+    for (const ver of (hasBefore ? ["before", "after"] : ["after"])) {
+      const w = DATA.summary[ver].why[fam];
+      h += `<div class="row"><span class="k">${ver}</span><div class="why">`;
+      for (const [k, label, col] of WHY) if (w[k] > 0) h += `<i style="width:${w[k]}%;background:var(${col})" title="${label} ${fmt(w[k], 1)}%"></i>`;
+      h += `</div><span class="mono num" style="font-size:12.5px;text-align:right">${fmt(100 - DATA.summary[ver].hit[fam], 0)}%</span></div>`;
+    }
+    c.innerHTML = h + `<span class="sub" style="color:var(--dim);font-size:12.5px">The bar is the share of ${famName[fam].toLowerCase()} runs that missed, split by why; the number is the total miss rate.</span>`;
+    wr.appendChild(c);
+  }
+  $("phase-legend").innerHTML = ["AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN", "PUSH", "AI", "STOP"].map(p =>
+    `<span><i style="background:var(${PH_COL[p]})"></i>${PH_NAME[p]}</span>`).join("") + `<span><i style="background:var(--enemy)"></i>enemy</span>`;
+
+  // ── the replay deck ───────────────────────────────────────────────────
+  const st = { fam: "come", sc: null, run: null, ver: "after", t: 0, playing: false, speed: 1, last: null };
+  const runsOf = key => DATA.runs.filter(r => r.scenario === key);
+  function setFam(fam) {
+    st.fam = fam;
+    for (const b of document.querySelectorAll("[data-fam]")) b.setAttribute("aria-pressed", String(b.dataset.fam === fam));
+    const sel = $("sc-select"); sel.innerHTML = "";
+    for (const s of DATA.scenarios.filter(s => s.family === fam && runsOf(s.key).length)) {
+      const o = document.createElement("option"); o.value = s.key; o.textContent = s.key.replace(/_/g, " "); sel.appendChild(o);
+    }
+    setScenario(sel.value);
+  }
+  function outcomePill(o) {
+    if (!o) return "";
+    return o.hit ? `<span class="pill hit">hit ${fmt(o.best, 2)} m</span>` : `<span class="pill miss">miss ${fmt(o.best, 1)} m</span>`;
+  }
+  function setScenario(key) {
+    st.sc = key;
+    const s = DATA.scenarios.find(x => x.key === key);
+    $("sc-desc").textContent = s ? s.desc : "";
+    const box = $("runs"); box.innerHTML = "";
+    const rs = runsOf(key);
+    rs.forEach((r, i) => {
+      const b = document.createElement("button"); b.type = "button"; b.id = "run-" + r.id;
+      b.setAttribute("aria-pressed", "false");
+      b.innerHTML = `<span>${r.speed} m/s · ${r.start === "ground" ? "from the ground" : "from a hover"}</span>
+        <span class="pills">${hasBefore && r.before ? `<span class="vv">before</span>${outcomePill(r.before)}` : ""}<span class="vv">after</span>${outcomePill(r.after)}</span>
+        <span class="meta">${fmt(r.r0)} m out, ${fmt(r.dz0)} m above · Bf${r.bf}</span>`;
+      b.onclick = () => setRun(r.id);
+      box.appendChild(b);
+    });
+    // open on the most telling one: a miss fixed by the change, else a hit
+    const pick = rs.find(r => r.after && r.after.hit && r.before && !r.before.hit) || rs.find(r => r.after && r.after.hit) || rs[0];
+    if (pick) setRun(pick.id);
+  }
+  function setRun(id) {
+    st.run = DATA.runs.find(r => r.id === id);
+    for (const b of $("runs").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.id === "run-" + id));
+    if (!st.run[st.ver]) st.ver = st.run.after ? "after" : "before";
+    syncVer(); st.t = 0; buildTimeline(); draw();
+  }
+  function syncVer() {
+    for (const b of document.querySelectorAll("[data-ver]")) {
+      b.setAttribute("aria-pressed", String(b.dataset.ver === st.ver));
+      b.disabled = !(st.run && st.run[b.dataset.ver]);
+    }
+    $("ver-seg").hidden = !hasBefore;
+  }
+  for (const b of document.querySelectorAll("[data-fam]")) b.onclick = () => setFam(b.dataset.fam);
+  for (const b of document.querySelectorAll("[data-ver]")) b.onclick = () => { st.ver = b.dataset.ver; syncVer(); st.t = Math.min(st.t, cur().T); buildTimeline(); draw(); };
+  $("sc-select").onchange = e => setScenario(e.target.value);
+
+  // a trace: [t, x, y, z, yaw, lean, bank, tx, ty, tz, phase, det, az, elc, spd], scaled x10
+  const cur = () => {
+    const v = st.run[st.ver];
+    if (!v._tr) {
+      const S = DATA.trace_scale, n = v.trace.length / 15, tr = [];
+      for (let i = 0; i < n; i++) { const row = []; for (let j = 0; j < 15; j++) row.push(v.trace[i * 15 + j] / S); tr.push(row); }
+      v._tr = tr; v.T = tr.length ? tr[tr.length - 1][0] : 0;
+    }
+    return v;
+  };
+  function sampleAt(tr, t) {
+    if (!tr.length) return null;
+    let lo = 0, hi = tr.length - 1;
+    if (t <= tr[0][0]) return tr[0];
+    if (t >= tr[hi][0]) return tr[hi];
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (tr[m][0] <= t) lo = m; else hi = m; }
+    const a = tr[lo], b = tr[hi], w = (t - a[0]) / Math.max(1e-6, b[0] - a[0]);
+    const out = a.map((x, j) => (j === 10 || j === 11) ? a[j] : x + (b[j] - x) * w);
+    // headings: interpolate the short way round
+    let dy = b[4] - a[4]; dy = ((dy + 540) % 360) - 180; out[4] = a[4] + dy * w;
+    let da = b[12] - a[12]; da = ((da + 540) % 360) - 180; out[12] = a[12] + da * w;
+    return out;
+  }
+  function buildTimeline() {
+    const v = cur(), tr = v._tr, T = Math.max(0.1, v.T);
+    const band = $("band"); band.innerHTML = "";
+    let s = 0;
+    for (let i = 1; i <= tr.length; i++) {
+      if (i === tr.length || tr[i][10] !== tr[s][10]) {
+        const e = document.createElement("i");
+        const t0 = tr[s][0], t1 = i < tr.length ? tr[i][0] : T;
+        e.style.left = (100 * t0 / T) + "%"; e.style.width = (100 * (t1 - t0) / T) + "%";
+        e.style.background = phCol(tr[s][10]); e.title = PH[tr[s][10]];
+        band.appendChild(e); s = i;
+      }
+    }
+    const ticks = $("ticks"); ticks.innerHTML = "";
+    const ev = [["t_seen", "seen"], ["t_go", "go"], ["t_ai", "AI"], ["t_best", v.hit ? "hit" : "closest"]];
+    let lastX = -99;
+    for (const [k, l] of ev) {
+      if (v[k] == null) continue;
+      const x = 100 * v[k] / T; if (x - lastX < 7) continue; lastX = x;
+      const sp = document.createElement("span"); sp.style.left = Math.min(97, Math.max(3, x)) + "%"; sp.textContent = l; ticks.appendChild(sp);
+    }
+    const o = $("outcome");
+    const r = st.run;
+    o.textContent = `${st.ver === "after" ? "After" : "Before"}: ${v.hit ? `hit at ${fmt(v.t_best, 1)} s (closest ${fmt(v.best, 2)} m)` : `missed, closest ${fmt(v.best, 1)} m at ${fmt(v.t_best, 1)} s (${(WHY.find(w => w[0] === v.why) || [0, v.why])[1]})`}. `
+      + `The enemy started ${fmt(r.r0)} m out, ${fmt(r.az0)}° off our nose and ${fmt(r.dz0)} m above us; wind Beaufort ${r.bf}.`
+      + (v.n_go > 1 ? ` AUTO flew ${v.n_go} attacks.` : "");
+  }
+
+  // ── drawing ───────────────────────────────────────────────────────────
+  function fit(cv) {
+    const r = cv.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.max(10, Math.round(r.width * dpr)), h = Math.max(10, Math.round(r.height * dpr));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return [ctx, r.width, r.height];
+  }
+  function niceStep(span, n) { const raw = span / n, p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p; return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p; }
+  function pathByPhase(ctx, pts, X, Y, upto, lw) {
+    ctx.lineWidth = lw; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    for (let i = 1; i < pts.length && pts[i][0] <= upto; i++) {
+      ctx.strokeStyle = phCol(pts[i][10]);
+      ctx.beginPath(); ctx.moveTo(X(pts[i - 1]), Y(pts[i - 1])); ctx.lineTo(X(pts[i]), Y(pts[i])); ctx.stroke();
+    }
+  }
+  function drawMap() {
+    const [ctx, W, H] = fit($("cv-map")); ctx.clearRect(0, 0, W, H);
+    const v = cur(), tr = v._tr; if (!tr.length) return;
+    const other = st.run[st.ver === "after" ? "before" : "after"];
+    // world x north, y east; the trace is already turned so our first nose = north = up
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    const grow = r => { x0 = Math.min(x0, r[1], r[7]); x1 = Math.max(x1, r[1], r[7]); y0 = Math.min(y0, r[2], r[8]); y1 = Math.max(y1, r[2], r[8]); };
+    tr.forEach(grow);
+    const span = Math.max(30, (x1 - x0), (y1 - y0)) * 1.12, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    const k = Math.min(W, H) / span;
+    const X = r => W / 2 + (r[2] - cy) * k, Y = r => H / 2 - (r[1] - cx) * k;
+    const step = niceStep(span, 6);
+    ctx.strokeStyle = css("--line"); ctx.lineWidth = 1;
+    for (let g = Math.ceil((cy - span) / step) * step; g < cy + span; g += step) { const x = W / 2 + (g - cy) * k; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+    for (let g = Math.ceil((cx - span) / step) * step; g < cx + span; g += step) { const y = H / 2 - (g - cx) * k; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+    $("map-scale").textContent = `grid ${step} m`;
+    if (other && other.trace) {   // the other version's path, faint
+      if (!other._tr) { const keep = st.ver; st.ver = st.ver === "after" ? "before" : "after"; cur(); st.ver = keep; }
+      ctx.setLineDash([4, 5]); ctx.strokeStyle = css("--ghost"); ctx.lineWidth = 1.5; ctx.beginPath();
+      other._tr.forEach((r, i) => i ? ctx.lineTo(X(r), Y(r)) : ctx.moveTo(X(r), Y(r))); ctx.stroke(); ctx.setLineDash([]);
+    }
+    // the enemy's path: dashed ahead, solid flown
+    ctx.strokeStyle = css("--enemy"); ctx.lineWidth = 1.5; ctx.setLineDash([2, 4]); ctx.beginPath();
+    tr.forEach((r, i) => { const p = [0, r[7], r[8]]; i ? ctx.lineTo(X(p), Y(p)) : ctx.moveTo(X(p), Y(p)); }); ctx.stroke(); ctx.setLineDash([]);
+    ctx.lineWidth = 2.5; ctx.beginPath();
+    tr.forEach((r, i) => { if (r[0] > st.t) return; const p = [0, r[7], r[8]]; i ? ctx.lineTo(X(p), Y(p)) : ctx.moveTo(X(p), Y(p)); }); ctx.stroke();
+    pathByPhase(ctx, tr, X, Y, st.t, 3);
+    const s = sampleAt(tr, st.t);
+    // the camera's horizontal view, from us
+    const yaw = s[4] * Math.PI / 180, half = 31.1 * Math.PI / 180, R = Math.max(18, span * 0.22) * k;
+    const ux = X(s), uy = Y(s);
+    ctx.fillStyle = css("--acc"); ctx.globalAlpha = .13; ctx.beginPath(); ctx.moveTo(ux, uy);
+    for (let a = -half; a <= half + 1e-6; a += half / 12) ctx.lineTo(ux + Math.sin(yaw + a) * R, uy - Math.cos(yaw + a) * R);
+    ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
+    // us: an arrowhead along the nose
+    ctx.save(); ctx.translate(ux, uy); ctx.rotate(yaw);
+    ctx.fillStyle = css("--us"); ctx.beginPath(); ctx.moveTo(0, -11); ctx.lineTo(7, 8); ctx.lineTo(0, 4); ctx.lineTo(-7, 8); ctx.closePath(); ctx.fill(); ctx.restore();
+    // the enemy: a small quad
+    const ex = X([0, s[7], s[8]]), ey = Y([0, s[7], s[8]]);
+    ctx.strokeStyle = css("--enemy"); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(ex - 6, ey - 6); ctx.lineTo(ex + 6, ey + 6); ctx.moveTo(ex + 6, ey - 6); ctx.lineTo(ex - 6, ey + 6); ctx.stroke();
+    for (const [dx, dy] of [[-6, -6], [6, -6], [-6, 6], [6, 6]]) { ctx.beginPath(); ctx.arc(ex + dx, ey + dy, 3, 0, 7); ctx.stroke(); }
+    if (v.hit && st.t >= v.t_best - 0.05) burst(ctx, ex, ey);
+    // north / scale
+    ctx.fillStyle = css("--faint"); ctx.font = `12px ${css("--cond")}`; ctx.fillText("our nose at the start ↑", 8, 16);
+  }
+  function burst(ctx, x, y) {
+    ctx.strokeStyle = css("--ok"); ctx.lineWidth = 2.5;
+    for (let i = 0; i < 10; i++) { const a = i * Math.PI / 5; ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * 9, y + Math.sin(a) * 9); ctx.lineTo(x + Math.cos(a) * 18, y + Math.sin(a) * 18); ctx.stroke(); }
+  }
+  function drawSide() {
+    const [ctx, W, H] = fit($("cv-side")); ctx.clearRect(0, 0, W, H);
+    const v = cur(), tr = v._tr; if (!tr.length) return;
+    let d0 = 0, d1 = 1, z1 = 5;
+    for (const r of tr) { d0 = Math.min(d0, r[1], r[7]); d1 = Math.max(d1, r[1], r[7]); z1 = Math.max(z1, r[3], r[9]); }
+    const pad = 22, spanD = (d1 - d0) * 1.08 + 10, spanZ = z1 * 1.15 + 3;
+    const kx = (W - pad - 8) / spanD, kz = (H - pad - 8) / spanZ, k = Math.min(kx, kz * 1.0);
+    const X = r => pad + (r[1] - d0 + 5) * kx, Z = r => H - pad - r[3] * kz;
+    const XT = r => pad + (r[7] - d0 + 5) * kx, ZT = r => H - pad - r[9] * kz;
+    ctx.strokeStyle = css("--line"); ctx.lineWidth = 1; ctx.fillStyle = css("--faint"); ctx.font = `11px ${css("--mono")}`;
+    const zs = niceStep(spanZ, 4);
+    for (let z = 0; z <= spanZ; z += zs) { const y = H - pad - z * kz; ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W, y); ctx.stroke(); ctx.fillText(`${z}`, 2, y + 4); }
+    ctx.strokeStyle = css("--ink"); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(pad, H - pad); ctx.lineTo(W, H - pad); ctx.stroke();
+    $("side-scale").textContent = `height in m · ahead ${Math.round(spanD)} m wide`;
+    ctx.strokeStyle = css("--enemy"); ctx.lineWidth = 1.5; ctx.setLineDash([2, 4]); ctx.beginPath();
+    tr.forEach((r, i) => i ? ctx.lineTo(XT(r), ZT(r)) : ctx.moveTo(XT(r), ZT(r))); ctx.stroke(); ctx.setLineDash([]);
+    ctx.lineWidth = 2.5; ctx.beginPath();
+    tr.forEach((r, i) => { if (r[0] > st.t) return; i ? ctx.lineTo(XT(r), ZT(r)) : ctx.moveTo(XT(r), ZT(r)); }); ctx.stroke();
+    pathByPhase(ctx, tr, X, Z, st.t, 3);
+    const s = sampleAt(tr, st.t);
+    // the camera's vertical band, along the nose as seen from the side
+    const fwd = Math.cos(s[4] * Math.PI / 180) >= 0 ? 1 : -1;
+    const axis = (30 + s[5]) * Math.PI / 180, R = 0.3 * Math.min(W, H) * 1.6;
+    const ux = X(s), uz = Z(s);
+    ctx.fillStyle = css("--acc"); ctx.globalAlpha = .13; ctx.beginPath(); ctx.moveTo(ux, uz);
+    for (let a = axis - 24.4 * Math.PI / 180; a <= axis + 24.4 * Math.PI / 180 + 1e-6; a += 0.05)
+      ctx.lineTo(ux + fwd * Math.cos(a) * R * (kx / Math.max(kx, kz)), uz - Math.sin(a) * R * (kz / Math.max(kx, kz)));
+    ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
+    ctx.fillStyle = css("--us"); ctx.beginPath(); ctx.arc(ux, uz, 5, 0, 7); ctx.fill();
+    ctx.strokeStyle = css("--enemy"); ctx.lineWidth = 2; const ex = XT(s), ez = ZT(s);
+    ctx.beginPath(); ctx.moveTo(ex - 5, ez); ctx.lineTo(ex + 5, ez); ctx.moveTo(ex, ez - 5); ctx.lineTo(ex, ez + 5); ctx.stroke();
+    if (v.hit && st.t >= v.t_best - 0.05) burst(ctx, ex, ez);
+  }
+  function drawEye() {
+    const [ctx, W, H] = fit($("cv-eye")); ctx.clearRect(0, 0, W, H);
+    const v = cur(), tr = v._tr; if (!tr.length) return;
+    const s = sampleAt(tr, st.t);
+    const D = Math.PI / 180, th = Math.tan(31.1 * D), tv = Math.tan(24.4 * D);
+    const bank = s[6] * D, c = Math.cos(bank), sn = Math.sin(bank);
+    const rot = (exl, eyl) => [W / 2 + exl * c + eyl * sn, H / 2 + (-exl * sn + eyl * c)];
+    // level-frame pixel of (az, el_cam) — the sim's own projection
+    const px = (az, el) => rot((W / 2) * Math.tan(az * D) / th, -(H / 2) * Math.tan(el * D) / tv);
+    // sky above the horizon, ground below it (the horizon is el_world = 0)
+    const camEl = (30 + s[5]);
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, css("--sky-hi")); g.addColorStop(1, css("--sky-lo"));
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    if (Math.abs(camEl) < 85) {
+      const yl = (H / 2) * Math.tan(camEl * D) / tv;           // horizon, level frame (y down)
+      const a = rot(-3 * W, yl), b = rot(3 * W, yl);
+      const nx = -(b[1] - a[1]), ny = (b[0] - a[0]), L = Math.hypot(nx, ny) || 1;
+      const gx = nx / L, gy = ny / L;                             // points down (toward the ground)
+      ctx.fillStyle = css("--ground-hi");
+      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(b[0] + gx * 4 * H, b[1] + gy * 4 * H); ctx.lineTo(a[0] + gx * 4 * H, a[1] + gy * 4 * H); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = css("--hud-dim"); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+    }
+    // the aim mark (where AUTO lines the target up), dashed
+    const am = [px(-40, -20), px(40, -20)];
+    ctx.setLineDash([6, 6]); ctx.strokeStyle = css("--hud-dim"); ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(...am[0]); ctx.lineTo(...am[1]); ctx.stroke(); ctx.setLineDash([]);
+    // centre cross
+    ctx.strokeStyle = css("--hud"); ctx.lineWidth = 1.5; ctx.beginPath();
+    ctx.moveTo(W / 2 - 10, H / 2); ctx.lineTo(W / 2 - 3, H / 2); ctx.moveTo(W / 2 + 3, H / 2); ctx.lineTo(W / 2 + 10, H / 2);
+    ctx.moveTo(W / 2, H / 2 - 10); ctx.lineTo(W / 2, H / 2 - 3); ctx.moveTo(W / 2, H / 2 + 3); ctx.lineTo(W / 2, H / 2 + 10); ctx.stroke();
+    // the enemy
+    const rng = Math.hypot(s[7] - s[1], s[8] - s[2], s[9] - s[3]);
+    const inView = Math.abs(s[12]) < 89 && Math.abs(s[13]) < 80;
+    let shown = false;
+    if (inView) {
+      const [x, y] = px(s[12], s[13]);
+      if (x >= 0 && x <= W && y >= 0 && y <= H) {
+        shown = true;
+        const bw = Math.max(3, (W / 2) / th * 0.30 / Math.max(0.3, rng));
+        ctx.fillStyle = css("--us"); ctx.globalAlpha = .9;
+        ctx.fillRect(x - bw / 2, y - bw / 6, bw, bw / 3); ctx.globalAlpha = 1;
+        const bx = Math.max(10, bw * 1.5);
+        ctx.strokeStyle = s[11] ? css("--acc") : css("--enemy"); ctx.lineWidth = 2;
+        for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+          ctx.beginPath(); ctx.moveTo(x + sx * bx, y + sy * bx * 0.75 - sy * 6); ctx.lineTo(x + sx * bx, y + sy * bx * 0.75); ctx.lineTo(x + sx * bx - sx * 6, y + sy * bx * 0.75); ctx.stroke();
+        }
+      }
+    }
+    if (!shown) {   // an arrow at the edge toward it
+      const az = s[12], el = s[13];
+      let dx = Math.sin(az * D), dy = -Math.sin(Math.max(-80, Math.min(80, el)) * D);
+      const r2 = [dx * c + dy * sn, -dx * sn + dy * c]; const L = Math.hypot(...r2) || 1; dx = r2[0] / L; dy = r2[1] / L;
+      const t = Math.min((W / 2 - 16) / Math.max(1e-6, Math.abs(dx)), (H / 2 - 16) / Math.max(1e-6, Math.abs(dy)));
+      const ax = W / 2 + dx * t, ay = H / 2 + dy * t;
+      ctx.save(); ctx.translate(ax, ay); ctx.rotate(Math.atan2(dy, dx)); ctx.fillStyle = css("--enemy");
+      ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(-6, -8); ctx.lineTo(-6, 8); ctx.closePath(); ctx.fill(); ctx.restore();
+    }
+    if (v.hit && st.t >= v.t_best - 0.05) { burst(ctx, W / 2, H / 2); }
+    ctx.fillStyle = css("--hud"); ctx.font = `700 13px ${css("--cond")}`;
+    ctx.fillText((PH_NAME[PH[s[10]]] || PH[s[10]]).toUpperCase(), 10, 20);
+    ctx.font = `12px ${css("--mono")}`; ctx.fillText(`${fmt(rng, 0)} m`, 10, H - 10);
+    $("eye-state").textContent = s[11] ? "detecting" : (shown ? "in view, not detected" : "out of view");
+  }
+  function readouts() {
+    const v = cur(), s = sampleAt(v._tr, st.t);
+    const rng = Math.hypot(s[7] - s[1], s[8] - s[2], s[9] - s[3]);
+    const items = [["phase", (PH_NAME[PH[s[10]]] || PH[s[10]]), "phase"], ["range", fmt(rng, 1) + " m"], ["our height", fmt(s[3], 1) + " m"],
+      ["enemy height", fmt(s[9], 1) + " m"], ["our speed", fmt(s[14], 1) + " m/s"],
+      ["attitude", `${fmt(Math.abs(s[5]), 0)}° ${s[5] <= 0 ? "down" : "up"} · ${fmt(Math.abs(s[6]), 0)}° ${s[6] >= 0 ? "R" : "L"}`]];
+    $("readouts").innerHTML = items.map(([k, val, cls]) => `<div class="ro ${cls || ""}"><span class="k">${k}</span><b>${val}</b></div>`).join("");
+    $("time").textContent = `${fmt(st.t, 1)} s`;
+    $("scrub").value = String(Math.round(1000 * st.t / Math.max(0.1, v.T)));
+  }
+  function draw() { if (!st.run) return; drawMap(); drawSide(); drawEye(); readouts(); }
+
+  // ── playback ──────────────────────────────────────────────────────────
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function frame(ts) {
+    if (!st.playing) { st.last = null; return; }
+    if (st.last != null) {
+      st.t += (ts - st.last) / 1000 * st.speed;
+      if (st.t >= cur().T) { st.t = cur().T; st.playing = false; $("play").textContent = "Replay"; }
+    }
+    st.last = ts; draw();
+    if (st.playing) requestAnimationFrame(frame);
+  }
+  $("play").onclick = () => {
+    if (st.playing) { st.playing = false; $("play").textContent = "Play"; return; }
+    if (st.t >= cur().T - 1e-3) st.t = 0;
+    if (reduce) { st.t = cur().T; draw(); $("play").textContent = "Replay"; return; }
+    st.playing = true; $("play").textContent = "Pause"; requestAnimationFrame(frame);
+  };
+  $("scrub").oninput = e => { st.t = cur().T * (+e.target.value) / 1000; draw(); };
+  $("speed").onchange = e => { st.speed = +e.target.value; };
+  window.addEventListener("resize", () => draw());
+  if (window.matchMedia) window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => draw());
+  new MutationObserver(() => draw()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  setFam("come");
+  // open at the moment that matters: a little before the closest approach
+  const v0 = st.run && cur(); if (v0) { st.t = Math.max(0, (v0.t_best || 0) - 3); draw(); }
+})();
+</script>

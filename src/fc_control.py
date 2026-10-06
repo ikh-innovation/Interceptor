@@ -642,6 +642,9 @@ class InterceptLaw:
                  fill_tau=0.30,           # low-pass on the fill fraction
                  # ── pitch: closing speed ─────────────────────────────────────
                  max_lean_deg=20.0,       # nose-down lean at full commit
+                 lean_near=1.0,           # share of it kept once close; 1 = off
+                 lean_far_frac=0.007,     # bbox fill where the ease-off starts
+                 lean_near_frac=0.03,     # ...and where it reaches lean_near
                  # Back the lean off when the target is near the TOP of the
                  # frame.  0 = off.  See _lean_el_gate().
                  lean_el_guard=0.0,        # legacy top-only guard; 0 = off
@@ -714,6 +717,16 @@ class InterceptLaw:
         # Hard ceiling on the lean, independent of any gain: a multirotor at
         # 30 deg is accelerating at ~0.58 g.
         self.max_lean = math.radians(_clamp(float(max_lean_deg), 0.0, 35.0))
+        # TERMINAL EASE-OFF.  Speed closes the range but costs the end game:
+        # the ~0.1 s of detection latency is ~2 m of miss at 21 m/s.  Full lean
+        # while the target is small, easing linearly to lean_near x max_lean
+        # as its fill grows (0.7 -> 3% of the frame width = ~35 -> 8 m for a
+        # 0.30 m quad).  Sim, AI MAX: 35->8 m 68% touches, 25->6 m 67%,
+        # 17->4 m 65%, none 62%; keeping 30% beat 50 / 70% and 0%.  Fill, not range_m, for the reason _schedule()
+        # gives: target_width_m is still a placeholder.
+        self.lean_near = _clamp(float(lean_near), 0.0, 1.0)
+        self.lean_far_frac = max(0.0, float(lean_far_frac))
+        self.lean_near_frac = max(self.lean_far_frac + 1e-3, float(lean_near_frac))
         self.lean_el_guard = _clamp(float(lean_el_guard), 0.0, 1.0)
         self.climb_los = bool(climb_los)
         self.edge_guard = _clamp(float(edge_guard), 0.0, 1.0)
@@ -897,7 +910,7 @@ class InterceptLaw:
                     locked=self._lock_t is not None)
 
     def set_speed(self, climb_limit_mps=None, climb_gain=None,
-                  max_lean_deg=None):
+                  max_lean_deg=None, lean_near=None):
         """Apply an operator SPEED profile.  Called from the HUD's HTTP thread.
 
         Three plain float stores, no allocation and no reconfiguration, so the
@@ -914,6 +927,8 @@ class InterceptLaw:
             self.climb_gain = max(0.0, float(climb_gain))
         if max_lean_deg is not None:
             self.max_lean = math.radians(_clamp(float(max_lean_deg), 0.0, 35.0))
+        if lean_near is not None:
+            self.lean_near = _clamp(float(lean_near), 0.0, 1.0)
         return self.speed_state()
 
     def set_stability(self, slew_per_s=None, rate_tau=None,
@@ -962,7 +977,8 @@ class InterceptLaw:
             climb_ceiling=self.max_climb_mps,
             descent_limit=self.max_descent_mps,
             climb_gain=self.climb_gain,
-            max_lean_deg=math.degrees(self.max_lean))
+            max_lean_deg=math.degrees(self.max_lean),
+            lean_near=self.lean_near)
 
     def _frame_edge_gate(self, el_cam, az):
         """Ease off the throttle-for-speed near ANY frame edge.  1 = free.
@@ -1300,7 +1316,11 @@ class InterceptLaw:
         # ...and give speed back to the seeker whenever the target is drifting
         # toward an edge, whichever edge that is.
         el_gate = self._lean_el_gate(el_cam) * self._frame_edge_gate(el_cam, az)
-        lean = -self.max_lean * cmt * aim_gate * el_gate   # negative = nose down
+        near = _clamp((self._fill - self.lean_far_frac)
+                      / (self.lean_near_frac - self.lean_far_frac), 0.0, 1.0)
+        lean_sched = 1.0 - near * (1.0 - self.lean_near)
+        lean = (-self.max_lean * lean_sched * cmt * aim_gate
+                * el_gate)                         # negative = nose down
         pitch_stick = self._angle_to_stick(lean, pitch, rate_mode)
 
         # ── 8. THROTTLE — vertical closure ───────────────────────────────────
@@ -3563,8 +3583,11 @@ class AcroCommander:
             accel_z=getattr(b, "accel_z", 2.5) or 2.5,
             jerk_z=getattr(b, "jerk_z", 5.0) or 5.0,
             log=lambda m: print(m, flush=True))
+        _saved = _mission_mod.load_auto_params(self.mission)
         print("-" * 74)
         print("MISSION APP  : Hover -> Scout -> Engage, driven from the phone.")
+        print(f"               AUTO settings: {self.mission.auto_params()}"
+              + (" (saved)" if _saved else " (defaults)"))
         print("               Nothing moves unless ARMED + ALT_HOLD + a button"
               " on the phone.")
         print(f"               handover conf >= {self.mission.min_conf:.2f}, "

@@ -608,14 +608,25 @@ class DroneTracker:
                  # yaw only has to keep the target in the picture.
                  kp_yaw=2.0, yaw_cap_dps=40.0)
     MODES = {
-        "SLOW":   dict(climb_limit_mps=8.0,  max_lean_deg=12.0, sens=0.35,
+        "SLOW":   dict(climb_limit_mps=8.0,  max_lean_deg=12.0, lean_near=1.0, sens=0.35,
                        climb_trim=5.0, **_STAB),
-        "MEDIUM": dict(climb_limit_mps=15.0, max_lean_deg=20.0, sens=0.50,
+        "MEDIUM": dict(climb_limit_mps=15.0, max_lean_deg=20.0, lean_near=1.0, sens=0.50,
                        climb_trim=6.0, **_STAB),
-        "FAST":   dict(climb_limit_mps=25.0, max_lean_deg=22.0, sens=0.65,
+        "FAST":   dict(climb_limit_mps=25.0, max_lean_deg=22.0, lean_near=1.0, sens=0.65,
                        climb_trim=8.0, **_STAB),
+        # MAX (AI only, 2026-10-06): the law's 35 deg lean ceiling, ~21 m/s in
+        # the sim's drag model (25 m/s would need ~45 deg, over ANGLE_MAX),
+        # eased to 30% of it as the target closes (lean_near: the end game,
+        # see InterceptLaw).  sim_sky_wind, PUSH 30, 1920 engagements each,
+        # total tilt held to ANGLE_MAX as the FC does: touches MEDIUM 72 /
+        # FAST 67 / MAX 68% (62% without the ease-off), median time to touch
+        # 5.0 / 4.9 / 4.5 s; targets coming at it 49 / 71 / 82%.  Turn gain
+        # left at 45 on purpose (55 -> 59%, 62 -> 54%); ANGLE_MAX 50 bought
+        # nothing; a 40 or 45 deg camera tilt lost 15-25 points everywhere.
+        "MAX":    dict(climb_limit_mps=25.0, max_lean_deg=35.0, lean_near=0.3,
+                       sens=0.65, climb_trim=8.0, **_STAB),
     }
-    _SPEED_KEYS = ("climb_limit_mps", "max_lean_deg")
+    _SPEED_KEYS = ("climb_limit_mps", "max_lean_deg", "lean_near")
     _STAB_KEYS  = ("slew_per_s", "rate_tau", "deadband_frac")
 
     def set_mode(self, name):
@@ -952,6 +963,13 @@ class DroneTracker:
         # _sky_bbox_native, i.e. YOLO runs on the whole image.
         self.sky_mask = self.sky.mask(frame_disp) if self.use_sky_mask else None
         self._ground_rejected = False
+        # An AUTO run may fly its own AI level (PARAMETERS -> AUTO -> AI, e.g.
+        # MAX); otherwise this is the AI setting and nothing changes.
+        _m = getattr(self.ap, "mission", None)
+        if _m is not None:
+            _want = _m.ai_level_now()
+            if _want != self.mode_name and _want in self.MODES:
+                self.set_mode(_want)
 
         t0      = perf_counter()
         kf_pred = self.kalman.predict() if self.kalman.initialized else None
@@ -1543,7 +1561,8 @@ class DroneTracker:
             return self.set_sky_gate(value)
         elif key == "follow":
             return self.set_follower(value)
-        elif key in ("hold", "release", "step", "engage", "abort", "lvl", "lock"):
+        elif key in ("hold", "release", "step", "engage", "abort", "lvl", "lock", "auto", "autoen",
+                     "autop", "autoreset"):
             return self._mission_command(key, str(value))
         else:
             raise ValueError("unknown command")
@@ -1561,7 +1580,10 @@ class DroneTracker:
                 if level.strip().upper() not in self.MODES:
                     return "unknown speed"
                 self.set_mode(level.strip().upper())
-        return mission_mod.phone_command(m, key, value, perf_counter())
+        r = mission_mod.phone_command(m, key, value, perf_counter())
+        if key in ("autop", "autoreset") and r == "":
+            mission_mod.save_auto_params(m)      # survives a reboot
+        return r
 
     # ── master draw ──────────────────────────────────────────────────────────────
 
