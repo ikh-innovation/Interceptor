@@ -90,7 +90,7 @@ class MJPEGServer:
     # does (any phone may stop it).  No PIN (the operator's choice,
     # 2026-09-27): the field WiFi itself is the only gate.
     CONTROL_KEYS = ("hold", "release", "step", "engage", "lvl", "mode", "lock", "auto", "autoen", "autop", "autoreset",
-                    "sky", "follow")
+                    "sky", "follow", "cam", "def")
     ALL_KEYS = CONTROL_KEYS + ("abort",)
     LEASE_S = 2.0
 

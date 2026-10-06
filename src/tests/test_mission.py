@@ -836,6 +836,48 @@ q3 = auto_rig()
 check("a bad saved value is skipped, the rest applied, nothing breaks",
       M.load_auto_params(q3.m, tf) == {"ai": "MAX"} and q3.m.AUTO_HEIGHT_M == 10.0)  # the rig's 10
 check("no saved file: defaults, no error", M.load_auto_params(auto_rig().m, tf + ".none") == {})
+print("=== A14. 'make it the default?': a change lasts until a reboot, YES saves it ===")
+import json                                                        # noqa: E402
+d = tempfile.mkdtemp()
+af, lf, df = (os.path.join(d, "wasp", n) for n in ("auto.json", "levels.json", "detection.json"))
+q = auto_rig()
+M.load_auto_params(q.m, af); M.load_levels(q.m, lf)
+check("nothing saved: the defaults are the factory ones (MEDIUM levels, the operator's AUTO)",
+      q.m.level_defaults == {g: "MEDIUM" for g in M.GROUPS} and q.m.auto_defaults["height"] == 15.0)
+M.phone_command(q.m, "autop", "height:20", q.t); M.phone_command(q.m, "lvl", "vert:FAST", q.t)
+check("a change applies at once but is NOT saved by itself",
+      q.m.AUTO_HEIGHT_M == 20.0 and q.m.level["vert"] == "FAST" and not os.path.exists(af) and not os.path.exists(lf))
+sn = q.m.snapshot(q.t)
+check("the phone sees what it powers up with next to what is set now",
+      sn["auto_defaults"]["height"] == 15.0 and sn["auto_params"]["height"] == 20.0
+      and sn["level_defaults"]["vert"] == "MEDIUM" and sn["levels"]["vert"] == "FAST")
+check("YES (def=auto:height): saved, and it is the default now",
+      M.save_default(q.m, "auto:height", af, lf) == "" and q.m.auto_defaults["height"] == 20.0
+      and json.load(open(af)) == {"height": 20.0})
+check("YES (def=lvl:vert): saved", M.save_default(q.m, "lvl:vert", af, lf) == ""
+      and json.load(open(lf)) == {"vert": "FAST"} and q.m.level_defaults["vert"] == "FAST")
+M.phone_command(q.m, "autop", "climb:5", q.t)
+check("another change, no YES: only HEIGHT is in the file (one setting at a time)",
+      json.load(open(af)) == {"height": 20.0})
+q2 = auto_rig()
+M.load_auto_params(q2.m, af); M.load_levels(q2.m, lf)
+check("after a reboot: it starts with the saved defaults, the rest as before",
+      q2.m.AUTO_HEIGHT_M == 20.0 and q2.m.AUTO_CLIMB_MPS == 3.0 and q2.m.level["vert"] == "FAST"
+      and q2.m.level["push"] == "MEDIUM" and q2.m.auto_defaults["height"] == 20.0 and q2.m.level_defaults["vert"] == "FAST")
+check("RESET then YES (def=auto:*): every AUTO setting saved at its factory value",
+      q2.m.reset_auto_params() == "" and M.save_default(q2.m, "auto:*", af, lf) == ""
+      and json.load(open(af))["height"] == 15.0 and len(json.load(open(af))) == len(M.Mission.AUTO_SETTINGS))
+check("unknown names are refused, nothing written",
+      M.save_default(q2.m, "auto:warp", af, lf) != "" and M.save_default(q2.m, "lvl:warp", af, lf) != ""
+      and M.save_default(q2.m, "x:y", af, lf) != "")
+q3 = M.Mission(FakeMapper(), log=lambda *_: None)
+M.load_auto_params(q3, af); M.load_levels(q3, lf)
+check("the AUTO button is never saved: a fresh power-up with saved defaults starts with AUTO OFF",
+      not q3.auto_enabled and q3.AUTO_HEIGHT_M == 15.0)
+check("FOLLOWER default saved and read back; the SKY GATE is refused (always ON at power-up)",
+      M.save_detection_default("follow", False, df) == "" and M.load_detection_defaults(df) == {"follow": False}
+      and M.save_detection_default("sky", False, df) != "" and "sky" not in json.load(open(df)))
+check("a broken file: ignored, never fatal", (open(lf, "w").write("{oops") or True) and M.load_levels(auto_rig().m, lf) == {})
 print("=== B. exact PWM vs ArduPilot 4.6's own decode, this FC ===")
 from fc_control import ArduPilotAcro                               # noqa: E402
 

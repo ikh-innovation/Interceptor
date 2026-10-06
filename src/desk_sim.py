@@ -52,6 +52,9 @@ TGT_BRG0, TGT_V = 178.0, 3.5
 START_HDG, START_H = 110.0, 0.5      # on the ground, just off it
 TILT = 30.0                     # deg, the camera's up-tilt (flight_config's sky mount)
 HFOV, VFOV = 62.2, 48.8
+# The CAMERA switch: 60 fps sees the centre of the 30 fps view, as a share of
+# tan(angle) (tracker.CAM_MODES' crop; not imported: that pulls in the model).
+CAM_CROP = {30: (1.0, 1.0), 60: (2560 / 3280, 1440 / 2464)}
 HIT_R, RESTART_S = 2.0, 3.5     # m; s after a hit, or after a miss has played out
 G, DRAG = 9.80665, 0.0159       # forward speed: g tan(lean) = DRAG v^2, the closed-loop
                                 # sim's drag: ~15 m/s at a 20 deg lean, ~21 at 35 (MAX)
@@ -84,6 +87,8 @@ class _Yaw:
 
 
 class _Mapper:
+    V_FOV = math.radians(VFOV)      # the camera's, for the mission's aim mark
+
     def phys_to_pwm(self, axis, v):
         if axis == "yaw":
             return int(round(1500 + 400 * max(-1.0, min(1.0, v / RATE_MAX))))
@@ -106,6 +111,7 @@ class DeskSim:
         self.bf = bf
         self.sky_gate = True                # the SKY GATE switch (no camera here: shown only)
         self.follower = True                # the FOLLOWER switch (shown only, like the sky gate)
+        self.cam = 30                       # the CAMERA switch: the view the picture and detector get
         self._lk = threading.Lock()
         self._thread = None
         self._touch = 0.0
@@ -117,6 +123,7 @@ class DeskSim:
         self.yaw = _Yaw(START_HDG)          # 30 deg off the pretend drone
         self.lean = 0.0                     # deg of pitch, negative = nose down
         self.mp = _Mapper()
+        self._set_cam(self.cam)
         self.lines, self.seq = [], 0
         self.m = M.Mission(self.mp, log=self._log)
         self.m.auto_enabled = True          # TEST shows AUTO with one press
@@ -138,6 +145,14 @@ class DeskSim:
         self.det = None                     # (ai_cmd, t) of the last detection
         self.t0 = time.perf_counter()
         self._log("[SIM] ΔΟΚΙΜΗ: a pretend drone, hovering in ALT_HOLD. Nothing reaches the FC.")
+
+    def _set_cam(self, cam):
+        """The camera's view, deg, for the picture, the detector and the aim mark."""
+        cx, cy = CAM_CROP[cam]
+        self.cam = cam
+        self.hfov = 2.0 * math.degrees(math.atan(cx * math.tan(math.radians(HFOV / 2.0))))
+        self.vfov = 2.0 * math.degrees(math.atan(cy * math.tan(math.radians(VFOV / 2.0))))
+        self.mp.V_FOV = math.radians(self.vfov)
 
     def touch(self):
         """Every request: keeps it running (starts a fresh one if it slept)."""
@@ -181,7 +196,7 @@ class DeskSim:
         """The pretend detector: in view, and the odds of a target this many
         pixels across.  On a hit, what the tracker would hand the mission."""
         g = self.geo
-        if self.hit_t is not None or abs(g["az"]) >= HFOV / 2 or abs(g["el"]) >= VFOV / 2:
+        if self.hit_t is not None or abs(g["az"]) >= self.hfov / 2 or abs(g["el"]) >= self.vfov / 2:
             return
         bw = FOCAL_PX * TGT_SPAN / max(0.5, g["rng"])
         if self.rng.random() >= 0.93 * max(0.0, min(1.0, (bw - 4.0) / 10.0)) * 0.5:
@@ -304,6 +319,9 @@ class DeskSim:
         return dict(linked=True, armed=True, fc_mode="ALT_HOLD", detector="TensorRT", fps=15.0,
                     lat_ms=None, tilt_deg=30.0, target="DRONE", mission=snap, console_seq=seq,
                     sky_gate=self.sky_gate, follower=self.follower,
+                    cam_fps=self.cam, cam_default=30, cam_busy=False,
+                    cam_hfov=round(self.hfov, 2), cam_vfov=round(self.vfov, 2),
+                    cam_aspect=round(4.0 / 3.0 if self.cam == 30 else 16.0 / 9.0, 4),
                     sim=dict(bf=self.bf, scene=scene))
 
     def command(self, key, value):
@@ -341,6 +359,21 @@ class DeskSim:
                 self.follower = v in ("on", "1", "true")
                 self._log(f"[SIM] follower {'ON' if self.follower else 'OFF'}")
                 return ""
+            if key == "cam":                # as the tracker's set_camera
+                try:
+                    cam = int(str(value).strip())
+                except ValueError:
+                    return "bad CAMERA value"
+                if cam not in CAM_CROP:
+                    return "CAMERA: 30 or 60"
+                if self.m.phase in ("PUSH", "AI", "STOP") + M.AUTO_PHASES:
+                    return f"not during {self.m.phase}: the picture is dark a moment while it switches"
+                if cam != self.cam:
+                    self._set_cam(cam)
+                    self._log(f"[SIM] camera {cam} fps: {self.hfov:.1f} x {self.vfov:.1f} deg")
+                return ""
+            if key == "def":
+                return "TEST: settings are not saved as defaults"
             if key == "reset":
                 bf = self.bf
                 self._reset()

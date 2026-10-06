@@ -133,6 +133,16 @@ def _deadband(n, db):
     return math.copysign((a - db) / (1.0 - db), n)
 
 
+def _set_crop(law, cx, cy):
+    """Narrow a law's field of view to the centre `cx` x `cy` of its full
+    (reference) view.  A crop of the sensor is a crop in tan(angle), and 1.0
+    restores the reference values EXACTLY, so 30 fps is bit-for-bit as before."""
+    law._tan_h = law.ref_tan_h * cx
+    law._tan_v = law.ref_tan_v * cy
+    law.h_fov = law.ref_h_fov if cx == 1.0 else 2.0 * math.atan(law._tan_h)
+    law.v_fov = law.ref_v_fov if cy == 1.0 else 2.0 * math.atan(law._tan_v)
+
+
 # ArduPilot Copter custom_mode -> name.  ACRO is what this module targets.
 COPTER_MODES = {
     0: "STABILIZE", 1: "ACRO", 2: "ALT_HOLD", 3: "AUTO", 4: "GUIDED",
@@ -247,12 +257,22 @@ class ControlLaw:
 
         self._tan_h = math.tan(self.h_fov / 2.0)
         self._tan_v = math.tan(self.v_fov / 2.0)
+        # The FULL view the gains were tuned on; see set_crop().
+        self.ref_h_fov, self.ref_v_fov = self.h_fov, self.v_fov
+        self.ref_tan_h, self.ref_tan_v = self._tan_h, self._tan_v
 
         self._ax_prev = 0.0
         self._ay_prev = 0.0
         self._t_prev = None
         self._yaw_stick = 0.0
         self._pitch_stick = 0.0
+
+    def set_crop(self, cx=1.0, cy=1.0):
+        """The camera now sees the centre `cx` x `cy` of the full view (the
+        60 fps mode: 2560x1440 of the 3280x2464 array).  Shares of the sensor
+        are shares of tan(angle), so the angles stay true; the deadband and
+        the shaping stay in FULL-view units, so the law is the 30 fps one."""
+        _set_crop(self, cx, cy)
 
     # ── the approach term ─────────────────────────────────────────────────────
     def approach_pitch_stick(self, measured_pitch_rad, throttle_frac):
@@ -309,14 +329,16 @@ class ControlLaw:
 
         # Normalized offset: +/-1 at the frame edge.  Preserved by the tracker's
         # anisotropic resize, so it pairs correctly with the true lens FOV.
-        nx = _deadband(_clamp(2.0 * err_x / max(1, fw), -1.0, 1.0),
-                       self.deadband_frac)
-        ny = _deadband(_clamp(2.0 * err_y / max(1, fh), -1.0, 1.0),
-                       self.deadband_frac)
+        # Rescaled to the FULL view (x1 at 30 fps), so the deadband and the
+        # shaping mean the same angles in either camera mode.
+        nx = _deadband(_clamp(2.0 * err_x / max(1, fw), -1.0, 1.0)
+                       * (self._tan_h / self.ref_tan_h), self.deadband_frac)
+        ny = _deadband(_clamp(2.0 * err_y / max(1, fh), -1.0, 1.0)
+                       * (self._tan_v / self.ref_tan_v), self.deadband_frac)
 
         # Pinhole model: angle off boresight.
-        ax = math.atan(nx * self._tan_h)          # azimuth   (right positive)
-        ay = math.atan(ny * self._tan_v)          # elevation (down  positive)
+        ax = math.atan(nx * self.ref_tan_h)       # azimuth   (right positive)
+        ay = math.atan(ny * self.ref_tan_v)       # elevation (down  positive)
 
         if dt > 1e-6:
             dax = (ax - self._ax_prev) / dt
@@ -795,6 +817,11 @@ class InterceptLaw:
 
         self._tan_h = math.tan(self.h_fov / 2.0)
         self._tan_v = math.tan(self.v_fov / 2.0)
+        # The FULL view every size in this law was tuned on (the fill
+        # schedules, the terminal trigger, the deadband).  set_crop() narrows
+        # h_fov / v_fov to the 60 fps window; those sizes stay in these units.
+        self.ref_h_fov, self.ref_v_fov = self.h_fov, self.v_fov
+        self.ref_tan_h, self.ref_tan_v = self._tan_h, self._tan_v
 
         # Marks this law for the commander and the preflight report. The
         # `approach` machinery in ControlLaw does not apply here.
@@ -838,6 +865,20 @@ class InterceptLaw:
             return ex, ey
         c, s = math.cos(roll), math.sin(roll)
         return ex * c - ey * s, ex * s + ey * c
+
+    def set_crop(self, cx=1.0, cy=1.0):
+        """The camera now sees the centre `cx` x `cy` of the full view: the
+        60 fps mode is 2560x1440 of the 3280x2464 array, 50.4 x 29.7 deg.
+
+        What changes: the pixel -> angle map (azimuth, elevation, range), so
+        every angle stays TRUE, and the frame-edge gates, which are about
+        keeping the target inside the picture the camera actually has.
+
+        What does not: everything measured as a share of the frame -- the
+        fill schedules (bank, gain, MAX's ease-off), the terminal trigger and
+        the deadband -- is converted back to full-view units, so the same
+        target at the same range flies the same law as at 30 fps."""
+        _set_crop(self, cx, cy)
 
     def _angles(self, ex, ey, fw, fh):
         """Level-frame pixel offsets -> azimuth (right +) and camera-frame
@@ -1251,7 +1292,10 @@ class InterceptLaw:
         # Fill fraction drives the schedule, low-passed: the bbox width jitters
         # frame to frame, and a jittering gain is a gain-modulation noise source
         # in its own right.  _lock_t counts from the first frame after neutral().
-        fill = (float(bbox_w) / float(fw)) if (bbox_w and fw) else 0.0
+        # In FULL-view units (x1 at 30 fps): a cropped frame is narrower, so
+        # the same target fills more of it.
+        fill = (float(bbox_w) / float(fw) * (self._tan_h / self.ref_tan_h)
+                if (bbox_w and fw) else 0.0)
         a = dt / (self.fill_tau + dt) if dt > 1e-6 else 1.0
         self._fill += a * (fill - self._fill)
         self._lock_t = dt if self._lock_t is None else self._lock_t + max(0.0, dt)
@@ -1279,8 +1323,9 @@ class InterceptLaw:
         # ── 4. angular deadbands, applied to the LED angles ──────────────────
         # On the angle, not the pixel: with tilt compensation a zero WORLD
         # elevation is not a zero pixel offset, so a pixel deadband would sit in
-        # the wrong place.
-        half_h, half_v = self.h_fov / 2.0, self.v_fov / 2.0
+        # the wrong place.  A share of the FULL view's half-angle, so it is the
+        # same deadband in degrees in either camera mode.
+        half_h, half_v = self.ref_h_fov / 2.0, self.ref_v_fov / 2.0
         az_eff = _deadband(_clamp(az_lead / half_h, -1.0, 1.0),
                            self.deadband_frac) * half_h
         if el_lead is None:
@@ -1459,8 +1504,10 @@ class InterceptLaw:
         the same thing to the closed-loop sim as it does in flight (where dt IS
         wall clock) — and so it is testable at all.
         """
+        # A share of the FULL view's height (x1 at 30 fps), like the fill.
         big = (bbox_h is not None and fh and
-               (bbox_h / float(fh)) >= self.terminal_bbox_frac)
+               (bbox_h / float(fh)) * (self._tan_v / self.ref_tan_v)
+               >= self.terminal_bbox_frac)
         close = (rng is not None and rng <= self.terminal_range_m)
         if self._terminal_since is None:
             if not (big or close):
@@ -3584,10 +3631,13 @@ class AcroCommander:
             jerk_z=getattr(b, "jerk_z", 5.0) or 5.0,
             log=lambda m: print(m, flush=True))
         _saved = _mission_mod.load_auto_params(self.mission)
+        _lv = _mission_mod.load_levels(self.mission)
         print("-" * 74)
         print("MISSION APP  : Hover -> Scout -> Engage, driven from the phone.")
         print(f"               AUTO settings: {self.mission.auto_params()}"
               + (" (saved)" if _saved else " (defaults)"))
+        print(f"               speed levels: {self.mission.level}"
+              + (" (saved)" if _lv else " (defaults)"))
         print("               Nothing moves unless ARMED + ALT_HOLD + a button"
               " on the phone.")
         print(f"               handover conf >= {self.mission.min_conf:.2f}, "

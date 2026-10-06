@@ -91,7 +91,7 @@ from ultralytics import YOLO
 # for the GStreamer capture thread and the FC tx thread.  getNumThreads() still
 # reports 6 while it is serialised, so do not trust it to check this.
 cv2.setNumThreads(int(os.environ.get("CV_THREADS", "4")))
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as _dc_replace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fc_control import AcroCommander, ControlLaw, commander_from_env
@@ -342,12 +342,24 @@ class DroneTracker:
     # fine-tune the model on contrast-enhanced data.
     USE_CLAHE    = False  # contrast-boost the crop before inference
 
+    # ── the CAMERA switch (30 / 60 fps, see CAM_MODES) ─────────────────────────
+    # Every frame count in here (MISS_TO_*, GATE_MAX_REJECT, YIELD_MISSES) was
+    # tuned on the 30 fps camera; _frames() keeps them the same TIME at 60.
+    REF_FPS     = 30.0
+    cam_mode    = 30
+    cam_aspect  = 4.0 / 3.0
+    ref_display = None    # the 30 fps working frame; None = the current one
+    _ui_fps     = 0.0
+
     def __init__(
         self,
         model_path      = "/runs/detect/v0/weights/best.pt",
         # ── live camera (GStreamer pipeline, required) ────────────────────────
         camera_pipeline = None,   # GStreamer pipeline string
         camera_fps      = 30.0,   # fallback FPS when cap.get(CAP_PROP_FPS) returns 0
+        # The CameraConfig the pipeline was built from.  With it the phone can
+        # switch the camera 30 <-> 60 fps (set_camera); without it, no switch.
+        camera_config   = None,
         # ─────────────────────────────────────────────────────────────────────
         conf_thresh    = 0.05,
         display_size   = (640, 640),
@@ -410,7 +422,8 @@ class DroneTracker:
               f"('{names[self.target_class]}') of {dict(names)}, max 1 object")
         print(f"[MODEL] weights: {model_path}")
         self.camera_pipeline = camera_pipeline
-        self.camera_fps      = float(camera_fps)        
+        self.camera_fps      = float(camera_fps)
+        self.camera_config   = camera_config
         # A TensorRT engine is built for ONE input shape (640 here), so the
         # per-pass imgsz choices cannot apply — ultralytics letterboxes to the
         # engine's shape whatever is asked.  Say so once and align the constants
@@ -424,6 +437,7 @@ class DroneTracker:
         self.conf_thresh  = conf_thresh
         self.display_size = display_size
         self.fw, self.fh  = display_size
+        self.ref_display  = tuple(display_size)   # at 30 fps; 60 crops it
         self.skip_frames  = max(0, int(skip_frames))
         self.show_sky     = show_sky
         self.use_sky_mask = use_sky_mask
@@ -468,6 +482,12 @@ class DroneTracker:
         # (set_follower) turns it on / off in flight.
         self.follower        = TargetFollower()
         self.use_follower    = os.environ.get("FOLLOW", "1") != "0"
+        # The FOLLOWER default saved from the phone ("make it the default?"),
+        # unless FOLLOW is set for this run.  The SKY GATE is never saved.
+        _saved = mission_mod.load_detection_defaults()
+        if "follow" in _saved and "FOLLOW" not in os.environ:
+            self.use_follower = _saved["follow"]
+        self.follower_default = self.use_follower
         self.follow_hits     = 0
         self._gate_rejects   = 0
         self.gated_total     = 0
@@ -500,6 +520,21 @@ class DroneTracker:
         self.CAM_OPEN_RETRIES  = 5     # full pipeline re-opens on first-buffer failure
         self.CAM_WARMUP_READS  = 30    # reads per attempt to catch the first good frame
         self.CAM_RETRY_WAIT_S  = 0.8   # settle time between re-opens
+
+        # The camera mode, 30 or 60 fps: CAM_MODE for this run, else what the
+        # phone saved as the default, else 30.  _apply_cam_mode sets the
+        # pipeline, the working frame and the law's field of view together.
+        self.cam_default = 30
+        start = 30
+        if self.camera_config is not None:
+            if _saved.get("cam") in CAM_MODES:
+                self.cam_default = _saved["cam"]
+            _env_cam = os.environ.get("CAM_MODE", "").strip()
+            start = int(_env_cam) if _env_cam.isdigit() and int(_env_cam) in CAM_MODES \
+                else self.cam_default
+        self._cam_req  = None          # posted by the phone, done by the loop
+        self._cam_busy = False
+        self._apply_cam_mode(start)
 
     # ──────────────────────────────────────────────────────────────────────────
     # helpers
@@ -677,6 +712,40 @@ class DroneTracker:
             self.use_follower = on
             print(f"[FOLLOW] follower {'ON' if on else 'OFF: detector only'}")
         return ""
+
+    def set_camera(self, value):
+        """The phone's CAMERA switch: 30 or 60 fps.  Only POSTS the request;
+        the main loop owns the capture and reopens it between two frames
+        (_switch_camera).  The picture is dark for a moment while it does,
+        so it is refused while anything flies on the picture."""
+        try:
+            want = int(str(value).strip())
+        except ValueError:
+            return "bad CAMERA value"
+        if want not in CAM_MODES:
+            return "CAMERA: 30 or 60"
+        if self.camera_config is None:
+            return "this run cannot switch the camera (no camera config)"
+        if want == (self._cam_req or self.cam_mode):
+            return ""
+        why = self._camera_locked()
+        if why:
+            return why
+        self._cam_req = want
+        print(f"[CAM] {want} fps asked for")
+        return ""
+
+    def _camera_locked(self):
+        """Why the camera may not switch right now, or ''."""
+        if self._cam_busy:
+            return "the camera is switching"
+        m = getattr(self.ap, "mission", None)
+        if m is not None and m.phase in ("PUSH", "AI", "STOP") + mission_mod.AUTO_PHASES:
+            return f"not during {m.phase}: the picture is dark a moment while it switches"
+        if m is None and self._last_sent:
+            return "not while the AI steers: the picture is dark a moment while it switches"
+        return ""
+
     def state_snapshot(self):
         """Everything the dashboard shows, read off the live objects."""
         ap = getattr(self, "ap", None)
@@ -701,7 +770,16 @@ class DroneTracker:
             steering=bool(self._last_sent),
             sky_gate=bool(self.use_sky_mask),
             follower=bool(self.use_follower),
+            follower_default=bool(getattr(self, "follower_default", self.use_follower)),
+            # the CAMERA switch, and the picture's shape for the overlays
+            cam_fps=self.cam_mode, cam_default=getattr(self, "cam_default", 30),
+            cam_busy=bool(getattr(self, "_cam_busy", False)
+                          or getattr(self, "_cam_req", None) is not None),
+            cam_aspect=round(self.cam_aspect, 4),
         )
+        if law is not None and hasattr(law, "h_fov"):
+            out["cam_hfov"] = round(math.degrees(law.h_fov), 2)
+            out["cam_vfov"] = round(math.degrees(law.v_fov), 2)
         if hasattr(ap, "mission_state"):
             try:
                 out["mission"] = ap.mission_state()
@@ -789,13 +867,22 @@ class DroneTracker:
             self._gate_rejects = 0
             return True
         self._gate_rejects += 1
-        if self._gate_rejects > self.GATE_MAX_REJECT:
+        if self._gate_rejects > self._frames(self.GATE_MAX_REJECT):
             self._gate_rejects = 0      # it has insisted; believe it
             self.gate_note = "REACQ"
             return True
         self.gate_note = f"GATE {jump:.0f}px"
         self.gated_total += 1
         return False
+
+    def _frames(self, n):
+        """`n` frames of the 30 fps camera as frames of THIS loop, so a count
+        means the same time in either camera mode.  At 30 fps it is `n`.  At
+        60 fps the detector, not the camera, sets the loop's pace; if that is
+        faster than 30 Hz the count grows with it, never below `n`."""
+        if self.cam_mode <= self.REF_FPS:
+            return n
+        return max(n, int(round(n * self._ui_fps / self.REF_FPS)))
 
     def _gate_allow(self, dt):
         """How far, px, a real target's centre can plausibly move from the
@@ -866,7 +953,7 @@ class DroneTracker:
         # The follower lost it this frame: a plausible detection that looks
         # like the target is taken; an unlike one only once the follower
         # has lost it YIELD_MISSES frames in a row (its look changed).
-        if like >= self.VERIFY_MIN or self.follower.misses >= self.YIELD_MISSES:
+        if like >= self.VERIFY_MIN or self.follower.misses >= self._frames(self.YIELD_MISSES):
             self._gate_rejects = 0
             return det, None
         self.gate_note = f"DISTRACT {jump:.0f}px"
@@ -879,7 +966,10 @@ class DroneTracker:
         if self.last_bbox is None:
             return True
         bw, bh = self.last_bbox[2], self.last_bbox[3]
-        return max(bw, bh) < self.fh * self.BIG_OBJ_FRAC
+        # of the 30 fps frame's height: at 60 fps the frame is a crop at the
+        # same pixel scale, so the same target is the same number of pixels
+        ref_h = self.ref_display[1] if self.ref_display else self.fh
+        return max(bw, bh) < ref_h * self.BIG_OBJ_FRAC
 
     def _sky_bbox_native(self):
         """Bounding box of the sky mask, in native coords, padded.
@@ -1068,12 +1158,13 @@ class DroneTracker:
             self.layer     = f"FOLLOW {score:.2f}"     # self.conf: the detector's last
         elif kf_pred and self.state != "SEARCH":
             self.missed += 1
-            if self.missed >= self.MISS_TO_SEARCH:
+            if self.missed >= self._frames(self.MISS_TO_SEARCH):
                 self._reset()
                 fused      = None
                 self.layer = "LOST"
             else:
-                self.state = "PREDICT" if self.missed >= self.MISS_TO_PREDICT else self.state
+                self.state = ("PREDICT" if self.missed >= self._frames(self.MISS_TO_PREDICT)
+                              else self.state)
                 fused      = kf_pred
                 self.layer = f"KF  miss={self.missed}"
         else:
@@ -1460,6 +1551,11 @@ class DroneTracker:
                 return
             try:
                 if self._writer is not None:
+                    size = (frame.shape[1], frame.shape[0])
+                    if size != getattr(self, "_rec_size", size):
+                        # the CAMERA switch changed the frame size: one mp4
+                        # holds one size, so a new segment starts here
+                        self._rec_rotate(frame)
                     self._writer.write(frame)
                     self._rec_seg_n = getattr(self, "_rec_seg_n", 0) + 1
                     if self._rec_seg_n >= self._rec_seg_frames():
@@ -1488,6 +1584,7 @@ class DroneTracker:
         if not w.isOpened():
             return                        # keep writing the current segment
         old, self._writer = self._writer, w
+        self._rec_size = (frame.shape[1], frame.shape[0])
         old.release()                     # the finished segment is now playable
         self._rec_seg_n = 0
 
@@ -1561,8 +1658,12 @@ class DroneTracker:
             return self.set_sky_gate(value)
         elif key == "follow":
             return self.set_follower(value)
+        elif key == "cam":
+            return self.set_camera(value)
+        elif key == "def" and str(value).startswith("det:"):
+            return self._save_detection_default(str(value)[4:].strip().lower())
         elif key in ("hold", "release", "step", "engage", "abort", "lvl", "lock", "auto", "autoen",
-                     "autop", "autoreset"):
+                     "autop", "autoreset", "def"):
             return self._mission_command(key, str(value))
         else:
             raise ValueError("unknown command")
@@ -1574,15 +1675,40 @@ class DroneTracker:
         m = getattr(self.ap, "mission", None)
         if m is None:
             return "mission app not running (WASP_APP=mission, FC linked?)"
+        if ((key == "engage" or (key == "auto" and str(value).strip().lower() in ("1", "on", "true")))
+                and (self._cam_busy or self._cam_req is not None)):
+            # the CAMERA switch is reopening the camera: no picture to fly on yet
+            return "the camera is switching: ENGAGE / AUTO in a moment"
         if key == "lvl":
             group, _, level = str(value).partition(":")
             if group.strip().lower() == "ai":
                 if level.strip().upper() not in self.MODES:
                     return "unknown speed"
                 self.set_mode(level.strip().upper())
-        r = mission_mod.phone_command(m, key, value, perf_counter())
-        if key in ("autop", "autoreset") and r == "":
-            mission_mod.save_auto_params(m)      # survives a reboot
+        if key == "def":
+            # the phone's YES to "make it the default": saved on the Jetson,
+            # what it powers up with.  A change alone lasts until a reboot.
+            r = mission_mod.save_default(m, value)
+            if r == "":
+                print(f"[PARAMS] default saved: {value}")
+            return r
+        return mission_mod.phone_command(m, key, value, perf_counter())
+
+    def _save_detection_default(self, key):
+        if key == "cam":
+            # the mode asked for, even if the reopen is still under way
+            want = self._cam_req or self.cam_mode
+            r = mission_mod.save_detection_default("cam", want)
+            if r == "":
+                self.cam_default = want
+                print(f"[PARAMS] default saved: camera {want} fps")
+            return r
+        if key != "follow":
+            return mission_mod.save_detection_default(key, True)   # the refusal
+        r = mission_mod.save_detection_default("follow", self.use_follower)
+        if r == "":
+            self.follower_default = self.use_follower
+            print(f"[PARAMS] default saved: follower {'ON' if self.use_follower else 'OFF'}")
         return r
 
     # ── master draw ──────────────────────────────────────────────────────────────
@@ -1711,6 +1837,83 @@ class DroneTracker:
 
         return cap, src_fps, label
 
+    def _apply_cam_mode(self, mode):
+        """Point everything at camera mode `mode` (CAM_MODES): the pipeline,
+        the working frame and the law's field of view, together.
+
+        The 60 fps window is the centre of the 30 fps one at the same sensor
+        pixel scale, so the working frame is cropped the same way (640 x 640
+        -> 500 x 374): one working-frame pixel is the same angle in both
+        modes, and every pixel constant in this file (track gate, ROI,
+        follower, sky mask, BIG_OBJ_FRAC) keeps its meaning.  The law is told
+        the crop, so its angles stay true (InterceptLaw.set_crop)."""
+        spec = CAM_MODES[mode]
+        cx, cy = spec["crop"]
+        self.cam_mode = mode
+        if self.camera_config is not None:
+            cfg = self.camera_config
+            if "sensor_mode" in spec:
+                cfg = _dc_replace(cfg, sensor_mode=spec["sensor_mode"], width=spec["width"],
+                                  height=spec["height"], fps=spec["fps"])
+            self.camera_pipeline = make_pipeline(cfg)
+            self.camera_fps = float(cfg.fps)
+            self.cam_aspect = cfg.width / float(cfg.height)
+        rw, rh = self.ref_display
+        self.display_size = ((rw, rh) if (cx, cy) == (1.0, 1.0) else
+                             (2 * int(round(rw * cx / 2.0)), 2 * int(round(rh * cy / 2.0))))
+        self.fw, self.fh = self.display_size
+        law = getattr(getattr(self, "ap", None), "law", None)
+        if hasattr(law, "set_crop"):
+            law.set_crop(cx, cy)
+
+    def _switch_camera(self, pre_buf):
+        """Reopen the camera in the mode the phone asked for (set_camera).
+
+        On the main loop, which owns the capture, between two frames.  The
+        track is dropped (its pixels belong to the old picture), the pre-roll
+        is emptied and the reel starts a new segment at the new size.  If the
+        new mode does not come up the old one is reopened; if that fails too
+        the run ends as any camera fault does."""
+        want = self._cam_req
+        if want is None or want == self.cam_mode:
+            self._cam_req = None
+            return
+        why = self._camera_locked()
+        if why:
+            self._cam_req = None
+            print(f"[CAM] {want} fps not switched: {why}")
+            return
+        old = self.cam_mode
+        # busy BEFORE the request is cleared: ENGAGE / AUTO are refused on
+        # either, so there is no instant when neither says "switching"
+        self._cam_busy = True
+        self._cam_req = None
+        try:
+            print(f"[CAM] {old} -> {want} fps: reopening the camera")
+            self._apply_cam_mode(want)          # the mode IS `want` from here on
+            try:
+                self._cap.release()
+            except Exception:
+                pass
+            try:
+                self._cap, _fps, _label = self._open_capture()
+            except RuntimeError as exc:
+                print(f"[CAM] {want} fps did not come up "
+                      f"({str(exc).splitlines()[0]}) — back to {old} fps")
+                self._apply_cam_mode(old)
+                self._cap, _fps, _label = self._open_capture()
+            self._reset()
+            self.sky_mask = None
+            self._t_last_frame = self._t_ui_prev = None
+            pre_buf.clear()
+            law = getattr(self.ap, "law", None)
+            fov = (f"{math.degrees(law.h_fov):.1f} x {math.degrees(law.v_fov):.1f} deg, "
+                   if law is not None else "")
+            print(f"[CAM] camera at {self.cam_mode} fps: {fov}working frame "
+                  f"{self.fw}x{self.fh}")
+        finally:
+            self._cam_busy = False
+
     # ──────────────────────────────────────────────────────────────────────────
     # MAIN LOOP
     # ──────────────────────────────────────────────────────────────────────────
@@ -1737,8 +1940,23 @@ class DroneTracker:
         # is dead or the board is not something we can steer.
         self.ap.connect()
 
-        cap, src_fps, source_label = self._open_capture()
+        try:
+            cap, src_fps, source_label = self._open_capture()
+        except RuntimeError as exc:
+            # a saved 60 fps default must not cost the flight its seeker
+            if self.cam_mode == 30 or self.camera_config is None:
+                raise
+            print(f"[CAM] {self.cam_mode} fps did not come up "
+                  f"({str(exc).splitlines()[0]}) — starting at 30 fps")
+            self._apply_cam_mode(30)
+            cap, src_fps, source_label = self._open_capture()
+        self._cap = cap                 # replaced by the CAMERA switch
         print(f"[RUN] Source: {source_label}")
+        # The reel and its pre-roll count LOOP frames, one per processed frame,
+        # and the detector, not the camera, sets the loop's pace (~30 Hz): a
+        # 60 fps camera mostly gives fresher frames, not more of them.  So the
+        # reel stays at 30 fps, near real time in either camera mode.
+        src_fps = min(src_fps, self.REF_FPS)
             
         # ── recording setup ────────────────────────────────────────────────────
         rec_on       = self.record_dir is not None
@@ -1790,7 +2008,7 @@ class DroneTracker:
                        fourcc)
         finally:
             self._finish_recording()
-            cap.release()
+            self._cap.release()
             if not self.headless:
                 cv2.destroyAllWindows()
 
@@ -1827,9 +2045,12 @@ class DroneTracker:
         self._rec_path    = out_path.resolve() if out_path else None
         last_written      = -1
         post_left         = 0
+        self._cap         = cap
 
-        while cap.isOpened():
-            ret, frame_full = cap.read()
+        while self._cap.isOpened():
+            if self._cam_req is not None:
+                self._switch_camera(pre_buf)      # the phone's CAMERA switch
+            ret, frame_full = self._cap.read()
             # Stamped the instant the frame lands, so the control law can measure
             # its own end-to-end latency instead of assuming the frame interval.
             # At intercept speed the difference is metres of stale geometry.
@@ -1962,6 +2183,7 @@ class DroneTracker:
                            self._writer = cv2.VideoWriter(
                                str(out_path), fourcc, src_fps,
                                (frame_disp.shape[1], frame_disp.shape[0]))
+                           self._rec_size = (frame_disp.shape[1], frame_disp.shape[0])
                            if not self._writer.isOpened():
                                # Say so once, here, rather than leaving a stub
                                # file and a silent gap where the evidence
@@ -2034,14 +2256,15 @@ class CameraConfig:
     # nvarguscamerasrc fail with "Frame Rate specified is greater than supported"
     # / InvalidState.  Set CAM_SENSOR_MODE=-1 to let Argus auto-select.
     #
-    # MODE 3, NOT MODE 4 (2026-09-26).  Read off nv_imx219.ko's register
-    # tables: mode 4 is a CENTRE CROP (x 360-2919, y 512-1951 = 2560x1440 of
-    # the 3280x2464 array, 2x2 binned), so its real FOV is 50.4 x 29.7 deg —
-    # while the control law is told 62.2 x 48.8 (CAM_HFOV_DEG / CAM_VFOV_DEG).
-    # Every azimuth read 28% large and every elevation 71% large, and the
-    # vertical band was +/-14.9 deg, not +/-24.4.  Mode 3 is the FULL array
-    # 2x2 binned, i.e. exactly 62.2 x 48.8; 1280x960 keeps it 4:3 (square
-    # pixels).  Sim (tests/sim_sky_wind.py): touches Bf0/Bf3 66/42% -> 82/76%.
+    # MODE 3 IS THE 30 FPS DEFAULT (2026-09-26).  Read off nv_imx219.ko's
+    # register tables: mode 4 is a CENTRE CROP (x 360-2919, y 512-1951 =
+    # 2560x1440 of the 3280x2464 array, 2x2 binned), so its real FOV is
+    # 50.4 x 29.7 deg.  Flown once with the law told 62.2 x 48.8, every
+    # azimuth read 28% large and every elevation 71% large.  Mode 3 is the
+    # FULL array 2x2 binned, i.e. exactly 62.2 x 48.8; 1280x960 keeps it 4:3
+    # (square pixels).  Sim (tests/sim_sky_wind.py): touches Bf0/Bf3 66/42%
+    # -> 82/76%.  Mode 4 is now the phone's 60 fps CAMERA setting, with the
+    # law told the crop (CAM_MODES below), never the full-view numbers.
     sensor_mode: int = int(os.getenv("CAM_SENSOR_MODE", "3"))
 
     # Video mode
@@ -2071,6 +2294,23 @@ class CameraConfig:
     drop: bool = env_bool("CAM_DROP", True)
     max_buffers: int = int(os.getenv("CAM_MAX_BUFFERS", "1"))
     sync: bool = env_bool("CAM_SYNC", False)
+
+
+# The phone's CAMERA switch (PARAMETERS -> DETECTION), live, and CAM_MODE=30|60
+# for one run.  30 = CameraConfig as configured (sensor mode 3, the whole
+# array, 62.2 x 48.8 deg).  60 = sensor mode 4: the centre 2560 x 1440 of the
+# same array, binned 2x2 the same way, so the same pixels at the same focal
+# length through a smaller window: 50.4 x 29.7 deg.  `crop` is that window as
+# a share of the full view in SENSOR PIXELS, which is a share of tan(angle)
+# (pinhole), so the law's angles follow exactly (InterceptLaw.set_crop).
+# The price: +/-14.85 deg vertically instead of +/-24.4.  A lined-up target
+# (the aim mark, ~-10 deg at 60) stays in the picture under a lean of up to
+# ~25 deg; PUSH / the straight line at 30-40 deg tips it out of the top.
+CAM_MODES = {
+    30: dict(crop=(1.0, 1.0)),
+    60: dict(crop=(2560 / 3280, 1440 / 2464),
+             sensor_mode=4, width=1280, height=720, fps=60),
+}
 
 
 def make_pipeline(cfg: CameraConfig) -> str:
@@ -2304,6 +2544,7 @@ if __name__ == "__main__":
         model_path   = model_pth,
         camera_pipeline=CAP_PIPELINE,
         camera_fps=cam_cfg.fps,
+        camera_config=cam_cfg,          # the phone's 30 / 60 fps CAMERA switch
         conf_thresh  = 0.01,
         display_size = (640, 640),
         skip_frames  = 0,

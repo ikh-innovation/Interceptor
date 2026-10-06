@@ -59,6 +59,10 @@ ST = dict(linked=True, armed=True, fc_mode="ALT_HOLD", target="DRONE", tilt_deg=
                        target_fresh=True, target_az_deg=1.2, target_el_deg=-18.5),
           console_seq=2)
 ST["mission"]["auto_params"] = {k: getattr(_M.Mission, a[0]) for k, a, _c in _M.Mission.AUTO_SETTINGS}
+# what the Jetson powers up with: the same as now, so nothing starts "this flight only"
+ST["mission"]["auto_defaults"] = dict(ST["mission"]["auto_params"])
+ST["mission"]["level_defaults"] = dict(ST["mission"]["levels"])
+ST["follower_default"] = True
 CONSOLE = [[1, "12:00:00", "[MISSION] PILOT -> HOVER  (armed in ALT_HOLD)"],
            [2, "12:00:01", "[FC] override CONFIRMED"]]
 CMDS, REP, SIMPOLLS = [], [], []
@@ -182,11 +186,34 @@ STEPS = [
      " search:[].map.call(d.querySelectorAll('.seg[data-g=search] button'),function(x){return x.textContent}),"
      " searchOn:(q('.seg[data-g=search] button.on')||{}).textContent,"
      " fol:[].map.call(d.querySelectorAll('#folseg button'),function(x){return x.textContent}),"
-     " folOn:(q('#folseg button.on')||{}).textContent});"
-     " q('.seg[data-g=vert] button[data-lv=FAST]').click(); q('.seg[data-g=search] button[data-lv=FAST]').click();", 500),
-    ("cmds().then(function(c){rep({step:'lvl', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
+     " folOn:(q('#folseg button.on')||{}).textContent,"
+     " heads:[].map.call(d.querySelectorAll('#sh_speed .acch b'),function(x){return x.textContent}),"
+     " nOpen:d.querySelectorAll('#sh_speed .ppane.on').length,"
+     " homes:[q('#pp_semi').contains(q('.seg[data-g=search]')), q('#pp_auto').contains(q('#autoparams')) && q('#pp_auto').contains(q('#autoseg')),"
+     " q('#pp_det').contains(q('#skyseg')) && q('#pp_det').contains(q('#folseg'))],"
+     " sums:[q('#sum_semi').textContent, q('#sum_auto').textContent, q('#sum_det').textContent],"
+     " acc:W.getComputedStyle(q('.seg[data-g=search] button.on')).backgroundColor, boxBg:W.getComputedStyle(q('#ptab_auto')).backgroundColor,"
+     " unsaved:d.querySelectorAll('.unsaved.on').length,"
+     " isdef:(q('.seg[data-g=vert] .isdef')||{getAttribute:function(){return null}}).getAttribute('data-lv'),"
+     " ask:q('#defask').classList.contains('on')});"
+     " q('#ptab_semi').click(); rep({step:'semiopen', semi:q('#pp_semi').classList.contains('on'), auto:q('#pp_auto').classList.contains('on'),"
+     " det:q('#pp_det').classList.contains('on'), exp:q('#ptab_semi').getAttribute('aria-expanded')});"
+     " q('.seg[data-g=vert] button[data-lv=FAST]').click();", 500),
+    ("until(function(){return q('#defask').classList.contains('on')},3000).then(function(){ return cmds(); }).then(function(c){"
+     " rep({step:'ask1', ask:q('#defask').classList.contains('on'), k:q('#defk').textContent, v:q('#defv').textContent,"
+     " sub:q('#defsub').textContent, cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})}); q('#def_yes').click(); });", 3400),
+    ("cmds().then(function(c){rep({step:'def1', ask:q('#defask').classList.contains('on'), cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
+     " fetch('/reset').then(function(){ q('.seg[data-g=search] button[data-lv=FAST]').click(); });});", 500),
+    ("until(function(){return q('#defask').classList.contains('on')},3000).then(function(ok){"
+     " rep({step:'ask2', ask:ok, v:q('#defv').textContent}); q('#def_no').click(); });", 3400),
+    ("cmds().then(function(c){rep({step:'lvl', ask:q('#defask').classList.contains('on'), cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
      " fetch('/reset').then(function(){ q('#folseg [data-fol=off]').click(); });});", 400),
-    ("cmds().then(function(c){rep({step:'fol', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
+    ("until(function(){return q('#defask').classList.contains('on')},3000).then(function(){ return cmds(); }).then(function(c){"
+     " rep({step:'fol', ask:q('#defask').classList.contains('on'), k:q('#defk').textContent, v:q('#defv').textContent, cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
+     " q('#def_no').click(); return fetch('/set?phase=HOVER&lvl_vert=FAST'); }).then(function(){ return fetch('/reset'); })"
+     ".then(function(){ return until(function(){return q('.unsaved[data-save=\"lvl:vert\"]').classList.contains('on')},3000); })"
+     ".then(function(ok){ rep({step:'chip', on:ok, n:d.querySelectorAll('.unsaved.on').length}); q('.unsaved[data-save=\"lvl:vert\"]').click(); });", 3800),
+    ("cmds().then(function(c){rep({step:'chipsave', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})}); fetch('/set?phase=HOVER&lvl_vert=SLOW');"
      " q('#sh_speed [data-close]').click(); rep({step:'closed', open:q('#sh_speed').classList.contains('open')}); fetch('/reset');});", 400),
     # AUTO: greyed out while OFF in PARAMETERS, sends auto=on when ON, shows
     # its state while flying; MAX on the AI row; the PARAMETERS switch
@@ -211,20 +238,28 @@ STEPS = [
      " autoseg:[].map.call(d.querySelectorAll('#autoseg button'),function(x){return x.getAttribute('data-autoen')}),"
      " autoOn:(q('#autoseg button.on')||{getAttribute:function(){return null}}).getAttribute('data-autoen')});"
      " q('.seg[data-g=ai] button[data-lv=MAX]').click(); q('#autoseg [data-autoen=off]').click(); });", 3400),
-    ("cmds().then(function(c){rep({step:'max_autoen', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})}); fetch('/reset');});", 400),
-    # PARAMETERS: category cards, each opening its own page; AUTO's settings
+    ("cmds().then(function(c){rep({step:'max_autoen', askMax:q('#defask').classList.contains('on'), cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
+     " q('#def_no').click(); fetch('/reset');});", 400),
+    # PARAMETERS: two big tabs; AUTO's settings on the AUTO tab
     ("q('#t_menu').click(); q('#t_par').click(); setTimeout(function(){"
-     " rep({step:'hub', cats:[].map.call(d.querySelectorAll('#sh_speed .cat b'),function(x){return x.textContent}),"
-     " segsOnHub:d.querySelectorAll('#sh_speed .seg').length, sumAuto:q('#sum_auto').textContent, tag:q('#autotag').textContent});"
-     " q('#sh_speed [data-open=sh_p_auto]').click(); }, 300);", 700),
-    ("rep({step:'autopage', open:q('#sh_p_auto').classList.contains('open'), hubOpen:q('#sh_speed').classList.contains('open'),"
-     " z:[W.getComputedStyle(q('#sh_p_auto')).zIndex, W.getComputedStyle(q('#sh_speed')).zIndex],"
-     " n:d.querySelectorAll('#sh_p_auto [data-ap]').length, secs:[].map.call(d.querySelectorAll('#sh_p_auto .pcard .sec'),function(x){return x.textContent}),"
-     " on:[].map.call(d.querySelectorAll('#sh_p_auto [data-ap].on'),function(x){return x.getAttribute('data-ap')+'='+x.getAttribute('data-av')}),"
-     " dflt:d.querySelectorAll('#sh_p_auto .dflt').length});"
-     " q('#sh_p_auto [data-ap=height][data-av=\"15\"]').click(); q('#autoreset').click();", 400),
-    ("cmds().then(function(c){rep({step:'autoset', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
-     " q('#sh_p_auto [data-close]').click(); rep({step:'autoback', auto:q('#sh_p_auto').classList.contains('open'), hub:q('#sh_speed').classList.contains('open')});"
+     " rep({step:'hub', heads:[].map.call(d.querySelectorAll('#sh_speed .acch b'),function(x){return x.textContent}),"
+     " tag:q('#autotag').textContent, tagIn:q('#ptab_auto').contains(q('#autotag')), cats:d.querySelectorAll('.cat').length});"
+     " q('#ptab_auto').click(); }, 300);", 700),
+    ("rep({step:'autopage', auto:q('#pp_auto').classList.contains('on'), semi:q('#pp_semi').classList.contains('on'),"
+     " exp:q('#ptab_auto').getAttribute('aria-expanded'),"
+     " n:d.querySelectorAll('#pp_auto [data-ap]').length, secs:[].map.call(d.querySelectorAll('#pp_auto .pcard .sec'),function(x){return x.textContent}),"
+     " on:[].map.call(d.querySelectorAll('#pp_auto [data-ap].on'),function(x){return x.getAttribute('data-ap')+'='+x.getAttribute('data-av')}),"
+     " dflt:d.querySelectorAll('#pp_auto [data-ap].isdef').length, chips:d.querySelectorAll('#pp_auto .unsaved').length,"
+     " autoenDef:(q('#autoseg .isdef')||{getAttribute:function(){return null}}).getAttribute('data-autoen'),"
+     " skyDef:(q('#skyseg .isdef')||{getAttribute:function(){return null}}).getAttribute('data-sky')});"
+     " q('#pp_auto [data-ap=height][data-av=\"15\"]').click(); q('#autoreset').click();", 600),
+    ("cmds().then(function(c){rep({step:'autoset', ask:q('#defask').classList.contains('on'), cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
+     " fetch('/reset').then(function(){ q('#pp_auto [data-ap=height][data-av=\"20\"]').click(); });});", 400),
+    ("until(function(){return q('#defask').classList.contains('on')},3000).then(function(ok){"
+     " rep({step:'autoask', ask:ok, k:q('#defk').textContent, v:q('#defv').textContent, sub:q('#defsub').textContent}); q('#def_yes').click(); });", 3400),
+    ("cmds().then(function(c){rep({step:'autodef', ask:q('#defask').classList.contains('on'), cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
+     " q('#ptab_semi').click(); rep({step:'autoback', semi:q('#pp_semi').classList.contains('on'), auto:q('#pp_auto').classList.contains('on')});"
+     " q('#ptab_semi').click(); rep({step:'toggle', semi:q('#pp_semi').classList.contains('on'), exp:q('#ptab_semi').getAttribute('aria-expanded')});"
      " d.querySelectorAll('.sheet').forEach(function(x){x.classList.remove('open')}); fetch('/reset');});", 400),
     ("q('#t_log').click();", 400),
     ("rep({step:'console', lines:[].map.call(d.querySelectorAll('#log .ln'),function(l){return l.textContent})});"
@@ -315,6 +350,9 @@ class H(BaseHTTPRequestHandler):
                 ST["mission"]["heading_deg"] = float(a["heading"][0])
             if "auto" in a:
                 ST["mission"]["auto_enabled"] = a["auto"][0] == "1"
+            for k in a:
+                if k.startswith("lvl_"):
+                    ST["mission"]["levels"][k[4:]] = a[k][0]
             en = a.get("engaged", ["0"])[0] == "1"
             ST["mission"]["engaged"] = en
             ST["mission"]["ai_steering"] = en and ST["mission"]["phase"] in ("AI", "PUSH")
@@ -458,14 +496,38 @@ check("pilot STAB -> ALT_HOLD: ENGAGE red and enabled again",
 sp = R.get("speeds", {})
 check("☰ → PARAMETERS opens FULL-SCREEN", sp.get("open") and sp.get("pos") == "fixed"
       and sp.get("h", 0) >= 0.95 * sp.get("winh", 1), str(sp))
-check("a speed button sends lvl=vert:FAST; ✕ closes the page",
-      R.get("lvl", {}).get("cmds", [None])[0] == "lvl=vert:FAST" and R.get("closed", {}).get("open") is False)
+so2 = R.get("semiopen", {})
+check("PARAMETERS: three grey sections AUTO, SEMI-AUTO, DETECTION (in that order), all closed at first, each with what it has set; dark blue, not orange",
+      sp.get("heads") == ["AUTO", "SEMI-AUTO", "DETECTION"] and sp.get("nOpen") == 0
+      and "PUSH" in (sp.get("sums") or [""])[0] and "15 m" in (sp.get("sums") or ["", ""])[1] and "MAX" in (sp.get("sums") or ["", ""])[1]
+      and sp.get("acc") == "rgb(31, 59, 99)" and sp.get("boxBg") == "rgb(226, 230, 235)"
+      and "follower ON" in (sp.get("sums") or ["", "", ""])[2], str({k: sp.get(k) for k in ("heads", "nOpen", "sums", "acc", "boxBg")}))
+check("...every setting lives in its own section (speeds in SEMI-AUTO, AUTO's in AUTO, sky gate + follower in DETECTION)",
+      sp.get("homes") == [True, True, True], str(sp.get("homes")))
+check("a tap on SEMI-AUTO opens it and only it", so2.get("semi") and not so2.get("auto") and not so2.get("det")
+      and so2.get("exp") == "true", str(so2))
+check("...each setting's DEFAULT marked (▲▼ SLOW here); nothing 'this flight only' yet; no question open",
+      sp.get("isdef") == "SLOW" and sp.get("unsaved") == 0 and sp.get("ask") is False, str(sp))
+a1, d1 = R.get("ask1", {}), R.get("def1", {})
+check("a speed button sends lvl=vert:FAST, then asks: make it the default? (name, value, the default now)",
+      a1.get("cmds") == ["lvl=vert:FAST"] and a1.get("ask") and "HEIGHT SPEED" in (a1.get("k") or "")
+      and (a1.get("v") or "").startswith("FAST") and "SLOW" in (a1.get("sub") or ""), str(a1))
+check("YES: sends def=lvl:vert, the question closes", d1.get("cmds") == ["lvl=vert:FAST", "def=lvl:vert"]
+      and d1.get("ask") is False, str(d1))
 check("SEARCH: 4 s / 6 s / 8 s with the distance at PUSH 20°, 4 s selected; 8 s sends lvl=search:FAST",
       sp.get("search") == ["4 s~19 m", "6 s~42 m", "8 s~69 m"] and sp.get("searchOn") == "4 s~19 m"
-      and R.get("lvl", {}).get("cmds") == ["lvl=vert:FAST", "lvl=search:FAST"], f"{sp.get('search')} {sp.get('searchOn')} {R.get('lvl')}")
-check("FOLLOWER: ON / OFF after the SKY GATE, ON lit from the status; OFF sends follow=off",
+      and R.get("lvl", {}).get("cmds") == ["lvl=search:FAST"], f"{sp.get('search')} {sp.get('searchOn')} {R.get('lvl')}")
+check("ONLY THIS FLIGHT: nothing more is sent, the question closes",
+      R.get("ask2", {}).get("ask") and R.get("lvl", {}).get("ask") is False and "def=" not in str(R.get("lvl")), str(R.get("lvl")))
+fo = R.get("fol", {})
+check("FOLLOWER: ON / OFF after the SKY GATE, ON lit from the status; OFF sends follow=off, then asks too",
       sp.get("fol") == ["ONdetector + follower", "OFFdetector only"] and sp.get("folOn") == "ONdetector + follower"
-      and R.get("fol", {}).get("cmds") == ["follow=off"], f"{sp.get('fol')} {sp.get('folOn')} {R.get('fol')}")
+      and fo.get("cmds") == ["follow=off"] and fo.get("ask") and fo.get("k") == "FOLLOWER" and fo.get("v") == "OFF",
+      f"{sp.get('fol')} {sp.get('folOn')} {fo}")
+check("a level that differs from its default shows THIS FLIGHT ONLY · SAVE; a tap sends def=lvl:vert; ✕ closes",
+      R.get("chip", {}).get("on") and R.get("chip", {}).get("n") == 1
+      and R.get("chipsave", {}).get("cmds") == ["def=lvl:vert"] and R.get("closed", {}).get("open") is False,
+      f"{R.get('chip')} {R.get('chipsave')}")
 check("console shows the tracker's printed lines", len(R.get("console", {}).get("lines", [])) == 2)
 lg = R.get("logsheet", {})
 check("MESSAGES opens FULL-SCREEN (not a pop-up) and ✕ closes it",
@@ -491,22 +553,31 @@ check("AI row has SLOW / MEDIUM / FAST / MAX; PUSH row has no MAX",
       ab.get("ai") == ["SLOW", "MEDIUM", "FAST", "MAX"] and ab.get("push") == ["SLOW", "MEDIUM", "FAST"], str(ab))
 check("PARAMETERS has the AUTO ON / OFF switch, showing ON", ab.get("autoseg") == ["on", "off"]
       and ab.get("autoOn") == "on", str(ab))
-check("MAX sends lvl=ai:MAX; the switch sends autoen=off",
-      R.get("max_autoen", {}).get("cmds") == ["lvl=ai:MAX", "autoen=off"], str(R.get("max_autoen")))
+check("MAX sends lvl=ai:MAX (and asks about the default); the AUTO switch sends autoen=off and asks nothing more",
+      sorted(R.get("max_autoen", {}).get("cmds") or []) == ["autoen=off", "lvl=ai:MAX"]   # sent together: any order
+      and R.get("max_autoen", {}).get("askMax"),
+      str(R.get("max_autoen")))
 hb, apg = R.get("hub", {}), R.get("autopage", {})
-check("PARAMETERS: four category cards, no settings crammed on the first page",
-      hb.get("cats") == ["FLIGHT", "ENGAGE", "AUTO", "DETECTION"] and hb.get("segsOnHub") == 0, str(hb))
-check("...each card says what is set (AUTO: height, line, AI, window; the ON tag)",
-      "15 m" in (hb.get("sumAuto") or "") and "±5°" in (hb.get("sumAuto") or "") and "MAX" in (hb.get("sumAuto") or "")
-      and hb.get("tag") == "ON", str(hb))
-check("AUTO page opens over PARAMETERS (back = PARAMETERS)", apg.get("open") is True and apg.get("hubOpen") is True
-      and int(apg["z"][0]) > int(apg["z"][1]) and R.get("autoback", {}).get("auto") is False
-      and R.get("autoback", {}).get("hub") is True, str(apg) + str(R.get("autoback")))
-check("AUTO page: 12 settings in three sections, the current value of each lit, every default marked",
-      apg.get("secs") == ["LEG 1 · CLIMB AND WATCH", "LINING UP · AFTER THE FIRST DETECTION", "LEG 2 · THE RUN"]
-      and apg.get("n", 0) >= 36 and len(apg.get("on", [])) == 12 and apg.get("dflt") == 12, str(apg))
-check("a tap sends autop=height:15; RESET sends autoreset=1",
-      R.get("autoset", {}).get("cmds") == ["autop=height:15", "autoreset=1"], str(R.get("autoset")))
+check("PARAMETERS: no sub-pages any more; the AUTO section carries the ON tag",
+      hb.get("heads") == ["AUTO", "SEMI-AUTO", "DETECTION"] and hb.get("cats") == 0 and hb.get("tag") == "ON" and hb.get("tagIn"), str(hb))
+check("a tap on AUTO opens it and closes SEMI-AUTO; SEMI-AUTO again swaps back; a second tap closes it",
+      apg.get("auto") and not apg.get("semi") and apg.get("exp") == "true"
+      and R.get("autoback", {}).get("semi") and not R.get("autoback", {}).get("auto")
+      and R.get("toggle", {}).get("semi") is False and R.get("toggle", {}).get("exp") == "false",
+      str(apg) + str(R.get("autoback")) + str(R.get("toggle")))
+check("AUTO section: the AUTO button, then 12 settings in three sections, each lit and its default marked, each with a SAVE chip",
+      apg.get("secs") == ["AUTO BUTTON", "LEG 1 · CLIMB AND WATCH", "LINING UP · AFTER THE FIRST DETECTION", "LEG 2 · THE RUN"]
+      and apg.get("n", 0) >= 36 and len(apg.get("on", [])) == 12 and apg.get("dflt") == 12 and apg.get("chips") == 12, str(apg))
+check("AUTO button (OFF) and SKY GATE (ON) are marked as fixed power-up values",
+      apg.get("autoenDef") == "off" and apg.get("skyDef") == "on", str(apg))
+check("a tap on the default value sends autop=height:15 and asks nothing; RESET sends autoreset=1 (factory = default: no question)",
+      sorted(R.get("autoset", {}).get("cmds") or []) == ["autop=height:15", "autoreset=1"]   # sent together: any order
+      and R.get("autoset", {}).get("ask") is False,
+      str(R.get("autoset")))
+aa, adf = R.get("autoask", {}), R.get("autodef", {})
+check("HEIGHT 20 m: asks to make it the default (default now 15 m); YES sends def=auto:height",
+      aa.get("ask") and aa.get("k") == "HEIGHT" and aa.get("v") == "20 m" and "15 m" in (aa.get("sub") or "")
+      and adf.get("cmds") == ["autop=height:20", "def=auto:height"] and adf.get("ask") is False, f"{aa} {adf}")
 check("link dead: the red cover shows", R.get("dead", {}).get("cover") is True)
 
 # ── the same page on a tablet and a desktop: one frame per screen size ─────

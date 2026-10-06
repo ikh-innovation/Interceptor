@@ -83,9 +83,10 @@
   .dial canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   .dial.off{opacity:.3}
   .dial.drag{border-color:var(--acc);box-shadow:0 0 0 3px rgba(255,122,0,.45)}
-  /* 4:3, the camera's true shape (mode 3, 1280x960).  The overlay maths is
-     proportional to the box, so it stays exact at any size. */
-  .vbox{position:relative;height:calc(100% - 52px);max-width:100%;aspect-ratio:4/3;border-radius:var(--r);overflow:hidden;
+  /* the camera's true shape: 4:3 at 30 fps (mode 3, 1280x960), 16:9 at 60 fps
+     (mode 4, 1280x720); paint() sets --ar from the Jetson.  The overlay maths
+     is proportional to the box, so it stays exact at any size. */
+  .vbox{position:relative;height:calc(100% - 52px);max-width:100%;aspect-ratio:var(--ar, 4 / 3);border-radius:var(--r);overflow:hidden;
         background:#000;border:1px solid var(--line);box-shadow:0 4px 16px rgba(16,19,23,.2)}
   .vbox img{width:100%;height:100%;display:block;object-fit:fill}
   /* the aim indication: a STRAIGHT dashed line across the frame, at the
@@ -201,8 +202,40 @@
   .grp .help{font:12.5px/1.35 var(--sans);color:var(--faint);margin:-3px 0 9px}
   .pcard{background:var(--bg2);border:1px solid var(--line);border-radius:16px;padding:14px 12px 2px;margin:0 0 14px}
   .pcard > .sec{margin:0 0 12px;color:var(--acc);font-weight:700}
-  .seg button .dflt{display:block;font:normal 9.5px/1 var(--sans);letter-spacing:.08em;color:var(--faint);margin-top:5px}
-  .seg button.on .dflt{color:var(--acc-ink)}
+  /* DEFAULT under the choice the Jetson powers up with (saved, or factory) */
+  .seg button.isdef::after{content:"DEFAULT";display:block;font:normal 9.5px/1 var(--sans);letter-spacing:.08em;
+                            color:var(--faint);margin-top:5px}
+  .seg button.on.isdef::after{color:var(--acc-ink)}
+  /* PARAMETERS: three big sections, SEMI-AUTO / AUTO / DETECTION; a tap opens
+     one and shows its settings under it (one open at a time) */
+  /* PARAMETERS in dark blue, not orange (operator, 2026-10-06): the accent
+     on this page and on its "make it the default?" question */
+  #sh_speed, #defask{--acc:#1f3b63;--acc-ink:#ffffff}
+  .acc{margin:0 0 10px}
+  .acch{position:relative;display:flex;align-items:center;gap:12px;width:100%;min-width:0;padding:14px 12px;border-radius:16px;
+        border:1px solid #cdd3da;background:#e2e6eb;color:var(--ink);text-align:left;box-shadow:0 1px 2px rgba(16,19,23,.06)}
+  .acch[aria-expanded="true"]{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset,0 2px 10px rgba(16,19,23,.10)}
+  .acch .pt-ico{flex:0 0 auto;width:46px;height:46px;border-radius:13px;display:flex;align-items:center;justify-content:center;
+        background:var(--ctl);color:#fff;font:700 18px/1 var(--sans)}
+  .acch .pt-ico svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .acch[data-acc="auto"] .pt-ico{background:var(--acc);color:var(--acc-ink)}
+  .acch .pt-txt{flex:1;min-width:0}
+  .acch b{display:block;font:700 16px/1.1 var(--sans);letter-spacing:.12em}
+  .acch small{display:block;font:12.5px/1.35 var(--sans);color:var(--dim);margin-top:5px;
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .acch .tag{flex:0 0 auto}
+  .acch .chev{flex:0 0 auto;color:var(--faint);font-size:24px;line-height:1;transition:transform .15s}
+  .acch[aria-expanded="true"] .chev{transform:rotate(90deg);color:var(--acc)}
+  .ppane{display:none;padding:10px 0 4px}.ppane.on{display:block}
+  /* tablet / desktop: one readable column, not settings stretched edge to edge */
+  #sh_speed > h3, #sh_speed > .body{width:100%;max-width:760px;margin-left:auto;margin-right:auto}
+  .grp .gh{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;min-height:22px}
+  .grp .gh .lbl{margin:0;color:var(--ink);font-weight:700}
+  .unsaved{display:none;flex:0 0 auto;border:1px solid var(--warn);background:#fff6dc;color:#6b4a00;border-radius:999px;
+           padding:5px 9px;font:700 10.5px/1 var(--sans);letter-spacing:.06em;white-space:nowrap}
+  .unsaved.on{display:inline-block}
+  .fixed{flex:0 0 auto;font:10.5px/1 var(--cond);letter-spacing:.1em;color:var(--faint);white-space:nowrap}
+
   .seg button:disabled{opacity:.45}
   .reset{display:block;width:100%;margin:4px 0 18px;padding:15px;border-radius:14px;border:1px dashed var(--faint);
          background:none;color:var(--dim);font:700 13px/1 var(--sans);letter-spacing:.12em}
@@ -263,6 +296,12 @@
   .ask button{display:block;width:100%;margin-top:10px;padding:16px;border-radius:12px;font:700 16px/1 var(--sans);letter-spacing:.1em}
   .ask .yes{border:0;background:var(--acc);color:var(--acc-ink);margin-top:18px}
   .ask .no{border:2px solid var(--ctl);background:#fff;color:var(--ink)}
+  /* the second pop-up: make the value just set the default?  Over PARAMETERS */
+  .defask{z-index:9}
+  .defask .dk{font:700 13px/1.2 var(--cond);letter-spacing:.14em;color:var(--faint);margin-top:14px}
+  .defask .deg{font:700 38px/1.1 var(--sans);margin:4px 0 8px}
+  .defask .sub{line-height:1.4}
+  .defask .yes{font-size:14.5px}.defask .no{font-size:14.5px}
   .cover{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;
          background:rgba(170,20,24,.95);color:#fff;z-index:9;text-align:center;padding:24px}
   .cover.on{display:flex}.cover b{font:700 26px/1.2 var(--sans);letter-spacing:.06em}.cover p{font-size:15px;max-width:22em;opacity:.92}
@@ -286,12 +325,12 @@
     .app{padding-left:10px;padding-right:10px}.tiles{gap:5px}
     .tile .v{font-size:11.5px}.tile .k{font-size:10px;letter-spacing:.06em}
   }
-  /* true 4:3 whatever the phone: the picture is as big as fits beside the
-     scroll, and the scroll is exactly as tall as the picture */
+  /* the true shape whatever the phone: the picture is as big as fits beside
+     the scroll, and the scroll is exactly as tall as the picture */
   @supports (width:1cqw){
     .vidwrap{container-type:size}
-    .vbox{height:auto;max-width:none;width:min(100cqw, (100cqh - 52px) * 4 / 3)}
-    .belt{width:min(100cqw, (100cqh - 52px) * 4 / 3)}
+    .vbox{height:auto;max-width:none;width:min(100cqw, (100cqh - 52px) * var(--ar, 4 / 3))}
+    .belt{width:min(100cqw, (100cqh - 52px) * var(--ar, 4 / 3))}
   }
   /* the pages (menu, parameters, messages, test) read as a centred column on
      anything wider than a phone, not rows stretched across a desktop */
@@ -423,7 +462,7 @@
 <div class="sheet" id="sh_menu">
   <h3><span>MENU</span><button data-close aria-label="close">&#x2715;</button></h3>
   <div class="body">
-    <button class="row" id="t_par"><div>PARAMETERS<small>Flight, ENGAGE, AUTO and detection settings</small></div><span>›</span></button>
+    <button class="row" id="t_par"><div>PARAMETERS<small>SEMI-AUTO and AUTO settings, detection</small></div><span>›</span></button>
     <button class="row" id="t_log"><div>MESSAGES<small>What the Jetson reports</small></div><span>›</span></button>
     <button class="row" id="t_test"><div>TEST<small>A pretend drone: try the buttons without flying</small></div><span>›</span></button>
     <div class="byline"><img src="/img/ikd-logo.svg" alt="IKnowHow Defence"><span>WASP INTERCEPTOR</span></div>
@@ -432,49 +471,73 @@
 <div class="sheet sub" id="sh_speed">
   <h3><span>PARAMETERS<small>APPLIED AT ONCE</small></span><button data-close aria-label="close">&#x2715;</button></h3>
   <div class="body">
-    <button class="cat" data-open="sh_p_flight"><span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v18M7 8l5-5 5 5M7 16l5 5 5-5"/></svg></span>
-      <div><b>FLIGHT</b><small id="sum_flight">height and turn speeds</small></div><span class="chev">›</span></button>
-    <button class="cat" data-open="sh_p_engage"><span class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg></span>
-      <div><b>ENGAGE</b><small id="sum_engage">push lean, AI, search time</small></div><span class="chev">›</span></button>
-    <button class="cat auto" data-open="sh_p_auto"><span class="ico">A</span>
-      <div><b>AUTO</b><small id="sum_auto">one button: up, find, line up, go</small></div><span class="tag" id="autotag">OFF</span><span class="chev">›</span></button>
-    <button class="cat" data-open="sh_p_det"><span class="ico"><svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
-      <div><b>DETECTION</b><small id="sum_det">sky gate, follower</small></div><span class="chev">›</span></button>
-  </div>
-</div>
-<div class="sheet sub sub2" id="sh_p_flight">
-  <h3><span>FLIGHT<small>THE ▲▼ ⟲⟳ PAD</small></span><button data-close aria-label="back">&#x2715;</button></h3>
-  <div class="body">
-    <div class="grp"><div class="lbl">▲▼ HEIGHT</div><div class="help">climb / descent while ▲ ▼ is held</div><div class="seg" data-g="vert"></div></div>
-    <div class="grp"><div class="lbl">⟲⟳ TURN</div><div class="help">turn rate while held · the size of one tap</div><div class="seg" data-g="yaw"></div></div>
-  </div>
-</div>
-<div class="sheet sub sub2" id="sh_p_engage">
-  <h3><span>ENGAGE<small>PUSH, THEN THE AI</small></span><button data-close aria-label="back">&#x2715;</button></h3>
-  <div class="body">
-    <div class="grp"><div class="lbl">PUSH — FORWARD LEAN</div><div class="help">the straight line after ENGAGE · less lean leaves the AI more to see</div><div class="seg" data-g="push"></div></div>
-    <div class="grp"><div class="lbl">AI — APPROACH SPEED</div><div class="help">how fast the AI flies at it · MAX is the fastest, best head-on</div><div class="seg" data-g="ai"></div></div>
-    <div class="grp"><div class="lbl">SEARCH</div><div class="help">after ENGAGE, how long PUSH looks for a target before the soft stop</div><div class="seg" data-g="search"></div></div>
-    <div class="phint">Sim, 960 runs each: <b>PUSH 20° + AI MEDIUM</b> hit most (77%). <b>AI MAX</b> is fastest and best against a drone coming straight at you.</div>
-  </div>
-</div>
-<div class="sheet sub sub2" id="sh_p_auto">
-  <h3><span>AUTO<small>UP · FIND · LINE UP · GO</small></span><button data-close aria-label="back">&#x2715;</button></h3>
-  <div class="body">
-    <div class="grp"><div class="lbl">AUTO BUTTON</div><div class="help">OFF at every power-up · OFF = the button above LOCK is greyed out</div><div class="seg" id="autoseg">
-      <button data-autoen="on">ON<i>usable</i></button><button data-autoen="off">OFF<i>greyed out</i></button></div></div>
-    <div id="autoparams"></div>
-    <button class="reset" id="autoreset">RESET AUTO SETTINGS TO DEFAULTS</button>
-    <div class="phint">Saved on the Jetson: they stay after a reboot. They cannot be changed while AUTO is flying.</div>
-  </div>
-</div>
-<div class="sheet sub sub2" id="sh_p_det">
-  <h3><span>DETECTION<small>WHAT COUNTS AS A TARGET</small></span><button data-close aria-label="back">&#x2715;</button></h3>
-  <div class="body">
-    <div class="grp"><div class="lbl">SKY GATE</div><div class="help">ignore detections over the ground</div><div class="seg" id="skyseg">
-      <button data-sky="on">ON<i>sky only</i></button><button data-sky="off">OFF<i>whole frame</i></button></div></div>
-    <div class="grp"><div class="lbl">FOLLOWER</div><div class="help">hold the target between detections</div><div class="seg" id="folseg">
-      <button data-fol="on">ON<i>detector + follower</i></button><button data-fol="off">OFF<i>detector only</i></button></div></div>
+    <section class="acc">
+      <button class="acch" id="ptab_auto" data-acc="auto" aria-expanded="false" aria-controls="pp_auto">
+        <span class="pt-ico">A</span>
+        <span class="pt-txt"><b>AUTO</b><small id="sum_auto">one button: find and go</small></span>
+        <span class="tag" id="autotag">OFF</span><span class="chev" aria-hidden="true">›</span></button>
+      <div class="ppane" id="pp_auto" role="region" aria-labelledby="ptab_auto">
+      <div class="pcard"><div class="sec">AUTO BUTTON</div>
+        <div class="grp"><div class="gh"><div class="lbl">AUTO</div><span class="fixed">OFF AT EVERY POWER-UP</span></div>
+          <div class="help">OFF = the AUTO button above LOCK is greyed out · never saved as a default, on purpose</div><div class="seg" id="autoseg">
+          <button data-autoen="on">ON<i>usable</i></button><button data-autoen="off">OFF<i>greyed out</i></button></div></div>
+      </div>
+      <div id="autoparams"></div>
+      <button class="reset" id="autoreset">RESET AUTO TO FACTORY SETTINGS</button>
+      <div class="phint">AUTO settings cannot be changed while AUTO is flying.</div>
+    
+      </div>
+    </section>
+    <section class="acc">
+      <button class="acch" id="ptab_semi" data-acc="semi" aria-expanded="false" aria-controls="pp_semi">
+        <span class="pt-ico"><svg viewBox="0 0 24 24"><path d="M12 4v16M4 12h16M8 8l4-4 4 4M8 16l4 4 4-4"/></svg></span>
+        <span class="pt-txt"><b>SEMI-AUTO</b><small id="sum_semi">you fly, then ENGAGE</small></span>
+        <span class="chev" aria-hidden="true">›</span></button>
+      <div class="ppane" id="pp_semi" role="region" aria-labelledby="ptab_semi">
+      <div class="pcard"><div class="sec">FLIGHT · THE ▲▼ ⟲⟳ PAD</div>
+        <div class="grp"><div class="gh"><div class="lbl">▲▼ HEIGHT SPEED</div><button class="unsaved" data-save="lvl:vert">THIS FLIGHT ONLY · SAVE</button></div>
+          <div class="help">climb / descent while ▲ ▼ is held</div><div class="seg" data-g="vert"></div></div>
+        <div class="grp"><div class="gh"><div class="lbl">⟲⟳ TURN SPEED</div><button class="unsaved" data-save="lvl:yaw">THIS FLIGHT ONLY · SAVE</button></div>
+          <div class="help">turn rate while held · the size of one tap</div><div class="seg" data-g="yaw"></div></div>
+      </div>
+      <div class="pcard"><div class="sec">ENGAGE · PUSH, THEN THE AI</div>
+        <div class="grp"><div class="gh"><div class="lbl">PUSH · FORWARD LEAN</div><button class="unsaved" data-save="lvl:push">THIS FLIGHT ONLY · SAVE</button></div>
+          <div class="help">the straight line after ENGAGE · less lean leaves the AI more to see</div><div class="seg" data-g="push"></div></div>
+        <div class="grp"><div class="gh"><div class="lbl">AI · APPROACH SPEED</div><button class="unsaved" data-save="lvl:ai">THIS FLIGHT ONLY · SAVE</button></div>
+          <div class="help">how fast the AI flies at it · MAX is the fastest</div><div class="seg" data-g="ai"></div></div>
+        <div class="grp"><div class="gh"><div class="lbl">SEARCH</div><button class="unsaved" data-save="lvl:search">THIS FLIGHT ONLY · SAVE</button></div>
+          <div class="help">after ENGAGE, how long PUSH looks for a target before the soft stop</div><div class="seg" data-g="search"></div></div>
+        <div class="phint">Sim, 960 runs each: <b>PUSH 20° + AI MEDIUM</b> hit most (77%). <b>AI MAX</b> is fastest and best against a drone coming straight at you.</div>
+      </div>
+    
+      </div>
+    </section>
+    <section class="acc">
+      <button class="acch" id="ptab_det" data-acc="det" aria-expanded="false" aria-controls="pp_det">
+        <span class="pt-ico"><svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
+        <span class="pt-txt"><b>DETECTION</b><small id="sum_det">sky gate, follower, camera</small></span>
+        <span class="chev" aria-hidden="true">›</span></button>
+      <div class="ppane" id="pp_det" role="region" aria-labelledby="ptab_det">
+      <div class="pcard"><div class="sec">BOTH MODES · WHAT COUNTS AS A TARGET</div>
+        <div class="grp"><div class="gh"><div class="lbl">SKY GATE</div><span class="fixed">ON AT EVERY POWER-UP</span></div>
+          <div class="help">ignore detections over the ground · never saved as a default, on purpose</div><div class="seg" id="skyseg">
+          <button data-sky="on">ON<i>sky only</i></button><button data-sky="off">OFF<i>whole frame</i></button></div></div>
+        <div class="grp"><div class="gh"><div class="lbl">FOLLOWER</div><button class="unsaved" data-save="det:follow">THIS FLIGHT ONLY · SAVE</button></div>
+          <div class="help">hold the target between detections</div><div class="seg" id="folseg">
+          <button data-fol="on">ON<i>detector + follower</i></button><button data-fol="off">OFF<i>detector only</i></button></div></div>
+      </div>
+      <div class="pcard"><div class="sec">CAMERA · FULL VIEW OR FRESHER FRAMES</div>
+        <div class="grp"><div class="gh"><div class="lbl">CAMERA</div><button class="unsaved" data-save="det:cam">THIS FLIGHT ONLY · SAVE</button></div>
+          <div class="help">60 fps: each frame up to 17 ms fresher, but only the centre of the picture · the AI
+            flies the same either way · not while ENGAGE or AUTO flies (dark a moment while it switches)</div><div class="seg" id="camseg">
+          <button data-cam="30">30 FPS<i>full view 62°×49°</i></button><button data-cam="60">60 FPS<i>narrow 50°×30°</i></button></div></div>
+        <div class="phint">At <b>60 fps</b> the picture is ±15° high, not ±24°: past ~25° of lean (PUSH / the straight line at
+          30° or 40°) a lined-up drone leaves the top of the picture. Use <b>PUSH 20°</b> and <b>line 20°</b> with it.</div>
+      </div>
+      </div>
+    </section>
+    <div class="phint"><b>DEFAULT</b> marks what the Jetson starts with after a power-up. After every change it asks whether
+      to make the new value the default; say no and it lasts until the next reboot.</div>
   </div>
 </div>
 <div class="sheet sub" id="sh_log">
@@ -491,6 +554,14 @@
     <p class="txt" id="t_simtxt"></p>
   </div>
 </div>
+<div class="ask defask" id="defask" role="dialog" aria-modal="true" aria-labelledby="defk"><div>
+  <div class="q">MAKE IT THE DEFAULT?</div>
+  <div class="dk" id="defk">--</div>
+  <div class="deg" id="defv">--</div>
+  <div class="sub" id="defsub"></div>
+  <button class="yes" id="def_yes">YES, MAKE IT THE DEFAULT</button>
+  <button class="no" id="def_no">ONLY THIS FLIGHT</button>
+</div></div>
 <div class="ask" id="ask"><div>
   <div class="q">LOCK AT</div>
   <div class="deg" id="ask_deg">---°</div>
@@ -514,9 +585,11 @@
   var C = rid();
   var VIEW = false;        // every phone may command (the controller lease still picks one)
 
-  var HFOV = 62.2, VFOV = 48.8, TILT = 30;
+  // the camera's view and shape: the Jetson's CAMERA mode (paint), 30 fps here
+  var HFOV = 62.2, VFOV = 48.8, TILT = 30, CAMAR = 4 / 3;
   var LEVELS = ["SLOW", "MEDIUM", "FAST"];
   var LAST = null, lastOk = 0, consoleSeq = 0, HDG = null, LOCKHDG = null;
+  var VAL = null;          // a speed level in words, per group (set by paint)
   // tablet / desktop: the controls live INSIDE the picture box (see the CSS);
   // the phone keeps them under it.  Moving the node keeps every handler.
   (function () {
@@ -745,20 +818,97 @@
         card.appendChild(h); box.appendChild(card); return;
       }
       var g = document.createElement("div"); g.className = "grp";
-      g.innerHTML = '<div class="lbl"></div><div class="help"></div><div class="seg"></div>';
-      g.firstChild.textContent = p.t; g.children[1].textContent = p.h;
+      g.innerHTML = '<div class="gh"><div class="lbl"></div><button class="unsaved">THIS FLIGHT ONLY · SAVE</button></div>'
+        + '<div class="help"></div><div class="seg"></div>';
+      g.querySelector(".lbl").textContent = p.t; g.querySelector(".help").textContent = p.h;
+      g.querySelector(".unsaved").setAttribute("data-save", "auto:" + p.k);
       p.c.forEach(function (v) {
         var b = document.createElement("button");
         b.setAttribute("data-ap", p.k); b.setAttribute("data-av", String(v));
         b.textContent = p.f(v);
-        if (v === p.d) { var i = document.createElement("span"); i.className = "dflt"; i.textContent = "DEFAULT"; b.appendChild(i); }
-        b.onclick = function () { cmd("autop=" + p.k + ":" + v); };
-        g.children[2].appendChild(b);
+        b.onclick = function () { setThen("autop=" + p.k + ":" + v, "auto:" + p.k, v); };
+        g.querySelector(".seg").appendChild(b);
       });
       card.appendChild(g);
     });
   })();
-  $("autoreset").onclick = function () { cmd("autoreset=1"); };
+  $("autoreset").onclick = function () { setThen("autoreset=1", "auto:*", null); };
+
+  // ── PARAMETERS: SEMI-AUTO / AUTO / DETECTION, a tap opens one ─────────
+  function openAcc(t) {                       // t = "semi" | "auto" | "det" | "" (all closed)
+    document.querySelectorAll("[data-acc]").forEach(function (b) {
+      var k = b.getAttribute("data-acc"), on = k === t;
+      b.setAttribute("aria-expanded", String(on));
+      $("pp_" + k).classList.toggle("on", on);
+    });
+    try { localStorage.setItem("wasp_pacc", t); } catch (e) {}
+  }
+  document.querySelectorAll("[data-acc]").forEach(function (b) {
+    b.onclick = function () {
+      var k = b.getAttribute("data-acc");
+      openAcc(b.getAttribute("aria-expanded") === "true" ? "" : k);   // a second tap closes it
+    };
+  });
+  try { var _pa = localStorage.getItem("wasp_pacc"); if (_pa === "semi" || _pa === "auto" || _pa === "det") openAcc(_pa); } catch (e) {}
+
+  // ── "make it the default?" after every change (operator, 2026-10-06) ───
+  // A change applies at once and lasts until the next reboot; YES saves it on
+  // the Jetson as what it powers up with (def=<what>).  Never in TEST, and
+  // never for the AUTO button or the SKY GATE (fixed at power-up).
+  var LV_WORDS = {vert: "▲▼ HEIGHT SPEED", yaw: "⟲⟳ TURN SPEED", push: "PUSH · FORWARD LEAN", ai: "AI · APPROACH SPEED", search: "SEARCH"};
+  function autoUi(k) { for (var i = 0; i < AUTO_UI.length; i++) if (AUTO_UI[i].k === k) return AUTO_UI[i]; return null; }
+  // [setting name, the value in words, the default (null = unknown)] for one setting
+  function words(what, v) {
+    var kind = what.split(":")[0], key = what.split(":")[1], m = (LAST && LAST.mission) || {};
+    if (kind === "lvl") {
+      var d = (m.level_defaults || {})[key];
+      var vw = function (L) { return L + (VAL && VAL[key] ? " · " + VAL[key](L) : ""); };
+      return [LV_WORDS[key] || key, vw(v), d === undefined ? null : vw(d), d === undefined ? null : d === v];
+    }
+    if (kind === "auto") {
+      var p = autoUi(key), d2 = (m.auto_defaults || {})[key];
+      return [p ? p.t : key, p ? p.f(v) : String(v), d2 === undefined ? null : (p ? p.f(d2) : String(d2)),
+              d2 === undefined ? null : String(d2) === String(v)];
+    }
+    if (key === "cam") {
+      var cd = LAST ? LAST.cam_default : undefined;
+      return ["CAMERA", v + " FPS", cd === undefined ? null : cd + " FPS", cd === undefined ? null : Number(cd) === Number(v)];
+    }
+    var fd = LAST ? LAST.follower_default : undefined;
+    return ["FOLLOWER", v ? "ON" : "OFF", fd === undefined ? null : (fd ? "ON" : "OFF"), fd === undefined ? null : !!fd === !!v];
+  }
+  var DEFQ = null;
+  function askDefault(what, v) {
+    if (SIM) return;
+    if (what === "auto:*") {
+      var m = (LAST && LAST.mission) || {}, ad = m.auto_defaults || {}, same = true;
+      AUTO_UI.forEach(function (p) { if (p.k && ad[p.k] !== undefined && String(ad[p.k]) !== String(p.d)) same = false; });
+      if (same) return;                          // the factory values already are the defaults
+      T("defk", "EVERY AUTO SETTING"); T("defv", "FACTORY");
+      T("defsub", "The Jetson starts AUTO with the factory settings after every power-up, instead of the ones saved before.");
+    } else {
+      var w = words(what, v);
+      if (w[3]) return;                          // already the default: nothing to ask
+      T("defk", w[0]); T("defv", w[1]);
+      T("defsub", "The Jetson starts with it after every power-up." + (w[2] ? " Default now: " + w[2] + "." : ""));
+    }
+    DEFQ = what;
+    $("defask").classList.add("on");
+  }
+  function closeDef() { DEFQ = null; $("defask").classList.remove("on"); }
+  $("def_yes").onclick = function () {
+    var what = DEFQ; closeDef();
+    if (what) cmd("def=" + what);              // the DEFAULT mark moves: that is the answer
+  };
+  $("def_no").onclick = closeDef;
+  // a change: send it; once the Jetson took it, ask about the default
+  function setThen(q, what, v) {
+    cmd(q).then(function (j) { if (j && !j.refused) askDefault(what, v); });
+  }
+  document.querySelectorAll("[data-save]").forEach(function (b) {
+    b.onclick = function () { cmd("def=" + b.getAttribute("data-save")); };
+  });
+
   $("t_log").onclick = function () { openSheet("sh_log"); };
   $("t_test").onclick = function () { openSheet("sh_test"); };
   document.querySelectorAll("[data-close]").forEach(function (b) {
@@ -769,7 +919,7 @@
     (g === "ai" ? LEVELS.concat(["MAX"]) : LEVELS).forEach(function (lv) {
       var b = document.createElement("button"); b.setAttribute("data-lv", lv);
       b.innerHTML = lv + "<i>&nbsp;</i>";
-      b.onclick = function () { cmd("lvl=" + g + ":" + lv); };
+      b.onclick = function () { setThen("lvl=" + g + ":" + lv, "lvl:" + g, lv); };
       seg.appendChild(b);
     });
   });
@@ -780,7 +930,16 @@
     b.onclick = function () { cmd("sky=" + b.getAttribute("data-sky")); };
   });
   document.querySelectorAll("[data-fol]").forEach(function (b) {
-    b.onclick = function () { cmd("follow=" + b.getAttribute("data-fol")); };
+    b.onclick = function () {
+      var on = b.getAttribute("data-fol") === "on";
+      setThen("follow=" + b.getAttribute("data-fol"), "det:follow", on);
+    };
+  });
+  document.querySelectorAll("[data-cam]").forEach(function (b) {
+    b.onclick = function () {
+      var fps = Number(b.getAttribute("data-cam"));
+      setThen("cam=" + fps, "det:cam", fps);
+    };
   });
 
   // ── TEST: during an AUTO run, which step it is on (words only here) ────
@@ -839,6 +998,16 @@
   function paint(j) {
     LAST = j;
     if (SIM && j.real_armed) { setSim(false); note("✗ the real drone armed: leaving TEST", true); return; }
+    // the camera's view and shape (the CAMERA switch): every overlay and the
+    // TEST picture are drawn in it, and the picture box takes its shape
+    var cH = Number(j.cam_hfov), cV = Number(j.cam_vfov), cA = Number(j.cam_aspect);
+    HFOV = cH > 0 ? cH : 62.2; VFOV = cV > 0 ? cV : 48.8;
+    var car = cA > 0 ? cA : 4 / 3;
+    if (Math.abs(car - CAMAR) > 1e-3) {
+      CAMAR = car;
+      if (Math.abs(car - 4 / 3) < 1e-3) document.documentElement.style.removeProperty("--ar");
+      else document.documentElement.style.setProperty("--ar", car.toFixed(4));
+    }
     if (!SIM) {
       $("t_sim").disabled = !!j.armed || VIEW;
       T("t_simtxt", j.armed ? "The drone is ARMED: disarm it to test." : "");
@@ -874,7 +1043,8 @@
     // Green = TensorRT at >= 20 fps; amber = slower; red = the PyTorch fallback.
     var trt = j.detector === "TensorRT", fps_ = j.fps || 0;
     T("c_ai_k", (j.detector || "Detector") + (j.lat_ms ? " · " + j.lat_ms + " ms" : ""));
-    S("c_ai", fmt(fps_, 0) + " fps", !trt ? "bad" : fps_ >= 20 ? "ok" : "warn");
+    S("c_ai", j.cam_busy ? "camera…" : fmt(fps_, 0) + " fps" + (Number(j.cam_fps) === 60 ? " · cam 60" : ""),
+      !trt ? "bad" : fps_ >= 20 ? "ok" : "warn");
     var ctl = j.control || "free";
 
     // which buttons can act right now (the server decides; this only mirrors it)
@@ -914,21 +1084,24 @@
     TILT = (j.tilt_deg !== undefined && j.tilt_deg !== null) ? j.tilt_deg : TILT;
     var push = (m.speeds && m.speeds.push) || 20;
     var aimEl = (ph === "PUSH" || ph === "AI" || ph === "STOP") ? 0 : -Math.min(push, 20);
+    // ...kept 4.4° inside the bottom of the picture, as the mission's own mark
+    // (mission.AUTO_AIM_EDGE_DEG): no change at 30 fps, -10.45° at 60 fps
+    aimEl = Math.max(aimEl, -Math.round((VFOV / 2 - 4.4) * 1000) / 1000);
     var ty = function (el) { return 50 - 50 * Math.tan(el * Math.PI / 180) / Math.tan(VFOV / 2 * Math.PI / 180); };
     var tx = function (az) { return 50 + 50 * Math.tan(az * Math.PI / 180) / Math.tan(HFOV / 2 * Math.PI / 180); };
     var aim = $("aim"); aim.style.left = "50%"; aim.style.top = ty(aimEl) + "%"; AIMY = ty(aimEl);
     // the aim line: straight, edge to edge, at the top of the (invisible)
     // aim circle.
-    var AIM_RY_ = 10 * 4 / 3, apex = Math.max(2, ty(aimEl) - AIM_RY_);
+    var AIM_RY_ = 10 * CAMAR, apex = Math.max(2, ty(aimEl) - AIM_RY_);
     var dArc = "M0," + apex.toFixed(2) + " L100," + apex.toFixed(2);
     $("arc_sh").setAttribute("d", dArc); $("arc_fg").setAttribute("d", dArc);
     var az = m.target_az_deg, el = m.target_el_deg, tg = $("tgt"), bd = $("badge");
     if (m.target_fresh && az !== null && el !== null) {
       tg.style.display = "block"; tg.style.left = tx(az) + "%"; tg.style.top = ty(el) + "%";
       // green = the target is inside the aim circle (not drawn any more: the
-      // aim line marks its top).  The circle is 20% of the frame WIDTH; the
-      // frame is 4:3, so in height-% its radius is 10*4/3.
-      var AIM_RX = 10, AIM_RY = 10 * 4 / 3, dx_s = tx(az) - 50, dy_s = ty(el) - ty(aimEl);
+      // aim line marks its top).  The circle is 20% of the frame WIDTH; in
+      // height-% its radius is 10 x the frame's shape (4:3 or 16:9).
+      var AIM_RX = 10, AIM_RY = 10 * CAMAR, dx_s = tx(az) - 50, dy_s = ty(el) - ty(aimEl);
       var dy = el - aimEl, good = (dx_s * dx_s) / (AIM_RX * AIM_RX) + (dy_s * dy_s) / (AIM_RY * AIM_RY) <= 1;
       aim.classList.toggle("good", good); $("arc").classList.toggle("good", good);
       bd.style.display = "block"; bd.className = "badge" + (good ? " good" : "");
@@ -956,19 +1129,33 @@
                  var D = {20: [19, 42, 69], 30: [28, 61, 97], 40: [39, 80, 125]}[sp.push] || [19, 42, 69];
                  return "~" + D[LEVELS.indexOf(L)] + " m"; },
                ai: function (L) { return {SLOW: "≈11 m/s ↑8", MEDIUM: "≈15 m/s ↑15", FAST: "≈16 m/s ↑25", MAX: "≈21 m/s ↑25"}[L]; }};
+    VAL = val;
     var ap = m.auto_params || {}, flying = inAuto || autoRun;
+    var ad = m.auto_defaults || {}, ld = m.level_defaults || {};
     document.querySelectorAll("[data-ap]").forEach(function (x) {
       var k = x.getAttribute("data-ap"), v = x.getAttribute("data-av");
       x.classList.toggle("on", ap[k] !== undefined && String(ap[k]) === v);
+      x.classList.toggle("isdef", ad[k] !== undefined && String(ad[k]) === v);
       x.disabled = flying;
     });
     $("autoreset").disabled = flying;
-    var spd = m.speeds || {};
-    T("sum_flight", spd.climb !== undefined ? "▲ " + spd.climb + " m/s · ▼ " + spd.descent + " m/s · turn " + spd.yaw + "°/s" : "height and turn speeds");
-    T("sum_engage", spd.push !== undefined ? "PUSH " + spd.push + "° · AI " + (lv.ai || "--") + " · search " + spd.search + " s" : "push lean, AI, search time");
-    T("sum_auto", ap.height !== undefined ? "up to " + ap.height + " m · line " + (ap.line ? ap.line + "°" : "= PUSH")
-      + " · AI " + (ap.ai === "SAME" ? "= AI" : ap.ai) + " · window ±" + ap.window + "°" : "one button: up, find, line up, go");
-    T("sum_det", "sky gate " + (j.sky_gate ? "ON" : "OFF") + " · follower " + (j.follower ? "ON" : "OFF"));
+    // THIS FLIGHT ONLY: the value set now is not what it powers up with
+    document.querySelectorAll("[data-save]").forEach(function (x) {
+      var w = x.getAttribute("data-save").split(":"), off = false;
+      if (w[0] === "auto") off = ad[w[1]] !== undefined && ap[w[1]] !== undefined && String(ad[w[1]]) !== String(ap[w[1]]);
+      else if (w[0] === "lvl") off = ld[w[1]] !== undefined && lv[w[1]] !== undefined && ld[w[1]] !== lv[w[1]];
+      else if (w[1] === "follow") off = !SIM && j.follower_default !== undefined && !!j.follower_default !== !!j.follower;
+      else if (w[1] === "cam") off = !SIM && j.cam_default !== undefined && j.cam_fps !== undefined
+        && Number(j.cam_default) !== Number(j.cam_fps);
+      x.classList.toggle("on", off && !SIM);
+    });
+    // what each closed section has set, in one line
+    var spx = m.speeds || {};
+    if (lv.vert) T("sum_semi", "▲▼ " + lv.vert + " · PUSH " + spx.push + "° · AI " + lv.ai + " · search " + spx.search + " s");
+    if (ap.height !== undefined) T("sum_auto", "up to " + ap.height + " m · line " + (ap.line ? ap.line + "°" : "= PUSH")
+      + " · AI " + (ap.ai === "SAME" ? "= AI" : ap.ai));
+    T("sum_det", "sky gate " + (j.sky_gate ? "ON" : "OFF") + " · follower " + (j.follower ? "ON" : "OFF")
+      + (j.cam_fps ? " · camera " + j.cam_fps + " fps" : ""));
     var tag = $("autotag"); tag.textContent = m.auto_enabled ? "ON" : "OFF"; tag.className = "tag" + (m.auto_enabled ? " on" : "");
     document.querySelectorAll("[data-autoen]").forEach(function (x) {
       x.classList.toggle("on", m.auto_enabled !== undefined && (x.getAttribute("data-autoen") === "on") === !!m.auto_enabled);
@@ -978,12 +1165,21 @@
     });
     document.querySelectorAll("[data-fol]").forEach(function (x) {
       x.classList.toggle("on", j.follower !== undefined && (x.getAttribute("data-fol") === "on") === !!j.follower);
+      x.classList.toggle("isdef", j.follower_default !== undefined && (x.getAttribute("data-fol") === "on") === !!j.follower_default);
     });
+    document.querySelectorAll("[data-cam]").forEach(function (x) {
+      var f = Number(x.getAttribute("data-cam"));
+      x.classList.toggle("on", Number(j.cam_fps || 30) === f);
+      x.classList.toggle("isdef", Number(j.cam_default || 30) === f);
+      x.disabled = !!j.cam_busy;
+    });
+    document.querySelectorAll("[data-sky=on], [data-autoen=off]").forEach(function (x) { x.classList.add("isdef"); });
     document.querySelectorAll(".seg[data-g]").forEach(function (seg) {
       var g = seg.getAttribute("data-g");
       seg.querySelectorAll("button").forEach(function (b) {
         var L = b.getAttribute("data-lv");
         b.classList.toggle("on", lv[g] === L);
+        b.classList.toggle("isdef", ld[g] === L);
         b.querySelector("i").textContent = val[g](L);
         if (g === "search") b.firstChild.textContent = {SLOW: "4 s", MEDIUM: "6 s", FAST: "8 s"}[L];
       });
@@ -1307,7 +1503,7 @@
     else hdgDisp = wrap(hdgDisp + adiff(HDG, hdgDisp) * (1 - Math.exp(-dt / 0.12)));
     var dpr = window.devicePixelRatio || 1, w = tape.clientWidth, h = tape.clientHeight;
     // redraw only when something moved: an idle tape costs the phone nothing
-    var key = (hdgDisp === null ? "n" : hdgDisp.toFixed(2)) + "|" + w + "|" + h + "|" + dpr + "|" + LOCKHDG + "|" + SEL;
+    var key = (hdgDisp === null ? "n" : hdgDisp.toFixed(2)) + "|" + w + "|" + h + "|" + dpr + "|" + LOCKHDG + "|" + SEL + "|" + HFOV;
     if (key === lastKey) return;
     lastKey = key;
     if (tape.width !== Math.round(w * dpr) || tape.height !== Math.round(h * dpr)) {

@@ -162,36 +162,124 @@ def stop_distance(v, accel, jerk, ramp_s):
     return 0.5 * v * ramp_s + 0.5 * v * t
 
 
-# The AUTO settings survive a reboot here (one small JSON).  Not the levels or
-# AUTO ON / OFF: those start MEDIUM / OFF every power-up on purpose.
-AUTO_FILE = os.path.expanduser("~/.config/wasp/auto.json")
+# What the Jetson powers up with: a change on the phone applies at once, and
+# the phone then asks whether to make it the DEFAULT (operator, 2026-10-06).
+# Only a YES writes here, one small JSON per kind.  Two switches are never
+# saved, on purpose: AUTO ON / OFF starts OFF (a mode that climbs and attacks
+# on its own is a choice made that session) and the SKY GATE starts ON (off,
+# detections over the ground count as targets).
+CONF_DIR = os.path.expanduser("~/.config/wasp")
+AUTO_FILE = os.path.join(CONF_DIR, "auto.json")
+LEVELS_FILE = os.path.join(CONF_DIR, "levels.json")
+DETECT_FILE = os.path.join(CONF_DIR, "detection.json")
+# what each saved detection setting is (the sky gate is not in it, see above);
+# "cam" is the CAMERA switch, 30 or 60 fps (the tracker checks the value)
+DETECT_SAVED = {"follow": bool, "cam": int}
 
 
-def save_auto_params(m, path=AUTO_FILE):
+def _read_json(path):
+    try:
+        with open(path) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def _write_json(path, d):
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = path + ".tmp"
         with open(tmp, "w") as f:
-            json.dump(m.auto_params(), f, indent=1)
+            json.dump(d, f, indent=1)
         os.replace(tmp, path)
         return True
     except OSError:
         return False
 
 
+def save_auto_params(m, path=AUTO_FILE):
+    """Every AUTO setting as it is now, as the power-up default."""
+    if not _write_json(path, m.auto_params()):
+        return False
+    m.auto_defaults = m.auto_params()
+    return True
+
+
 def load_auto_params(m, path=AUTO_FILE):
     """Apply what was saved; a bad or unknown entry is skipped, never fatal.
-    Returns {setting: value} actually applied."""
-    try:
-        with open(path) as f:
-            saved = json.load(f)
-    except (OSError, ValueError):
-        return {}
+    Returns {setting: value} actually applied.  The factory values with the
+    saved ones on top are what the phone marks as DEFAULT."""
     done = {}
-    for k, v in (saved.items() if isinstance(saved, dict) else ()):
+    for k, v in _read_json(path).items():
         if m.set_auto_param(k, v) == "":
             done[k] = v
+    now = m.auto_params()
+    m.auto_defaults = {k: getattr(type(m), attrs[0]) for k, attrs, _c in m.AUTO_SETTINGS}
+    m.auto_defaults.update({k: now[k] for k in done})
     return done
+
+
+def load_levels(m, path=LEVELS_FILE):
+    """The speed levels saved as defaults (FLIGHT and ENGAGE on the phone).
+    Without a saved file every level starts MEDIUM, as before."""
+    done = {}
+    for g, lv in _read_json(path).items():
+        if m.set_level(str(g), str(lv).strip().upper()) == "":
+            done[g] = lv
+    m.level_defaults = {g: "MEDIUM" for g in GROUPS}
+    m.level_defaults.update({g: m.level[g] for g in done})
+    return done
+
+
+def load_detection_defaults(path=DETECT_FILE):
+    """{"follow": bool, "cam": int}, whichever were saved, else {}."""
+    out = {}
+    for k, v in _read_json(path).items():
+        if k in DETECT_SAVED:
+            try:
+                out[k] = DETECT_SAVED[k](v)
+            except (TypeError, ValueError):
+                pass                    # a bad entry is skipped, never fatal
+    return out
+
+
+def save_detection_default(key, on, path=DETECT_FILE):
+    if key not in DETECT_SAVED:
+        return "the SKY GATE always starts ON: it is not saved"
+    d = _read_json(path)
+    d[key] = DETECT_SAVED[key](on)
+    return "" if _write_json(path, d) else "could not save on the Jetson"
+
+
+def save_default(m, what, auto_path=AUTO_FILE, levels_path=LEVELS_FILE):
+    """The phone's YES to 'make it the default': the CURRENT value of one
+    setting becomes what the Jetson powers up with.  what = 'auto:<key>',
+    'auto:*' (every AUTO setting, after RESET) or 'lvl:<group>'.  Detection
+    ('det:<key>') is the tracker's.  Returns '' or a refusal."""
+    kind, _, key = str(what).partition(":")
+    key = key.strip().lower()
+    if kind == "auto":
+        cur = m.auto_params()
+        keys = list(cur) if key == "*" else [key]
+        if any(k not in cur for k in keys):
+            return "unknown AUTO setting"
+        d = _read_json(auto_path)
+        d.update({k: cur[k] for k in keys})
+        if not _write_json(auto_path, d):
+            return "could not save on the Jetson"
+        m.auto_defaults.update({k: cur[k] for k in keys})
+        return ""
+    if kind == "lvl":
+        if key not in GROUPS:
+            return "unknown setting"
+        d = _read_json(levels_path)
+        d[key] = m.level[key]
+        if not _write_json(levels_path, d):
+            return "could not save on the Jetson"
+        m.level_defaults[key] = m.level[key]
+        return ""
+    return "unknown setting"
 
 
 def phone_command(m, key, value, now):
@@ -443,6 +531,10 @@ class Mission:
         # PUSH 30 deg, AI MEDIUM, search 6 s -- the best in the field
         # (operator, 2026-09-30).  The sims use the same defaults.
         self.level = {g: "MEDIUM" for g in GROUPS}
+        # What it powers up with (the phone marks it DEFAULT): these until
+        # load_levels / load_auto_params read what the operator saved.
+        self.level_defaults = dict(self.level)
+        self.auto_defaults = self.auto_params()
 
         self.phase = "PILOT"
         self.phase_t = 0.0
@@ -936,10 +1028,19 @@ class Mission:
         self.refusal = why
 
     # ── AUTO ───────────────────────────────────────────────────────────────
+    # The aim mark stays at least this far inside the bottom of the picture.
+    # At 30 fps (+/-24.4 deg) the -20 deg mark is 4.4 deg in, so nothing moves;
+    # the 60 fps camera sees only +/-14.85 deg, where -20 is below the picture
+    # and no target could ever be lined up: the mark comes up to -10.45 deg.
+    AUTO_AIM_EDGE_DEG = 4.4
+
     def auto_aim_el(self):
         """Camera elevation, deg, where ALIGN puts the target (the phone's aim
-        mark): centred in the frame once the line's lean is on."""
-        return -min(self.line_deg(), 20.0)
+        mark): centred in the frame once the line's lean is on, as far as the
+        camera's picture (the mapper's V_FOV, the camera mode's) reaches."""
+        vf = getattr(self.mapper, "V_FOV", None)
+        low = round((math.degrees(vf) / 2.0 if vf else 24.4) - self.AUTO_AIM_EDGE_DEG, 3)
+        return max(-min(self.line_deg(), 20.0), -low)
 
     def _start_auto(self, now, ctx):
         att, height = ctx.get("att"), ctx.get("height")
@@ -1322,6 +1423,8 @@ class Mission:
             auto_enabled=bool(self.auto_enabled),
             auto_run=bool(self.auto_run),
             auto_params=self.auto_params(),
+            auto_defaults=dict(self.auto_defaults),
+            level_defaults=dict(self.level_defaults),
             ai_now=self.ai_level_now(),
             line_deg=self.line_deg(),
             auto_height_m=self.AUTO_HEIGHT_M,
