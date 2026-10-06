@@ -22,7 +22,7 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-WorkingDirectory=/home/iknowhow/Documents/Interceptor/src
+WorkingDirectory=/home/iknowhow/Documents/Interceptor-1/src
 
 # Every environment decision (camera tilt, commit channel, gains, offline
 # model cache, X display) lives in start-wasp.sh so there is exactly ONE
@@ -53,7 +53,7 @@ WorkingDirectory=/home/iknowhow/Documents/Interceptor/src
 ExecStartPre=/bin/sleep 15
 
 # The launcher is a plain bash script: edit it, not this unit.
-ExecStart=/home/iknowhow/Documents/Interceptor/src/start-wasp.sh
+ExecStart=/home/iknowhow/Documents/Interceptor-1/src/start-wasp.sh
 
 # Boot failures are invisible without this: the user journal is not
 # persistent on this Jetson, so keep our own rolling log.

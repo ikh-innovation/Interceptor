@@ -6,7 +6,7 @@
 # is the manual way in: it asks you to confirm the camera is physically at
 # 30 deg before anything starts.
 #
-#     ~/Documents/Interceptor/src/start-wasp-sky.sh
+#     ~/Documents/Interceptor-1/src/start-wasp-sky.sh
 #
 # Back to the boot service:  systemctl --user start wasp-tracker
 # Watch the boot service:    tail -f ~/wasp-logs/wasp-tracker.log
@@ -26,10 +26,10 @@
 # near-vertical intercept is not in this law.  Do not expect one.
 
 set -u
-cd /home/iknowhow/Documents/Interceptor/src || exit 1
+cd /home/iknowhow/Documents/Interceptor-1/src || exit 1
 
 # Same venv as start-wasp.sh — see the note there.
-export PATH=/home/iknowhow/Documents/Interceptor/.env/yolo/bin:$PATH
+export PATH=/home/iknowhow/Documents/Interceptor-1/.env/yolo/bin:$PATH
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. CAMERA TILT — A HARDWARE FACT, NOT A PREFERENCE.
