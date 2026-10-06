@@ -2,11 +2,10 @@
 
 WASP runs on an NVIDIA Jetson mounted on a multirotor. It watches a forward camera, detects a target with YOLO, and flies the drone into it. It sends stick commands to an ArduPilot flight controller over MAVLink.
 
-It can chase two kinds of target:
+It has one mode:
 
 | Mode | Target | Camera mount | Detector |
 |---|---|---|---|
-| `human` | a person's head/face on the ground | 10° up | `iitolstykh/YOLO-Face-Person-Detector` (HuggingFace, cached) |
 | `sky` | another drone in the air, above | 30° up | local single-class model, `runs/detect/v0/weights/best.pt` |
 
 The airframe has no GPS. Guidance uses only the camera image, the flight controller's attitude and its barometric altitude.
@@ -147,7 +146,7 @@ The page layout on a phone, top to bottom:
   - The ▲▼⟲⟳ pad sits at the left. A held button turns orange, and pulses while the Jetson is accepting its keepalives, so you can see the drone is being told. It turns red if the command is refused.
   - On the right, one above the other, are **LOCK** (white; an orange ring and the heading when on) and **ENGAGE** (red), 74 px round.
 
-The target is always a drone; there is no in-air HUMAN/DRONE switch. The Ubuntu typeface is served from `src/fonts/` by the Jetson itself, since the field has no internet. So is the IKnowHow Defence logo (`src/img/ikd-logo.svg`, at `/img/ikd-logo.svg`). It sits at the right end of the top line, and is also the browser-tab icon and the sign-off at the bottom of the MENU page.
+The target is always a drone. The Ubuntu typeface is served from `src/fonts/` by the Jetson itself, since the field has no internet. So is the IKnowHow Defence logo (`src/img/ikd-logo.svg`, at `/img/ikd-logo.svg`). It sits at the right end of the top line, and is also the browser-tab icon and the sign-off at the bottom of the MENU page.
 
 There is **no PIN**: any phone on the field WiFi can command, one at a time (the controller lease). The field WiFi is the only gate, so keep it private. Frames are JPEG-encoded only while someone is watching.
 
@@ -179,7 +178,6 @@ src/
   tests/              offline simulations, fake FC, bench diagnostics
   data/               run logs, videos, CSVs (generated)
 runs/detect/          sky-detector training run and weights
-docs/                 non-technical explainer (Greek)
 *.pt / *.engine / *.onnx   model weights
 ```
 
@@ -191,10 +189,10 @@ On a new Jetson, open Claude Code in the repo and have it follow **[INSTALL_PROM
 Python dependencies live in the virtualenv `.env/yolo`. It must see the system site-packages so that JetPack's GStreamer OpenCV and TensorRT are available. It needs:
 
 - `torch` (CUDA build — the CPU build runs but gives ~0.3 fps)
-- `ultralytics`, `huggingface_hub`, `numpy`
+- `ultralytics`, `numpy`
 - `pymavlink`, `pyserial`
 
-The field has no internet. Download the face detector into the HuggingFace cache once, while online. The launchers set `HF_HUB_OFFLINE=1` and `YOLO_AUTOINSTALL=false`.
+The field has no internet. The sky weights are in the repo, and the launchers set `YOLO_AUTOINSTALL=false` so ultralytics never tries pip at boot.
 
 Enable auto-start at power-up:
 
@@ -210,7 +208,7 @@ Starting the service does **not** give the AI control. It waits, idle, until the
 Edit **`src/flight_config.py`** and reboot:
 
 ```python
-MODE = "sky"            # or "human"
+MODE = "sky"            # the only mode
 MOUNT_TILT_DEG = 30     # the camera's REAL measured angle
 TARGET_WIDTH_M = None   # real target width in metres (drives range + terminal freeze)
 MAX_LEAN_DEG = None     # None = mode default; moves together with ROLL_PN_GAIN

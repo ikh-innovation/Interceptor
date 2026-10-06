@@ -1,26 +1,21 @@
 #!/usr/bin/env bash
-# WASP — SKY TARGET launcher (on demand, NOT the boot default).
+# WASP — SKY TARGET launcher, by hand, with a mount-tilt confirmation.
 #
-# The boot default is start-wasp.sh: head tracking, camera at 10 deg, and that
-# is what the systemd unit runs at power-up.  This script is the other mode —
-# an airborne target ABOVE the airframe — and it is deliberately manual,
-# because it needs the camera physically re-mounted first.
+# The boot default is start-wasp.sh, which flies the same sky mode from
+# flight_config.py and is what the systemd unit runs at power-up.  This script
+# is the manual way in: it asks you to confirm the camera is physically at
+# 30 deg before anything starts.
 #
 #     ~/Documents/Interceptor/src/start-wasp-sky.sh
 #
-# Back to head tracking:  systemctl --user start wasp-tracker
-# Watch:                  tail -f ~/wasp-logs/wasp-tracker.log   (head mode)
-# Stop either one:        Ctrl-C, or q in the window
+# Back to the boot service:  systemctl --user start wasp-tracker
+# Watch the boot service:    tail -f ~/wasp-logs/wasp-tracker.log
+# Stop this one:             Ctrl-C, or q in the window
 #
-# WHAT MAKES THIS DIFFERENT FROM HEAD MODE — measured in the closed-loop sim
-# (tests/test_intercept.py), target hovering above the launch point:
+# Measured in the closed-loop sim (tests/test_intercept.py), target hovering
+# above the launch point: camera tilt 30, climb 6.0 m/s closes to ~35 deg.
 #
-#   camera tilt 10, climb 2.5 m/s  (head mode):  hits to 23 deg, then falls off
-#                                                a cliff — 31 deg misses by 11 m,
-#                                                43 deg is 0% in frame.
-#   camera tilt 30, climb 6.0 m/s  (this mode):  hits to ~35 deg.
-#
-# BOTH changes are needed and neither is sufficient alone: at tilt 30 with the
+# Both the 30 deg tilt and the faster climb are needed: at tilt 30 with the
 # stock 2.5 m/s climb the target is 94% in frame and it STILL misses by 5.9 m,
 # because the airframe flies forward at ~11 m/s and can only climb at 2.25 —
 # an 11 deg climb angle.  It goes underneath.
@@ -46,17 +41,16 @@ export CAM_TILT_DEG=${CAM_TILT_DEG:-30}
 
 # 2. TARGET WIDTH, METRES — the target's REAL width, not its apparent size.
 #    Range is focal_px * this / bbox_px, so it is what turns pixels into metres:
-#    it drives the range readout AND the terminal freeze.  0.20 is a human FACE
-#    and is wrong here.  MEASURE the drone motor-tip to motor-tip and set it.
+#    it drives the range readout AND the terminal freeze.  MEASURE the drone motor-tip to motor-tip and set it.
 #    0.30 is a placeholder for a 7-inch quad, i.e. an assumption.
 export TARGET_WIDTH_M=${TARGET_WIDTH_M:-0.30}
 
-# 3. COMMIT / ABORT CHANNEL — same as head mode.  0 = none wired, so lean is
+# 3. COMMIT / ABORT CHANNEL.  0 = none wired, so lean is
 #    pinned at 100% whenever a target is locked and the mode switch is the only
 #    abort (~1 s at heartbeat rate).
 export COMMIT_CHAN=${COMMIT_CHAN:-0}
 
-# 4. Lean and turn gain, kept at head mode's gentle pair.  These two ALWAYS
+# 4. Lean and turn gain, a gentle pair.  These two ALWAYS
 #    move together (gain ~= 3 x cruise speed) — raising the lean alone makes it
 #    trail.  Left gentle on purpose: this mode has never been flown.
 export MAX_LEAN_DEG=${MAX_LEAN_DEG:-12}
@@ -67,9 +61,7 @@ export ROLL_PN_GAIN=${ROLL_PN_GAIN:-35}
 export DISPLAY=:0
 export XAUTHORITY=/run/user/1000/gdm/Xauthority
 
-# No WiFi in the field: model from cache, and ultralytics must not run pip.
-export HF_HUB_OFFLINE=1
-export HF_HUB_DISABLE_TELEMETRY=1
+# No WiFi in the field: ultralytics must not run pip.
 export YOLO_AUTOINSTALL=false
 
 echo "=========================================================================="
@@ -90,18 +82,18 @@ echo "==========================================================================
 # "device reports readiness to read but returned no data", which reads like a
 # cable fault and is not one.  Take the port cleanly instead.
 if systemctl --user is-active --quiet wasp-tracker; then
-    echo "[sky] head-tracking service is running and owns the FC port — stopping it."
+    echo "[sky] the boot service is running and owns the FC port — stopping it."
     systemctl --user stop wasp-tracker
     for _ in $(seq 20); do
         systemctl --user is-active --quiet wasp-tracker || break
         sleep 0.5
     done
-    echo "[sky] stopped.  Head mode returns on reboot, or:"
+    echo "[sky] stopped.  It returns on reboot, or:"
     echo "      systemctl --user start wasp-tracker"
 fi
 
 # THE MOUNT CHECK.  This is the one failure that hides: a wrong tilt does not
-# error, it just flies wrong forever.  Confirm it out loud when a human is here.
+# error, it just flies wrong forever.  Confirm it out loud when an operator is here.
 if [ "${SKY_TILT_OK:-0}" != "1" ]; then
     if [ -t 0 ]; then
         echo

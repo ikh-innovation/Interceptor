@@ -301,7 +301,7 @@ check("light theme: light-grey page; controls, heading bar and height box a neut
       f"{b.get('bodyBg')} / {b.get('btnBg')} / {b.get('dialBg')} / {b.get('hbBg')}")
 check("no pure black left in the page's styles (the video's own background aside)",
       b"#15181c" not in PAGE and b"#101317" not in PAGE and PAGE.count(b"#000") == 1)
-check("no HUMAN/DRONE target button (always DRONE)", b.get("tgtbtn") is False)
+check("no target-type button (always DRONE)", b.get("tgtbtn") is False)
 check("the pad sits at the left edge, the buttons at the right edge (inside their 8 px plate)",
       b.get("padL", 99) <= 16 and b.get("engR", 0) >= 390 - 24, f"pad left {b.get('padL')}, ENGAGE right {b.get('engR')}")
 tp, t3 = R.get("tape", {}), R.get("tape352", {})

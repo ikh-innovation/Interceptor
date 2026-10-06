@@ -25,7 +25,7 @@ import numpy as np                                                 # noqa: E402
 from fc_control import InterceptLaw                                # noqa: E402
 
 with contextlib.redirect_stdout(io.StringIO()):
-    import test_intercept as T                                     # noqa: E402
+    import sim_model as T                                     # noqa: E402
 
 FAILED = []
 

@@ -5,10 +5,7 @@ Edit this, reboot, and the Jetson comes up in the mode you chose.  It is read
 by start-wasp.sh, which is what the systemd unit runs, so there is exactly one
 place to change and nothing else to remember.
 
-    MODE = "human"   ->  head tracking      (camera mount at 10 deg)
     MODE = "sky"     ->  airborne target    (camera mount at 30 deg)
-
-Pick ONE below by commenting out the other.
 
     python3 flight_config.py            show the active mode and check it
     python3 flight_config.py --shell    emit the env for start-wasp.sh
@@ -20,19 +17,16 @@ elevation it computes, so a number here that disagrees with the real mount
 flies the airframe high or low by exactly that error, consistently, forever,
 with nothing in the log to say why.  It never errors — it just flies wrong.
 
-At the bench a human can be asked.  At power-up nobody is there.  So the
+At the bench an operator can be asked.  At power-up nobody is there.  So the
 physical angle is declared ONCE, in MOUNT_TILT_DEG below, and a mode whose
 required tilt does not match it REFUSES TO START.  Changing the mode without
 touching the mount is meant to be loud, not silent.
 """
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 1. THE MODE.  Comment out the one you are NOT flying.
-#    (If you leave both uncommented, the LAST one wins — Python is just
-#    assigning a variable twice.  Comment one out properly.)
+# 1. THE MODE.  "sky" is the only mode.
 # ═════════════════════════════════════════════════════════════════════════════
 
-# MODE = "human"          # head tracking — needs the mount at 10 deg
 MODE = "sky"        # drone in the sky — needs the mount at 30 deg
 
 
@@ -74,36 +68,6 @@ COMMIT_CHAN = 0
 # ═════════════════════════════════════════════════════════════════════════════
 
 MODES = {
-    "human": {
-        "label": "HEAD TRACKING (human face)",
-        "cam_tilt_deg": 10,
-        "target_width_m": 0.20,        # a human face
-        "max_lean_deg": 12,
-        "roll_pn_gain": 35,
-        "band": "-26 .. +22 deg at 12 deg lean  (sees the ground)",
-        # None = the HuggingFace face/person detector, pulled from the cache.
-        "model": None,
-        "target_class": "",            # "" = auto (the 'face' class)
-        # NO range schedule here.  This is the scored scenario, and section 9 of
-        # tests/test_intercept.py stops hitting the close-range zigzag the
-        # moment the far-field bank ceiling is tightened: a human face fills so
-        # little of the frame that the schedule reads "far" for the whole
-        # engagement and never hands the authority back.  Bit-for-bit the
-        # behaviour that was measured.
-        "climb_gain": 8,
-        "stick_limit_throttle": 0.90,
-        "lean_el_guard": 0.0,
-        # Human mode keeps the measured behaviour: no LOS climb, no guard.
-        "climb_los": False,
-        "edge_guard": 0.0,
-        "bank_far_deg": None,
-        "sens_default": 0.5,
-        "sens_mode": "STANDARD",
-        "speed_mode": "SLOW",
-        "pn_near_mult": 1.0,
-        "lock_ramp_s": 0.0,
-        "note": "Scored and flown.  Closes on a level target.",
-    },
     "sky": {
         "label": "AIRBORNE TARGET (drone above)",
         "cam_tilt_deg": 30,
@@ -117,7 +81,7 @@ MODES = {
         # the repo root, resolved to an absolute path below, because tracker.py
         # runs with its cwd in src/ and a relative path would miss by one level.
         "model": "runs/detect/v0/weights/best.pt",
-        # That model is single-class and calls its class '0', not 'face'.
+        # That model is single-class and calls its class '0'.
         "target_class": "",            # "" = auto: the only class there is
         # THE RANGE SCHEDULE, and it is on only here.  A drone in the sky is
         # acquired at long range, where the LOS rate is mostly bbox jitter and
@@ -286,8 +250,7 @@ def as_shell(cfg):
         f"CLIMB_GAIN={cfg.get('climb_gain', 8)}",
         f"STICK_LIMIT_THROTTLE={cfg.get('stick_limit_throttle', 0.90)}",
         f"LEAN_EL_GUARD={cfg.get('lean_el_guard', 0.0)}",
-        # The dashboard's named steering modes and the two target widths, so
-        # switching target type in the air also switches the range scale.
+        # The dashboard's named steering modes and the target width.
         f"WASP_MODE_SPEED={cfg.get('speed_mode', 'MEDIUM')}",
         f"CLIMB_LOS={1 if cfg.get('climb_los') else 0}",
         f"EDGE_GUARD={cfg.get('edge_guard', 0.0)}",
@@ -299,10 +262,9 @@ def as_shell(cfg):
         # The dashboard SPEED profile owns climb_gain and max_lean at run
         # time, so CLIMB_GAIN / MAX_LEAN_DEG above are only the values the
         # law is built with before the profile is applied at startup.
-        f"TARGET_WIDTH_HUMAN={MODES['human']['target_width_m']}",
         f"TARGET_WIDTH_DRONE={TARGET_WIDTH_M if TARGET_WIDTH_M is not None else MODES['sky']['target_width_m']}",
-        # Empty is meaningful: it tells tracker.py to fall back to the Hub
-        # model / auto class rather than inheriting a stale export.
+        # Empty TARGET_CLASS is meaningful: it tells tracker.py to auto-pick
+        # the class rather than inheriting a stale export.
         f"WASP_MODEL={cfg.get('model') or ''}",
         f"TARGET_CLASS={cfg.get('target_class') or ''}",
     ])
@@ -350,5 +312,5 @@ if __name__ == "__main__":
             print(f"  sensitivity   : {cfg['sens_default']} at start "
                   f"(live on the HUD slider)  lock ramp "
                   f"{cfg['lock_ramp_s']}s")
-        print(f"  weights       : {cfg.get('model') or 'HuggingFace face detector (cached)'}")
+        print(f"  weights       : {cfg['model']}")
         print(f"  note          : {cfg['note']}")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-command launcher for the WASP head tracker.
+"""One-command launcher for the WASP drone tracker.
 
 The single entry point.  Everything the tracker needs — interpreter, gains, FC
 discovery, firmware identification, transport, display — is decided here so that
@@ -34,8 +34,7 @@ TWO PRESETS, because there are two different control problems:
   --intercept  (DEFAULT)  free flight.  Proportional navigation on ALL FOUR
                channels in ALT_HOLD: yaw aims the seeker, ROLL banks to turn the
                velocity vector, pitch sets closing speed, THROTTLE closes the
-               vertical.  This is the one that chases a person running across a
-               field.
+               vertical.  This is the free-flight law.
   --gimbal     the bring-up rig.  yaw+pitch body rates in ACRO, nulling pixel
                error on an airframe bolted to a gimbal that cannot translate.
 
@@ -138,7 +137,7 @@ YOLO_PY    = _find_yolo_py()
 TRACKER    = HERE / "tracker.py"
 MP_EXE     = HOME / "MissionPlanner/MissionPlanner.exe"
 MAVPROXY   = HOME / ".local/bin/mavproxy.py"
-FT_DIR     = HOME / "face_tracker"                     # logs + mavproxy state
+FT_DIR     = HOME / "wasp_tracker"                     # logs + mavproxy state
 LOG_DIR    = FT_DIR / "logs"
 STATE_DIR  = FT_DIR / "mavproxy-state"
 
@@ -243,7 +242,7 @@ GIMBAL = {
 }
 
 # ── the free-flight preset ────────────────────────────────────────────────────
-# INTERCEPT.  This is the one that chases a person running across a field, and it
+# INTERCEPT.  The free-flight law, and it
 # is a different control problem from the gimbal, not a retune of it.
 #
 # The gimbal preset above points the camera. That IS the whole job when the
@@ -690,7 +689,7 @@ def start_mission_planner():
 def banner(intercept):
     env = os.environ
     print("=" * 74)
-    print("WASP head tracker — " + ("INTERCEPT (free flight)" if intercept
+    print("WASP drone tracker — " + ("INTERCEPT (free flight)" if intercept
                                     else "GIMBAL (visual servo)"))
     print("=" * 74)
     if intercept:
@@ -861,42 +860,24 @@ def main():
     for k, v in SEEKER_VIEW.items():
         os.environ.setdefault(k, v)
 
-    # HARDCODED at the operator's instruction during the 2026-08-26 bring-up: the
-    # mount is built at 10 deg and this is the ONE place that number lives, so the
-    # launcher, the systemd unit and a bare `./run.py` can no longer disagree about
-    # it.  IF THE MOUNT IS EVER CHANGED, CHANGE IT HERE.
-    #
-    # This block used to refuse to start, and the reasoning behind that refusal has
-    # NOT gone away: the tilt is a HARDWARE FACT, the law adds it to every elevation
-    # it computes, and a value that disagrees with the real mount makes the airframe
-    # fly high or low by exactly that error, consistently, with nothing in the log
-    # to say why.  So the number is still never applied SILENTLY — it is announced
-    # loudly below, every run, as an assumption rather than a measurement.
-    HARDCODED_CAM_TILT_DEG = "10"
+    # The mount angle normally comes from flight_config.py via start-wasp.sh.
+    # A bare `./run.py` without CAM_TILT_DEG falls back to the sky mount, 30 deg,
+    # and says so loudly: the tilt is a HARDWARE FACT, the law adds it to every
+    # elevation it computes, and a value that disagrees with the real mount makes
+    # the airframe fly high or low by exactly that error, with nothing in the log
+    # to say why.
+    HARDCODED_CAM_TILT_DEG = "30"
 
     if intercept and "CAM_TILT_DEG" not in os.environ:
         os.environ["CAM_TILT_DEG"] = HARDCODED_CAM_TILT_DEG
         print(f"""
-[SETUP] CAM_TILT_DEG was not set — using the HARDCODED {HARDCODED_CAM_TILT_DEG} deg.
+[SETUP] CAM_TILT_DEG was not set — using the sky-mode {HARDCODED_CAM_TILT_DEG} deg.
 
-  This is an ASSUMPTION about the hardware, not a measurement.  Confirm it:
-  put the drone on the floor, stand 10 m in front of it, and check that your
-  HEAD falls in the CENTRE of the image.  If it does not, measure the real
-  angle and either export CAM_TILT_DEG=<measured> or edit
-  HARDCODED_CAM_TILT_DEG in run.py.
+  This is an ASSUMPTION about the hardware, not a measurement.  The measured
+  mount angle belongs in flight_config.py (MOUNT_TILT_DEG); start-wasp.sh
+  exports it.  Overriding still works and still wins:
 
-  Overriding still works and still wins:  CAM_TILT_DEG=<measured> ./run.py
-
-  What was measured, for the record:
-
-    tilt  0   the target leaves the TOP of the frame as soon as it flies fast.
-              In the closed-loop sim it is in frame at most 48% of the time and
-              NEVER closes, at any lean.  Bench configuration only.
-    tilt 10   best of everything tried: in frame 100% of the time on the flat
-              chase, and it closes.   <-- the hardcoded value
-    tilt 15   as good on the easy cases, but launched 6 m above the target it is
-              in frame 13% of the time — effectively blind.  Tilting further
-              spends downward vision.
+      CAM_TILT_DEG=<measured> ./run.py
 
   For the bench polarity check (props off), 0 is the honest value:
 
@@ -927,7 +908,7 @@ def main():
         # Let the OS fully release the port we just probed before handing it on.
         time.sleep(0.5)
 
-    print("\n== Head-tracker preflight ==", flush=True)
+    print("\n== Tracker preflight ==", flush=True)
     if not Path(FC_DEV).exists():
         die(f"FC serial '{FC_DEV}' not found — is the flight controller plugged in?")
     ok(f"FC serial: {FC_DEV}")

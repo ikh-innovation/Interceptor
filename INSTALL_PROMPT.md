@@ -1,6 +1,6 @@
 # INSTALL_PROMPT — bring WASP up on a new Jetson
 
-**For the human:** clone the repo on the new Jetson, open Claude Code in the repo folder, and paste this one line:
+**For the operator:** clone the repo on the new Jetson, open Claude Code in the repo folder, and paste this one line:
 
 > Read INSTALL_PROMPT.md and do everything in it on this Jetson. Check every item, fix what you are allowed to fix, ask me for the physical facts, and end with the final report.
 
@@ -13,12 +13,12 @@ Everything below is written **for the Claude Code session running on the new Jet
 Make this Jetson run WASP exactly like the reference Jetson: same camera mode, same detector engine, same service, same checks passing. Work through the phases **in order**. For every item, **check first, fix only if it is wrong, then check again**. At the end, print the final report (template at the bottom).
 
 ### Hard rules
-1. **Never write a flight-controller parameter.** Read them and report them. The human changes them in Mission Planner.
-2. **Never arm, never spin motors, never run `fc_check.py --wiggle`.** Anything that talks to the FC runs with **props off** and the FC disarmed. Ask the human to confirm props are off before phase 6.
+1. **Never write a flight-controller parameter.** Read them and report them. The operator changes them in Mission Planner.
+2. **Never arm, never spin motors, never run `fc_check.py --wiggle`.** Anything that talks to the FC runs with **props off** and the FC disarmed. Ask the operator to confirm props are off before phase 6.
 3. **Do not change control-law gains, speeds or mission timings** (`fc_control.py`, `mission.py`, `flight_config.py` modes, `tracker.py` `MODES`). They were tuned in simulation and in the field. Only machine-specific settings are yours to fix: paths, packages, engines, camera mode, service.
-4. **Physical facts come from the human, never from a default.** These are the camera tilt angle and the target width. Ask.
+4. **Physical facts come from the operator, never from a default.** These are the camera tilt angle and the target width. Ask.
 5. If a check fails and the fix is not listed here, **stop and report it**. Do not improvise around it.
-6. Do not commit or push unless the human asks.
+6. Do not commit or push unless the operator asks.
 
 ---
 
@@ -33,11 +33,10 @@ Make this Jetson run WASP exactly like the reference Jetson: same camera mode, s
 | ultralytics | 8.4.160 |
 | OpenCV | 4.5.4 from JetPack, **built with GStreamer** (comes via system site-packages) |
 | TensorRT | 8.5.2.2 (JetPack) |
-| numpy / pymavlink / pyserial / huggingface_hub | 1.23.5 / 2.4.49 / 3.5 / 0.36.2 |
+| numpy / pymavlink / pyserial | 1.23.5 / 2.4.49 / 3.5 |
 | Camera | IMX219 on CSI `sensor-id=0`, `/dev/video0` |
 | Camera mode | **sensor-mode 3, 1280×960 @ 30 fps** (full sensor, 62.2° × 48.8°) |
 | Detector (sky) | `runs/detect/v0/weights/best.pt` (in git) → `best.engine` built **on this machine** |
-| Detector (human) | `iitolstykh/YOLO-Face-Person-Detector` / `yolov8x_person_face.pt` in the HF cache |
 | Tracker frame rate | ~30 fps, detector reported as `TensorRT` |
 | User | `iknowhow` (uid 1000), groups include `dialout video i2c gpio render` |
 | Repo path | `/home/iknowhow/Documents/Interceptor` |
@@ -66,8 +65,8 @@ Fix / decide:
   - `src/wasp-tracker.service` (`WorkingDirectory`, `ExecStart`, `StandardOutput`, `StandardError`)
   - `XAUTHORITY=/run/user/1000/...` in both launch scripts, which assumes uid 1000
 
-  Show the human the exact edits, apply them after they agree, and list them in the report.
-- Add the user to the groups the hardware needs, if missing: `sudo usermod -aG dialout,video,i2c,gpio,render $USER`. A re-login is needed; tell the human.
+  Show the operator the exact edits, apply them after they agree, and list them in the report.
+- Add the user to the groups the hardware needs, if missing: `sudo usermod -aG dialout,video,i2c,gpio,render $USER`. A re-login is needed; tell the operator.
 - Set max performance, and report it: `sudo nvpmodel -m 0` (or the board's MAXN mode) and `sudo jetson_clocks`.
 
 ## Phase 2 — Python environment
@@ -76,7 +75,7 @@ Check:
 ```bash
 ls .env/yolo/bin/python && grep include-system .env/yolo/pyvenv.cfg
 .env/yolo/bin/python - <<'EOF'
-import sys, torch, cv2, numpy, ultralytics, pymavlink, serial, huggingface_hub, tensorrt
+import sys, torch, cv2, numpy, ultralytics, pymavlink, serial, tensorrt
 print(sys.version.split()[0], "torch", torch.__version__, "cuda", torch.cuda.is_available())
 print("cv2", cv2.__version__, "GStreamer" if "GStreamer:                   YES" in cv2.getBuildInformation() else "NO GSTREAMER")
 print("ultralytics", ultralytics.__version__, "trt", tensorrt.__version__, "numpy", numpy.__version__)
@@ -85,7 +84,7 @@ EOF
 Fix:
 - **No venv:** `python3 -m venv --system-site-packages .env/yolo`. Without `--system-site-packages`, it cannot see JetPack's GStreamer OpenCV or TensorRT.
 - **torch without CUDA** (the PyPI wheel is CPU-only on Jetson): install NVIDIA's CUDA wheel that matches this JetPack. Everything still "works" on CPU, but the detector drops to ~0.3 fps and the seeker is blind. This check is mandatory.
-- **Missing packages:** `.env/yolo/bin/pip install ultralytics==8.4.160 pymavlink pyserial huggingface_hub "numpy<1.24"`. Then **check that pip did not replace JetPack's OpenCV or numpy** with a PyPI build. `cv2` must still report GStreamer. If ultralytics pulled in `opencv-python`, uninstall it so the system cv2 wins.
+- **Missing packages:** `.env/yolo/bin/pip install ultralytics==8.4.160 pymavlink pyserial "numpy<1.24"`. Then **check that pip did not replace JetPack's OpenCV or numpy** with a PyPI build. `cv2` must still report GStreamer. If ultralytics pulled in `opencv-python`, uninstall it so the system cv2 wins.
 
 ## Phase 3 — Repository sanity
 
@@ -107,17 +106,12 @@ ls src/mission_ui.html runs/detect/v0/weights/best.pt src/flight_config.py
    - It takes several minutes and produces `best.engine` next to `best.pt`. The tracker picks it up automatically.
    - It must be **exported by ultralytics**, so the class metadata is embedded. The tracker refuses an engine with placeholder class names.
    - The input is fixed at 640, which is expected.
-3. **Face/person model**: only needed if `flight_config.py` is ever set to `MODE = "human"` (the in-air HUMAN/DRONE switch was removed; sky mode never loads it). Download it into the HF cache **while online**; the field has no internet and the launchers set `HF_HUB_OFFLINE=1`:
-   ```bash
-   .env/yolo/bin/python -c "from huggingface_hub import hf_hub_download as d; print(d('iitolstykh/YOLO-Face-Person-Detector','yolov8x_person_face.pt'))"
-   ```
-   Then check that it loads with `HF_HUB_OFFLINE=1` set.
 
 ## Phase 5 — Camera
 
 1. **Presence:**
    - `ls /dev/video0 /sys/class/video4linux/` and `systemctl is-active nvargus-daemon`.
-   - **No `/dev/video0`:** it is almost always the CSI ribbon. Ask the human to reseat it at both ends. `sudo dmesg | grep -i imx219` shows `i2c read probe (-121)` when the sensor does not answer.
+   - **No `/dev/video0`:** it is almost always the CSI ribbon. Ask the operator to reseat it at both ends. `sudo dmesg | grep -i imx219` shows `i2c read probe (-121)` when the sensor does not answer.
    - **No IMX219 overlay:** `sudo /opt/nvidia/jetson-io/jetson-io.py` → Configure for compatible hardware → the IMX219 camera on the correct port → reboot.
 2. **Confirm mode 3 is the full sensor on THIS driver.** This is the check that matters. On the reference machine, mode 4 (1280×720) turned out to be a centre crop (50.4° × 29.7°) while the code assumes 62.2° × 48.8°. Every angle was wrong, and in simulation touches fell from ~80% to ~45–65%. Read the crop windows straight from the driver:
    ```bash
@@ -144,11 +138,11 @@ ls src/mission_ui.html runs/detect/v0/weights/best.pt src/flight_config.py
    cd src && timeout -s INT 12 ../.env/yolo/bin/python -u tests/cameraTest.py --headless
    ```
    You want `sensor-mode=3 ... width=1280, height=960` in the pipeline and **~30 fps average**. Mode 3 and 1280×960 are the code defaults (`tracker.CameraConfig`). Check that nothing overrides them: `grep -rn CAM_SENSOR_MODE\|CAM_HEIGHT src/*.sh src/*.service`.
-4. **Tilt:** ask the human for the **measured** camera angle (degrees up from horizontal, inclinometer on the camera body, drone on level ground). Sky mode needs **30**. Do not continue with sky mode unless they confirm it.
+4. **Tilt:** ask the operator for the **measured** camera angle (degrees up from horizontal, inclinometer on the camera body, drone on level ground). Sky mode needs **30**. Do not continue with sky mode unless they confirm it.
 
 ## Phase 6 — Flight controller link (props OFF, disarmed)
 
-Ask the human: *"Props off, FC powered over USB, disarmed?"* Wait for a yes.
+Ask the operator: *"Props off, FC powered over USB, disarmed?"* Wait for a yes.
 
 ```bash
 ls -l /dev/serial/by-id/ /dev/ttyACM*          # the port is auto-discovered; do not hard-code it
@@ -175,12 +169,12 @@ Then report these parameters against the values the app expects. `run.py` prints
 | `INS_LOG_BAT_MASK` | 1 | IMU batch log for vibration FFT |
 | `SYSID_MYGCS` | read, not changed | the override source sysid |
 
-**Never write these.** List the mismatches for the human to fix in Mission Planner.
+**Never write these.** List the mismatches for the operator to fix in Mission Planner.
 
 ## Phase 7 — Flight configuration
 
-Show `src/flight_config.py` settings to the human and confirm each one:
-- `MODE = "sky"` (drone target) or `"human"`
+Show `src/flight_config.py` settings to the operator and confirm each one:
+- `MODE = "sky"` (the only mode)
 - `MOUNT_TILT_DEG` = the measured angle from phase 5
 - `TARGET_WIDTH_M` = the target drone's **measured** motor-tip-to-motor-tip width (the placeholder is 0.30)
 - `COMMIT_CHAN` = a spare RC channel if the pilot wired one, otherwise 0
@@ -197,7 +191,7 @@ systemctl --user daemon-reload
 systemctl --user enable wasp-tracker.service
 systemctl --user is-enabled wasp-tracker.service   # enabled
 ```
-- **Autologin off:** the unit is a user service tied to the graphical session, so without autologin it never starts at power-up. Set this in `/etc/gdm3/custom.conf` under `[daemon]` (needs sudo; tell the human):
+- **Autologin off:** the unit is a user service tied to the graphical session, so without autologin it never starts at power-up. Set this in `/etc/gdm3/custom.conf` under `[daemon]` (needs sudo; tell the operator):
   ```
   AutomaticLoginEnable=true
   AutomaticLogin=<user>
@@ -241,7 +235,7 @@ timeout 300 ../.env/yolo/bin/python tests/test_ui_browser.py 2>&1 | tail -1     
      - the FC being found
    - Read `http://127.0.0.1:8080/state` with Python (`curl` may not be installed). It should show `fps` ≈ 30 and `detector` = `TensorRT`.
    - Fetch `http://127.0.0.1:8080/`. It must be the app, not "UI file missing".
-2. **Reboot:** ask the human to reboot (do not do it yourself; it ends your session). In the next session, check:
+2. **Reboot:** ask the operator to reboot (do not do it yourself; it ends your session). In the next session, check:
    - `systemctl --user status wasp-tracker` shows it active
    - the newest `src/data/*.log` started within ~1 minute of boot (`uptime -s`)
 
@@ -257,9 +251,8 @@ Board / L4T:        <model>, <R35.x>         [same | DIFFERENT: ...]
 Python env:         torch <v> cuda <yes/no>, ultralytics <v>, cv2 <v> gst <yes/no>, trt <v>
 Repo path / user:   <path>, <user> uid <n>    [edits made: ...]
 Sky engine:         built <yes/no>, loads <yes/no>, tracker fps <n>
-Face model cached:  <yes/no>, loads offline <yes/no>
 Camera:             /dev/video0 <yes/no>, mode 3 = full sensor <yes/no>, 1280x960 @ <fps>
-Camera tilt:        <deg> (confirmed by human: <yes/no>)
+Camera tilt:        <deg> (confirmed by operator: <yes/no>)
 FC:                 <firmware> <version>, override verified <yes/no>, ALT_HOLD reachable <yes/no>
 FC params to fix:   <list, or none>
 flight_config:      MODE <..>, tilt <..>, target width <..>, commit chan <..>
@@ -267,5 +260,5 @@ Service:            enabled <yes/no>, autologin <yes/no>, starts at boot <verifi
 Phone:              http://<ip>:8080/
 Tests:              <n>/<n> passed  [failures: ...]
 Sim (quick):        touch Bf0-3 <..>%, AI takeover <..>%, crashes <..>
-Open items:         <anything that needs the human>
+Open items:         <anything that needs the operator>
 ```

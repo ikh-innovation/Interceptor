@@ -181,7 +181,7 @@ check("offline backend links=False", cmdr.linked is False)
 check("no-crash compute+update", True)
 for i in range(10):
     c = cmdr.compute(100, -50, "LOCK", FW, FH)
-    cmdr.update(c, (100, -50), have_face=True)
+    cmdr.update(c, (100, -50), have_target=True)
     time.sleep(0.02)
 line = cmdr.format_command("LOCK", c, (100, -50), False, cmdr.linked, True)
 check("format_command mentions SIM when offline", "SIM" in line, line)

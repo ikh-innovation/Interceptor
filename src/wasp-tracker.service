@@ -1,5 +1,5 @@
 [Unit]
-Description=WASP head tracker (auto-start at Jetson power-up, intercept law)
+Description=WASP drone tracker (auto-start at Jetson power-up, intercept law)
 
 # systemd USER service.  Autologin is enabled for iknowhow (/etc/gdm3/custom.conf
 # AutomaticLogin=iknowhow), so the graphical session — and therefore this unit —

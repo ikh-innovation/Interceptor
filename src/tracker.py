@@ -92,7 +92,6 @@ from ultralytics import YOLO
 # reports 6 while it is serialised, so do not trust it to check this.
 cv2.setNumThreads(int(os.environ.get("CV_THREADS", "4")))
 from dataclasses import dataclass
-from huggingface_hub import hf_hub_download
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fc_control import AcroCommander, ControlLaw, commander_from_env
@@ -381,18 +380,12 @@ class DroneTracker:
         self.model        = (YOLO(model_path, task="detect")
                              if str(model_path).endswith(".engine")
                              else YOLO(model_path))
-        # Restrict detection to the "face" class only.  Resolve its class id from
-        # the model's own label map so it works regardless of index order
-        # (this model exposes e.g. {0: 'person', 1: 'face'}).
         names = self.model.names
         names = names if isinstance(names, dict) else dict(enumerate(names))
-        # ONE class is tracked, whatever the model calls it.  The head model
-        # exposes {0: 'person', 1: 'face'} and we want the face; the sky model
-        # is single-class and calls it '0'.  Demanding a literal "face" label
-        # made the second one impossible to load at all, so: an explicit
-        # TARGET_CLASS wins, else a face-like label, else the only class there
-        # is.  Anything ambiguous is an error that names the options rather
-        # than a silent guess about what we are shooting at.
+        # ONE class is tracked, whatever the model calls it.  The sky model is
+        # single-class and calls it '0'.  An explicit TARGET_CLASS wins, else
+        # the only class there is.  Anything ambiguous is an error that names
+        # the options rather than a silent guess.
         want = os.environ.get("TARGET_CLASS")
         if want is not None and want != "":
             match = None
@@ -407,10 +400,8 @@ class DroneTracker:
                     f"{names}.")
             self.target_class = match
         else:
-            self.target_class = next(
-                (i for i, n in names.items() if "face" in str(n).lower()), None)
-            if self.target_class is None and len(names) == 1:
-                self.target_class = next(iter(names))
+            self.target_class = (next(iter(names)) if len(names) == 1
+                                 else None)
             if self.target_class is None:
                 raise RuntimeError(
                     f"Cannot tell which class to track in {names}. "
@@ -484,8 +475,7 @@ class DroneTracker:
         self._t_last_frame   = None
         self._frame_dt       = None     # between detection frames, for the ROI margin
         self.mode_name       = os.environ.get("WASP_MODE_SPEED", "MEDIUM").upper()
-        # One target type per run, set by flight_config at boot.  The in-air
-        # HUMAN/DRONE switch was removed 2026-09-26 (operator: always DRONE).
+        # The target is always a drone.
         self.target_kind     = os.environ.get("TARGET_KIND", "DRONE").upper()
         self.model_path      = model_path
         self._last_cmd       = None
@@ -1899,7 +1889,7 @@ class DroneTracker:
                                               bbox=self.last_bbox, capture_t=t_cap)
                     else:
                         cmd = self.ap.neutral_command()  # no target: centre + release
-                    self.ap.update(cmd, target_off, have_face=bool(fused),
+                    self.ap.update(cmd, target_off, have_target=bool(fused),
                                    detected=bool(detected),
                                    conf=self.conf if detected else None,
                                    bbox=self.last_bbox if detected else None)
@@ -2233,31 +2223,19 @@ if __name__ == "__main__":
 
     cam_cfg = CameraConfig()
     CAP_PIPELINE = make_pipeline(cam_cfg)
-    # WASP_MODEL points at a local .pt and skips HuggingFace entirely — that is
-    # how sky mode loads its own weights (runs/detect/v0/weights/best.pt), which
-    # are not on the Hub at all.  Unset, we fall back to the face detector.
-    # Checked here rather than at first inference: a missing weights file in the
-    # field should stop the run at startup with the path in the message, not
-    # three minutes later inside a detect call.
+    # WASP_MODEL points at the local sky weights; unset, the repo's own
+    # runs/detect/v0/weights/best.pt is used.  Checked here rather than at
+    # first inference: a missing weights file in the field should stop the
+    # run at startup with the path in the message, not three minutes later
+    # inside a detect call.
     _model_env = os.environ.get("WASP_MODEL", "").strip()
-    if _model_env:
-        model_pth = str(Path(_model_env).expanduser().resolve())
-        if not Path(model_pth).is_file():
-            print(f"[MODEL] WASP_MODEL is set but there is no file at "
-                  f"{model_pth}", file=sys.stderr)
-            sys.exit(1)
-    else:
-        model_pth = hf_hub_download(
-            repo_id="iitolstykh/YOLO-Face-Person-Detector",
-            filename="yolov8x_person_face.pt",
-            repo_type="model"
-        )
+    model_pth = str(Path(_model_env).expanduser().resolve() if _model_env else
+                    Path(__file__).resolve().parent.parent
+                    / "runs/detect/v0/weights/best.pt")
+    if not Path(model_pth).is_file():
+        print(f"[MODEL] no weights file at {model_pth}", file=sys.stderr)
+        sys.exit(1)
 
-    # BOTH detectors, resolved now, so the operator can switch target type in
-    # the air without the loop ever touching the network or the disk.  The
-    # alternate is best-effort: if it cannot be resolved the switch simply
-    # refuses at the dashboard and says so, which is far better than a failed
-    # download inside the control loop.
     # PREFER A TENSORRT ENGINE next to the weights.  Measured on this Jetson,
     # same 1280x720 input the tracker actually feeds it:
     #
@@ -2296,7 +2274,7 @@ if __name__ == "__main__":
                 print(f"[MODEL] engine {_eng.name} unusable ({_exc}); "
                       f"falling back to {Path(model_pth).name}")
 
-    os.environ.setdefault("TARGET_KIND", "DRONE" if _model_env else "HUMAN")
+    os.environ.setdefault("TARGET_KIND", "DRONE")
     print(f"[TARGET] {os.environ['TARGET_KIND']} (fixed for this run)")
 
     DroneTracker(

@@ -172,7 +172,7 @@ try:
     while perf_counter() < t_end:
         cmd = c.compute(ex, 0.0, "LOCK", 640, 640, bbox=(0, 0, 20, 20),
                         capture_t=perf_counter() - 0.05)
-        c.update(cmd, (int(ex), 0), have_face=True, detected=True, conf=0.55,
+        c.update(cmd, (int(ex), 0), have_target=True, detected=True, conf=0.55,
                  bbox=(0, 0, 20, 20))
         ch4.append(fc.overrides.get(4))
         sleep(0.03)

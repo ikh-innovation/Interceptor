@@ -174,7 +174,7 @@ buf = io.StringIO()
 try:
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
-        import test_intercept as T
+        import sim_model as T
 except SystemExit:
     pass
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WASP head tracker — power-on launcher.
+# WASP drone tracker — power-on launcher.
 #
 # This is the ONE file to edit in the field.  It is what the systemd user unit
 # runs at Jetson power-up, and it is also runnable by hand:
@@ -22,8 +22,7 @@ export PATH=/home/iknowhow/Documents/Interceptor/.env/yolo/bin:$PATH
 # ─────────────────────────────────────────────────────────────────────────────
 # WHICH MODE FLIES IS DECIDED IN flight_config.py, NOT HERE.
 #
-# That file is the one place to edit: pick MODE = "human" or "sky", declare the
-# real MOUNT_TILT_DEG, reboot.  It refuses to start if the mode's required
+# That file is the one place to edit: declare the real MOUNT_TILT_DEG, reboot.  It refuses to start if the mode's required
 # camera angle disagrees with the mount you declared, because a wrong tilt does
 # not error — it flies high or low by exactly that error, permanently.
 #
@@ -66,13 +65,7 @@ export XAUTHORITY=/run/user/1000/gdm/Xauthority
 #   TRACKER_HEADLESS=0 ./start-wasp.sh    brings the local window back for bench work
 export TRACKER_HEADLESS=${TRACKER_HEADLESS:-1}
 
-# THE FIELD HAS NO WIFI.  The detector is pulled from the HuggingFace cache;
-# without this, huggingface_hub can stall on a DNS/HTTP timeout at every boot.
-# Verified: the cached model loads with HF_HUB_OFFLINE=1.
-export HF_HUB_OFFLINE=1
-export HF_HUB_DISABLE_TELEMETRY=1
-
-# ULTRALYTICS ALSO REACHES FOR THE NETWORK, and HF_HUB_OFFLINE does not stop it.
+# THE FIELD HAS NO WIFI, AND ULTRALYTICS REACHES FOR THE NETWORK.
 # On first load it decided a requirement was missing and ran pip at RUNTIME
 # ("requirements: AutoUpdate success") — on the bench that is a 7 s pause, in
 # the field it is a pip call with no route, inside the boot path, before the

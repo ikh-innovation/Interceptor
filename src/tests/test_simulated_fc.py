@@ -79,7 +79,7 @@ def run_case(name, port, *, sysid_mygcs=255, rc_options=0, force_sysid=None,
     t0 = perf_counter()
     while perf_counter() - t0 < settle:
         c = cmdr.compute(+200, -80, "LOCK", 640, 640)
-        cmdr.update(c, (200, -80), have_face=True)
+        cmdr.update(c, (200, -80), have_target=True)
         sleep(0.05)
 
     confirmed = cmdr.override_confirmed
@@ -176,7 +176,7 @@ def run_mode_gate_case(port):
         t0 = perf_counter()
         while perf_counter() - t0 < seconds:
             c = cmdr.compute(+200, -80, "LOCK", 640, 640)
-            cmdr.update(c, (200, -80), have_face=True)
+            cmdr.update(c, (200, -80), have_target=True)
             sleep(0.05)
 
     results = []
@@ -232,7 +232,7 @@ def run_gate_off_case(port):
     t0 = perf_counter()
     while perf_counter() - t0 < 2.0:
         c = cmdr.compute(+200, -80, "LOCK", 640, 640)
-        cmdr.update(c, (200, -80), have_face=True)
+        cmdr.update(c, (200, -80), have_target=True)
         sleep(0.05)
     applied = dict(fc.overrides)
     cmdr.close()
@@ -273,7 +273,7 @@ def run_intercept_case(port):
         t0 = perf_counter()
         while perf_counter() - t0 < seconds:
             c = cmdr.compute(+120, -60, "LOCK", 640, 640, bbox=(0, 0, 30, 30))
-            cmdr.update(c, (120, -60), have_face=True)
+            cmdr.update(c, (120, -60), have_target=True)
             sleep(0.02)
 
     # The FC read ANGLE_MAX / PILOT_Y_RATE / PILOT_SPEED_UP, not the ACRO rates.
@@ -347,7 +347,7 @@ def run_no_attitude_case(port):
     last = None
     while perf_counter() - t0 < 1.5:
         last = cmdr.compute(+120, -60, "LOCK", 640, 640, bbox=(0, 0, 30, 30))
-        cmdr.update(last, (120, -60), have_face=True)
+        cmdr.update(last, (120, -60), have_target=True)
         sleep(0.02)
     sleep(0.3)
     applied = dict(fc.overrides)
@@ -407,7 +407,7 @@ def run_time_alignment_case(port):
         az_px = -(320.0) * math.tan(yaw) / half
         cmd = cmdr.compute(az_px, 0, "LOCK", 640, 640, bbox=(0, 0, 30, 30),
                            capture_t=perf_counter())
-        cmdr.update(cmd, (int(az_px), 0), have_face=True)
+        cmdr.update(cmd, (int(az_px), 0), have_target=True)
         if k > 25:                         # past the LOS filter's settling time
             worst = max(worst, abs(cmd["bank_deg"]))
 

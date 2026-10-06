@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-fc_check.py  —  bench diagnostic for the WASP head-tracker's flight-control link
+fc_check.py  —  bench diagnostic for the WASP tracker's flight-control link
 ==============================================================================
 Answers, without YOLO or a camera in the loop, the only question that matters:
 "will this flight controller actually move when the Jetson tells it to?"

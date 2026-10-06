@@ -48,7 +48,7 @@ def drive(sec, az=8.0, el_world=None, el=0.0):
         ex, ey = px(az, el)
         cmd = c.compute(ex, ey, "LOCK", 640, 640, bbox=(0,0,30,30),
                         capture_t=perf_counter()-0.10)
-        c.update(cmd, (int(ex),int(ey)), have_face=True); sleep(0.02)
+        c.update(cmd, (int(ex),int(ey)), have_target=True); sleep(0.02)
     return cmd
 
 print("\n== STEP 3-4: Jetson up, drone disarmed in STABILIZE ==")
@@ -80,37 +80,37 @@ for k in range(70):
     fc.att.update(yaw=yaw, yawspeed=math.radians(14.0)); sleep(0.06)
     ex, ey = px(3.0)
     last = c.compute(ex, ey, "LOCK", 640, 640, bbox=(0,0,30,30), capture_t=perf_counter())
-    c.update(last, (int(ex),int(ey)), have_face=True)
+    c.update(last, (int(ex),int(ey)), have_target=True)
     peak = max(peak, last["bank_deg"])
 ck("target crossing -> BANKS to cut the corner", peak > 8.0, f"peak bank {peak:+.1f} deg")
 ck("bank stays inside its ceiling", peak <= 30.0+1e-9)
 ck("bank reaches the drone as real stick travel", abs(fc.overrides[1]-1500) > 40,
    f"ch1={fc.overrides[1]}")
 # the regression that mattered: its OWN yaw must not fake a turn
-c.update(c.neutral_command(), None, have_face=False); sleep(0.15)
+c.update(c.neutral_command(), None, have_target=False); sleep(0.15)
 worst = 0.0
 for k in range(70):
     fixed = math.radians(6.0)*math.sin(k*0.25)
     fc.att.update(yaw=fixed, yawspeed=math.radians(90.0)); sleep(0.06)
     ex, ey = px(-math.degrees(fixed))
     last = c.compute(ex, ey, "LOCK", 640, 640, bbox=(0,0,30,30), capture_t=perf_counter())
-    c.update(last, (int(ex),int(ey)), have_face=True)
+    c.update(last, (int(ex),int(ey)), have_target=True)
     if k > 25: worst = max(worst, abs(last["bank_deg"]))
 ck("its OWN turning does NOT fake a bank (no spin-out)", worst < 1.0,
    f"worst {worst:.3f} deg  (27.0 before the fix)")
 
 print("\n== 3) IT WORKS THE THROTTLE ITSELF ==")
-c.update(c.neutral_command(), None, have_face=False); sleep(0.15)
+c.update(c.neutral_command(), None, have_target=False); sleep(0.15)
 up = drive(1.2, az=2.0, el_world=+12.0)   # target ABOVE the horizon
 ch3_up = fc.overrides.get(3, 0)
 ck("target ABOVE -> commands CLIMB", up["climb_mps"] > 0.2, f"{up['climb_mps']:+.2f} m/s")
 ck("...and the throttle stick goes ABOVE mid", ch3_up > 1540, f"ch3={ch3_up}")
-c.update(c.neutral_command(), None, have_face=False); sleep(0.15)
+c.update(c.neutral_command(), None, have_target=False); sleep(0.15)
 dn = drive(1.2, az=2.0, el_world=-12.0)   # target BELOW the horizon
 ch3_dn = fc.overrides.get(3, 0)
 ck("target BELOW -> commands DESCEND", dn["climb_mps"] < -0.2, f"{dn['climb_mps']:+.2f} m/s")
 ck("...and the throttle stick goes BELOW mid", 0 < ch3_dn < 1460, f"ch3={ch3_dn}")
-c.update(c.neutral_command(), None, have_face=False); sleep(0.15)
+c.update(c.neutral_command(), None, have_target=False); sleep(0.15)
 lv = drive(1.2, az=2.0, el_world=0.0)     # target LEVEL with the drone
 ck("target LEVEL -> holds altitude (throttle at mid)",
    abs(lv["climb_mps"]) < 0.35 and abs(fc.overrides.get(3,0)-1500) < 130,
@@ -129,7 +129,7 @@ fc.mode = 2; sleep(1.4); drive(0.8)
 ck("back to ALT_HOLD -> re-engages by itself", set(fc.overrides)=={1,2,3,4})
 t0 = perf_counter()
 while perf_counter()-t0 < 1.2:
-    c.update(c.neutral_command(), None, have_face=False); sleep(0.02)
+    c.update(c.neutral_command(), None, have_target=False); sleep(0.02)
 ck("target lost -> every stick released", not fc.overrides, str(fc.overrides or "{}"))
 c.close(); sleep(0.4)
 ck("Ctrl-C / shutdown -> every stick released", not fc.overrides, str(fc.overrides or "{}"))

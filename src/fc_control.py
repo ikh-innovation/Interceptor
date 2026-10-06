@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-fc_control.py  —  flight-control layer for the WASP head tracker
+fc_control.py  —  flight-control layer for the WASP drone tracker
 ==============================================================================
-Turns "the head is N pixels off-centre" into stick commands the flight
+Turns "the target is N pixels off-centre" into stick commands the flight
 controller actually honours.
 
 TWO CONTROL LAWS, FOR TWO DIFFERENT PROBLEMS
@@ -543,7 +543,7 @@ class InterceptLaw:
     a large LOS rate that is not there. PN then banks hard on the airframe's own
     yaw, which turns the airframe, which moves the pixel error, which yaws
     again — a limit cycle at full bank. It was measured doing exactly that in
-    section 9 of tests/test_intercept.py: 30 deg of bank, sign-flipping, and the
+    an earlier closed-loop sim: 30 deg of bank, sign-flipping, and the
     heading swinging through 180 deg while the range never closed.
 
     With the single-signal form the seeker's yaw CANNOT drive PN at all, and for
@@ -569,7 +569,7 @@ class InterceptLaw:
     WHY THE CLOSING SPEED IS NOT IN THE GAIN
     ----------------------------------------
     Textbook PN uses `N * V_closing * lambda_dot`. Range here comes from bbox
-    width against an assumed head size, which is noisy and biased, and V_closing
+    width against an assumed target size, which is noisy and biased, and V_closing
     collapses toward zero when the target runs away at a similar speed — which
     would command NO turn exactly when the chase needs one. So range and closing
     speed are computed for the terminal trigger and the log, and deliberately
@@ -674,7 +674,7 @@ class InterceptLaw:
                  latency_s=0.0,           # 0 = measure it live
                  latency_max_s=0.35,      # never extrapolate further than this
                  # ── terminal phase ───────────────────────────────────────────
-                 target_width_m=0.20,     # a human head, for the range estimate
+                 target_width_m=0.30,     # a ~7-inch quad, for the range estimate
                  terminal_bbox_frac=0.35,
                  terminal_range_m=2.5,
                  terminal_hold_s=1.0,
@@ -851,7 +851,7 @@ class InterceptLaw:
         return lam
 
     def range_m(self, bbox_w, fw):
-        """Range from apparent target width. Rough — an assumed head size against
+        """Range from apparent target width. Rough — an assumed target size against
         a jittering bbox — so it is used for the terminal trigger and the log,
         never in the loop gain."""
         if not bbox_w or bbox_w <= 0 or not fw:
@@ -1116,7 +1116,7 @@ class InterceptLaw:
     def _schedule(self):
         """Range-scheduled turn authority.  Sets _gain_eff and _bank_cap.
 
-        WHY THE GAIN ONLY EVER GOES UP.  tests/test_intercept.py section 9
+        WHY THE GAIN ONLY EVER GOES UP.  An earlier closed-loop sim
         measured this law LOSING a hard zigzag outright at roll_pn_gain=25 — no
         hit, target in frame 37% of the time — and intercepting at 45.  The
         configured gain is therefore a FLOOR, not a number to scale down: a
@@ -1165,7 +1165,7 @@ class InterceptLaw:
         # The acquisition transient.  A step into the rate_tau differentiator at
         # first lock, plus the phantom LOS rate hard yaw slaving injects
         # (~10 deg/s — see the class docstring, and the full-bank limit cycle it
-        # produced in test_intercept section 9), together command a large bank
+        # produced in an earlier closed-loop sim), together command a large bank
         # on nothing.  Ramp the CEILING in rather than trusting the first frames.
         if self.lock_ramp_s > 0.0:
             # An unset clock means "no lock has been timed yet", which is the
@@ -1412,8 +1412,8 @@ class InterceptLaw:
         An explicit `latency_s` wins. Otherwise prefer a real measured
         capture-to-here age; failing that, fall back to the detection interval,
         which is a lower bound on the true pipeline delay (one frame must elapse
-        before a detection can exist). Clamped, because extrapolating a running
-        human on a stale, jittering track diverges fast.
+        before a detection can exist). Clamped, because extrapolating a moving
+        target on a stale, jittering track diverges fast.
         """
         if self.latency_s > 0.0:
             return min(self.latency_s, self.latency_max_s)
@@ -1426,8 +1426,8 @@ class InterceptLaw:
     def _terminal(self, cmd, bbox_h, fh, rng, dt):
         """Freeze guidance for the last stretch.
 
-        Inside a metre or two the head fills the frame, the detector (trained on
-        distant heads) starts dropping out and the pixel error goes large and
+        Inside a metre or two the target fills the frame, the detector (trained on
+        distant targets) starts dropping out and the pixel error goes large and
         meaningless — so the last half-second is exactly where a live loop veers
         off. Past the trigger the sticks are held at their last value and the
         airframe flies the trajectory it already had.
@@ -3461,7 +3461,7 @@ class AcroCommander:
     def search_command(self):
         return self.law.neutral()
 
-    def update(self, cmd, target_off, have_face, detected=None, conf=None,
+    def update(self, cmd, target_off, have_target, detected=None, conf=None,
                bbox=None):
         """Publish the latest command for the tx thread.  Returns True when the
         sticks are actually being driven right now.
@@ -3473,7 +3473,7 @@ class AcroCommander:
         with self._lock:
             self._cmd = dict(cmd)
             self._target_off = target_off
-            if have_face:
+            if have_target:
                 self._last_target_t = now
             if detected:
                 self._det_t = now
@@ -4181,7 +4181,7 @@ def _intercept_from_env(log_dir=None, verbose=True):
                         Default 45 = N 3 x the ~15 m/s this airframe settles at
                         with MAX_LEAN_DEG=20. **RAISE IT IF YOU RAISE THE LEAN**,
                         or the turn gain no longer matches the speed it flies.
-                        Measured in tests/test_intercept.py section 9: 25 loses a
+                        Measured in an earlier closed-loop sim: 25 loses a
                         hard zigzag outright (no hit, target in frame only 37% of
                         the time), 45 intercepts it with the target in frame 100%
                         of the time, and 80 is worse again — it is not monotonic.
@@ -4195,7 +4195,7 @@ def _intercept_from_env(log_dir=None, verbose=True):
                         asks for it. This is the "do not
                         throw the airframe around at acquisition" knob, and it is
                         the RIGHT one for that job: it caps authority without
-                        touching ROLL_PN_GAIN, which section 9 measured losing a
+                        touching ROLL_PN_GAIN, which the closed-loop sim measured losing a
                         hard zigzag outright when it was lowered to 25.
         SCHED_LO_FRAC   bbox width / frame width treated as "far". Default 0.02.
         SCHED_HI_FRAC   ...and as "close". Default 0.35, the terminal trigger.
@@ -4206,7 +4206,7 @@ def _intercept_from_env(log_dir=None, verbose=True):
                         slider. Default 0.5 = neutral. flight_config sets 0.2 for
                         SKY, deliberately calm while the target is far.
                         MEASURED: 0.2 with BANK_FAR_DEG=12 caps the bank below
-                        what a close-range zigzag needs, and section 9 stops
+                        what a close-range zigzag needs, and the closed-loop sim stops
                         hitting. That is why this is per-mode, not global.
                         0.5 = exactly the configured gain with the full
                         schedule; BELOW 0.5 trims the bank ceiling only, ABOVE
@@ -4242,15 +4242,15 @@ def _intercept_from_env(log_dir=None, verbose=True):
                         drops the sticks mid-engagement is its own surprise. Set
                         it to a number of seconds only for unattended testing.
 
-        TARGET_WIDTH_M  assumed target width for the range estimate. Default 0.20
-                        (a human head). Range feeds the terminal trigger and the
+        TARGET_WIDTH_M  assumed target width for the range estimate. Default 0.30
+                        (a ~7-inch quad). Range feeds the terminal trigger and the
                         log; it is deliberately NOT in the loop gain.
         TERMINAL_BBOX_FRAC / TERMINAL_RANGE_M / TERMINAL_HOLD_S
                         when the bbox height reaches this fraction of the frame, or
                         the range drops below this, guidance FREEZES and the
                         airframe flies the trajectory it already had, for at most
                         HOLD_S. Defaults 0.35 / 2.5 / 1.0. This exists because in
-                        the last metre the head fills the frame, the detector drops
+                        the last metre the target fills the frame, the detector drops
                         out and the pixel error goes meaningless.
 
         CONTROL_LATENCY_S
@@ -4324,7 +4324,7 @@ def _intercept_from_env(log_dir=None, verbose=True):
         rate_tau=_env_f("LOS_TAU", 0.12),
         latency_s=_env_f("CONTROL_LATENCY_S", 0.0),
         latency_max_s=_env_f("LATENCY_MAX_S", 0.35),
-        target_width_m=_env_f("TARGET_WIDTH_M", 0.20),
+        target_width_m=_env_f("TARGET_WIDTH_M", 0.30),
         terminal_bbox_frac=_env_f("TERMINAL_BBOX_FRAC", 0.35),
         terminal_range_m=_env_f("TERMINAL_RANGE_M", 2.5),
         terminal_hold_s=_env_f("TERMINAL_HOLD_S", 1.0),

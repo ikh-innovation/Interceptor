@@ -3,14 +3,11 @@
 
 Needs no FC and no camera.  Two things are being pinned down here:
 
-  1. THE SCHEDULE IS A NO-OP UNLESS A MODE ASKS FOR IT.  Human mode is the
-     scored scenario; section 9 of test_intercept.py stops hitting the moment
-     the far-field bank ceiling is tightened, because a human face fills so
-     little of the frame that the schedule reads "far" for the whole engagement.
-     So the defaults must be bit-for-bit the old law.
+  1. THE SCHEDULE IS A NO-OP UNLESS A MODE ASKS FOR IT.  With no bank_far
+     set, the defaults must be bit-for-bit the unscheduled law.
 
-  2. THE GAIN FLOOR IS NEVER CROSSED.  Section 9 measured this law LOSING a
-     hard zigzag outright at roll_pn_gain=25.  The slider and the schedule may
+  2. THE GAIN FLOOR IS NEVER CROSSED.  The law was measured LOSING a hard
+     zigzag outright at roll_pn_gain=25.  The slider and the schedule may
      therefore only ever ADD gain; "calmer" is bought from the BANK CEILING.
      A sensitivity control that could quietly de-tune the tracker below its
      measured-good gain would be a trap, not a feature.
