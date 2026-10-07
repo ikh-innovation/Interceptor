@@ -291,6 +291,10 @@ Flight time counts from launch, including the initial no-detection wait.
 No detection timeout / Flight time / target loss after acquisition / ABORT →
 release all Jetson overrides to the pilot; disarm before another launch.
 
+Accepted Seeker ENGAGE / AUTO or Wasp LAUNCH → continues with Wi-Fi disconnected.
+Jetson → FC remains wired USB. Transmitter mode switch → pilot control.
+Held phone movement buttons → expire after 0.3 s without fresh requests.
+
 Camera alignment check, disarmed and propellers removed: move an object above the
 camera toward the aircraft nose.
 
@@ -312,6 +316,7 @@ after a service restart, select the mode and confirm the camera again.
 "$WASP_PY" src/tests/test_camera_modes.py
 "$WASP_PY" src/tests/test_detection_performance.py
 "$WASP_PY" src/tests/test_wasp_mavlink.py
+"$WASP_PY" src/tests/test_wifi_autonomy.py
 python3 src/tests/test_wasp_ui.py
 curl --fail http://127.0.0.1:8080/state | python3 -m json.tool
 tail -n 80 "$HOME/wasp-logs/wasp-tracker.log"
