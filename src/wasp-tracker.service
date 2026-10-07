@@ -1,84 +1,32 @@
 [Unit]
 Description=WASP drone tracker (auto-start at Jetson power-up, intercept law)
 
-# systemd USER service.  Autologin is enabled for iknowhow (/etc/gdm3/custom.conf
-# AutomaticLogin=iknowhow), so the graphical session — and therefore this unit —
-# comes up on its own at power-up with no keyboard.
-#
-# Install:   systemctl --user enable --now wasp-tracker.service
-# Watch:     journalctl --user -u wasp-tracker -f
-# Stop:      systemctl --user stop wasp-tracker      (releases every channel)
-# Disable:   systemctl --user disable wasp-tracker
 After=graphical-session.target
 PartOf=graphical-session.target
-# nvarguscamerasrc talks to the Argus daemon; without it the CSI camera fails to
-# open.  Wants, not Requires, so a slow daemon start retries rather than aborts.
 Wants=nvargus-daemon.service
 After=nvargus-daemon.service
 
-# Keep retrying indefinitely at boot instead of giving up after N fast failures:
-# the camera, the X session and the FC all come up on their own schedule.
 StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 WorkingDirectory=/home/iknowhow/Documents/Interceptor-1/src
 
-# Every environment decision (camera tilt, commit channel, gains, offline
-# model cache, X display) lives in start-wasp.sh so there is exactly ONE
-# file to edit in the field and no second copy here to disagree with it.
 
-# Nothing about the FC, the transmitter or the tuning is hardcoded here: run.py
-# applies the tuned preset, then reads the channel map, the calibration, the
-# ACRO full-stick rates and SYSID_MYGCS off the FC at connect.
-# The FC's by-id descriptor AND its ACM number both change across reboots, so the
-# port is discovered, never hardcoded.  Set FC_DEV only to override.
 
-# THE SAFETY MODEL, unchanged by auto-start:
-#   * Mode gate — the tracker touches nothing unless the FC reports a mode in
-#     FC_STEER_MODES (ALT_HOLD for the intercept law).  The pilot's mode switch
-#     IS the on/off control for the AI.
-#   * REQUIRE_ARMED=1 (default) — nothing is driven while disarmed.
-#   * The intercept law drives ROLL, PITCH, YAW and THROTTLE.  Only ARMING stays
-#     with the pilot.  (An earlier version of this comment claimed roll and
-#     throttle were never touched — that was the gimbal law, and it is false
-#     here.  In ALT_HOLD a centred throttle means HOLD ALTITUDE, which is the
-#     only reason it is safe for this code to hold the throttle at all.)
-#   * Target lost, service stopped, or any crash -> every channel released.
-# So this unit running at boot does NOT mean the AI has control at boot.  It
-# waits, idle, until the pilot deliberately selects ALT_HOLD.
 
-# Let udev, the X session and the Argus daemon settle.  run.py then waits for the
-# FC itself, so the drone may be powered up long after the Jetson.
 ExecStartPre=/bin/sleep 15
 
-# The launcher is a plain bash script: edit it, not this unit.
 ExecStart=/home/iknowhow/Documents/Interceptor-1/src/start-wasp.sh
 
-# Boot failures are invisible without this: the user journal is not
-# persistent on this Jetson, so keep our own rolling log.
 StandardOutput=append:/home/iknowhow/wasp-logs/wasp-tracker.log
 StandardError=append:/home/iknowhow/wasp-logs/wasp-tracker.log
 
-# on-failure, NOT always.  'q' in the HUD window (and Ctrl-C) is a DELIBERATE
-# stop: the operator closed the seeker view and expects it to stay closed.  With
-# Restart=always systemd read that clean exit as something to repair and brought
-# the window back ~10 s later, forever — you could not turn it off without
-# stopping the unit.  On-failure keeps the property that actually matters at
-# boot: the camera, the X session and the FC come up on their own schedule, and
-# a preflight that dies because one of them is not ready yet still retries here.
-# run.py returns the tracker's own exit status, so "failure" means what it says.
 Restart=on-failure
 RestartSec=10
 
-# SIGINT is what KillSignal sends on `systemctl stop`, and Python reports it as
-# 130.  A stop never triggers a restart, but naming it a success keeps the unit
-# from being logged as failed every time it is stopped by hand.
 SuccessExitStatus=130
 TimeoutStopSec=25
-# KillMode defaults to control-group, so stopping this unit also kills the
-# tracker it exec'd.  SIGTERM first: the tracker's finally-block releases every
-# overridden channel back to the pilot before the link closes.
 KillSignal=SIGINT
 
 [Install]

@@ -1,9 +1,6 @@
 <title>WASP AUTO Trials</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@400;500;700&family=Ubuntu+Condensed&family=Ubuntu+Mono:wght@400;700&display=swap">
 <style>
-/* Layout: a ground-station sheet. The verdict first, then every scenario's
-   odds before -> after, then the replay deck: pick an engagement, watch it on
-   the map, from the side and through the drone's own camera. */
 :root {
   --bg: #eceef1; --surface: #ffffff; --surface-2: #f5f6f8; --line: #d5d9df;
   --ink: #262b31; --dim: #5b646e; --faint: #8b939d;
@@ -60,7 +57,6 @@ h2 { font: 700 19px/1.25 var(--sans); }
 section { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; }
 
-/* the verdict */
 .verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
 .vcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .vcard.main { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc) inset; }
@@ -71,7 +67,6 @@ section { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .vline .delta { font: 700 14px/1 var(--mono); color: var(--ok); }
 .vcard .sub { color: var(--dim); font-size: 13px; }
 
-/* the matrix */
 .tablebox { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
 table { border-collapse: collapse; width: 100%; min-width: 760px; }
 th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
@@ -98,7 +93,6 @@ td.name span { display: block; color: var(--dim); font-size: 12.5px; line-height
 .whycard .row { display: grid; grid-template-columns: 56px 1fr 48px; gap: 8px; align-items: center; }
 .whycard .row .why { height: 14px; }
 
-/* the replay deck */
 .deck { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 14px; align-items: start; }
 @media (max-width: 860px) { .deck { grid-template-columns: minmax(0, 1fr); } }
 .picker { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
@@ -252,7 +246,6 @@ const DATA = /*DATA*/null;
   const fmt = (x, d = 0) => (x == null || isNaN(x)) ? "–" : x.toFixed(d);
   const hasBefore = !!DATA.summary.before;
 
-  // ── the verdict ───────────────────────────────────────────────────────
   $("lede").textContent = DATA.lede;
   $("foot").textContent = DATA.foot;
   const vd = $("verdict");
@@ -267,7 +260,6 @@ const DATA = /*DATA*/null;
     vd.appendChild(d);
   }
 
-  // ── the matrix ────────────────────────────────────────────────────────
   const tb = $("matrix");
   tb.innerHTML = `<thead><tr><th>Scenario</th><th>Hit rate by enemy speed</th><th>After: why it missed</th></tr></thead>`;
   const body = document.createElement("tbody");
@@ -297,7 +289,6 @@ const DATA = /*DATA*/null;
   }
   tb.appendChild(body);
 
-  // ── why the misses missed (COME / GO, before vs after) ───────────────
   const wl = $("why-legend");
   wl.innerHTML = WHY.map(([k, l, c]) => `<span><i style="background:var(${c})"></i>${l}</span>`).join("");
   const wr = $("whyrows");
@@ -316,7 +307,6 @@ const DATA = /*DATA*/null;
   $("phase-legend").innerHTML = ["AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN", "PUSH", "AI", "STOP"].map(p =>
     `<span><i style="background:var(${PH_COL[p]})"></i>${PH_NAME[p]}</span>`).join("") + `<span><i style="background:var(--enemy)"></i>enemy</span>`;
 
-  // ── the replay deck ───────────────────────────────────────────────────
   const st = { fam: "come", sc: null, run: null, ver: "after", t: 0, playing: false, speed: 1, last: null };
   const runsOf = key => DATA.runs.filter(r => r.scenario === key);
   function setFam(fam) {
@@ -347,7 +337,6 @@ const DATA = /*DATA*/null;
       b.onclick = () => setRun(r.id);
       box.appendChild(b);
     });
-    // open on the most telling one: a miss fixed by the change, else a hit
     const pick = rs.find(r => r.after && r.after.hit && r.before && !r.before.hit) || rs.find(r => r.after && r.after.hit) || rs[0];
     if (pick) setRun(pick.id);
   }
@@ -368,7 +357,6 @@ const DATA = /*DATA*/null;
   for (const b of document.querySelectorAll("[data-ver]")) b.onclick = () => { st.ver = b.dataset.ver; syncVer(); st.t = Math.min(st.t, cur().T); buildTimeline(); draw(); };
   $("sc-select").onchange = e => setScenario(e.target.value);
 
-  // a trace: [t, x, y, z, yaw, lean, bank, tx, ty, tz, phase, det, az, elc, spd], scaled x10
   const cur = () => {
     const v = st.run[st.ver];
     if (!v._tr) {
@@ -386,7 +374,6 @@ const DATA = /*DATA*/null;
     while (hi - lo > 1) { const m = (lo + hi) >> 1; if (tr[m][0] <= t) lo = m; else hi = m; }
     const a = tr[lo], b = tr[hi], w = (t - a[0]) / Math.max(1e-6, b[0] - a[0]);
     const out = a.map((x, j) => (j === 10 || j === 11) ? a[j] : x + (b[j] - x) * w);
-    // headings: interpolate the short way round
     let dy = b[4] - a[4]; dy = ((dy + 540) % 360) - 180; out[4] = a[4] + dy * w;
     let da = b[12] - a[12]; da = ((da + 540) % 360) - 180; out[12] = a[12] + da * w;
     return out;
@@ -419,7 +406,6 @@ const DATA = /*DATA*/null;
       + (v.n_go > 1 ? ` AUTO flew ${v.n_go} attacks.` : "");
   }
 
-  // ── drawing ───────────────────────────────────────────────────────────
   function fit(cv) {
     const r = cv.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
     const w = Math.max(10, Math.round(r.width * dpr)), h = Math.max(10, Math.round(r.height * dpr));
@@ -439,7 +425,6 @@ const DATA = /*DATA*/null;
     const [ctx, W, H] = fit($("cv-map")); ctx.clearRect(0, 0, W, H);
     const v = cur(), tr = v._tr; if (!tr.length) return;
     const other = st.run[st.ver === "after" ? "before" : "after"];
-    // world x north, y east; the trace is already turned so our first nose = north = up
     let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
     const grow = r => { x0 = Math.min(x0, r[1], r[7]); x1 = Math.max(x1, r[1], r[7]); y0 = Math.min(y0, r[2], r[8]); y1 = Math.max(y1, r[2], r[8]); };
     tr.forEach(grow);
@@ -451,34 +436,29 @@ const DATA = /*DATA*/null;
     for (let g = Math.ceil((cy - span) / step) * step; g < cy + span; g += step) { const x = W / 2 + (g - cy) * k; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
     for (let g = Math.ceil((cx - span) / step) * step; g < cx + span; g += step) { const y = H / 2 - (g - cx) * k; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
     $("map-scale").textContent = `grid ${step} m`;
-    if (other && other.trace) {   // the other version's path, faint
+    if (other && other.trace) {
       if (!other._tr) { const keep = st.ver; st.ver = st.ver === "after" ? "before" : "after"; cur(); st.ver = keep; }
       ctx.setLineDash([4, 5]); ctx.strokeStyle = css("--ghost"); ctx.lineWidth = 1.5; ctx.beginPath();
       other._tr.forEach((r, i) => i ? ctx.lineTo(X(r), Y(r)) : ctx.moveTo(X(r), Y(r))); ctx.stroke(); ctx.setLineDash([]);
     }
-    // the enemy's path: dashed ahead, solid flown
     ctx.strokeStyle = css("--enemy"); ctx.lineWidth = 1.5; ctx.setLineDash([2, 4]); ctx.beginPath();
     tr.forEach((r, i) => { const p = [0, r[7], r[8]]; i ? ctx.lineTo(X(p), Y(p)) : ctx.moveTo(X(p), Y(p)); }); ctx.stroke(); ctx.setLineDash([]);
     ctx.lineWidth = 2.5; ctx.beginPath();
     tr.forEach((r, i) => { if (r[0] > st.t) return; const p = [0, r[7], r[8]]; i ? ctx.lineTo(X(p), Y(p)) : ctx.moveTo(X(p), Y(p)); }); ctx.stroke();
     pathByPhase(ctx, tr, X, Y, st.t, 3);
     const s = sampleAt(tr, st.t);
-    // the camera's horizontal view, from us
     const yaw = s[4] * Math.PI / 180, half = 31.1 * Math.PI / 180, R = Math.max(18, span * 0.22) * k;
     const ux = X(s), uy = Y(s);
     ctx.fillStyle = css("--acc"); ctx.globalAlpha = .13; ctx.beginPath(); ctx.moveTo(ux, uy);
     for (let a = -half; a <= half + 1e-6; a += half / 12) ctx.lineTo(ux + Math.sin(yaw + a) * R, uy - Math.cos(yaw + a) * R);
     ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
-    // us: an arrowhead along the nose
     ctx.save(); ctx.translate(ux, uy); ctx.rotate(yaw);
     ctx.fillStyle = css("--us"); ctx.beginPath(); ctx.moveTo(0, -11); ctx.lineTo(7, 8); ctx.lineTo(0, 4); ctx.lineTo(-7, 8); ctx.closePath(); ctx.fill(); ctx.restore();
-    // the enemy: a small quad
     const ex = X([0, s[7], s[8]]), ey = Y([0, s[7], s[8]]);
     ctx.strokeStyle = css("--enemy"); ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(ex - 6, ey - 6); ctx.lineTo(ex + 6, ey + 6); ctx.moveTo(ex + 6, ey - 6); ctx.lineTo(ex - 6, ey + 6); ctx.stroke();
     for (const [dx, dy] of [[-6, -6], [6, -6], [-6, 6], [6, 6]]) { ctx.beginPath(); ctx.arc(ex + dx, ey + dy, 3, 0, 7); ctx.stroke(); }
     if (v.hit && st.t >= v.t_best - 0.05) burst(ctx, ex, ey);
-    // north / scale
     ctx.fillStyle = css("--faint"); ctx.font = `12px ${css("--cond")}`; ctx.fillText("our nose at the start ↑", 8, 16);
   }
   function burst(ctx, x, y) {
@@ -505,7 +485,6 @@ const DATA = /*DATA*/null;
     tr.forEach((r, i) => { if (r[0] > st.t) return; i ? ctx.lineTo(XT(r), ZT(r)) : ctx.moveTo(XT(r), ZT(r)); }); ctx.stroke();
     pathByPhase(ctx, tr, X, Z, st.t, 3);
     const s = sampleAt(tr, st.t);
-    // the camera's vertical band, along the nose as seen from the side
     const fwd = Math.cos(s[4] * Math.PI / 180) >= 0 ? 1 : -1;
     const axis = (30 + s[5]) * Math.PI / 180, R = 0.3 * Math.min(W, H) * 1.6;
     const ux = X(s), uz = Z(s);
@@ -525,29 +504,24 @@ const DATA = /*DATA*/null;
     const D = Math.PI / 180, th = Math.tan(31.1 * D), tv = Math.tan(24.4 * D);
     const bank = s[6] * D, c = Math.cos(bank), sn = Math.sin(bank);
     const rot = (exl, eyl) => [W / 2 + exl * c + eyl * sn, H / 2 + (-exl * sn + eyl * c)];
-    // level-frame pixel of (az, el_cam) — the sim's own projection
     const px = (az, el) => rot((W / 2) * Math.tan(az * D) / th, -(H / 2) * Math.tan(el * D) / tv);
-    // sky above the horizon, ground below it (the horizon is el_world = 0)
     const camEl = (30 + s[5]);
     const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, css("--sky-hi")); g.addColorStop(1, css("--sky-lo"));
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
     if (Math.abs(camEl) < 85) {
-      const yl = (H / 2) * Math.tan(camEl * D) / tv;           // horizon, level frame (y down)
+      const yl = (H / 2) * Math.tan(camEl * D) / tv;
       const a = rot(-3 * W, yl), b = rot(3 * W, yl);
       const nx = -(b[1] - a[1]), ny = (b[0] - a[0]), L = Math.hypot(nx, ny) || 1;
-      const gx = nx / L, gy = ny / L;                             // points down (toward the ground)
+      const gx = nx / L, gy = ny / L;
       ctx.fillStyle = css("--ground-hi");
       ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(b[0] + gx * 4 * H, b[1] + gy * 4 * H); ctx.lineTo(a[0] + gx * 4 * H, a[1] + gy * 4 * H); ctx.closePath(); ctx.fill();
       ctx.strokeStyle = css("--hud-dim"); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
     }
-    // the aim mark (where AUTO lines the target up), dashed
     const am = [px(-40, -20), px(40, -20)];
     ctx.setLineDash([6, 6]); ctx.strokeStyle = css("--hud-dim"); ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(...am[0]); ctx.lineTo(...am[1]); ctx.stroke(); ctx.setLineDash([]);
-    // centre cross
     ctx.strokeStyle = css("--hud"); ctx.lineWidth = 1.5; ctx.beginPath();
     ctx.moveTo(W / 2 - 10, H / 2); ctx.lineTo(W / 2 - 3, H / 2); ctx.moveTo(W / 2 + 3, H / 2); ctx.lineTo(W / 2 + 10, H / 2);
     ctx.moveTo(W / 2, H / 2 - 10); ctx.lineTo(W / 2, H / 2 - 3); ctx.moveTo(W / 2, H / 2 + 3); ctx.lineTo(W / 2, H / 2 + 10); ctx.stroke();
-    // the enemy
     const rng = Math.hypot(s[7] - s[1], s[8] - s[2], s[9] - s[3]);
     const inView = Math.abs(s[12]) < 89 && Math.abs(s[13]) < 80;
     let shown = false;
@@ -565,7 +539,7 @@ const DATA = /*DATA*/null;
         }
       }
     }
-    if (!shown) {   // an arrow at the edge toward it
+    if (!shown) {
       const az = s[12], el = s[13];
       let dx = Math.sin(az * D), dy = -Math.sin(Math.max(-80, Math.min(80, el)) * D);
       const r2 = [dx * c + dy * sn, -dx * sn + dy * c]; const L = Math.hypot(...r2) || 1; dx = r2[0] / L; dy = r2[1] / L;
@@ -592,7 +566,6 @@ const DATA = /*DATA*/null;
   }
   function draw() { if (!st.run) return; drawMap(); drawSide(); drawEye(); readouts(); }
 
-  // ── playback ──────────────────────────────────────────────────────────
   const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   function frame(ts) {
     if (!st.playing) { st.last = null; return; }
@@ -616,7 +589,6 @@ const DATA = /*DATA*/null;
   new MutationObserver(() => draw()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
   setFam("come");
-  // open at the moment that matters: a little before the closest approach
   const v0 = st.run && cur(); if (v0) { st.t = Math.max(0, (v0.t_best || 0) - 3); draw(); }
 })();
 </script>

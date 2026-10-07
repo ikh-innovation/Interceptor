@@ -1,36 +1,4 @@
 #!/usr/bin/env python3
-"""AUTO against enemy drones ABOVE us: coming at us, or going away.
-
-    ../.env/yolo/bin/python tests/sim_auto_scenarios.py              # every scenario
-    ../.env/yolo/bin/python tests/sim_auto_scenarios.py --seeds 60   # more runs each
-    ../.env/yolo/bin/python tests/sim_auto_scenarios.py --only come_straight,go_straight
-    ../.env/yolo/bin/python tests/sim_auto_scenarios.py --list       # what each one is
-    ../.env/yolo/bin/python tests/sim_auto_scenarios.py --json out.json --traces 2
-
-Not pass/fail: a campaign that prints the odds, scenario by scenario, and WHY
-each miss missed.  Every enemy starts ABOVE us (6-45 m higher) and either
-COMES at us (straight, past our side, angled, overhead, diving, climbing,
-weaving, homing on us, stopping short) or GOES away (straight, angled,
-climbing, turning, weaving, fleeing once we close in).  AUTO is pressed at
-t = 0, just off the ground (1.5 m) or from a hover (5-10 m), and the run ends
-at a hit, a crash, or when AUTO has handed back to the pilot.
-
-REAL and MODELLED are as in tests/sim_sky_wind.py, whose airframe (total tilt
-held to ANGLE_MAX), wind (Bf 0-3), camera (30 deg up, 62.2 x 48.8 deg),
-detector (25 Hz, 120 ms late, misses that rise as the target shrinks) and
-barometer this reuses.  The Mission (AUTO_CLIMB -> AUTO_HOLD -> AUTO_ALIGN ->
-PUSH -> AI -> STOP) and the InterceptLaw, built as start-wasp.sh builds it,
-with the tracker's AI levels, are the code that flies.  A HIT is a closest
-approach under 0.5 m between centres (TOUCH_M).
-
-Why a miss missed (the first that fits):
-  crash        it hit the ground
-  never_seen   no confirmed detection, the whole run
-  no_go        seen, but AUTO never flew the second line
-  lost_line    flew the line, but the AI never got to steer
-  lost_chase   the AI steered, then lost it for good (> 3 m away)
-  near_miss    the AI steered and passed within 3 m, but not 0.5 m
-"""
 import argparse
 import contextlib
 import io
@@ -47,29 +15,19 @@ SRC = os.path.dirname(HERE)
 sys.path.insert(0, SRC)
 sys.path.insert(0, HERE)
 
-# The law is built from tracker.DroneTracker's AI levels (MODES / set_mode),
-# which never need the detector.  Importing ultralytics costs ~6 s and ~400 MB
-# per process on the Jetson (next to the live tracker), so it is stubbed here.
 if "ultralytics" not in sys.modules:
     _stub = types.ModuleType("ultralytics")
     _stub.YOLO = None
     sys.modules["ultralytics"] = _stub
 
-import sim_sky_wind as S      # noqa: E402  the airframe, wind, camera, law
+import sim_sky_wind as S
 
 FW, FH, HFOV, VFOV = S.FW, S.FH, S.HFOV, S.VFOV_LAW
 FOCAL = (FW / 2) / math.tan(math.radians(HFOV / 2))
 T_END = 50.0
 TRACE_DT = 0.1
-TARGET_TIMEOUT_S = 0.5        # AcroCommander(target_timeout=0.5)
+TARGET_TIMEOUT_S = 0.5
 
-# Stress, for the robustness pass (all off by default, so the yardstick is the
-# yardstick).  SIM_DET_SCALE: the detector finds it this much less often.
-# SIM_LAT: detection latency, s.  SIM_MOUNT_ERR: the REAL camera tilt minus the
-# 30 deg the law is told, deg.  SIM_TARGET_W: the REAL enemy width, m (the law
-# assumes 0.30).  SIM_ANGLE_MAX: the FC's ANGLE_MAX, deg (this FC read 30 on
-# 2026-10-06; the checklist asks for 40).  SIM_BF: every run in this Beaufort
-# (4 = 5.5-7.9 m/s, gusting).
 DET_SCALE = float(os.environ.get("SIM_DET_SCALE", "1.0"))
 DET_LAT = float(os.environ.get("SIM_LAT", "0.12"))
 FORCE_BF = os.environ.get("SIM_BF", "")
@@ -77,8 +35,6 @@ S.BEAUFORT.setdefault(4, (6.7, 1.8))
 
 
 def apply_stress():
-    """Module-level stress knobs, set in the parent before the law is built
-    and the workers fork."""
     if os.environ.get("SIM_MOUNT_ERR"):
         S.TILT = 30.0 + float(os.environ["SIM_MOUNT_ERR"])
     if os.environ.get("SIM_TARGET_W"):
@@ -87,13 +43,7 @@ def apply_stress():
         S.ANGLE_MAX = math.radians(float(os.environ["SIM_ANGLE_MAX"]))
 
 
-# ── our airframe ─────────────────────────────────────────────────────────────
 class Airframe(S.Drone):
-    """sim_sky_wind's airframe, plus ALT_HOLD's PILOT_ACCEL_Z: the FC moves
-    its climb-rate target at most this fast (1500 cm/s^2 on this FC, read at
-    connect on 2026-10-06), so a climb ordered at once is not flown at once.
-    Climbing hard is most of what an intercept above us asks for; without
-    this the sim would credit climbs the FC never gives."""
     ACCEL_Z = float(os.environ.get("SIM_ACCEL_Z", "15.0"))
 
     def step(self, lean_c, bank_c, yr_c, climb_c, wind, dt, rng):
@@ -103,11 +53,7 @@ class Airframe(S.Drone):
         super().step(lean_c, bank_c, yr_c, self._climb_tgt, wind, dt, rng)
 
 
-# ── the enemy ────────────────────────────────────────────────────────────────
 class Enemy:
-    """A point flying a velocity law, integrated as the sim asks for it.
-    vel(t, p, own, st) -> (vx, vy, vz); `own` is OUR position (for the ones
-    that home on us or run once we are close), `st` a dict it may keep."""
 
     def __init__(self, p0, vel):
         self.p = list(p0)
@@ -126,7 +72,6 @@ class Enemy:
 
 
 def _bob_v(t):
-    """A hovering drone is never quite still: the velocity of a ~0.3 m wobble."""
     return -0.21 * math.sin(0.7 * t), -0.15 * math.cos(0.5 * t), -0.165 * math.sin(1.1 * t)
 
 
@@ -140,7 +85,6 @@ def v_straight(heading, speed, vz=0.0, z_lo=None, z_hi=None):
 
 
 def v_weave(heading, speed, swing, period, vz=0.0):
-    """S-turns at a constant speed: the heading swings +/- `swing` rad."""
     w = 2 * math.pi / period
 
     def vel(t, p, own, st):
@@ -150,7 +94,6 @@ def v_weave(heading, speed, swing, period, vz=0.0):
 
 
 def v_turn(heading, speed, t_turn, turn, rate=math.radians(30.0), vz=0.0):
-    """Straight, then a steady turn of `turn` rad at `rate`, then straight."""
     dur = abs(turn) / rate
 
     def vel(t, p, own, st):
@@ -160,19 +103,16 @@ def v_turn(heading, speed, t_turn, turn, rate=math.radians(30.0), vz=0.0):
 
 
 def v_homing(speed):
-    """Flies at where we ARE now, at its own height: an attacker that passes
-    over us if nothing stops it."""
     def vel(t, p, own, st):
         h = math.atan2(own[1] - p[1], own[0] - p[0])
         if math.hypot(own[0] - p[0], own[1] - p[1]) < 2.0:
-            h = st.get("h", h)                  # overhead: carry straight on
+            h = st.get("h", h)
         st["h"] = h
         return speed * math.cos(h), speed * math.sin(h), 0.0
     return vel
 
 
 def v_stop(heading, speed, stop_after, decel=3.0):
-    """Flies in, brakes after `stop_after` m and hovers there."""
     def vel(t, p, own, st):
         d = st.setdefault("d", 0.0)
         v = st.setdefault("v", speed)
@@ -187,8 +127,6 @@ def v_stop(heading, speed, stop_after, decel=3.0):
 
 
 def v_flee(trigger_m, speed, accel=4.0, vz=1.0):
-    """Hovers until we come within `trigger_m`, then runs straight away from
-    us (climbing a little), up to `speed`."""
     def vel(t, p, own, st):
         if "h" not in st:
             if math.dist(own, p) > trigger_m:
@@ -206,16 +144,11 @@ def v_hover():
     return vel
 
 
-# ── the scenarios ────────────────────────────────────────────────────────────
-# Each picks, from its own random stream: where the enemy starts (horizontal
-# range r, bearing off our nose az, height ABOVE our start dz) and how it flies.
-# `to_us` is the bearing from the enemy to us, `away` its reverse.
 def _sc(family, desc, place, motion, speeds):
     return dict(family=family, desc=desc, place=place, motion=motion, speeds=speeds)
 
 
 SCENARIOS = {
-    # ── COMING AT US ─────────────────────────────────────────────────────────
     "come_straight": _sc(
         "come", "flies straight at us, level, 8-40 m above, from 55-85 m",
         lambda r: dict(r=r.uniform(55, 85), az=r.uniform(-15, 15), dz=r.uniform(8, 40)),
@@ -257,7 +190,6 @@ SCENARIOS = {
         lambda r: dict(r=r.uniform(55, 80), az=r.uniform(-15, 15), dz=r.uniform(8, 35),
                        stop=r.uniform(20, 40)),
         None, (6.0, 10.0)),
-    # ── GOING AWAY ───────────────────────────────────────────────────────────
     "go_straight": _sc(
         "go", "flies straight away, level, 15-40 m out, 6-30 m above",
         lambda r: dict(r=r.uniform(15, 40), az=r.uniform(-15, 15), dz=r.uniform(6, 30)),
@@ -287,7 +219,6 @@ SCENARIOS = {
         lambda r: dict(r=r.uniform(25, 45), az=r.uniform(-15, 15), dz=r.uniform(6, 30),
                        trigger=r.uniform(15, 25)),
         None, (8.0, 12.0)),
-    # ── for reference ────────────────────────────────────────────────────────
     "hover_above": _sc(
         "other", "hovers 20-50 m out, 6-35 m above",
         lambda r: dict(r=r.uniform(20, 50), az=r.uniform(-15, 15), dz=r.uniform(6, 35)),
@@ -321,10 +252,7 @@ def build_enemy(name, speed, r, p0, own_p0, pl):
     return Enemy(p0, vel)
 
 
-# ── one engagement ───────────────────────────────────────────────────────────
 def run_one(job):
-    """job = (scenario, speed, start, bf, seed, trace).  Mirrors
-    sim_sky_wind.engage with AUTO pressed at t = 0."""
     name, speed, start, bf, seed, want_trace = job
     bf = int(FORCE_BF) if FORCE_BF else bf
     import mission as M
@@ -339,7 +267,6 @@ def run_one(job):
         k, _, v = kv.partition("=")
         assert m.set_auto_param(k, v) == "", kv
 
-    # pilot hovering in ALT_HOLD, trimmed into the MEAN wind (as sim_sky_wind)
     wx, wy = wind.mean * math.cos(wind.dir), wind.mean * math.sin(wind.dir)
     yaw0 = rng.uniform(-math.pi, math.pi)
     trim_tilt = math.atan(S.Drone.DRAG * wind.mean * wind.mean / S.G)
@@ -359,11 +286,10 @@ def run_one(job):
                 "roll": mp.phys_to_pwm("roll", math.degrees(bank0)),
                 "yaw": 1500, "throttle": 1500}
 
-    # the enemy: r m out (horizontally), az deg off our nose, dz m above us
     pl = SCENARIOS[name]["place"](rng)
     a = yaw0 + math.radians(pl["az"])
     p0 = [pl["r"] * math.cos(a), pl["r"] * math.sin(a), h0 + pl["dz"]]
-    if "offset" in pl:              # its line passes `offset` m to our side
+    if "offset" in pl:
         p0[0] += pl["offset"] * -math.sin(a)
         p0[1] += pl["offset"] * math.cos(a)
     own0 = (0.0, 0.0, h0)
@@ -381,7 +307,7 @@ def run_one(job):
     next_det, next_tx, t_last_det = 0.0, 0.0, None
     best, t_best, crashed = 1e9, None, False
     rel_best = (0.0, 0.0, 0.0)
-    m.cycle(0.0, ctx)                               # PILOT -> HOVER
+    m.cycle(0.0, ctx)
     m.set_auto_enabled(True)
     assert m.request_auto(True) == ""
     out = {}
@@ -411,7 +337,6 @@ def run_one(job):
             crashed = True
             break
         h_max, h_min = max(h_max, dr.p[2]), min(h_min, dr.p[2])
-        # camera frame
         if t >= next_det:
             next_det += det_period
             meas = dr.measure(tgt, VFOV, HFOV)
@@ -445,11 +370,8 @@ def run_one(job):
             ctx.update(det_t=t, det_conf=conf)
             if ev["t_go"] is not None:
                 det_after_go += 1
-        # TX thread, 50 Hz
         if t >= next_tx:
             next_tx += 0.02
-            # exactly as AcroCommander._mission_tx: the AI command only while
-            # a REAL detection is younger than target_timeout, else None
             fresh_ai = ctx["det_t"] is not None and t - ctx["det_t"] <= TARGET_TIMEOUT_S
             ctx.update(ai_cmd=last_cmd if fresh_ai else None,
                        ai_t=ctx["det_t"] if fresh_ai else None)
@@ -466,7 +388,7 @@ def run_one(job):
                     n_align += 1
                     ev["t_align"] = ev["t_align"] if ev["t_align"] is not None else t
                 if ph == "PUSH" and phase_prev != "AI":
-                    n_go += 1               # a line flown (not a re-acquire)
+                    n_go += 1
                 if ph == "PUSH" and ev["t_go"] is None:
                     ev["t_go"] = t
                 if ph == "STOP" and ev["t_stop"] is None:
@@ -475,13 +397,12 @@ def run_one(job):
             if ev["t_ai"] is None and (m._push_steer or ph == "AI"):
                 ev["t_ai"] = t
             lv = m.ai_level_now()
-            if lv != lv_law:                        # the tracker's per-frame sync
+            if lv != lv_law:
                 S.set_level(law, lv)
                 lv_law = lv
             if ph == "HOVER" and t > 0.5:
-                break                               # AUTO handed back: over
+                break
         wv = wind.step(t, dt)
-        # a channel AUTO does not hold stays the pilot's (the trim into the wind)
         lean = math.radians(mp.pwm_to_phys("pitch", out.get("pitch", mp.pilot["pitch"])))
         bank = math.radians(mp.pwm_to_phys("roll", out.get("roll", mp.pilot["roll"])))
         yr = math.radians(mp.pwm_to_phys("yaw", out.get("yaw", 1500)))
@@ -528,7 +449,6 @@ def run_one(job):
     return res
 
 
-# ── the campaign ─────────────────────────────────────────────────────────────
 def jobs(names, n_seeds, n_traces, master_seed=2026):
     out = []
     for name in names:
@@ -536,7 +456,6 @@ def jobs(names, n_seeds, n_traces, master_seed=2026):
         rng = random.Random(f"{master_seed}:{name}")
         for i in range(n_seeds):
             for sp in sc["speeds"]:
-                # every wind from the ground, then every wind from a hover
                 start = "ground" if (i // 4) % 2 == 0 else "hover"
                 out.append((name, sp, start, i % 4, rng.randrange(10 ** 9), i < n_traces))
     return out
@@ -599,7 +518,6 @@ def report(res):
 
 
 def compare(old, new):
-    """Hit rate per scenario and speed, before -> after (same jobs: same seeds)."""
     print("\n=== CHANGE vs --compare (hit %) ===")
     keys = []
     for r in new:
@@ -616,7 +534,6 @@ def compare(old, new):
 
 
 def score(res):
-    """One number to compare versions: the hit rate over COME + GO."""
     cg = [r for r in res if r["family"] in ("come", "go")]
     return pct(r["hit"] for r in cg)
 
@@ -655,12 +572,12 @@ def main():
         cur = getattr(M.Mission, k)
         setattr(M.Mission, k, type(cur)(v) if not isinstance(cur, bool) else v.lower() in ("1", "true", "on"))
     try:
-        os.nice(10)                     # the live tracker on this Jetson keeps priority
+        os.nice(10)
     except OSError:
         pass
     apply_stress()
-    S.build_law_cached()                # forked workers inherit it
-    for kv in a.law:                    # InterceptLaw.attr=value (experiments)
+    S.build_law_cached()
+    for kv in a.law:
         k, _, v = kv.partition("=")
         setattr(S._LAW._pristine, k, float(v))
     js = jobs(names, 8 if a.quick else a.seeds, a.traces, a.master_seed)

@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""The CAMERA switch: 60 fps (sensor mode 4, the centre crop) flies the same
-law as 30 fps (sensor mode 3, the full view).
-
-Mode 4 is the centre 2560x1440 of the 3280x2464 array, binned like mode 3:
-50.4 x 29.7 deg instead of 62.2 x 48.8.  The law is told the crop
-(set_crop); this checks that the same target, at the same angles and range,
-gets the SAME command in both modes -- the fill schedules, MAX's ease-off,
-the terminal trigger and the deadband included -- and that 30 fps is exactly
-what it was before the switch existed.
-
-    ../.env/yolo/bin/python tests/test_camera_modes.py
-"""
 import contextlib
 import io
 import json
@@ -22,11 +10,11 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
-from fc_control import ControlLaw, InterceptLaw                    # noqa: E402
-import mission as M                                                # noqa: E402
+from fc_control import ControlLaw, InterceptLaw
+import mission as M
 
 FAILED = []
-CX, CY = 2560 / 3280, 1440 / 2464            # tracker.CAM_MODES[60]["crop"]
+CX, CY = 2560 / 3280, 1440 / 2464
 
 
 def check(label, ok, detail=""):
@@ -36,7 +24,6 @@ def check(label, ok, detail=""):
 
 
 def sky_law(edge_guard=0.0):
-    """The sky configuration (flight_config + tracker MODES["MAX"])."""
     law = InterceptLaw(cam_tilt_deg=30, roll_pn_gain=45, max_bank_deg=36, bank_far_deg=30,
                        pn_near_mult=1.4, lock_ramp_s=0.3, max_lean_deg=35, lean_near=0.3,
                        climb_los=True, edge_guard=edge_guard, climb_lead=8, climb_gain=19,
@@ -47,20 +34,16 @@ def sky_law(edge_guard=0.0):
 
 
 def project(law, fw, fh, az, el, roll, width_m, rng):
-    """A target at (az, el) deg in the LEVEL frame, `width_m` wide at `rng` m,
-    as the tracker hands it to the law: camera-frame pixel offsets and a box."""
     fx = (fw / 2.0) / law._tan_h
     fy = (fh / 2.0) / law._tan_v
     H = fx * math.tan(math.radians(az))
     V = -fy * math.tan(math.radians(el))
     c, s = math.cos(roll), math.sin(roll)
-    ex, ey = H * c + V * s, -H * s + V * c          # the bank rotates the picture
+    ex, ey = H * c + V * s, -H * s + V * c
     return ex, ey, fx * width_m / rng, fy * width_m / rng
 
 
 def fly(law, fw, fh, steps=150):
-    """A target closing from 60 m to ~1 m, drifting across and up, the airframe
-    yawing, pitching and banking: every output of the law, frame by frame."""
     out = []
     for i in range(steps):
         k = i / (steps - 1.0)
@@ -81,7 +64,6 @@ KEYS = ("az_deg", "el_deg", "el_cam_deg", "yaw_stick", "roll_stick", "pitch_stic
 
 
 def worst(a, b):
-    """Largest difference over every frame and output (terminal as 0 / 1)."""
     d = 0.0
     for x, y in zip(a, b):
         for k in KEYS:
@@ -103,7 +85,7 @@ check("60 fps view: 50.4 x 29.7 deg", abs(math.degrees(b.h_fov) - 50.42) < 0.02
 d = worst(ref, fly(b, 640 * CX, 640 * CY))
 check(f"every output, every frame, equal on the exact crop (worst {d:.2e})", d < 1e-9)
 b = sky_law(); b.set_crop(CX, CY)
-got = fly(b, 500, 374)                      # the tracker's working frame, rounded to even
+got = fly(b, 500, 374)
 dr = max(abs(x["range_m"] - y["range_m"]) / y["range_m"] for x, y in zip(got, ref))
 dang = max(abs(x[k] - y[k]) for x, y in zip(got, ref) for k in ("bank_deg", "lean_deg", "az_deg", "el_deg"))
 check(f"...and on the real 500 x 374 frame: angles within {dang:.3f} deg, range within {100 * dr:.2f}%",
@@ -122,8 +104,6 @@ check("back to 30: the field of view is restored EXACTLY",
 check("...and every command is bit-for-bit a fresh law's", worst(ref, fly(c, 640, 640)) == 0.0)
 
 print("=== 3. the frame-edge guard watches the picture the camera really has ===")
-# a target 10 deg above the boresight, level: inside both pictures, but past
-# 55% of the 60 fps half-height (8.2 deg) and not of the 30 fps one (13.4)
 for crop, want in (((1.0, 1.0), "free"), ((CX, CY), "eased")):
     g = sky_law(edge_guard=0.55); g.set_crop(*crop)
     fw, fh = 640 * crop[0], 640 * crop[1]
@@ -186,7 +166,7 @@ check("the SKY GATE is still refused", M.save_detection_default("sky", False, df
 
 print("=== 7. the tracker: the pipeline, the working frame, the law, the frame counts ===")
 with contextlib.redirect_stdout(io.StringIO()):
-    import tracker as T                                            # noqa: E402
+    import tracker as T
 
 
 class AP:
@@ -238,9 +218,9 @@ t.ap.mission = Phase()
 check("refused while the AI flies (the picture goes dark a moment)", t.set_camera("60") != "" and t._cam_req is None)
 
 print("=== 8. TEST mode follows the switch ===")
-import desk_sim                                                    # noqa: E402
+import desk_sim
 s = desk_sim.DeskSim(seed=1)
-s.touch = lambda: None                      # no 50 Hz thread for this
+s.touch = lambda: None
 check("TEST: cam=60 narrows the pretend camera; the state says so",
       s.command("cam", "60") == "" and abs(s.state()["cam_vfov"] - 29.70) < 0.02
       and s.state()["cam_fps"] == 60 and abs(s.m.auto_aim_el() + 10.45) < 0.01)

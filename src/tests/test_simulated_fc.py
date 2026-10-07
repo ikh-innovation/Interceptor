@@ -1,26 +1,4 @@
 #!/usr/bin/env python3
-"""
-End-to-end test against a SIMULATED ArduPilot Copter that reproduces the real
-firmware's override-gating rule:
-
-    void GCS_MAVLINK::handle_rc_channels_override(const mavlink_message_t &msg)
-    {
-        if (msg.sysid != sysid_my_gcs()) return;   // silently dropped
-        ...
-    }
-
-and echoes an accepted override back in RC_CHANNELS (as RC_Channel::update()
-copies override_value into radio_in).  That lets us prove, without hardware:
-
-  A. the commander adopts the FC's SYSID_MYGCS and its overrides are accepted
-  B. it works for a NON-default SYSID_MYGCS too (read, not assumed)
-  C. the old behaviour (source_system=1 vs SYSID_MYGCS=255) is refused
-  D. RC_OPTIONS bit 1 (ignore overrides) is detected and reported
-  E. a disarmed FC is never driven
-  F. the mode gate: the pilot's STABILIZE<->ACRO switch hands control over and
-     takes it back, repeatedly
-  G. REQUIRE_RATE_MODE=0 restores the ungated behaviour
-"""
 import math
 import sys
 from time import perf_counter, sleep
@@ -75,7 +53,6 @@ def run_case(name, port, *, sysid_mygcs=255, rc_options=0, force_sysid=None,
           and cmdr.backend.rc["pitch"]["chan"] == 2)
     check("mode reported as ACRO", cmdr.mode_name == "ACRO", cmdr.mode_name)
 
-    # Drive a target hard right of centre for a few seconds.
     t0 = perf_counter()
     while perf_counter() - t0 < settle:
         c = cmdr.compute(+200, -80, "LOCK", 640, 640)
@@ -97,7 +74,6 @@ def run_case(name, port, *, sysid_mygcs=255, rc_options=0, force_sysid=None,
                 sent_from=sent_from, released=released)
 
 
-# ── A. default SYSID_MYGCS=255 ────────────────────────────────────────────────
 r = run_case("A. ArduPilot default SYSID_MYGCS=255", 14601, sysid_mygcs=255)
 if r:
     check("override CONFIRMED via the RC_CHANNELS echo", r["confirmed"] is True)
@@ -113,7 +89,6 @@ if r:
           r["released"] == {}, str(r["released"]))
     check("nothing was rejected", not r["rejected"], str(r["rejected"]))
 
-# ── B. non-default SYSID_MYGCS: must be READ, not assumed ────────────────────
 r = run_case("B. non-default SYSID_MYGCS=42 (must be read from the FC)",
              14602, sysid_mygcs=42)
 if r:
@@ -122,7 +97,6 @@ if r:
           r["confirmed"] is True)
     check("FC applied the override", bool(r["applied"]), str(r["applied"]))
 
-# ── C. the OLD bug: sending from sysid 1 against SYSID_MYGCS=255 ─────────────
 r = run_case("C. regression: old behaviour (source_system=1) must be REFUSED",
              14603, sysid_mygcs=255, force_sysid=1, settle=5.0)
 if r:
@@ -133,27 +107,20 @@ if r:
     check("commander reports override_confirmed=False (no longer silent)",
           r["confirmed"] is False)
 
-# ── D. RC_OPTIONS bit 1 = ignore overrides ───────────────────────────────────
 r = run_case("D. RC_OPTIONS=2 (IGNORE_OVERRIDES) is detected", 14604,
              sysid_mygcs=255, rc_options=2, settle=5.0)
 if r:
     check("FC applied nothing with overrides disabled", not r["applied"])
     check("commander reports override_confirmed=False", r["confirmed"] is False)
 
-# ── E. disarmed: must NOT drive the sticks ───────────────────────────────────
 r = run_case("E. DISARMED -> sticks stay released (safety gate)", 14605,
              sysid_mygcs=255, armed=False, settle=3.0)
 if r:
     check("no override sent while disarmed", not r["applied"], str(r["applied"]))
 
-# ── F. the mode gate: the pilot's mode switch owns the handover ──────────────
-# The pilot flies in STABILIZE and flips to ACRO when the tracker should take
-# yaw/pitch.  Flipping back must return every channel immediately, and the pair
-# must survive being toggled repeatedly — a latch that only fires once would
-# leave the AI holding the sticks on the second handback.
 def run_mode_gate_case(port):
     print("\n=== F. mode gate: STABILIZE <-> ACRO handover, repeated ===")
-    fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=0)   # STABILIZE
+    fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=0)
     fc.start()
     sleep(0.3)
 
@@ -171,8 +138,6 @@ def run_mode_gate_case(port):
           cmdr.require_rate_mode is True)
 
     def drive(seconds):
-        """Hold a locked target off-centre so the ONLY thing gating the sticks
-        is the flight mode."""
         t0 = perf_counter()
         while perf_counter() - t0 < seconds:
             c = cmdr.compute(+200, -80, "LOCK", 640, 640)
@@ -184,7 +149,7 @@ def run_mode_gate_case(port):
                                        (0, "STABILIZE"), (1, "ACRO"),
                                        (0, "STABILIZE")]):
         fc.mode = mode
-        fc.overrides.clear()          # only look at what happens AFTER the flip
+        fc.overrides.clear()
         drive(1.5)
         applied = dict(fc.overrides)
         results.append((label, applied, cmdr.rate_mode_ok))
@@ -213,10 +178,9 @@ def run_mode_gate_case(port):
 run_mode_gate_case(14606)
 
 
-# ── G. gate disabled: REQUIRE_RATE_MODE=0 restores the ungated behaviour ─────
 def run_gate_off_case(port):
     print("\n=== G. REQUIRE_RATE_MODE=0 -> steering is NOT gated on mode ===")
-    fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=0)   # STABILIZE
+    fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=0)
     fc.start()
     sleep(0.3)
     law = ControlLaw(kp_yaw=2.0, kp_pitch=2.0, slew_per_s=1e9)
@@ -246,15 +210,12 @@ def run_gate_off_case(port):
 run_gate_off_case(14607)
 
 
-# ── H. the INTERCEPT path: ALT_HOLD, four channels, commit input ─────────────
 def run_intercept_case(port):
-    """The free-flight law end to end: gated on ALT_HOLD instead of ACRO, driving
-    all four channels, reading a commit channel it never writes."""
     print("\n=== H. intercept law: ALT_HOLD gate + 4 channels + commit ===")
-    fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=0)   # STABILIZE
+    fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=0)
     fc.start()
     sleep(0.3)
-    fc.radio[6] = 2000                          # commit stick fully up
+    fc.radio[6] = 2000
     law = InterceptLaw(cam_tilt_deg=15.0, roll_pn_gain=45.0, slew_per_s=1e9,
                        max_lean_deg=20.0, climb_gain=8.0)
     cmdr = AcroCommander(conn=f"udpin:127.0.0.1:{port}", transport="mavlink",
@@ -276,7 +237,6 @@ def run_intercept_case(port):
             cmdr.update(c, (120, -60), have_target=True)
             sleep(0.02)
 
-    # The FC read ANGLE_MAX / PILOT_Y_RATE / PILOT_SPEED_UP, not the ACRO rates.
     check("H: angle-mode scaling was read off the FC",
           abs(law.angle_max - __import__("math").radians(30.0)) < 1e-6
           and abs(law.max_climb_mps - 2.5) < 1e-6,
@@ -288,7 +248,7 @@ def run_intercept_case(port):
     check("H: STABILIZE is NOT driven when the gate wants ALT_HOLD",
           not in_stab, str(in_stab or "{}"))
 
-    fc.mode = 2                                  # pilot selects ALT_HOLD
+    fc.mode = 2
     sleep(1.2)
     drive(2.0)
     in_ah = dict(fc.overrides)
@@ -296,17 +256,12 @@ def run_intercept_case(port):
           set(in_ah) == {1, 2, 3, 4}, f"channels {sorted(in_ah)}")
     check("H: the FC confirmed the override echo", cmdr.override_confirmed is True,
           f"confirmed={cmdr.override_confirmed}")
-    # Throttle is ch3, calibrated 1000..2000 with TRIM at 1002 (bottom of travel).
-    # A climb command must sit ABOVE mid, and never near trim.
     check("H: throttle is driven around MID (1500), not around TRIM (1002)",
           in_ah.get(3, 0) > 1500, f"ch3={in_ah.get(3)}")
 
-    # The commit stick is an input only: it must never be overridden.
     check("H: the commit channel is never written", 6 not in in_ah,
           f"channels {sorted(in_ah)}")
 
-    # Pull the commit stick down -> every channel released, without waiting for a
-    # mode change (the whole point of a channel we do not write).
     fc.radio[6] = 1000
     sleep(0.4)
     drive(0.6)
@@ -323,7 +278,6 @@ def run_intercept_case(port):
 run_intercept_case(14608)
 
 
-# ── I. no ATTITUDE: roll and throttle must go dead, not guess ────────────────
 def run_no_attitude_case(port):
     print("\n=== I. no ATTITUDE -> roll + throttle command nothing ===")
     fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=2, attitude=False)
@@ -367,17 +321,7 @@ def run_no_attitude_case(port):
 run_no_attitude_case(14609)
 
 
-# ── J. attitude must be time-aligned to the video frame ──────────────────────
 def run_time_alignment_case(port):
-    """The line-of-sight bearing PN differentiates is `yaw + azimuth_in_frame`.
-    The azimuth comes from a video frame ~100 ms old; ATTITUDE arrives on its own
-    schedule. Adding two numbers from DIFFERENT instants injects a bearing error
-    that varies with yaw acceleration — and PN multiplies that by a large gain.
-
-    Measured before the fix, through this exact path: a nose swinging on a
-    CONSTANT target bearing produced 27 deg of phantom bank, pinned at the
-    ceiling. Aligning the attitude to the frame's capture time took it to 0.06.
-    """
     print("\n=== J. attitude aligned to the frame -> no phantom bank ===")
     fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=2)
     fc.start()
@@ -398,24 +342,19 @@ def run_time_alignment_case(port):
     half = math.tan(math.radians(62.2 / 2))
     worst = 0.0
     for k in range(60):
-        # Airframe yaws back and forth; the target stays on a FIXED world
-        # bearing, so the seeker's azimuth moves exactly opposite. lambda is
-        # constant, therefore PN must command nothing.
         yaw = math.radians(6.0) * math.sin(k * 0.25)
         fc.att.update(yaw=yaw, yawspeed=math.radians(90.0))
-        sleep(0.06)                        # let that ATTITUDE actually land
+        sleep(0.06)
         az_px = -(320.0) * math.tan(yaw) / half
         cmd = cmdr.compute(az_px, 0, "LOCK", 640, 640, bbox=(0, 0, 30, 30),
                            capture_t=perf_counter())
         cmdr.update(cmd, (int(az_px), 0), have_target=True)
-        if k > 25:                         # past the LOS filter's settling time
+        if k > 25:
             worst = max(worst, abs(cmd["bank_deg"]))
 
     cmdr.close()
     sleep(0.2)
     fc.shutdown()
-    # 1 deg of bank is ~0.002 g of lateral acceleration: physically nothing.
-    # The pre-fix value was 27 deg, i.e. the full ceiling.
     check("J: a nose swinging on a constant bearing commands ~no bank",
           worst < 1.0, f"worst {worst:.3f} deg (was 27.0 before time alignment)")
 

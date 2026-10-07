@@ -1,12 +1,4 @@
 #!/usr/bin/env python3
-"""The sky gate (SkyDetector) at half resolution must decide like full resolution.
-
-Ground rejection stays the SAME module; SKY_MASK_SCALE=0.5 only computes its
-mask on a half-size frame (21 -> ~7 ms on this Jetson).  Checked on recorded
-field frames when any are readable, and always on synthetic sky/ground scenes.
-
-    ../.env/yolo/bin/python tests/test_sky_mask.py
-"""
 import contextlib, glob, io, os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cv2
@@ -26,13 +18,13 @@ def check(label, ok, detail=""):
 def synthetic(seed):
     rng = np.random.default_rng(seed)
     img = np.zeros((640, 640, 3), np.uint8)
-    img[:] = (235, 200, 150)                          # sky, BGR
+    img[:] = (235, 200, 150)
     hz = int(rng.integers(300, 520))
-    img[hz:] = (40, 90, 60)                           # ground from the bottom
-    for _ in range(6):                                # trees rising from the ground
+    img[hz:] = (40, 90, 60)
+    for _ in range(6):
         x = int(rng.integers(0, 600)); w = int(rng.integers(20, 60)); top = int(rng.integers(150, hz))
         img[top:hz, x:x + w] = (30, 70, 40)
-    for _ in range(4):                                # dark blobs floating in the sky
+    for _ in range(4):
         cv2.circle(img, (int(rng.integers(40, 600)), int(rng.integers(20, 200))), int(rng.integers(4, 14)), (60, 60, 60), -1)
     return cv2.GaussianBlur(img, (3, 3), 0)
 
@@ -40,10 +32,6 @@ def synthetic(seed):
 frames = [synthetic(s) for s in range(12)]
 here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 full, half = tracker.SkyDetector(), tracker.SkyDetector(scale=0.5)
-# Real footage, newest first -- but only frames that actually SHOW SKY (the
-# full-resolution gate calls >= 80% of the top quarter sky).  src/data/ also
-# holds bench recordings of a ceiling and curtains; the sky gate means
-# nothing there, and judging it on them failed this test for no reason.
 real = 0
 for v in sorted(glob.glob(os.path.join(here, "data", "*.mp4")), reverse=True):
     if real >= 24:

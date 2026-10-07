@@ -1,20 +1,11 @@
 #!/usr/bin/env python3
-"""Hover -> Scout -> Engage: the mission state machine, and the exact PWM map.
-
-    ../.env/yolo/bin/python tests/test_mission.py
-
-Part A drives mission.Mission with a fake clock and a fake mapper, so every
-transition is checked without hardware.  Part B checks ArduPilotAcro's exact
-PWM map against an independent model of ArduPilot 4.6's own stick decode,
-with THIS FC's calibration.
-"""
 import math
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import mission as M                                                # noqa: E402
+import mission as M
 
 FAILED = []
 
@@ -26,9 +17,6 @@ def check(label, ok, detail=""):
 
 
 class FakeMapper:
-    """Linear stand-in: 10 us per m/s of climb, per deg of lean/bank, 2 us per
-    deg/s of yaw.  Exactly invertible, so a test can read physical values off
-    the PWM the mission produced."""
     K = {"throttle": 10.0, "pitch": 10.0, "roll": 10.0, "yaw": 2.0}
 
     def __init__(self):
@@ -52,7 +40,6 @@ def phys(mp, out, axis):
 
 
 class Rig:
-    """A mission, a clock and a context, stepped at 50 Hz."""
 
     def __init__(self, **kw):
         self.mp = FakeMapper()
@@ -68,7 +55,6 @@ class Rig:
             if hold:
                 self.m.request_hold(hold, session, self.t)
             self.out = self.m.cycle(self.t, self.ctx)
-            # a trivial yaw plant, so steps can be closed
             if "yaw" in self.out:
                 y = self.ctx["att"]["yaw"]
                 self.ctx["att"]["yaw"] = y + math.radians(
@@ -106,7 +92,7 @@ check("ramps IN (no step): starts near 0, half-way at ~0.25 s, full by 0.5 s",
       first < 0.05 and 0.3 < mid < 0.7 and abs(full - 1.0) < 1e-6,
       f"{first:.2f} -> {mid:.2f} -> {full:.2f} m/s")
 check("phase CLIMB", r.m.phase == "CLIMB")
-r.run_until(0.28)                       # keepalives stop: still inside dead-man
+r.run_until(0.28)
 still = phys(r.mp, r.out, "throttle")
 r.run_until(0.22)
 check("keepalives stop: holds for up to 0.3 s, then starts ramping out",
@@ -118,7 +104,7 @@ check("...lands on zero and hands the throttle back to the pilot",
 
 r = Rig()
 r.step()
-r.m.set_level("vert", "SLOW")              # written for the 1 m/s climb
+r.m.set_level("vert", "SLOW")
 r.run_until(0.6, hold="up")
 r.m.request_release("s1")
 r.run_until(0.12)
@@ -140,7 +126,7 @@ for lv, up, dn in (("SLOW", 1.0, 0.5), ("MEDIUM", 3.0, 1.5), ("FAST", 8.0, 2.5))
     r.run_until(0.7, hold="up")
     u = phys(r.mp, r.out, "throttle")
     r = Rig()
-    r.ctx["height"] = 10.0                 # FAST descent needs ~2.7 m to stop
+    r.ctx["height"] = 10.0
     r.step()
     r.m.set_level("vert", lv)
     r.run_until(0.7, hold="down")
@@ -166,7 +152,7 @@ r = Rig(ceiling_m=30.0)
 r.step()
 r.m.set_level("vert", "FAST")
 r.run_until(0.7, hold="up")
-r.ctx.update(height=20.0, climb=8.0)       # climbing fast, 10 m short
+r.ctx.update(height=20.0, climb=8.0)
 r.run_until(0.1, hold="up")
 check("FAST climb 10 m under the ceiling: already easing off (stop distance "
       f"{M.stop_distance(8.0, 5.0, 5.0, 0.5):.1f} m)",
@@ -254,10 +240,10 @@ AI = {"pwm": {"roll": 1700, "pitch": 1350, "yaw": 1560, "throttle": 1520}}
 
 def push_rig():
     q = Rig(min_conf=0.20)
-    q.ctx["height"] = 10.0                    # the real flow engages at ~10 m
+    q.ctx["height"] = 10.0
     q.step()
-    q.m.set_level("push", "MEDIUM")           # these checks are written for 30 deg
-    q.m.set_level("search", "SLOW")           # ...and for the 4 s search
+    q.m.set_level("push", "MEDIUM")
+    q.m.set_level("search", "SLOW")
     q.m.request_engage()
     q.step()
     return q
@@ -270,7 +256,7 @@ def see(q, conf):
 q = push_rig()
 q.run_until(0.3)
 p_before = dict(q.out)
-for _ in range(45):                       # detections from 0.3 s to 1.2 s
+for _ in range(45):
     see(q, 0.9)
     q.step()
 check("a detection early in PUSH: the AI already steers yaw / roll / throttle",
@@ -295,7 +281,7 @@ q.run_until(0.5)
 for _ in range(30):
     see(q, 0.6)
     q.step()
-q.ctx.update(ai_cmd=None, ai_t=None, det_t=None)      # lost mid-push
+q.ctx.update(ai_cmd=None, ai_t=None, det_t=None)
 rolls_back = []
 for _ in range(int(M.Mission.BLEND_S / 0.02) + 5):
     rolls_back.append(q.step()["roll"])
@@ -318,14 +304,14 @@ for _ in range(int(M.Mission.BLEND_S / 0.02) + 5):
     see(q, 0.35)
     rolls.append(q.step()["roll"])
 d = [b - a for a, b in zip(rolls, rolls[1:])]
-_lim = int(200 * 1.5 * 0.02 / M.Mission.BLEND_S) + 3     # smoothstep's peak slope
+_lim = int(200 * 1.5 * 0.02 / M.Mission.BLEND_S) + 3
 check(f"roll glides monotonically to the AI's value, max step <= {_lim} us per 20 ms",
       all(x >= -1 for x in d) and max(d) <= _lim and rolls[-1] == 1700,
       f"max {max(d)} us, final {rolls[-1]}")
 
 print("=== A8. soft stops ===")
 q = Rig(min_conf=0.20); q.ctx["height"] = 10.0; q.step()
-q.m.request_engage(); q.step()                # the shipped default search
+q.m.request_engage(); q.step()
 q.run_until(5.8)
 check("PUSH with no target: still pushing at 5.8 s (the default search is 6 s)", q.m.phase == "PUSH")
 q.run_until(0.3)
@@ -351,14 +337,14 @@ q = push_rig()
 q.run_until(1.52)
 see(q, 0.5)
 q.step()
-q.run_until(0.6)                           # detections stop -> stale
+q.run_until(0.6)
 check("AI loses the target: NOT a stop -- back to the straight PUSH, looking again",
       q.m.phase == "PUSH", q.m.phase)
 q.run_until(1.6)
 check("...gliding back to straight: roll 1500, yaw 1500, lean = the push angle",
       q.out["roll"] == 1500 and q.out["yaw"] == 1500 and abs(phys(q.mp, q.out, "pitch") + 30.0) < 0.2,
       str(q.out))
-q.run_until(1.2)                           # 2.5 s of re-acquire window gone
+q.run_until(1.2)
 q.run_until(1.2)
 check("...nothing found in 2.5 s: soft stop, released", q.out == {} and q.m.phase == "HOVER",
       q.m.phase)
@@ -366,7 +352,7 @@ q = push_rig()
 q.run_until(1.52)
 see(q, 0.5)
 q.step()
-q.run_until(0.8)                           # lost -> back to PUSH
+q.run_until(0.8)
 was = q.m.phase
 see(q, 0.5)
 q.step()
@@ -377,14 +363,14 @@ q = push_rig()
 q.run_until(1.52)
 see(q, 0.5)
 q.step()
-for _ in range(60):                         # blend done, AI flying, target in view
+for _ in range(60):
     see(q, 0.5)
     q.step()
 TERM = {"pwm": {"roll": 1520, "pitch": 1250, "yaw": 1500, "throttle": 1560},
         "terminal": True}
 q.ctx.update(ai_cmd=TERM, ai_t=q.t, det_t=q.t, det_conf=0.6)
 q.step()
-q.ctx.update(ai_cmd=None, ai_t=None)       # the target fills the frame: lost
+q.ctx.update(ai_cmd=None, ai_t=None)
 q.run_until(1.0)
 check("TERMINAL commit: detection lost in the last metre -> keeps flying the "
       "frozen command (no soft stop before the touch)",
@@ -418,8 +404,8 @@ def in_phase(name):
     q.step()
     if name == "AI":
         return q, None
-    q.run_until(0.7)                       # target lost -> back to PUSH
-    q.run_until(2.6)                       # nothing re-acquired -> STOP
+    q.run_until(0.7)
+    q.run_until(2.6)
     return q, None
 
 
@@ -427,7 +413,7 @@ for name in ("HOVER", "CLIMB", "DESCEND", "SCOUT", "PUSH", "AI", "STOP"):
     q, hold = in_phase(name)
     ok_in = q.m.phase == name
     q.m.request_abort()
-    o = q.step(hold=hold)                  # a finger still on the button
+    o = q.step(hold=hold)
     check(f"ABORT from {name}: released at once, HOVER, a held button stays dead",
           ok_in and o == {} and q.m.phase == "HOVER"
           and q.step(hold=hold) == {}, f"was {q.m.phase if not ok_in else name}")
@@ -445,14 +431,14 @@ check("after ABORT a NEW press works again",
 print("=== A8b. a gap in REAL detections: stop turning, then soft stop ===")
 q = push_rig()
 q.run_until(1.52)
-for _ in range(90):                       # AI established, target in view
+for _ in range(90):
     see(q, 0.6)
     q.step()
 y0, r0 = q.out["yaw"], q.out["roll"]
 t_lost = q.t
-q.ctx.update(det_t=t_lost - 0.02, ai_t=t_lost - 0.02)     # detections stop; the cmd stays
+q.ctx.update(det_t=t_lost - 0.02, ai_t=t_lost - 0.02)
 yaws, rolls = [], []
-for _ in range(40):                       # until the soft stop takes over
+for _ in range(40):
     o = q.step()
     if q.m.phase != "AI":
         break
@@ -466,7 +452,7 @@ check("0.5 s with no real detection: back to the straight push (not a spin, not 
       q.m.phase == "PUSH", q.m.phase)
 
 print("=== A8c. no AI floor: the AI may descend toward a low target at any height ===")
-DOWN = {"pwm": {"roll": 1500, "pitch": 1350, "yaw": 1500, "throttle": 1450}}   # AI wants -5 m/s
+DOWN = {"pwm": {"roll": 1500, "pitch": 1350, "yaw": 1500, "throttle": 1450}}
 for h, vz, want, label in ((12.0, 0.0, "free", "12 m: the AI's descent passes"),
                            (3.8, -2.5, "free", "3.8 m descending at 2.5 m/s: still passes"),
                            (2.5, 0.0, "free", "2.5 m (the old floor): passes"),
@@ -489,18 +475,18 @@ see(q, 0.6)
 q.step()
 check("the AI takes a channel: engaged (ENGAGE turns green)", q.m.snapshot(q.t)["engaged"])
 q.ctx.update(ai_cmd=None, ai_t=None, det_t=None)
-q.run_until(4.5)                               # lost -> back to hold -> timeout -> STOP -> HOVER
+q.run_until(4.5)
 q.run_until(1.2)
 check("after the attempt, back in HOVER: still engaged, a 2nd ENGAGE is refused",
       q.m.phase == "HOVER" and q.m.snapshot(q.t)["engaged"] and "STAB" in q.m.request_engage())
-q.ctx["gate_ok"] = False                       # pilot -> STAB
+q.ctx["gate_ok"] = False
 q.step()
-q.ctx["gate_ok"] = True                        # ... -> ALT_HOLD
+q.ctx["gate_ok"] = True
 q.step()
 check("pilot STAB -> ALT_HOLD: reset (red), ENGAGE accepted again",
       not q.m.snapshot(q.t)["engaged"] and q.m.request_engage() == "")
 q = push_rig()
-q.run_until(4.2)                               # PUSH timed out, the AI never steered
+q.run_until(4.2)
 q.run_until(1.2)
 check("a push that never found a target does NOT latch: ENGAGE again at once",
       q.m.phase == "HOVER" and not q.m.snapshot(q.t)["engaged"] and q.m.request_engage() == "")
@@ -525,14 +511,14 @@ def herr(a, b):
 
 
 r = Rig()
-r.step()                                             # HOVER
-r.ctx["att"]["yaw"] = math.radians(0.0)              # facing north
+r.step()
+r.ctx["att"]["yaw"] = math.radians(0.0)
 check("LOCK accepted while hovering", r.m.request_lock(True) == "")
 r.step()
 check("LOCK on: heading captured, phase still HOVER, yaw channel held at centre",
       r.m.lock_hdg is not None and abs(herr(r.m.lock_hdg, 0.0)) < 0.1 and r.m.phase == "HOVER"
       and "yaw" in r.out and abs(phys(r.mp, r.out, "yaw")) < 0.5, f"{r.m.lock_hdg} {r.out}")
-r.ctx["att"]["yaw"] = math.radians(25.0)             # a gust knocks it 25 deg right
+r.ctx["att"]["yaw"] = math.radians(25.0)
 r.step(1)
 turned = phys(r.mp, r.out, "yaw")
 r.run_until(6.0)
@@ -540,7 +526,7 @@ check("knocked 25 deg: it turns back on its own (negative rate) and settles with
       abs(herr(hdg(r), 0.0)) < 1.0, f"now {hdg(r):.1f} deg")
 peak = []
 r.ctx["att"]["yaw"] = math.radians(-90.0)
-for _ in range(450):                                 # 1 s settle wait + the turn back
+for _ in range(450):
     r.step()
     peak.append(abs(phys(r.mp, r.out, "yaw")))
 check(f"knocked 90 deg: back without a spin (rate <= {r.m.LOCK_MAX_DPS:.0f} deg/s)",
@@ -553,7 +539,6 @@ r.run_until(1.0, hold="up")
 check("▲ while locked: climbs AND keeps the heading", "throttle" in r.out and "yaw" in r.out
       and r.m.lock_hdg is not None)
 r.m.request_release("s1"); r.run_until(1.5)
-# a held ⟳ turns it away; let go and it comes BACK to the locked heading
 held_lock = r.m.lock_hdg
 r.run_until(1.0, hold="yawr", session="s2")
 away = hdg(r)
@@ -586,7 +571,7 @@ check("lock_hdg = 313 at once, the drone turning toward it",
       abs(herr(q.m.lock_hdg, 313.0)) < 1e-6 and phys(q.mp, q.out, "yaw") is not None)
 q.run_until(3.0)
 check("...reaches 313 and holds it", abs(herr(hdg(q), 313.0)) < 1.0, f"now {hdg(q):.1f}")
-q.ctx["att"]["yaw"] = math.radians(340.0)            # a gust: 27 deg right
+q.ctx["att"]["yaw"] = math.radians(340.0)
 peak = []
 for _ in range(250):
     q.step(); peak.append(abs(phys(q.mp, q.out, "yaw")))
@@ -641,17 +626,14 @@ def auto_rig(h=2.0):
     q = Rig(min_conf=0.20)
     q.ctx["height"] = h
     q.step()
-    q.m.set_level("push", "MEDIUM")           # aim mark -20 deg, push 30 deg
+    q.m.set_level("push", "MEDIUM")
     q.m.set_auto_enabled(True)
-    # these checks are written for 10 m, the PUSH lean and the AI steering
-    # at once; the operator's defaults are checked in A13
     for k, v in (("height", 10), ("line", 0), ("ai", "SAME"), ("steer", 0)):
         q.m.set_auto_param(k, v)
     return q
 
 
 def fly(q, secs, det=None):
-    """Step with a trivial height plant; `det` = a target seen every frame."""
     for _ in range(int(round(secs / 0.02))):
         if det is not None:
             q.ctx.update(det_t=q.t, det_conf=0.8, ai_cmd=det, ai_t=q.t)
@@ -683,7 +665,7 @@ check("no detection: still holding 20 s later, heading locked, nothing else driv
       and abs(phys(q.mp, q.out, "throttle")) < 1e-6 and q.m.lock_hdg is not None)
 check("▲ / ▼ refused during AUTO", q.m.request_hold("up", "x", q.t) != "")
 hd0 = q.m.lock_hdg
-for _ in range(50):                            # ⟳ held 1 s while watching
+for _ in range(50):
     q.m.request_hold("yawr", "y1", q.t); fly(q, 0.02)
 check("⟳ held while watching: it turns, still AUTO_HOLD", q.m.phase == "AUTO_HOLD"
       and phys(q.mp, q.out, "yaw") > 5.0, f"{q.m.phase} {phys(q.mp, q.out, 'yaw'):.1f}")
@@ -752,12 +734,12 @@ q.m.request_engage(); q.step()
 check("ENGAGE during AUTO: go now, PUSH", q.m.phase == "PUSH")
 
 q = auto_rig(h=3.2); q.m.request_auto(True); q.step()
-fly(q, 1.0, det=tgt(az=0.0, el=-30.0))        # below the mark: would descend
+fly(q, 1.0, det=tgt(az=0.0, el=-30.0))
 check("ALIGN never descends to the AUTO floor",
       q.ctx["height"] > q.m.AUTO_FLOOR_M and phys(q.mp, q.out, "throttle") >= -1e-6,
       f"h {q.ctx['height']:.2f}")
 q = auto_rig(h=12.0); q.m.request_auto(True); q.step()
-fly(q, 1.0, det=tgt(az=12.0, el=-20.0, rate=-24.0))   # keeps sliding: never on the mark
+fly(q, 1.0, det=tgt(az=12.0, el=-20.0, rate=-24.0))
 check("not lined up after AUTO_ALIGN_MAX_S but near the nose: goes anyway",
       q.m.phase == "AUTO_ALIGN")
 fly(q, 1.3, det=tgt(az=12.0, el=-20.0, rate=-24.0))
@@ -834,10 +816,10 @@ check("...and loaded into a fresh mission (a reboot)", q2.m.AUTO_HEIGHT_M == 20.
 open(tf, "w").write('{"height": 999, "ai": "MAX", "junk": 1}')
 q3 = auto_rig()
 check("a bad saved value is skipped, the rest applied, nothing breaks",
-      M.load_auto_params(q3.m, tf) == {"ai": "MAX"} and q3.m.AUTO_HEIGHT_M == 10.0)  # the rig's 10
+      M.load_auto_params(q3.m, tf) == {"ai": "MAX"} and q3.m.AUTO_HEIGHT_M == 10.0)
 check("no saved file: defaults, no error", M.load_auto_params(auto_rig().m, tf + ".none") == {})
 print("=== A14. 'make it the default?': a change lasts until a reboot, YES saves it ===")
-import json                                                        # noqa: E402
+import json
 d = tempfile.mkdtemp()
 af, lf, df = (os.path.join(d, "wasp", n) for n in ("auto.json", "levels.json", "detection.json"))
 q = auto_rig()
@@ -879,7 +861,7 @@ check("FOLLOWER default saved and read back; the SKY GATE is refused (always ON 
       and M.save_detection_default("sky", False, df) != "" and "sky" not in json.load(open(df)))
 check("a broken file: ignored, never fatal", (open(lf, "w").write("{oops") or True) and M.load_levels(auto_rig().m, lf) == {})
 print("=== B. exact PWM vs ArduPilot 4.6's own decode, this FC ===")
-from fc_control import ArduPilotAcro                               # noqa: E402
+from fc_control import ArduPilotAcro
 
 
 def ap_climb(pwm, lo=1100, hi=1900, dz=30, thr_dz=100, up=25.0, dn=2.5):

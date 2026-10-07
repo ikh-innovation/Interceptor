@@ -1,27 +1,4 @@
 #!/usr/bin/env python3
-"""Watch a real flight video through the tracker: today's (detector only)
-beside the new one (detector + follower).
-
-    ../.env/yolo/bin/python tests/render_replay.py data/20260930_083620_p04.mp4 [more.mp4 ...]
-    ../.env/yolo/bin/python tests/render_replay.py --dets dets.json data/*.mp4
-
-Writes replays/<name>_replay.mp4 in the repo root (H.264, 1280x640: today's
-tracker on the left, the new one on the right).  Play them on the Jetson.
-
-Both halves run the tracker's REAL _process (Kalman, track gate, ROI, the
-follower) on the same frames and the same detections:
-    green box   the detector found it on this frame
-    orange box  the follower found it (the detector missed)
-    grey cross  neither: the Kalman guess (the AI does NOT steer on it)
-    nothing     SEARCH, no track
-Bottom right of each half: the target's surroundings magnified x4.
-
-Detections come from the model itself (the detector runs on the recorded
-640 px frame, like the live search pass) unless --dets gives a cache.
-Running the model needs ~1 GB of RAM on top of the live tracker: stop it
-first (systemctl --user stop wasp-tracker) when the Jetson is short.
-The recordings carry the live HUD (thin reticle marks); both halves see them.
-"""
 import argparse
 import contextlib
 import io
@@ -38,7 +15,7 @@ sys.path.insert(0, SRC)
 sys.path.insert(0, HERE)
 
 with contextlib.redirect_stdout(io.StringIO()):
-    import test_follower as TF                                     # noqa: E402
+    import test_follower as TF
 
 MODEL = os.path.join(os.path.dirname(SRC), "runs/detect/v0/weights/best.engine")
 CONF = 0.20
@@ -46,8 +23,6 @@ GREEN, ORANGE, GREY = (60, 200, 60), (0, 140, 255), (170, 170, 170)
 
 
 class Recorded:
-    """The detector's answer for this frame, only if inside the asked region
-    (the tracker asks for its ROI or the sky), like the live model."""
 
     def __init__(self):
         self.d = None
@@ -93,7 +68,6 @@ def draw(fr, t, detected, fused, stats, title):
         else:
             col = GREY
             cv2.drawMarker(img, (x, y), col, cv2.MARKER_CROSS, 18, 1)
-        # magnified surroundings, bottom right
         R = 24
         g = cv2.copyMakeBorder(fr, R, R, R, R, cv2.BORDER_CONSTANT)
         crop = g[y:y + 2 * R, x:x + 2 * R]

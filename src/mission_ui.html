@@ -5,20 +5,15 @@
 <title>WASP</title>
 <link rel="icon" type="image/svg+xml" href="/img/ikd-logo.svg">
 <style>
-  /* The typeface is served by the Jetson itself (/font/...): the field has no
-     internet, so a CDN font would silently fall back. */
   @font-face{font-family:"U";src:url(/font/Ubuntu-R.ttf) format("truetype");font-weight:400;font-display:swap}
   @font-face{font-family:"U";src:url(/font/Ubuntu-M.ttf) format("truetype");font-weight:500;font-display:swap}
   @font-face{font-family:"U";src:url(/font/Ubuntu-B.ttf) format("truetype");font-weight:700;font-display:swap}
   @font-face{font-family:"UC";src:url(/font/Ubuntu-C.ttf) format("truetype");font-display:swap}
   @font-face{font-family:"UM";src:url(/font/UbuntuMono-B.ttf) format("truetype");font-display:swap}
 
-  /* light: white / grey surfaces, black controls, orange only as the accent */
   :root{
     --bg:#eceef1; --bg2:#ffffff; --bg3:#f5f6f8; --line:#d5d9df;
     --txt:#262b31; --dim:#5b646e; --faint:#8b939d;
-    /* neutral greys, no black: --ink = dark-grey text, --ctl = the controls'
-       fill (white on it is 6.6:1), --ctl-sub = the small labels on them */
     --ink:#30353c; --ink2:#454b53; --ctl:#565d66; --ctl-sub:#d9dde2;
     --acc:#ff7a00; --acc-ink:#1a0d00;
     --ok:#16a34a; --warn:#e8a200; --bad:#dc2626;
@@ -34,22 +29,17 @@
   .app{height:100%;display:flex;flex-direction:column;gap:8px;
        padding:calc(8px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom))}
 
-  /* ── top bar: menu, name, who controls ───────────────────────────────── */
   .top{flex:0 0 auto;display:flex;align-items:center;gap:10px}
   .burger{flex:0 0 auto;width:42px;height:42px;border-radius:12px;border:1px solid var(--line);background:var(--bg2);
           display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:0}
   .burger i{display:block;width:18px;height:2px;border-radius:2px;background:var(--ink)}
   .brand{flex:1;min-width:0;overflow:hidden;white-space:nowrap;font:700 15px/1 var(--sans);letter-spacing:.22em;color:var(--ink)}
   .brand span{color:var(--acc);font-weight:500;letter-spacing:.14em;margin-left:6px;font-size:11px}
-  /* the IKnowHow Defence logo: top right, its own navy / maroon on the light bar.
-     Fixed box (348:238, the artwork's shape) so the bar never jumps while it loads */
   .logo{flex:0 0 auto;display:block;height:38px;width:56px;object-fit:contain}
-  /* the menu page signs off with it, bigger */
   .byline{display:flex;flex-direction:column;align-items:center;gap:10px;margin:34px 0 10px}
   .byline img{display:block;height:96px;width:140px;object-fit:contain}
   .byline span{font:11px/1 var(--cond);letter-spacing:.24em;color:var(--faint)}
 
-  /* ── status tiles ────────────────────────────────────────────────────── */
   .tiles{flex:0 0 auto;display:grid;grid-template-columns:1fr 1.15fr .95fr;gap:6px}
   .tile{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:6px 8px 7px;min-width:0}
   .tile .k{display:block;font:11px/1 var(--cond);letter-spacing:.09em;color:var(--faint);text-transform:uppercase;
@@ -63,62 +53,42 @@
   .tile .v.bad{color:var(--bad)}
   .tile .v.on:before{background:var(--acc)}
 
-  /* ── video + overlays (overlays stay dark: they sit on the picture) ──── */
   .vidwrap{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:6px}
-  /* under the picture: the heading bar (drag it) and the height, same look */
   .belt{flex:0 0 46px;width:100%;display:flex;gap:6px}
   .hbox{flex:0 0 76px;border-radius:12px;background:var(--ctl);border:1px solid var(--ctl);color:#fff;
         display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
         box-shadow:0 2px 8px rgba(16,19,23,.2);font-variant-numeric:tabular-nums}
   .hbox b{font:700 15px/1 var(--mono)}
   .hbox span{font:10.5px/1 var(--mono);color:var(--ctl-sub)}
-  /* a refusal: 4 s over the bottom of the picture (the phase card is gone) */
   .toast{position:absolute;left:8px;right:8px;bottom:8px;display:none;padding:7px 10px;border-radius:9px;
          background:rgba(185,28,28,.92);color:#fff;font:500 13px/1.3 var(--sans);text-align:center}
   .toast.on{display:block}
-  /* the degree scroll, RIGHT of the picture: drag up = more degrees.  It
-     only PICKS a heading; lifting the finger asks whether to LOCK there. */
   .dial{flex:1 1 auto;min-width:0;position:relative;border-radius:12px;overflow:hidden;touch-action:none;
         background:var(--ctl);border:1px solid var(--ctl);box-shadow:0 2px 8px rgba(16,19,23,.2)}
   .dial canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   .dial.off{opacity:.3}
   .dial.drag{border-color:var(--acc);box-shadow:0 0 0 3px rgba(255,122,0,.45)}
-  /* the camera's true shape: 4:3 at 30 fps (mode 3, 1280x960), 16:9 at 60 fps
-     (mode 4, 1280x720); paint() sets --ar from the Jetson.  The overlay maths
-     is proportional to the box, so it stays exact at any size. */
   .vbox{position:relative;height:calc(100% - 52px);max-width:100%;aspect-ratio:var(--ar, 4 / 3);border-radius:var(--r);overflow:hidden;
         background:#000;border:1px solid var(--line);box-shadow:0 4px 16px rgba(16,19,23,.2)}
   .vbox img{width:100%;height:100%;display:block;object-fit:fill}
-  /* the aim indication: a STRAIGHT dashed line across the frame, at the
-     height where the top of the old 20%-of-frame circle was, so it moves with
-     the aim point (higher in PUSH / AI).  "On target" is still that circle
-     around the dot (AIM_R below), so the line turns green exactly when it
-     used to. */
   .arc{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
   .arc path{fill:none;vector-effect:non-scaling-stroke;stroke-linecap:round}
-  /* subtle on purpose: a dashed guide, not a target ring */
   .arc .sh{stroke:rgba(0,0,0,.3);stroke-width:3.5;stroke-dasharray:7 6}
   .arc .fg{stroke:var(--acc);stroke-width:1.8;stroke-dasharray:7 6;opacity:.85}
   .arc.good .fg{stroke:#22c55e;opacity:.95}
   .aim{position:absolute;width:7px;height:7px;transform:translate(-50%,-50%);border-radius:50%;
        background:var(--acc);box-shadow:0 0 0 1.5px rgba(0,0,0,.45);pointer-events:none;opacity:.9}
   .aim.good{background:#22c55e}
-  /* compass tape across the top of the picture.  Its width IS the camera's
-     horizontal FOV, so a bearing on the tape sits over the picture's pixels
-     that face it.  Heading from the FC (VFR_HUD), eased between polls. */
   .tape{position:absolute;left:0;top:0;width:100%;height:26px;display:block;pointer-events:none;
         background:linear-gradient(180deg,rgba(12,14,17,.85),rgba(12,14,17,.55));border-bottom:1px solid rgba(255,255,255,.12)}
   .tgt{position:absolute;width:7%;aspect-ratio:1/1;transform:translate(-50%,-50%);border:1.5px solid rgba(255,255,255,.75);
        border-radius:3px;box-shadow:0 0 0 1px rgba(0,0,0,.3);pointer-events:none;display:none}
-  /* TEST: the pretend drone is drawn as a drone, not a detection box */
-  /* TEST: the canvas draws the enemy itself; no words in the picture */
-  body.sim .tgt,body.sim .badge{display:none!important}
+  body.sim .tgt,body.sim .badge{display:none          }
   .badge{position:absolute;left:50%;top:34px;transform:translateX(-50%);padding:5px 12px;border-radius:999px;
          font:500 13px/1.2 var(--sans);color:#fff;background:rgba(12,14,17,.78);border:1px solid rgba(255,255,255,.15);
          white-space:nowrap}
   .badge.good{background:#22c55e;border-color:#22c55e;color:#03220f}
 
-  /* ── controls: the pad on the left, LOCK above ENGAGE on the right ──── */
   .ctl{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;padding:0 4px 0 0}
   .pad{display:grid;grid-template-columns:repeat(3,clamp(64px,19vw,84px));gap:7px}
   .pad .mid{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
@@ -127,8 +97,6 @@
        font:700 clamp(22px,6.4vw,27px)/1 var(--sans);height:clamp(54px,7.4vh,64px);touch-action:none;
        position:relative;padding:0 0 12px;box-shadow:0 2px 6px rgba(16,19,23,.25);transition:transform .06s}
   .btn small{position:absolute;left:0;right:0;bottom:6px;font:10px/1 var(--cond);letter-spacing:.1em;color:var(--ctl-sub)}
-  /* HELD = orange at once; SENDING (the Jetson accepted a keepalive) = a
-     pulsing ring too, so what the drone is being told is visible */
   .btn.held{background:var(--acc);color:var(--acc-ink);transform:scale(.96)}
   .btn.held small{color:var(--acc-ink)}
   .btn.held.tx{animation:tx .6s ease-in-out infinite alternate}
@@ -138,19 +106,15 @@
   .acts{display:flex;flex-direction:column;gap:12px}
   .rbtn{width:74px;height:74px;border-radius:50%;padding:0;touch-action:none;position:relative;overflow:hidden;
         font:700 10.5px/1.15 var(--sans);letter-spacing:.06em}
-  /* LOCK: white, black ring.  On = orange ring + the heading */
   .lock{background:#fff;color:var(--ink);border:3px solid var(--ctl);box-shadow:0 2px 6px rgba(16,19,23,.2)}
   .lock small{display:block;font:11px/1.1 var(--mono);letter-spacing:0;color:var(--acc);margin-top:2px}
   .lock.on{border-color:var(--acc);box-shadow:0 0 0 4px rgba(255,122,0,.45)}
-  /* AUTO: a pill above LOCK (three round keys would not fit beside the pad).
-     Grey like the pad; orange while AUTO flies, with what it is doing */
   .rbtn.auto{height:38px;border-radius:19px;background:var(--ctl);color:#fff;border:2px solid var(--ctl)}
   .auto small{display:block;font:9.5px/1.1 var(--mono);letter-spacing:0;color:var(--ctl-sub);margin-top:2px}
   .auto.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink);box-shadow:0 0 0 3px rgba(255,122,0,.35)}
   .auto.on small{color:var(--acc-ink)}
   .auto span{position:relative;display:block}
-  .auto.run:disabled{opacity:1}       /* the straight line / AI of an AUTO run */
-  /* ENGAGE: red */
+  .auto.run:disabled{opacity:1}
   .eng{border:3px solid #fff;background:#d62828;color:#fff;box-shadow:0 0 0 2px #d62828,0 3px 8px rgba(16,19,23,.3)}
   .eng .fill{position:absolute;inset:0;background:#fff;opacity:0;transition:opacity .18s}
   .eng span,.lock span{position:relative;display:block}
@@ -159,7 +123,6 @@
   .eng.go:disabled{opacity:1}
   .rbtn:disabled{opacity:.3}
 
-  /* ── full-screen pages with a big ✕ (never pop-ups) ─────────────────── */
   .sheet{position:fixed;inset:0;z-index:7;display:none;flex-direction:column;background:var(--bg);
          padding:calc(12px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom))}
   .sheet.open{display:flex}
@@ -180,7 +143,6 @@
        border-radius:12px;padding:16px 2px 12px;font:700 15px/1 var(--sans);letter-spacing:.04em}
   .seg button i{display:block;font:normal 11px/1 var(--mono);color:var(--faint);margin-top:6px}
   .seg button.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink)}.seg button.on i{color:var(--acc-ink)}
-  /* PARAMETERS: a page of category cards, each opening its own page */
   .sheet.sub2{z-index:9}
   .cat{display:flex;align-items:center;gap:14px;width:100%;margin:0 0 10px;padding:14px 14px 14px 12px;border-radius:16px;
        border:1px solid var(--line);background:var(--bg2);color:var(--ink);text-align:left;box-shadow:0 1px 2px rgba(16,19,23,.06)}
@@ -198,18 +160,12 @@
   .phint{font:12.5px/1.45 var(--sans);color:var(--dim);background:var(--bg3);border:1px solid var(--line);
          border-radius:12px;padding:10px 12px;margin:0 0 16px}
   .phint b{color:var(--ink)}
-  /* one setting: its name, what it does, the choices */
   .grp .help{font:12.5px/1.35 var(--sans);color:var(--faint);margin:-3px 0 9px}
   .pcard{background:var(--bg2);border:1px solid var(--line);border-radius:16px;padding:14px 12px 2px;margin:0 0 14px}
   .pcard > .sec{margin:0 0 12px;color:var(--acc);font-weight:700}
-  /* DEFAULT under the choice the Jetson powers up with (saved, or factory) */
   .seg button.isdef::after{content:"DEFAULT";display:block;font:normal 9.5px/1 var(--sans);letter-spacing:.08em;
                             color:var(--faint);margin-top:5px}
   .seg button.on.isdef::after{color:var(--acc-ink)}
-  /* PARAMETERS: three big sections, SEMI-AUTO / AUTO / DETECTION; a tap opens
-     one and shows its settings under it (one open at a time) */
-  /* PARAMETERS in dark blue, not orange (operator, 2026-10-06): the accent
-     on this page and on its "make it the default?" question */
   #sh_speed, #defask{--acc:#1f3b63;--acc-ink:#ffffff}
   .acc{margin:0 0 10px}
   .acch{position:relative;display:flex;align-items:center;gap:12px;width:100%;min-width:0;padding:14px 12px;border-radius:16px;
@@ -227,7 +183,6 @@
   .acch .chev{flex:0 0 auto;color:var(--faint);font-size:24px;line-height:1;transition:transform .15s}
   .acch[aria-expanded="true"] .chev{transform:rotate(90deg);color:var(--acc)}
   .ppane{display:none;padding:10px 0 4px}.ppane.on{display:block}
-  /* tablet / desktop: one readable column, not settings stretched edge to edge */
   #sh_speed > h3, #sh_speed > .body{width:100%;max-width:760px;margin-left:auto;margin-right:auto}
   .grp .gh{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;min-height:22px}
   .grp .gh .lbl{margin:0;color:var(--ink);font-weight:700}
@@ -242,17 +197,11 @@
   .row{display:flex;justify-content:space-between;align-items:center;width:100%;margin-top:6px;padding:16px;border-radius:12px;
        border:1px solid var(--line);background:var(--bg2);color:var(--ink);font:700 15px/1 var(--sans);letter-spacing:.1em}
   .row span{color:var(--faint);font-size:20px}
-  /* a button centres its text by default: menu rows read left-aligned */
   .row > div{flex:1;min-width:0;text-align:left}
   .log{font:12px/1.45 var(--mono);white-space:pre-wrap;word-break:break-word;color:#1d2229;-webkit-user-select:text;user-select:text}
   .log .ln{padding:6px 0;border-bottom:1px solid var(--line)}.log .t{color:var(--faint)}
   .log .m{color:#1f4f99}.log .r{color:#b44a00}.log .e{color:var(--bad)}
 
-  /* TEST mode: a pretend drone on the Jetson; striped so it can
-     never be mistaken for the real one */
-  /* TEST: inside the picture.  Top-left two small WIND keys (a gust that
-     pushes the nose left / right), top-right EXIT TEST, striped so the test
-     can never be mistaken for the real drone; the picture gets a black frame */
   .simctl{position:absolute;left:8px;top:34px;z-index:3;display:none;gap:6px}
   body.sim .simctl{display:flex}
   .simctl button{width:38px;height:38px;padding:0;border-radius:10px;color:#fff;display:flex;align-items:center;justify-content:center;
@@ -268,8 +217,6 @@
   body.sim .vbox{border-color:#15171a;box-shadow:0 0 0 3px #15171a}
   .simv{position:absolute;inset:0;width:100%;height:100%;display:none}
   body.sim .simv{display:block}
-  /* TEST only, during an AUTO run: which step it is on, in words, so someone
-     watching can follow it.  The drawn world itself stays wordless. */
   .simcap{position:absolute;left:50%;top:80px;transform:translateX(-50%);z-index:3;display:none;align-items:center;gap:10px;
           width:max-content;max-width:calc(100% - 24px);padding:8px 14px 8px 8px;border-radius:14px;color:#fff;
           background:rgba(14,17,21,.72);border:1px solid rgba(255,255,255,.18);box-shadow:0 2px 10px rgba(0,0,0,.35);
@@ -284,7 +231,6 @@
   body.sim #v{visibility:hidden}
   .row:disabled{opacity:.4}
   .row small{display:block;font:11px/1.3 var(--sans);letter-spacing:0;color:var(--faint);margin-top:6px;text-align:left}
-  /* the one pop-up: LOCK at the heading just picked on the degree scroll? */
   .ask{position:fixed;inset:0;z-index:8;display:none;align-items:center;justify-content:center;
        background:rgba(16,19,23,.55);padding:20px}
   .ask.on{display:flex}
@@ -296,7 +242,6 @@
   .ask button{display:block;width:100%;margin-top:10px;padding:16px;border-radius:12px;font:700 16px/1 var(--sans);letter-spacing:.1em}
   .ask .yes{border:0;background:var(--acc);color:var(--acc-ink);margin-top:18px}
   .ask .no{border:2px solid var(--ctl);background:#fff;color:var(--ink)}
-  /* the second pop-up: make the value just set the default?  Over PARAMETERS */
   .defask{z-index:9}
   .defask .dk{font:700 13px/1.2 var(--cond);letter-spacing:.14em;color:var(--faint);margin-top:14px}
   .defask .deg{font:700 38px/1.1 var(--sans);margin:4px 0 8px}
@@ -305,8 +250,6 @@
   .cover{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;
          background:rgba(170,20,24,.95);color:#fff;z-index:9;text-align:center;padding:24px}
   .cover.on{display:flex}.cover b{font:700 26px/1.2 var(--sans);letter-spacing:.06em}.cover p{font-size:15px;max-width:22em;opacity:.92}
-  /* phone: the same dark plates as on a tablet, behind the pad and behind
-     LOCK / ENGAGE, so each group reads as one control */
   .pad,.acts{padding:8px;border-radius:18px;background:#2f343a;border:1px solid rgba(255,255,255,.08);
              box-shadow:0 4px 14px rgba(16,19,23,.25)}
   .pad .mid{color:#e4e8ec}
@@ -314,7 +257,6 @@
   .btn:disabled small{color:rgba(255,255,255,.3)}
   .rbtn:disabled{opacity:.6}
   .ctl{padding:0}
-  /* smaller phones: give the picture the room, keep every word whole */
   @media (max-height:780px){
     .app{gap:6px}.tile{padding:5px 7px 6px}
     .btn{height:50px;padding-bottom:11px}.btn small{bottom:5px}.rbtn{width:66px;height:66px}.acts{gap:10px}
@@ -325,47 +267,33 @@
     .app{padding-left:10px;padding-right:10px}.tiles{gap:5px}
     .tile .v{font-size:11.5px}.tile .k{font-size:10px;letter-spacing:.06em}
   }
-  /* the true shape whatever the phone: the picture is as big as fits beside
-     the scroll, and the scroll is exactly as tall as the picture */
   @supports (width:1cqw){
     .vidwrap{container-type:size}
     .vbox{height:auto;max-width:none;width:min(100cqw, (100cqh - 52px) * var(--ar, 4 / 3))}
     .belt{width:min(100cqw, (100cqh - 52px) * var(--ar, 4 / 3))}
   }
-  /* the pages (menu, parameters, messages, test) read as a centred column on
-     anything wider than a phone, not rows stretched across a desktop */
   .sheet > *{width:100%;max-width:760px;align-self:center}
   @media (hover:hover){
     button{cursor:pointer}
     .btn:not(:disabled):not(.held):hover,.row:not(:disabled):hover,.seg button:hover{filter:brightness(1.06)}
   }
 
-  /* ══ TABLET / LAPTOP / DESKTOP: its own layout; the phone layout above is
-     untouched.  One line on top (☰, the name, the status), the picture as
-     big as it fits, the heading bar under it, and the controls INSIDE the
-     picture: the pad bottom-left, LOCK / ENGAGE bottom-right, each on a dark
-     glass plate so they read on any sky.  The script moves .ctl into the
-     picture box only at these widths; every behaviour is the phone's. ═══ */
   @media (min-width:700px){
     .app{display:grid;padding-left:20px;padding-right:20px;column-gap:20px;row-gap:12px;
          grid-template-columns:auto auto minmax(0,1fr) auto;grid-template-rows:auto minmax(0,1fr);
          grid-template-areas:"bur brand tiles logo" "vid vid vid vid"}
-    /* the top line: ☰, the name, the status strip, the logo at the far right */
     .top{display:contents}
     .burger{grid-area:bur;align-self:center}.brand{grid-area:brand;align-self:center;margin-left:-8px}
     .logo{grid-area:logo;align-self:center;height:46px;width:67px}
     .tiles{grid-area:tiles}
     .vidwrap{grid-area:vid;justify-content:center}
     .brand{font-size:17px}
-    /* status: one strip, cells split by hairlines */
     .tiles{display:flex;gap:0;height:50px;background:var(--bg2);border:1px solid var(--line);border-radius:12px;overflow:hidden}
     .tile{flex:1 1 0;min-width:0;border:0;border-left:1px solid var(--line);border-radius:0;background:none;
           padding:7px 12px;display:flex;flex-direction:column;justify-content:center}
     .tile:first-child{border-left:0}
     .tile .k{font-size:11px}.tile .v{font-size:clamp(12.5px,1.1vw,15px);margin-top:4px}
 
-    /* the controls over the picture.  K = one key: a tenth of the picture's
-       height (the picture is min(container height - bar, width * 3/4)) */
     .vbox{--K:clamp(48px, min(11cqh - 6px, 8.6cqw), 90px)}
     .ctl{position:absolute;left:0;right:0;bottom:0;z-index:2;display:flex;justify-content:space-between;
          align-items:flex-end;padding:0 calc(var(--K) * .22) calc(var(--K) * .22);pointer-events:none}
@@ -373,7 +301,6 @@
                background:rgba(14,17,21,.5);border:1px solid rgba(255,255,255,.14);
                -webkit-backdrop-filter:blur(10px) saturate(1.2);backdrop-filter:blur(10px) saturate(1.2);
                box-shadow:0 6px 24px rgba(0,0,0,.35)}
-    /* all four arrows the same square; the speeds read in the middle cell */
     .pad{grid-template-columns:repeat(3,var(--K));grid-template-rows:repeat(3,var(--K));gap:calc(var(--K) * .1)}
     .btn{height:var(--K);padding:0 0 calc(var(--K) * .18);font-size:calc(var(--K) * .36);border-radius:calc(var(--K) * .2);
          box-shadow:0 1px 3px rgba(0,0,0,.4)}
@@ -385,16 +312,11 @@
     .rbtn.auto{height:calc(var(--K) * .5);border-radius:calc(var(--K) * .25)}
     .auto small{font-size:calc(var(--K) * .11)}
     .acts{gap:calc(var(--K) * .16)}
-    /* what used to sit bottom-left of the picture moves out of the plates' way */
-    /* off (no FC, PUSH, ...) must still read as a key on the dark plate */
     .vbox .btn:disabled{opacity:1;background:#3b4148;color:rgba(255,255,255,.38)}
     .vbox .btn:disabled small{color:rgba(255,255,255,.3)}
     .vbox .rbtn:disabled{opacity:.6}
   }
-  /* upright tablet: the picture is as wide as the screen, so it sits right
-     under the status line instead of floating in the middle */
   @media (min-width:700px) and (orientation:portrait){ .vidwrap{justify-content:flex-start} }
-  /* a narrow tablet: the name alone, so the six status cells keep their words */
   @media (min-width:700px) and (max-width:1000px){
     .brand span{display:none}
     .tile{padding:7px 8px}.tile .v{font-size:12.5px;gap:4px}
@@ -581,17 +503,13 @@
   function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
   function rid() { return Math.random().toString(36).slice(2, 10); }
 
-  // ── identity: this page's client id (no password: the field WiFi is the gate)
   var C = rid();
-  var VIEW = false;        // every phone may command (the controller lease still picks one)
+  var VIEW = false;
 
-  // the camera's view and shape: the Jetson's CAMERA mode (paint), 30 fps here
   var HFOV = 62.2, VFOV = 48.8, TILT = 30, CAMAR = 4 / 3;
   var LEVELS = ["SLOW", "MEDIUM", "FAST"];
   var LAST = null, lastOk = 0, consoleSeq = 0, HDG = null, LOCKHDG = null;
-  var VAL = null;          // a speed level in words, per group (set by paint)
-  // tablet / desktop: the controls live INSIDE the picture box (see the CSS);
-  // the phone keeps them under it.  Moving the node keeps every handler.
+  var VAL = null;
   (function () {
     var mq = window.matchMedia("(min-width:700px)"), ctl = document.querySelector(".ctl"),
         app = document.querySelector(".app"), vbox = $("vbox");
@@ -602,18 +520,15 @@
     place();
     if (mq.addEventListener) mq.addEventListener("change", place); else mq.addListener(place);
   })();
-  var SIM = false;         // TEST: everything goes to /sim/..., the pretend drone
+  var SIM = false;
   function base() { return SIM ? "/sim" : ""; }
-  var SEL = null;          // the heading picked on the degree scroll (while dragging / asking)
-  var CANLOCK = false;     // LOCK allowed right now (the server's phase)
+  var SEL = null;
+  var CANLOCK = false;
 
-  // ── transport: polls may be skipped, commands never ────────────────────
   var polling = false;
   function poll() {
     if (polling) return;
     polling = true;
-    // a poll that hangs on field WiFi must not freeze the screen: give up
-    // after 1.2 s and ask again (the red cover still shows a dead link)
     var ac = window.AbortController ? new AbortController() : null;
     var to = ac ? setTimeout(function () { ac.abort(); }, 1200) : null;
     var wasSim = SIM;
@@ -637,10 +552,6 @@
         return j;
       }).catch(function () { return null; });
   }
-  // Messages never pop up: one line under the picture, the full list on its
-  // own full-screen page (MESSAGES).
-  // No message bar and no phase card: a refusal shows over the bottom of the
-  // picture for 4 s; everything else is in ☰ → MESSAGES.
   var NOTE = null, noteT = null;
   function note(s, bad) {
     if (!bad) return;
@@ -650,12 +561,6 @@
     noteT = setTimeout(function () { $("toast").classList.remove("on"); NOTE = null; }, 4000);
   }
 
-  // ── hold-to-move: keepalives every 100 ms while the finger is down ─────
-  // Up to 3 in flight, not 1: with one, a single slow request over field WiFi
-  // held back every keepalive behind it, the 0.3 s dead-man fired, and a
-  // button held without a break stuttered (tests/test_hold_wifi.py: 88/200
-  // holds on a hotspot at 30-80 m).  The server refuses a keepalive that
-  // lands after its release, so a late one cannot restart the axis.
   var holds = {};
   function holdButton(el) {
     var kind = el.getAttribute("data-hold"), tap = el.getAttribute("data-tap");
@@ -666,7 +571,6 @@
       var s = st; cmd("hold=" + kind + ":" + s.session, true).then(function (j) {
         s.inflight--;
         if (j && j.refused && !s.warned) { s.warned = true; note("✗ " + j.refused, true); }
-        // the button shows what the drone is really being told
         if (st === s) {
           el.classList.toggle("tx", !!(j && !j.refused));
           el.classList.toggle("refused", !!(j && j.refused));
@@ -700,7 +604,6 @@
   window.addEventListener("pagehide", releaseAll);
   document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
 
-  // ── ENGAGE: fires on touch-down (the operator's choice: instant) ────────
   $("b_eng").addEventListener("pointerdown", function (e) {
     var el = $("b_eng");
     if (el.disabled) return;
@@ -710,8 +613,6 @@
     cmd("engage=1");
   });
 
-  // ── AUTO: up, find, line up, go.  auto=on / auto=off, never a blind
-  // toggle, like LOCK. ──────────────────────────────────────────────────────
   $("b_auto").addEventListener("pointerdown", function (e) {
     var el = $("b_auto");
     if (el.disabled) return;
@@ -719,8 +620,6 @@
     cmd("auto=" + (LAST && LAST.mission && LAST.mission.auto ? "off" : "on"));
   });
 
-  // ── LOCK: hold the heading where it is.  lock=on / lock=off, never a blind
-  // toggle, so a retried request cannot undo itself. ──────────────────────
   $("b_lock").addEventListener("pointerdown", function (e) {
     var el = $("b_lock");
     if (el.disabled) return;
@@ -729,10 +628,6 @@
     cmd("lock=" + (on ? "on" : "off"));
   });
 
-  // ── the degree scroll: pick a heading, then YES / NO to LOCK there ─────
-  // Dragging only moves the number (nothing is sent); a slow drag is 1 deg
-  // per 4 px, a fast flick up to ~4x that.  The bar follows the finger like
-  // the compass tape: higher bearings to the right, so drag LEFT = more.
   var dial = $("dial"), drag = null;
   dial.addEventListener("pointerdown", function (e) {
     if (!CANLOCK || $("ask").classList.contains("on")) return;
@@ -744,7 +639,7 @@
   dial.addEventListener("pointermove", function (e) {
     if (!drag) return;
     var now = performance.now(), dy = drag.x - e.clientX, dt = Math.max(1, now - drag.t);
-    var speed = Math.abs(dy) / dt;                     // px per ms
+    var speed = Math.abs(dy) / dt;
     drag.acc += dy / 4 * Math.min(4, 1 + speed * 1.5);
     drag.x = e.clientX; drag.t = now;
     var whole = drag.acc < 0 ? Math.ceil(drag.acc) : Math.floor(drag.acc);
@@ -776,8 +671,6 @@
   });
   $("ask_no").addEventListener("click", closeAsk);
 
-  // ── full-screen pages ──────────────────────────────────────────────────
-  // ☰ opens the MENU: PARAMETERS, MESSAGES, TEST, each a page on top; ✕ goes back
   function openSheet(id) {
     releaseAll();
     $(id).classList.add("open");
@@ -789,9 +682,6 @@
     b.onclick = function () { openSheet(b.getAttribute("data-open")); };
   });
 
-  // ── PARAMETERS -> AUTO: every setting, as choices.  The keys, choices and
-  // defaults are mission.Mission.AUTO_SETTINGS' (tests/test_ui_browser.py
-  // checks they agree); this adds only the words. ─────────────────────────
   var AUTO_UI = [
     {sec: "LEG 1 · CLIMB AND WATCH"},
     {k: "height", t: "HEIGHT", h: "climbs straight up to this, then holds and watches", c: [5, 10, 15, 20], d: 15, f: function (v) { return v + " m"; }},
@@ -834,8 +724,7 @@
   })();
   $("autoreset").onclick = function () { setThen("autoreset=1", "auto:*", null); };
 
-  // ── PARAMETERS: SEMI-AUTO / AUTO / DETECTION, a tap opens one ─────────
-  function openAcc(t) {                       // t = "semi" | "auto" | "det" | "" (all closed)
+  function openAcc(t) {
     document.querySelectorAll("[data-acc]").forEach(function (b) {
       var k = b.getAttribute("data-acc"), on = k === t;
       b.setAttribute("aria-expanded", String(on));
@@ -846,18 +735,13 @@
   document.querySelectorAll("[data-acc]").forEach(function (b) {
     b.onclick = function () {
       var k = b.getAttribute("data-acc");
-      openAcc(b.getAttribute("aria-expanded") === "true" ? "" : k);   // a second tap closes it
+      openAcc(b.getAttribute("aria-expanded") === "true" ? "" : k);
     };
   });
   try { var _pa = localStorage.getItem("wasp_pacc"); if (_pa === "semi" || _pa === "auto" || _pa === "det") openAcc(_pa); } catch (e) {}
 
-  // ── "make it the default?" after every change (operator, 2026-10-06) ───
-  // A change applies at once and lasts until the next reboot; YES saves it on
-  // the Jetson as what it powers up with (def=<what>).  Never in TEST, and
-  // never for the AUTO button or the SKY GATE (fixed at power-up).
   var LV_WORDS = {vert: "▲▼ HEIGHT SPEED", yaw: "⟲⟳ TURN SPEED", push: "PUSH · FORWARD LEAN", ai: "AI · APPROACH SPEED", search: "SEARCH"};
   function autoUi(k) { for (var i = 0; i < AUTO_UI.length; i++) if (AUTO_UI[i].k === k) return AUTO_UI[i]; return null; }
-  // [setting name, the value in words, the default (null = unknown)] for one setting
   function words(what, v) {
     var kind = what.split(":")[0], key = what.split(":")[1], m = (LAST && LAST.mission) || {};
     if (kind === "lvl") {
@@ -883,12 +767,12 @@
     if (what === "auto:*") {
       var m = (LAST && LAST.mission) || {}, ad = m.auto_defaults || {}, same = true;
       AUTO_UI.forEach(function (p) { if (p.k && ad[p.k] !== undefined && String(ad[p.k]) !== String(p.d)) same = false; });
-      if (same) return;                          // the factory values already are the defaults
+      if (same) return;
       T("defk", "EVERY AUTO SETTING"); T("defv", "FACTORY");
       T("defsub", "The Jetson starts AUTO with the factory settings after every power-up, instead of the ones saved before.");
     } else {
       var w = words(what, v);
-      if (w[3]) return;                          // already the default: nothing to ask
+      if (w[3]) return;
       T("defk", w[0]); T("defv", w[1]);
       T("defsub", "The Jetson starts with it after every power-up." + (w[2] ? " Default now: " + w[2] + "." : ""));
     }
@@ -898,10 +782,9 @@
   function closeDef() { DEFQ = null; $("defask").classList.remove("on"); }
   $("def_yes").onclick = function () {
     var what = DEFQ; closeDef();
-    if (what) cmd("def=" + what);              // the DEFAULT mark moves: that is the answer
+    if (what) cmd("def=" + what);
   };
   $("def_no").onclick = closeDef;
-  // a change: send it; once the Jetson took it, ask about the default
   function setThen(q, what, v) {
     cmd(q).then(function (j) { if (j && !j.refused) askDefault(what, v); });
   }
@@ -942,7 +825,6 @@
     };
   });
 
-  // ── TEST: during an AUTO run, which step it is on (words only here) ────
   var capRun = false;
   function simCaption(m, ph, run) {
     var el = $("simcap");
@@ -966,7 +848,6 @@
     if (cap) { T("simcap_n", cap[0]); T("simcap_t", cap[1]); T("simcap_s", cap[2]); }
   }
 
-  // ── TEST: the same screen, driving a pretend drone on the Jetson ─────
   function setSim(on) {
     releaseAll();
     if (drag) dialEnd(false);
@@ -977,8 +858,6 @@
     document.querySelectorAll(".sheet").forEach(function (x) { x.classList.remove("open"); });
     poll(); pullConsole();
   }
-  // an older tracker process (started before TEST existed) serves this
-  // page but not /sim: say so instead of showing "connection lost"
   function simMissing() {
     if (!SIM) return;
     setSim(false);
@@ -993,13 +872,10 @@
   $("s_gr").onclick = function () { cmd("gust=r", true); };
 
 
-  // ── paint: ONLY from the server's reply ────────────────────────────────
   function fmt(x, d) { return (x === null || x === undefined) ? "--" : Number(x).toFixed(d); }
   function paint(j) {
     LAST = j;
     if (SIM && j.real_armed) { setSim(false); note("✗ the real drone armed: leaving TEST", true); return; }
-    // the camera's view and shape (the CAMERA switch): every overlay and the
-    // TEST picture are drawn in it, and the picture box takes its shape
     var cH = Number(j.cam_hfov), cV = Number(j.cam_vfov), cA = Number(j.cam_aspect);
     HFOV = cH > 0 ? cH : 62.2; VFOV = cV > 0 ? cV : 48.8;
     var car = cA > 0 ? cA : 4 / 3;
@@ -1019,7 +895,6 @@
     } else if (!SIM) SC = null;
     var locked = !!m.locked;
     LOCKHDG = locked && m.lock_hdg !== null && m.lock_hdg !== undefined ? Number(m.lock_hdg) : null;
-    // no phase card any more: the phase is kept for the page's own logic only
     document.body.setAttribute("data-phase", locked && ph === "HOVER" ? "LOCKED" : ph);
     T("alt", m.height_m === null || m.height_m === undefined ? "-- m" : fmt(m.height_m, 1) + " m");
     T("vs", m.climb_mps === null || m.climb_mps === undefined ? "height ?"
@@ -1039,23 +914,17 @@
     } else S("c_vib", "--", "");
     var conf = m.det_conf, fresh = m.det_age_s !== null && m.det_age_s !== undefined && m.det_age_s < 0.5;
     S("c_det", fresh ? "YES · " + fmt(conf, 2) : "NO", fresh ? (conf >= (m.min_conf || 0.2) ? "ok" : "warn") : "");
-    // Readiness: the detector really in use, and the frame rate it holds.
-    // Green = TensorRT at >= 20 fps; amber = slower; red = the PyTorch fallback.
     var trt = j.detector === "TensorRT", fps_ = j.fps || 0;
     T("c_ai_k", (j.detector || "Detector") + (j.lat_ms ? " · " + j.lat_ms + " ms" : ""));
     S("c_ai", j.cam_busy ? "camera…" : fmt(fps_, 0) + " fps" + (Number(j.cam_fps) === 60 ? " · cam 60" : ""),
       !trt ? "bad" : fps_ >= 20 ? "ok" : "warn");
     var ctl = j.control || "free";
 
-    // which buttons can act right now (the server decides; this only mirrors it)
     var manual = ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other";
     ["b_up", "b_dn", "b_yl", "b_yr"].forEach(function (id) { $(id).disabled = !manual; });
-    // AUTO climbing / watching: ⟲ ⟳ turn it to look around (the lock follows)
     if ((ph === "AUTO_CLIMB" || ph === "AUTO_HOLD") && !VIEW && ctl !== "other") {
       $("b_yl").disabled = false; $("b_yr").disabled = false;
     }
-    // ENGAGE: red = ready; orange = pushing; green = the AI has (or had) the
-    // drone, until the pilot's STAB -> ALT_HOLD resets it for the next try.
     var eng = $("b_eng"), done = !!m.engaged || !!m.ai_steering;
     eng.className = "rbtn eng" + (done ? " go" : ph === "PUSH" ? " push" : "");
     var AUTOPH = ["AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN"], inAuto = AUTOPH.indexOf(ph) >= 0;
@@ -1066,10 +935,8 @@
     CANLOCK = ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other";
     dial.classList.toggle("off", !CANLOCK);
     if (!CANLOCK) { if (drag) dialEnd(false); if ($("ask").classList.contains("on")) closeAsk(); }
-    // AUTO stays lit (GO / AI) through the straight line and the AI of a run
     var au = $("b_auto"), autoRun = !!m.auto_run && ["PUSH", "AI", "STOP"].indexOf(ph) >= 0;
     au.className = "rbtn auto" + (inAuto || autoRun ? " on" : "") + (autoRun ? " run" : "");
-    // OFF in PARAMETERS = greyed out (a running AUTO can still be stopped)
     au.disabled = !((inAuto || (manual && !done && m.auto_enabled)) && !VIEW && ctl !== "other");
     $("autotxt").innerHTML = "AUTO" + ({AUTO_CLIMB: "<small>UP " + Math.round(m.auto_height_m || 10) + " m</small>",
       AUTO_HOLD: "<small>WATCHING</small>", AUTO_ALIGN: "<small>LINING UP</small>"}[ph] ||
@@ -1080,27 +947,19 @@
     lk.disabled = !(["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other");
     $("locktxt").innerHTML = locked ? "LOCK<small>" + ("00" + Math.round(Number(m.lock_hdg)) % 360).slice(-3) + "°</small>" : "LOCK";
 
-    // aim mark: where the target must sit NOW so it is centred once leaning
     TILT = (j.tilt_deg !== undefined && j.tilt_deg !== null) ? j.tilt_deg : TILT;
     var push = (m.speeds && m.speeds.push) || 20;
     var aimEl = (ph === "PUSH" || ph === "AI" || ph === "STOP") ? 0 : -Math.min(push, 20);
-    // ...kept 4.4° inside the bottom of the picture, as the mission's own mark
-    // (mission.AUTO_AIM_EDGE_DEG): no change at 30 fps, -10.45° at 60 fps
     aimEl = Math.max(aimEl, -Math.round((VFOV / 2 - 4.4) * 1000) / 1000);
     var ty = function (el) { return 50 - 50 * Math.tan(el * Math.PI / 180) / Math.tan(VFOV / 2 * Math.PI / 180); };
     var tx = function (az) { return 50 + 50 * Math.tan(az * Math.PI / 180) / Math.tan(HFOV / 2 * Math.PI / 180); };
     var aim = $("aim"); aim.style.left = "50%"; aim.style.top = ty(aimEl) + "%"; AIMY = ty(aimEl);
-    // the aim line: straight, edge to edge, at the top of the (invisible)
-    // aim circle.
     var AIM_RY_ = 10 * CAMAR, apex = Math.max(2, ty(aimEl) - AIM_RY_);
     var dArc = "M0," + apex.toFixed(2) + " L100," + apex.toFixed(2);
     $("arc_sh").setAttribute("d", dArc); $("arc_fg").setAttribute("d", dArc);
     var az = m.target_az_deg, el = m.target_el_deg, tg = $("tgt"), bd = $("badge");
     if (m.target_fresh && az !== null && el !== null) {
       tg.style.display = "block"; tg.style.left = tx(az) + "%"; tg.style.top = ty(el) + "%";
-      // green = the target is inside the aim circle (not drawn any more: the
-      // aim line marks its top).  The circle is 20% of the frame WIDTH; in
-      // height-% its radius is 10 x the frame's shape (4:3 or 16:9).
       var AIM_RX = 10, AIM_RY = 10 * CAMAR, dx_s = tx(az) - 50, dy_s = ty(el) - ty(aimEl);
       var dy = el - aimEl, good = (dx_s * dx_s) / (AIM_RX * AIM_RX) + (dy_s * dy_s) / (AIM_RY * AIM_RY) <= 1;
       aim.classList.toggle("good", good); $("arc").classList.toggle("good", good);
@@ -1114,17 +973,12 @@
       bd.textContent = "no target";
     }
 
-    // speeds: the pad's centre and the speeds page
     var lv = m.levels || {}, sp = m.speeds || {};
     T("padmid", (sp.climb !== undefined ? "↑" + sp.climb + " ↓" + sp.descent + " m/s" : "--") + "\n" +
       (sp.yaw !== undefined ? "⟳ " + sp.yaw + "°/s" : ""));
     var val = {vert: function (L) { return {SLOW: "1 / 0.5", MEDIUM: "3 / 1.5", FAST: "8 / 2.5"}[L] + " m/s"; },
                yaw: function (L) { return {SLOW: "10°/s · 2°", MEDIUM: "20°/s · 5°", FAST: "45°/s · 10°"}[L]; },
                push: function (L) { return {SLOW: "20°", MEDIUM: "30°", FAST: "40°"}[L]; },
-               // cruise speed at the profile's max lean (tracker MODES 12/20/22/35 deg,
-               // ~15 m/s at 20 deg as in flight_config's cruise_mps), and the climb ceiling
-               // straight-line distance flown in that time at the chosen PUSH
-               // lean (the sim's drag model: ~15 m/s top speed at 20 deg)
                search: function (L) {
                  var D = {20: [19, 42, 69], 30: [28, 61, 97], 40: [39, 80, 125]}[sp.push] || [19, 42, 69];
                  return "~" + D[LEVELS.indexOf(L)] + " m"; },
@@ -1139,7 +993,6 @@
       x.disabled = flying;
     });
     $("autoreset").disabled = flying;
-    // THIS FLIGHT ONLY: the value set now is not what it powers up with
     document.querySelectorAll("[data-save]").forEach(function (x) {
       var w = x.getAttribute("data-save").split(":"), off = false;
       if (w[0] === "auto") off = ad[w[1]] !== undefined && ap[w[1]] !== undefined && String(ad[w[1]]) !== String(ap[w[1]]);
@@ -1149,7 +1002,6 @@
         && Number(j.cam_default) !== Number(j.cam_fps);
       x.classList.toggle("on", off && !SIM);
     });
-    // what each closed section has set, in one line
     var spx = m.speeds || {};
     if (lv.vert) T("sum_semi", "▲▼ " + lv.vert + " · PUSH " + spx.push + "° · AI " + lv.ai + " · search " + spx.search + " s");
     if (ap.height !== undefined) T("sum_auto", "up to " + ap.height + " m · line " + (ap.line ? ap.line + "°" : "= PUSH")
@@ -1187,7 +1039,6 @@
     if (j.console_seq !== undefined && j.console_seq > consoleSeq) pullConsole();
   }
 
-  // ── console: the tracker's own printed lines ───────────────────────────
   var pulling = false;
   function pullConsole() {
     if (pulling) return; pulling = true;
@@ -1209,22 +1060,11 @@
       }).catch(function () {}).then(function () { pulling = false; });
   }
 
-  // ── compass tape ───────────────────────────────────────────────────────
-  // The heading arrives at the 4 Hz poll; the tape eases toward it along the
-  // SHORT way round (350 -> 10 turns through north), so a turn slides.
   var tape = $("tape"), tctx = tape.getContext("2d"), hdgDisp = null, tPrev = 0, lastKey = "";
   var CARD = {0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW"};
   function wrap(a) { a %= 360; return a < 0 ? a + 360 : a; }
   function adiff(a, b) { var d = wrap(a - b); return d > 180 ? d - 360 : d; }
   function drawTape(now) { renderTape(now); renderDial(); renderSim(now); requestAnimationFrame(drawTape); }
-  // ── TEST: the pretend world, drawn every frame.  No words, only what a
-  // camera would see: the sky and clouds (fixed in the world, so turning pans
-  // them and climbing sinks them), the ground once the nose tips down
-  // (rushing by at the drone's speed), the ENEMY drone (a dark quad, spinning
-  // rotors, a blinking red light, red brackets; it grows as we close), an
-  // arrow at the frame's edge when it is out of view, a dotted line from the
-  // aim point to it (green when on it), and a burst when it is hit.
-  // Between the 4 Hz polls the scene is extrapolated with the sim's rates.
   var simv = $("simv"), sctx = simv.getContext("2d");
   var SC = null, SCt = 0, SCH = {h: 0, vz: 0}, AIMY = 50, SCLEAN = 0, SCLAST = null;
   var CLOUDS = (function () {
@@ -1233,9 +1073,6 @@
     for (var i = 0; i < 30; i++) out.push({b: rnd() * 360, d: 220 + rnd() * 480, alt: 90 + rnd() * 200, s: 40 + rnd() * 70, k: rnd()});
     return out;
   })();
-  // trees round the field (world-fixed, m east / north of the start), none
-  // on the way to the enemy (bearing 120..185: it flies in from ~178), so a newcomer starting on the
-  // ground sees their tops, and sees them sink away when climbing
   var TREES = (function () {
     var r = 11, out = [];
     function rnd() { r = (r * 16807) % 2147483647; return r / 2147483647; }
@@ -1259,7 +1096,7 @@
       var px = (i & 1 ? 1 : -1) * arm, py = (i & 2 ? 1 : -1) * arm;
       c.fillStyle = "rgba(28,32,38,.28)"; c.beginPath(); c.arc(px, py, rr, 0, 6.283); c.fill();
       c.strokeStyle = "rgba(28,32,38,.85)"; c.lineWidth = Math.max(1, s * 0.03); c.stroke();
-      var ang = t * 38 * (i === 0 || i === 3 ? 1 : -1);          // the blades spin
+      var ang = t * 38 * (i === 0 || i === 3 ? 1 : -1);
       c.lineWidth = Math.max(1.2, s * 0.045);
       c.beginPath(); c.moveTo(px - Math.cos(ang) * rr, py - Math.sin(ang) * rr); c.lineTo(px + Math.cos(ang) * rr, py + Math.sin(ang) * rr); c.stroke();
     }
@@ -1267,7 +1104,7 @@
     c.fillStyle = "#2b3038"; c.strokeStyle = "#111418"; c.lineWidth = Math.max(1, s * 0.03);
     if (c.roundRect) { c.beginPath(); c.roundRect(-bw / 2, -bw / 2, bw, bw, bw * 0.25); c.fill(); c.stroke(); }
     else { c.fillRect(-bw / 2, -bw / 2, bw, bw); }
-    if (Math.sin(t * 9) > -0.2) {                                 // the blinking red light
+    if (Math.sin(t * 9) > -0.2) {
       var lr = Math.max(2, s * 0.06);
       var gl = c.createRadialGradient(0, 0, 0, 0, 0, lr * 4);
       gl.addColorStop(0, "rgba(255,59,48,.9)"); gl.addColorStop(1, "rgba(255,59,48,0)");
@@ -1301,18 +1138,15 @@
     function sx(az) { return w * (0.5 + 0.5 * Math.tan(az * D2R) / th); }
     function sy(el) { return h * (0.5 - 0.5 * Math.tan((el - pitch) * D2R) / tv); }
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    // sky, paler toward the horizon
     var yH = sy(0), g = c.createLinearGradient(0, sy(70), 0, yH);
     g.addColorStop(0, "#2f62a8"); g.addColorStop(0.7, "#7fa9dc"); g.addColorStop(1, "#cfe0f2");
     c.fillStyle = g; c.fillRect(0, 0, w, h);
-    // the sun, fixed in the world
     var saz = adiff(205, hd);
     if (Math.abs(saz) < 75) {
       var sxp = sx(saz), syp = sy(38), sg = c.createRadialGradient(sxp, syp, 0, sxp, syp, w * 0.22);
       sg.addColorStop(0, "rgba(255,250,225,.95)"); sg.addColorStop(0.08, "rgba(255,246,210,.75)"); sg.addColorStop(1, "rgba(255,246,210,0)");
       c.fillStyle = sg; c.fillRect(0, 0, w, h);
     }
-    // clouds: world bearing, distance and height, so they pan and sink right
     CLOUDS.forEach(function (cl) {
       var az = adiff(cl.b, hd);
       if (Math.abs(az) > HFOV / 2 + 25) return;
@@ -1323,7 +1157,6 @@
         c.beginPath(); c.ellipse(x + e[0] * r, y + e[1] * r, e[2] * r, e[3] * r, 0, 0, 6.283); c.fill();
       });
     });
-    // the ground, once the nose tips down far enough to see it
     var spd = SC ? SC.spd : 0, odo = SC ? SC.odo + spd * dt : 0;
     if (yH < h) {
       var gg = c.createLinearGradient(0, yH, 0, h);
@@ -1339,16 +1172,14 @@
         }
         prev = Math.max(yH, y);
       }
-      // rows converging on where we are heading
       var vx = sx(0);
       c.strokeStyle = "rgba(40,60,30,.25)"; c.lineWidth = 1;
       for (var L = -60; L <= 60; L += 12) {
         if (!L) continue;
         c.beginPath(); c.moveTo(vx, yH); c.lineTo(vx + L * w * 0.06, h * 1.6); c.stroke();
       }
-      c.fillStyle = "rgba(230,236,242,.35)"; c.fillRect(0, yH - 2, w, 4);       // haze on the horizon
+      c.fillStyle = "rgba(230,236,242,.35)"; c.fillRect(0, yH - 2, w, 4);
     }
-    // trees, far ones first; their position relative to where we are now
     var px0 = SC ? SC.x + spd * dt * Math.sin(hd * D2R) : 0, py0 = SC ? SC.y + spd * dt * Math.cos(hd * D2R) : 0;
     TREES.map(function (tr) {
       var dx = tr.x - px0, dy = tr.y - py0;
@@ -1368,7 +1199,6 @@
       c.quadraticCurveTo(x - hw * 1.25, yt + (yb - yt) * 0.25, x, yt);
       c.fill();
     });
-    // speed: streaks out of the point we fly toward
     if (spd > 3) {
       var cx0 = sx(0), cy0 = sy(0), a0 = Math.min(0.55, spd / 35);
       c.strokeStyle = "rgba(255,255,255," + a0.toFixed(2) + ")"; c.lineWidth = 1.5;
@@ -1379,7 +1209,6 @@
         c.lineTo(cx0 + Math.cos(p.a) * r2, cy0 + Math.sin(p.a) * r2); c.stroke();
       });
     }
-    // a gust: wind streaks blowing across
     if (SC && SC.gust) {
       c.strokeStyle = "rgba(255,255,255,.6)"; c.lineWidth = 2; c.lineCap = "round";
       for (var i = 0; i < 9; i++) {
@@ -1388,7 +1217,6 @@
       }
     }
     if (!SC) return;
-    // the enemy
     var brg = SC.brg + SC.brg_r * dt, elw = SC.elw + SC.elw_r * dt, rng = Math.max(0.6, SC.rng + SC.rng_r * dt);
     var az = adiff(brg, hd), size = Math.max(22, Math.min(w * 0.9, w / (2 * th) * SC.span / rng * 1.6));
     var on = Math.abs(az) < 80, x = on ? sx(az) : (az > 0 ? w * 2 : -w), y = sy(elw);
@@ -1403,7 +1231,6 @@
         brackets(c, x, y, size * 0.75 + 10, t, good ? "#22c55e" : "#ef4444");
       }
       if (x < 0 || x > w || y < 0 || y > h) {
-        // out of view: an arrow at the edge, pointing at it
         var ex = Math.max(28, Math.min(w - 28, x)), ey = Math.max(28, Math.min(h - 28, y));
         var ang = Math.atan2(y - h / 2, x - w / 2), pul = 1 + 0.12 * Math.sin(t * 7);
         c.save(); c.translate(ex, ey); c.rotate(ang); c.scale(pul, pul);
@@ -1412,12 +1239,10 @@
         c.restore();
       }
     } else if (SCLAST) {
-      // hit: a flash, a fireball, debris, smoke; then a green tick
       var k = SC.hit + dt, bx = SCLAST.x, by = SCLAST.y, bs = SCLAST.s;
       if (k < 0.18) { c.fillStyle = "rgba(255,255,255," + (0.85 * (1 - k / 0.18)).toFixed(2) + ")"; c.fillRect(0, 0, w, h); }
       if (k < 2.6) {
         var cap = Math.min(w, h) * 0.45, sr = Math.min(cap, bs * (0.8 + k * 1.6));
-        // smoke: soft puffs that spread and rise
         for (var q = 0; q < 7; q++) {
           var qa = q * 0.9, qr = sr * (0.35 + 0.08 * q), qx = bx + Math.cos(qa) * sr * 0.45 * Math.min(1, k * 1.5),
               qy = by - k * bs * 0.5 + Math.sin(qa) * sr * 0.3 * Math.min(1, k * 1.5);
@@ -1450,7 +1275,6 @@
   }
   var dialc = $("dialc"), dctx = dialc.getContext("2d"), dialKey = "";
   function renderDial() {
-    // idle: follows the drone's heading; dragging / asking: the picked one
     var val = SEL !== null ? SEL : (hdgDisp !== null ? hdgDisp : null);
     var dpr = window.devicePixelRatio || 1, w = dialc.clientWidth, h = dialc.clientHeight;
     var key = (val === null ? "n" : val.toFixed(1)) + "|" + w + "|" + h + "|" + dpr + "|" + LOCKHDG + "|" + (SEL !== null);
@@ -1459,7 +1283,7 @@
     if (dialc.width !== Math.round(w * dpr) || dialc.height !== Math.round(h * dpr)) {
       dialc.width = Math.round(w * dpr); dialc.height = Math.round(h * dpr);
     }
-    var c = dctx, PX = 4;                 // px per degree on the dial
+    var c = dctx, PX = 4;
     c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h);
     if (val === null) {
       c.fillStyle = "rgba(255,255,255,.5)"; c.font = "11px UC, sans-serif"; c.textAlign = "center";
@@ -1478,7 +1302,6 @@
         c.fillText(card || String(bb), x, 7);
       }
     }
-    // the locked heading on the bar: a white notch at the top edge
     if (LOCKHDG !== null) {
       var lo = adiff(LOCKHDG, val), lx = w / 2 + lo * PX;
       c.fillStyle = "#fff"; c.beginPath();
@@ -1487,7 +1310,6 @@
       else { c.moveTo(3, h / 2 - 6); c.lineTo(11, h / 2); c.lineTo(3, h / 2 + 6); }
       c.closePath(); c.fill();
     }
-    // centre readout
     var txt = ("00" + Math.round(wrap(val)) % 360).slice(-3);
     c.fillStyle = SEL !== null ? "#ff8a1f" : "#fff";
     if (c.roundRect) { c.beginPath(); c.roundRect(w / 2 - 28, h / 2 - 12, 56, 24, 6); c.fill(); }
@@ -1502,7 +1324,6 @@
     else if (Math.abs(adiff(HDG, hdgDisp)) < 0.05) hdgDisp = HDG;
     else hdgDisp = wrap(hdgDisp + adiff(HDG, hdgDisp) * (1 - Math.exp(-dt / 0.12)));
     var dpr = window.devicePixelRatio || 1, w = tape.clientWidth, h = tape.clientHeight;
-    // redraw only when something moved: an idle tape costs the phone nothing
     var key = (hdgDisp === null ? "n" : hdgDisp.toFixed(2)) + "|" + w + "|" + h + "|" + dpr + "|" + LOCKHDG + "|" + SEL + "|" + HFOV;
     if (key === lastKey) return;
     lastKey = key;
@@ -1528,7 +1349,6 @@
         }
       }
     }
-    // the LOCKed heading: a white marker on the tape, or an arrow at the edge
     if (hdgDisp !== null && LOCKHDG !== null) {
       var lo = adiff(LOCKHDG, hdgDisp);
       c.fillStyle = "#ffffff"; c.strokeStyle = "rgba(0,0,0,.6)"; c.lineWidth = 1;
@@ -1540,7 +1360,6 @@
       else { c.moveTo(2, h / 2); c.lineTo(11, h / 2 - 6); c.lineTo(11, h / 2 + 6); }
       c.closePath(); c.fill(); c.stroke();
     }
-    // the heading being picked on the degree scroll: an orange line
     if (hdgDisp !== null && SEL !== null) {
       var so = adiff(SEL, hdgDisp);
       c.strokeStyle = "#ff8a1f"; c.lineWidth = 2; c.beginPath();
@@ -1551,7 +1370,6 @@
       else { c.moveTo(3, 3); c.lineTo(3, h - 3); }
       c.stroke();
     }
-    // centre: pointer + readout
     var txt = hdgDisp === null ? "---°" : ("00" + Math.round(wrap(hdgDisp)) % 360).slice(-3) + "°";
     c.font = "13px UM, monospace"; var bw = c.measureText(txt).width + 14;
     c.fillStyle = "#ff8a1f"; c.beginPath();
@@ -1563,7 +1381,6 @@
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { lastKey = ""; });
   requestAnimationFrame(drawTape);
 
-  // ── video reconnect, link watchdog, poll ───────────────────────────────
   var v = $("v");
   v.onerror = function () { setTimeout(function () { v.src = "/stream.mjpg?t=" + Date.now(); }, 1000); };
   setInterval(function () { $("cover").classList.toggle("on", lastOk && Date.now() - lastOk > 1500); }, 250);

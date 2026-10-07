@@ -1,38 +1,4 @@
 #!/usr/bin/env python3
-"""
-fc_check.py  —  bench diagnostic for the WASP tracker's flight-control link
-==============================================================================
-Answers, without YOLO or a camera in the loop, the only question that matters:
-"will this flight controller actually move when the Jetson tells it to?"
-
-It does four things:
-
-  1. IDENTIFY   what firmware is on the board (ArduPilot / PX4 / Betaflight /
-                INAV), over MAVLink first and MSP second.
-  2. REPORT     every setting that decides whether an override is honoured:
-                SYSID_MYGCS, RC_OPTIONS, ACRO_TRAINER, the RCMAP channel
-                assignment, each channel's calibration, and the ACRO full-stick
-                rates.
-  3. VERIFY     send a real RC override and prove the FC applied it, by reading
-                the value back out of the FC's own RC_CHANNELS stream.  This is
-                the test the tracker never had: previously an override could be
-                dropped in silence and nothing anywhere would say so.  Safe
-                while disarmed — it proves the transport, not the motors.
-  4. WIGGLE     (opt-in) sweep the yaw and pitch sticks and report the motor
-                output spread, proving the FC turns sticks into differential
-                thrust.  PROPS OFF — the airframe will not rotate without props.
-
-Typical session on the Jetson
------------------------------
-    # through the MAVProxy router that `run.py --router` starts
-    python3 tests/fc_check.py --verify
-
-    # straight at the FC's USB port (stop the router first, it owns the port)
-    python3 tests/fc_check.py --connect /dev/ttyACM0 --verify
-
-    # then, with the pilot armed in ACRO holding mid throttle, PROPS OFF:
-    python3 tests/fc_check.py --wiggle 8 --yes
-"""
 
 import argparse
 import math
@@ -60,13 +26,8 @@ AUTOPILOT_NAMES = {
 }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# device discovery
-# ══════════════════════════════════════════════════════════════════════════════
 
 def resolve_device(explicit=None):
-    """Pick the link to probe.  An explicit value always wins.  Otherwise use a
-    running router if there is one, else the FC's own USB serial port."""
     if explicit:
         return explicit
     if router_running():
@@ -97,13 +58,8 @@ def is_network(conn):
     return str(conn).startswith(("udp", "tcp"))
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 1) IDENTIFY
-# ══════════════════════════════════════════════════════════════════════════════
 
 def probe_mavlink(conn, baud, timeout=12.0):
-    """Wait for an AUTOPILOT heartbeat (never a GCS's).  Returns the connection
-    plus the heartbeat, or (None, None)."""
     if mavutil is None:
         print("[x] pymavlink is not installed:  pip install pymavlink")
         return None, None
@@ -144,8 +100,6 @@ def probe_mavlink(conn, baud, timeout=12.0):
 
 
 def probe_msp(dev, baud=115200):
-    """No MAVLink?  Then the board is probably still on Betaflight/INAV, which
-    speaks MSP.  Identify it so the report can say what to do about it."""
     if is_network(dev):
         print("\n[1b] MSP probe skipped — MSP needs a serial port, not a UDP link")
         return None
@@ -221,9 +175,6 @@ def probe_msp(dev, baud=115200):
     return dict(variant=name, version=vstr, armed=armed)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 2) REPORT  (ArduPilot)
-# ══════════════════════════════════════════════════════════════════════════════
 
 def read_param(master, name, timeout=2.5):
     try:
@@ -262,7 +213,6 @@ def request_rc_stream(master, hz=5):
 
 
 def report_ardupilot(master, hb):
-    """Everything that decides whether an override is honoured."""
     print("\n[2] ArduPilot configuration")
     mode = COPTER_MODES.get(hb.custom_mode, f"MODE{hb.custom_mode}")
     armed = bool(hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
@@ -335,22 +285,8 @@ def report_ardupilot(master, hb):
                 rc_options=rc_options)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 3) VERIFY  —  does an override actually land?
-# ══════════════════════════════════════════════════════════════════════════════
 
 def verify_override(master, cfg, hold=2.5):
-    """Send a distinctly-offset yaw override and read it back out of the FC's own
-    RC_CHANNELS.  ArduPilot copies an active override into radio_in, which is
-    what RC_CHANNELS reports, so a matching echo proves acceptance.
-
-    Sweeps candidate system ids, because sending from the wrong one is THE
-    failure mode: ArduPilot drops overrides from any sysid other than
-    SYSID_MYGCS, without a single diagnostic message.
-
-    Safe while disarmed: an override changes the FC's stick input, not the
-    motors.
-    """
     print("\n[3] override verification")
     yaw = cfg["axes"]["yaw"]
     chan = yaw["chan"]
@@ -359,7 +295,6 @@ def verify_override(master, cfg, hold=2.5):
               "reaches 1-8.  Remap RCMAP_YAW.")
         return False
 
-    # A value clearly distinguishable from whatever the radio is sending.
     test_pwm = int(min(yaw["max"], yaw["trim"] + 200))
     candidates = []
     if cfg["sysid_mygcs"] is not None:
@@ -382,7 +317,7 @@ def verify_override(master, cfg, hold=2.5):
         while perf_counter() < deadline:
             now = perf_counter()
             if now >= next_tx:
-                next_tx = now + 0.05                 # 20 Hz
+                next_tx = now + 0.05
                 try:
                     master.mav.rc_channels_override_send(
                         master.target_system, master.target_component, *chans)
@@ -400,7 +335,6 @@ def verify_override(master, cfg, hold=2.5):
                 matched = True
                 break
 
-        # release before judging, so a failed attempt leaves nothing latched
         try:
             master.mav.rc_channels_override_send(
                 master.target_system, master.target_component, *([0] * 8))
@@ -430,21 +364,8 @@ def verify_override(master, cfg, hold=2.5):
     return False
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 4) WIGGLE  —  make it visibly move
-# ══════════════════════════════════════════════════════════════════════════════
 
 def wiggle(master, cfg, seconds=8.0, amplitude=0.35, period=3.0):
-    """Sweep yaw and pitch with a slow sine and print the SERVO_OUTPUT_RAW spread.
-
-    The spread is the proof: it shows the FC turned our sticks into differential
-    MOTOR output, which is the last link in the chain before physics.
-
-    Note what this does and does not show.  With the props OFF the airframe will
-    NOT rotate — rotation comes from differential prop thrust, and bare motors
-    produce negligible torque.  Props off you are checking the numbers and the
-    sound; actual rotation only happens with props fitted.
-    """
     print(f"\n[4] wiggle for {seconds:.0f}s  "
           f"(amplitude {amplitude * 100:.0f}% stick, {period:.0f}s period)")
     print("    The FC must be ARMED in ACRO with the pilot holding mid throttle,")
@@ -514,7 +435,6 @@ def wiggle(master, cfg, seconds=8.0, amplitude=0.35, period=3.0):
         print("\n    sticks released back to the pilot")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 
 def main():
     ap = argparse.ArgumentParser(
@@ -582,8 +502,6 @@ Check, in order:
 
     ok = None
     if args.verify or args.wiggle > 0:
-        # An override IS a stick input.  While disarmed that is inert, but on an
-        # armed airframe it commands real rotation — so never do it silently.
         if cfg["armed"] and not args.yes:
             print("\n[3] override verification SKIPPED — the FC is ARMED, and the "
                   "test moves a stick\n    for 2.5 s per attempt.  Disarm and "

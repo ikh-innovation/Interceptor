@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""Display detector vs detector+follower side-by-side in real-time OpenCV window.
-Skips slow MP4 encoding - just shows frames as they're processed.
-
-    ../.env/yolo/bin/python tests/show_replay.py data/video.mp4 [more.mp4 ...]
-
-Green box = detector found it
-Orange box = follower found it (detector missed)
-Grey cross = Kalman guess (neither found it)
-Bottom right of each half: 4x magnified surroundings.
-"""
 import argparse
 import contextlib
 import io
@@ -25,12 +15,11 @@ sys.path.insert(0, SRC)
 sys.path.insert(0, HERE)
 
 with contextlib.redirect_stdout(io.StringIO()):
-    import tracker as T                                            # noqa: E402
-from follower import TargetFollower                                # noqa: E402
+    import tracker as T
+from follower import TargetFollower
 
 
 class TF:
-    """test_follower.make_tracker, copied: importing test_follower runs its whole suite."""
 
     @staticmethod
     def make_tracker(follow=True):
@@ -77,7 +66,7 @@ def detect_all(path):
         if not ok:
             break
         frame_count += 1
-        if frame_count % 30 == 0:  # Progress indicator
+        if frame_count % 30 == 0:
             print(f"  Inferring frame {frame_count}...", flush=True)
         r = m(fr, imgsz=640, max_det=3, conf=0.05, verbose=False)
         ds = []
@@ -101,7 +90,6 @@ def draw(fr, t, detected, fused, stats, title):
         else:
             col = GREY
             cv2.drawMarker(img, (x, y), col, cv2.MARKER_CROSS, 18, 1)
-        # magnified surroundings, bottom right
         R = 24
         g = cv2.copyMakeBorder(fr, R, R, R, R, cv2.BORDER_CONSTANT)
         crop = g[y:y + 2 * R, x:x + 2 * R]

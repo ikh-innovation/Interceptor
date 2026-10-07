@@ -1,13 +1,4 @@
 #!/usr/bin/env python3
-"""LOCK robustness: the cases a clean bench never shows.
-
-    ../.env/yolo/bin/python tests/test_lock.py
-
-Uses the real mission.Mission against sim_lock_wind's model of ArduPilot's
-yaw hold (heading target, error limit, rate loop, finite yaw authority).
-The end-to-end MAVLink path is in test_mission_mavlink.py section 7b; the
-odds against gusts are in sim_lock_wind.py.
-"""
 import contextlib
 import io
 import math
@@ -19,8 +10,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
-import mission as M                                                # noqa: E402
-import sim_lock_wind as SL                                         # noqa: E402
+import mission as M
+import sim_lock_wind as SL
 
 FAILED = []
 
@@ -32,8 +23,6 @@ def check(label, ok, detail=""):
 
 
 def fly(secs, psi0=0.0, lat=0.02, noise=0.3, seed=1, dist=None, blind=None, lock=True):
-    """Hover with LOCK; returns (errors after 2 s, yaw commands, fc, mission).
-    dist(t) -> deg/s^2 of yaw disturbance; blind(t) -> True while no ATTITUDE."""
     rng = random.Random(seed)
     fc = SL.FcYaw(psi0)
     mp = SL.Mapper()
@@ -88,7 +77,7 @@ check("never takes the long way round (worst error < 3 deg, peak command small)"
       f"worst {max(abs(e) for e in errs):.2f} deg, peak cmd {max(abs(c) for c in cmds):.1f} deg/s")
 for start, kick in ((1.0, 40.0), (359.0, -40.0)):
     def d(t, k=kick):
-        return k * 25.0 if 3.0 <= t < 3.2 else 0.0           # a sharp gust: ~40 deg in 0.2 s
+        return k * 25.0 if 3.0 <= t < 3.2 else 0.0
     errs, cmds, fc, m = fly(25.0, psi0=start, dist=d, seed=7)
     after = [abs(e) for e in errs[-40:]]
     check(f"locked at {start:.0f}, a gust across north ({'+' if kick > 0 else '-'}): back within 1 deg",
@@ -126,9 +115,6 @@ print("=== 6. locked at 313: wind turns it, hands turn it, it comes back to 313 
 
 
 def fly313(secs, script, dist=None, seed=21):
-    """FC model + Mission, locked at 313 from 300 via the degree scroll.
-    script(t, m) is called every TX cycle (holds, taps); returns the heading
-    trace [(t, psi)] and the mission."""
     rng = random.Random(seed)
     fc = SL.FcYaw(300.0)
     mp = SL.Mapper()
@@ -163,7 +149,6 @@ check("from 300, lock at 313 (the scroll): there within 3 s, then within 1 deg",
       max(at(tr, 3.0, 8.0)) < 1.0 and abs(m.lock_hdg - 313.0) < 1e-6, f"worst after 3 s {max(at(tr, 3.0, 8.0)):.2f}")
 
 
-# a gust stronger than the motors (the FC's own target is dragged): 60+ deg
 def gust(t):
     return 400.0 if 5.0 <= t < 5.4 else 0.0
 
@@ -192,13 +177,13 @@ check("16 s of steady torque + a slow swell: stays within 3 deg, ends within 1 d
 
 def hands(t, m):
     if 4.0 <= t < 6.0:
-        m.request_hold("yawl", "h1", t)             # ⟲ held 2 s
+        m.request_hold("yawl", "h1", t)
     elif 6.0 <= t < 6.02:
         m.request_release("h1")
     if 12.0 <= t < 12.02:
-        m.request_step(+1)                          # a tap ⟳
+        m.request_step(+1)
     if 16.0 <= t < 18.0:
-        m.request_hold("up", "h2", t)               # ▲ held 2 s
+        m.request_hold("up", "h2", t)
     elif 18.0 <= t < 18.02:
         m.request_release("h2")
 
@@ -208,15 +193,12 @@ check("⟲ held 2 s while locked (gusty): it really turns away (> 20 deg)",
       max(at(tr, 5.5, 6.5)) > 20.0, f"{max(at(tr, 5.5, 6.5)):.0f} deg")
 check("...let go: back at 313 within 1 deg by 5 s later, lock never moved",
       max(at(tr, 11.0, 12.0)) < 1.0 and abs(m.lock_hdg - 313.0) < 1e-6, f"{max(at(tr, 11.0, 12.0)):.2f}")
-# the gusts here (40 deg/s^2, steady swing) wobble even the FC's own hold by
-# ~2 deg; "back at 313" = back inside that wobble
 check("a tap ⟳ while locked: back at 313 (inside the wind's own ±2.5 deg)",
       max(at(tr, 14.5, 16.0)) < 2.5, f"{max(at(tr, 14.5, 16.0)):.2f}")
 check("▲ held while locked: the heading stays at 313 all the way up (±2.5)", max(at(tr, 16.0, 24.0)) < 2.5,
       f"{max(at(tr, 16.0, 24.0)):.2f}")
 
 
-# the operator's rule: LOCK itself never steers quickly
 def worst_cmd_step(cmds):
     return max(abs(b - a) for a, b in zip(cmds, cmds[1:]))
 
@@ -225,7 +207,6 @@ errs, cmds, fc, m = fly(25.0, psi0=1.0, dist=lambda t: 1000.0 if 3.0 <= t < 3.2 
 check(f"gentle: LOCK never commands more than {M.Mission.LOCK_MAX_DPS:.0f} deg/s, even 100 deg off",
       max(abs(c) for c in cmds) <= M.Mission.LOCK_MAX_DPS + 0.5, f"peak {max(abs(c) for c in cmds):.1f} deg/s")
 check(f"gentle: its command never changes faster than {M.Mission.LOCK_ACCEL:.0f} deg/s^2 (no jerks)",
-      # + two PWM steps (1 PWM = 0.5 deg/s here) for the rounding and a 22 ms cycle
       worst_cmd_step(cmds) <= M.Mission.LOCK_ACCEL * 0.022 + 2 * SL.RATE_MAX / 400.0,
       f"worst step {worst_cmd_step(cmds):.2f} deg/s per 20 ms")
 

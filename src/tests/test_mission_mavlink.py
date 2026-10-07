@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""The mission app end to end, over real MAVLink, against the fake ArduPilot
-configured as THIS airframe's FC (read off it on 2026-09-25):
-
-    throttle ch1, roll ch2, pitch ch3, yaw ch4, all 1100/1500/1900
-    RC1_DZ 30, RC2-4_DZ 20, THR_DZ 100
-    PILOT_SPEED_UP 2500, PILOT_SPEED_DN 250, ANGLE_MAX 4000, PILOT_Y_RATE 202.5
-
-It asserts the actual PWM on each channel per phase, and that the axes that
-must NOT move are NOT overridden (the pilot keeps them).
-
-    ../.env/yolo/bin/python tests/test_mission_mavlink.py
-"""
 import contextlib
 import csv
 import io
@@ -23,8 +11,8 @@ from time import perf_counter, sleep
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fake_fc import FakeArduPilot                                  # noqa: E402
-from fc_control import AcroCommander, InterceptLaw                 # noqa: E402
+from fake_fc import FakeArduPilot
+from fc_control import AcroCommander, InterceptLaw
 
 FAILED = []
 
@@ -35,7 +23,6 @@ def check(label, ok, detail=""):
         FAILED.append(label)
 
 
-# ArduPilot 4.6's own decode, integer maths as on the FC (see test_mission B).
 def ap_climb(pwm, lo=1100, hi=1900, dz=30, thr_dz=100, up=25.0, dn=2.5):
     trim_low = lo + dz
     c = (1000 * (pwm - trim_low)) // (hi - trim_low) if pwm > trim_low else 0
@@ -54,7 +41,7 @@ def ap_norm(pwm, tr=1500, dz=20, lo=1100, hi=1900):
 
 
 PORT = 14861
-fc = FakeArduPilot(PORT, sysid_mygcs=255, armed=True, mode=0)       # STABILIZE
+fc = FakeArduPilot(PORT, sysid_mygcs=255, armed=True, mode=0)
 fc.params.update({"RCMAP_THROTTLE": 1.0, "RCMAP_ROLL": 2.0, "RCMAP_PITCH": 3.0,
                   "RCMAP_YAW": 4.0, "ANGLE_MAX": 4000.0, "PILOT_SPEED_UP": 2500.0,
                   "PILOT_SPEED_DN": 250.0, "PILOT_ACCEL_Z": 500.0, "PSC_JERK_Z": 5.0,
@@ -92,13 +79,13 @@ try:
           f"{M.phase} {fc.overrides}")
     check("a ▲ press is refused while the pilot has it",
           M.request_hold("up", "p", perf_counter()) != "")
-    fc.vfr.update(alt=0.2)                                        # on the ground
-    fc.mode = 2                                                   # ALT_HOLD
+    fc.vfr.update(alt=0.2)
+    fc.mode = 2
     sleep(0.6)
     check("armed in ALT_HOLD but ON THE GROUND: still PILOT (no phone takeoff)",
           M.phase == "PILOT" and "ground" in c._mission_why and not fc.overrides,
           f"{M.phase} / {c._mission_why}")
-    fc.vfr.update(alt=2.0)                                        # took off
+    fc.vfr.update(alt=2.0)
     sleep(0.6)
     check("ALT_HOLD + armed + airborne: HOVER, still nothing overridden",
           M.phase == "HOVER" and not fc.overrides, f"{M.phase} {fc.overrides}")
@@ -115,7 +102,7 @@ try:
     check("ch1 decodes to exactly the SLOW climb, 1.0 m/s",
           1 in o and abs(ap_climb(o[1]) - 1.0) < 0.05, f"ch1={o.get(1)} -> "
           f"{ap_climb(o[1]) if 1 in o else 0:.2f} m/s")
-    sleep(1.2)                                                   # let go
+    sleep(1.2)
     check("let go: dead-man + ramp-out, then ch1 handed back",
           not fc.overrides and M.phase == "HOVER", str(fc.overrides))
 
@@ -130,7 +117,7 @@ try:
     check("let go: yaw handed back", not fc.overrides, str(fc.overrides))
 
     print("=== 4. bumpless: the pilot's own stick is the starting point ===")
-    fc.radio[1] = 1690                  # pilot's thumb: ~+8 m/s of climb stick
+    fc.radio[1] = 1690
     sleep(0.5)
     M.set_level("vert", "SLOW")
     M.request_hold("up", "b", perf_counter())
@@ -144,7 +131,7 @@ try:
 
     print("=== 5. ENGAGE: PUSH on all four, exact 30 deg ===")
     M.set_level("push", "MEDIUM")
-    fc.vfr.update(alt=10.0)                  # the real flow engages at ~10 m
+    fc.vfr.update(alt=10.0)
     sleep(0.3)
     check("ENGAGE accepted in HOVER", M.request_engage() == "")
     sleep(1.5)
@@ -156,7 +143,7 @@ try:
           o.get(4) == 1500 and o.get(1) == 1500 and o.get(2) == 1500, str(o))
     check("the FC echo confirms the override", c.override_confirmed is True)
     check("holds are refused during PUSH", M.request_hold("up", "z", perf_counter()) != "")
-    fc.vfr.update(alt=2.0)                   # low: no ground check any more
+    fc.vfr.update(alt=2.0)
     sleep(0.4)
     got = fc.overrides.get(1)
     check("no AI floor over MAVLink: at 2 m the push just holds height (ch1 1500), no forced climb",
@@ -190,21 +177,19 @@ try:
           not fc.overrides and M.phase == "HOVER", f"{M.phase} {fc.overrides}")
     hold("up", 0.5, session="m")
     check("climbing again after ABORT (a new press)", set(fc.overrides) == {1})
-    fc.mode = 0                                                   # STABILIZE
+    fc.mode = 0
     sleep(0.5)
     check("pilot flips to STABILIZE mid-climb: all released, PILOT",
           not fc.overrides and M.phase == "PILOT", f"{M.phase} {fc.overrides}")
 
     print("=== 7b. LOCK over real MAVLink: the heading held against knocks ===")
     import threading
-    fc.mode = 2                                                   # ALT_HOLD again
+    fc.mode = 2
     fc.vfr.update(alt=6.0)
     sleep(0.6)
     YAW = {"psi": 0.0, "run": True, "kick": 0.0}
 
     def yaw_plant():
-        # the FC turns at the rate its yaw channel decodes to (ArduPilot's own
-        # decode, dead zone included); a "kick" is a gust knocking it round
         while YAW["run"]:
             rate = ap_norm(fc.overrides.get(4, fc.radio[4])) * 202.5
             YAW["psi"] = (YAW["psi"] + rate * 0.01 + YAW["kick"]) % 360.0
@@ -225,10 +210,8 @@ try:
         check("locked at the heading it had (355 deg), ch4 held at exactly 1500",
               L0 is not None and abs(herr(L0, 355.0)) < 1.0 and fc.overrides.get(4) == 1500,
               f"lock {L0}, ch4 {fc.overrides.get(4)}")
-        YAW["kick"] = 20.0                                        # knocked 20 deg right, past north
-        # LOCK waits until the heading has been still for LOCK_SETTLE_S (the
-        # FC's own hold gets the first go), then corrects
-        sleep(0.05)                                               # the kick lands first
+        YAW["kick"] = 20.0
+        sleep(0.05)
         seen, sweep, prev = [], 0.0, YAW["psi"]
         t_end = perf_counter() + 5.0
         while perf_counter() < t_end:
@@ -241,7 +224,7 @@ try:
         check("...back within 1 deg by the short way (swept < 30 deg, not round the long way)",
               abs(herr(YAW["psi"], L0)) < 1.0 and sweep < 30.0,
               f"heading {YAW['psi']:.1f}, swept {sweep:.1f} deg")
-        YAW["kick"] = 3.0                                         # a small nudge
+        YAW["kick"] = 3.0
         seen = []
         for _ in range(90):
             sleep(0.02)
@@ -252,7 +235,6 @@ try:
               f"ch4={small} -> {ap_norm(small or 1500) * 202.5:.1f} deg/s")
         sleep(2.0)
         check("...and settles within 1 deg", abs(herr(YAW["psi"], L0)) < 1.0, f"{YAW['psi']:.1f}")
-        # the heading stops arriving (link or FC stream): LOCK must NOT keep turning on stale data
         fc.attitude = False
         YAW["kick"] = 30.0
         sleep(1.2)
@@ -267,7 +249,6 @@ try:
         sleep(3.5)
         check("ATTITUDE back: it returns to the locked heading", abs(herr(YAW["psi"], L0)) < 1.0,
               f"{YAW['psi']:.1f} vs {L0:.1f}")
-        # ENGAGE from LOCK: bumpless on yaw
         YAW["kick"] = 8.0
         sleep(0.2)
         before = fc.overrides.get(4)
@@ -299,7 +280,7 @@ try:
     ph._SPEED_KEYS, ph._STAB_KEYS = _tr.DroneTracker._SPEED_KEYS, _tr.DroneTracker._STAB_KEYS
     ph.set_mode = lambda n: _tr.DroneTracker.set_mode(ph, n)
     ph._mission_command = lambda k, v: _tr.DroneTracker._mission_command(ph, k, v)
-    fc.mode = 0                              # pilot: STAB -> ALT_HOLD, a fresh attempt
+    fc.mode = 0
     sleep(0.6)
     fc.mode = 2
     fc.vfr.update(alt=10.0)

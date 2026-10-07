@@ -1,28 +1,4 @@
 #!/usr/bin/env python3
-"""ACRO as a second control mode, and the wind-rejection fix.
-
-Two things pinned down here, both driven by a real field failure:
-
-  1. THE ACRO-RATE TRANSLATION.  InterceptLaw always decides a physical bank
-     and lean ANGLE (proportional navigation, closing-speed law).  In ALT_HOLD
-     that angle IS the stick, normalised by ANGLE_MAX, and the FC's own
-     ~400 Hz attitude controller holds it.  ACRO has no such controller, so an
-     outer P loop here converts the SAME angle target into the RATE that would
-     reach it — the "same as ALT_HOLD" the user asked for, at a bandwidth we
-     are honest about being lower.  Throttle is never driven in ACRO: a stick
-     there is raw thrust with nothing underneath it, so the law commands 0 and
-     a second, independent guard at the backend leaves the channel with the
-     pilot regardless of what axes are configured.
-
-  2. WIND.  Flight-in-the-field drift is not a bug in the guidance law's
-     tracking — it is the "calm at acquisition" bank ceiling (bank_far_deg)
-     running out of authority against a real crosswind while the target is
-     still far/small in frame.  Raising it (12 -> 24 deg) costs nothing in
-     still air (verified: identical result at 0 m/s) and is the difference
-     between a hit and a miss at 12 m/s of crosswind (measured below).
-
-    python3 tests/test_acro_dual.py
-"""
 import io
 import math
 import os
@@ -32,7 +8,7 @@ import contextlib
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
 
-from fc_control import InterceptLaw, ArduPilotAcro, ANGLE_MODES   # noqa: E402
+from fc_control import InterceptLaw, ArduPilotAcro, ANGLE_MODES
 
 FAILED = []
 
@@ -54,15 +30,13 @@ def law(**kw):
 
 print("=== 1. _angle_to_stick: the outer P loop that stands in for ACRO ===")
 L = law(att_kp=6.0)
-# ANGLE mode: pass-through, exactly as before -- must be a bit-for-bit no-op.
 check("ANGLE mode is a pure angle/angle_max pass-through, measured angle ignored",
       L._angle_to_stick(math.radians(15.0), math.radians(99.0), False)
       == L._angle_to_stick(math.radians(15.0), None, False)
       == 15.0 / 30.0)
 
-# RATE mode: outer P loop against measured angle, clamped, then rate-normalised.
 target, measured = math.radians(15.0), math.radians(5.0)
-want_rate = 6.0 * math.radians(10.0)                    # att_kp * error
+want_rate = 6.0 * math.radians(10.0)
 want_stick = want_rate / math.radians(360.0)
 got = L._angle_to_stick(target, measured, True)
 check("RATE mode outputs att_kp * angle_error, normalised by ACRO_RP_RATE",
@@ -92,7 +66,7 @@ check("...and it differs from the RATE-mode stick for the SAME pixel error",
 
 print("\n=== 3. throttle is NEVER driven in ACRO ===")
 L = law()
-for _ in range(30):     # a few frames so climb has something to command
+for _ in range(30):
     cmd = L.compute(0.0, -60.0, 640, 640, dt=0.05,
                     att=dict(roll=0.0, pitch=0.0, yaw=0.0,
                              yawspeed=0.0, pitchspeed=0.0),
@@ -113,7 +87,7 @@ print("\n=== 4. the backend-level guard: throttle channel untouched outside an "
 
 
 def make_backend(mode_name):
-    b = ArduPilotAcro.__new__(ArduPilotAcro)          # skip __init__ (no serial)
+    b = ArduPilotAcro.__new__(ArduPilotAcro)
     b.axes = ("roll", "pitch", "yaw", "throttle")
     b.mode_name = mode_name
     b.thr_deadzone = 100
@@ -126,7 +100,7 @@ def make_backend(mode_name):
     b._sent_hist = {}
     b._steer_since = None
     b.ECHO_HISTORY_S = 1.0
-    b._send_override = lambda chans: True   # no real link to write to
+    b._send_override = lambda chans: True
     return b
 
 
@@ -145,11 +119,6 @@ check("...the other three axes still drive normally in ACRO",
 
 
 print("\n=== 5. the reversal-flag invariant holds in BOTH modes ===")
-# The exact property test_intercept.py locks for ALT_HOLD: an invert flag must
-# change ONLY the wire value, never the reported physical angle.  Re-checked
-# here for rate_mode too, since a unit-mismatched formula there is exactly the
-# class of bug this file exists to catch (it bit the ALT_HOLD side once
-# already, in the same session that added this feature).
 for rate_mode in (False, True):
     L1 = law(invert_roll=False)
     L2 = law(invert_roll=True)
@@ -182,12 +151,6 @@ G = 9.80665
 
 
 class WindSim(T.Sim):
-    """T.Sim, but drag opposes AIRSPEED (ground velocity minus a constant wind
-    vector) instead of ground velocity.  An attitude-hold vehicle actively
-    holds whatever lean/bank is commanded regardless of wind -- that IS what
-    an attitude controller does -- so wind does not change the angle achieved,
-    it changes the GROUND velocity that angle produces.  A hovering airframe
-    (lean=bank=0) therefore drifts at exactly the wind speed."""
 
     def __init__(self, *a, wind=(0.0, 0.0), **kw):
         super().__init__(*a, **kw)
@@ -258,7 +221,7 @@ try:
           f"hit at {r12_new['t_hit']:.2f} s, closest {r12_new['best']:.2f} m, "
           f"in frame {r12_new['inframe']*100:.0f}%")
 finally:
-    T.InterceptLaw = InterceptLaw          # do not leak the monkeypatch
+    T.InterceptLaw = InterceptLaw
 
 
 print("\n" + "=" * 62)

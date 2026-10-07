@@ -1,17 +1,4 @@
 #!/usr/bin/env python3
-"""THE CIRCLES: an over-eager seeker yaw makes the airframe orbit the target.
-
-Field, 2026-09-25 (control_20260925_114322 / 125205): a target first seen at
-the frame edge commanded ~140 deg/s of yaw (KP_YAW 4.5, no ceiling); the
-heading swept 150-330 deg in 2-3 s and the logged line-of-sight rate read
-40-126 deg/s where the geometry allows ~14.  That excess is the airframe's
-own yaw leaking into lambda = yaw + az through a timing error, and PN banks
-on it.  This reproduces it with the FC's real yaw-acceleration limit
-(ATC_ACCEL_Y_MAX 297 deg/s^2) and attitude 80 ms LATE vs the frame, and pins
-the fix: seeker kp 2.0, yaw capped at 40 deg/s (tracker.DroneTracker._STAB).
-
-    ../.env/yolo/bin/python tests/test_yaw_circles.py
-"""
 import contextlib
 import io
 import math
@@ -21,11 +8,11 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import numpy as np                                                 # noqa: E402
-from fc_control import InterceptLaw                                # noqa: E402
+import numpy as np
+from fc_control import InterceptLaw
 
 with contextlib.redirect_stdout(io.StringIO()):
-    import sim_model as T                                     # noqa: E402
+    import sim_model as T
 
 FAILED = []
 
@@ -42,7 +29,6 @@ TILT = 30.0
 
 
 class FcSim(T.Sim):
-    """Point mass in ALT_HOLD + wind + the FC's yaw-acceleration limit."""
 
     def __init__(self, wind=(0.0, 0.0), **kw):
         super().__init__(**kw)
@@ -156,11 +142,6 @@ def sweep(kp, cap):
             max(r for _, _, r in rows))
 
 
-# The heading changes ONLY through yaw.  The field logs had it at 60-130 deg/s
-# (150-330 deg in 2-3 s).  A 40 deg/s cap makes that spin physically
-# impossible, whatever the timing or FOV error.  The sim is not claimed to
-# reproduce the orbit itself (in this harness the old seeker misses more but
-# does not orbit); what it must show is the cap holding and no accuracy lost.
 print("=== the seeker yaw, target first seen at the frame edge, attitude 80 ms late ===")
 h0, n, w0, r0 = sweep(4.5, 182.0)
 h1, _, w1, r1 = sweep(2.0, 40.0)

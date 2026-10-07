@@ -1,21 +1,4 @@
 #!/usr/bin/env python3
-"""flight_report.py  -  controller, Jetson, or vibration?  One page, from the CSV.
-
-    ../.env/yolo/bin/python flight_report.py                 # newest control CSV
-    ../.env/yolo/bin/python flight_report.py data/control_<stamp>.csv
-
-Reads the mission columns the commander logs at 50 Hz (see
-AcroCommander._mission_csv) and answers three questions with numbers:
-
-  1. CONTROLLER  does the FC fly what the Jetson asked?  Commanded lean/bank
-     (from the PWM actually sent, through ArduPilot's own decode) against the
-     measured pitch/roll from ATTITUDE: tracking error and lag.
-  2. JETSON      how old is the picture a command is built from?  capture age
-     at compute time, and the detection rate.
-  3. VIBRATION   is the airframe shaking the camera?  VIBRATION x/y/z and
-     clipping, and whether the detection's jitter follows the body rates
-     (shake) or not (the detector itself).
-"""
 import csv
 import glob
 import io
@@ -45,7 +28,6 @@ def col(rows, k):
 
 
 def decode_angle(pwm, tr=1500, dz=20, lo=1100, hi=1900, amax=40.0):
-    """ArduPilot's norm_input_dz, as degrees of ANGLE_MAX (this FC's calibration)."""
     out = np.zeros_like(pwm, dtype=float)
     lo_m = pwm < tr - dz
     hi_m = pwm > tr + dz
@@ -55,7 +37,6 @@ def decode_angle(pwm, tr=1500, dz=20, lo=1100, hi=1900, amax=40.0):
 
 
 def lag_s(cmd, meas, dt=0.02, max_lag=25):
-    """Delay that best lines measured up with commanded, by cross-correlation."""
     ok = ~(np.isnan(cmd) | np.isnan(meas))
     c, m = cmd[ok] - np.nanmean(cmd[ok]), meas[ok] - np.nanmean(meas[ok])
     if len(c) < 60 or np.std(c) < 0.3:
@@ -119,7 +100,6 @@ def main(path):
         print(f"   capture -> command age: median {np.median(age) * 1000:.0f} ms, "
               f"p95 {np.percentile(age, 95) * 1000:.0f} ms (above ~150 ms, fix the pipeline "
               f"before raising speed)")
-    # a new detection resets det_age_s, so count the resets
     fresh = int(np.sum(np.diff(np.nan_to_num(da, nan=1e9)) < -0.005))
     span = (t[-1] - t[0]) if len(t) > 1 else 0
     if span > 0:
@@ -144,7 +124,6 @@ def main(path):
         print(f"   vibration (max axis) median {np.nanmedian(vm):.0f}, p95 "
               f"{np.nanpercentile(vm, 95):.0f} m/s^2 -> {verdict} (<30 good, >60 bad); "
               f"new clipping events {int(cl)}")
-    # detection jitter vs body rates
     rs = np.abs(col(rows, "rollspeed_dps")) + np.abs(col(rows, "pitchspeed_dps"))
     el = col(rows, "el_cam_deg")
     new = np.r_[False, np.diff(da) < -0.01] & air

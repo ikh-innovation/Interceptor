@@ -1,28 +1,4 @@
 #!/usr/bin/env python3
-"""SKY MODE before the field: a moving drone target, gusty wind Bf 0-3.
-
-    ../.env/yolo/bin/python tests/sim_sky_wind.py            # full campaign
-    ../.env/yolo/bin/python tests/sim_sky_wind.py --quick    # ~1/4 of the runs
-
-Not a pass/fail test -- a campaign that prints the odds.  What is REAL here and
-what is modelled:
-
-  REAL      the InterceptLaw, built exactly as commander_from_env builds it
-            from flight_config.py's sky env on top of run.py's INTERCEPT preset,
-            then the MEDIUM speed profile applied by tracker.DroneTracker's own
-            set_mode.  The Mission state machine (PUSH -> AI -> STOP, blends,
-            floor, re-acquire, terminal grace), stepped at 50 Hz like the TX
-            thread.  ENGAGE pressed once the target is in frame.
-  MODELLED  the airframe (point mass in ALT_HOLD: attitude lag, yaw-accel limit,
-            quadratic drag on AIRSPEED so wind pushes it), the wind (mean +
-            filtered gusts + direction wander + vertical gusts, ALT_HOLD
-            rejecting only part of the vertical), the camera (1280x960 px, mode 3,
-            30 deg tilt, body-fixed, 30 fps), the detector (25 Hz, 120 ms
-            latency, pixel noise, misses that rise as the target shrinks), the
-            barometer (noise), and the pilot's pre-ENGAGE trim into the wind.
-
-A TOUCH is a closest approach under 0.5 m between centres (two small quads).
-"""
 import argparse
 import contextlib
 import io
@@ -38,29 +14,25 @@ sys.path.insert(0, SRC)
 sys.path.insert(0, HERE)
 
 G = 9.80665
-FW, FH = 1280, 960                    # mode 3, full sensor, 4:3
+FW, FH = 1280, 960
 HFOV = 62.2
-VFOV_LAW = 48.8                       # what the law is told (CAM_VFOV_DEG default)
+VFOV_LAW = 48.8
 TILT = 30.0
-ANGLE_MAX = math.radians(40.0)        # this FC
-CLIMB_UP, CLIMB_DN = 25.0, 2.5        # PILOT_SPEED_UP / _DN on this FC, m/s
+ANGLE_MAX = math.radians(40.0)
+CLIMB_UP, CLIMB_DN = 25.0, 2.5
 YAW_FULL = math.radians(202.5)
-YAW_ACC = math.radians(297.0)         # ATC_ACCEL_Y_MAX
+YAW_ACC = math.radians(297.0)
 TOUCH_M = 0.5
-AUTO = os.environ.get("SIM_AUTO") == "1"      # press AUTO instead of ENGAGE
+AUTO = os.environ.get("SIM_AUTO") == "1"
 GROUND = os.environ.get("SIM_START") == "ground"
 HORIZON = os.environ.get("SIM_START") == "horizon"
-# The pilot's own flow, for comparing with AUTO: ENGAGE pressed this many
-# seconds after the target is first confirmed on screen ("" = at once).
 ENGAGE_ON_DET = os.environ.get("SIM_ENGAGE_ON_DET", "")
-H0 = os.environ.get("SIM_H0", "")                # start height override, m
-TARGET_W = 0.30                       # the enemy, motor tip to tip
+H0 = os.environ.get("SIM_H0", "")
+TARGET_W = 0.30
 
-# Beaufort -> mean wind, m/s (middle of each band) and gust sigma
 BEAUFORT = {0: (0.0, 0.0), 1: (1.0, 0.4), 2: (2.5, 0.8), 3: (4.4, 1.3)}
 
 
-# ── the law, exactly as flown ────────────────────────────────────────────────
 def build_law():
     with contextlib.redirect_stdout(io.StringIO()):
         import flight_config
@@ -70,7 +42,7 @@ def build_law():
     env = dict(R.INTERCEPT)
     for line in _flight_env(flight_config):
         k, v = line
-        env[k] = v                    # start-wasp.sh exports these; they win
+        env[k] = v
     old = dict(os.environ)
     os.environ.update({k: str(v) for k, v in env.items()})
     try:
@@ -99,7 +71,6 @@ def build_law():
 
 
 def _flight_env(fc):
-    """flight_config.py --shell, parsed: what start-wasp.sh exports."""
     out = []
     for ln in fc.as_shell(fc.resolve()).splitlines():
         if "=" in ln:
@@ -109,7 +80,6 @@ def _flight_env(fc):
 
 
 def _law_only(F):
-    """commander_from_env's InterceptLaw, without opening any link."""
     src = F.commander_from_env.__code__
     del src
     captured = {}
@@ -127,7 +97,6 @@ def _law_only(F):
     return captured["law"]
 
 
-# ── the mapper the mission flies through (physical <-> PWM, linear) ─────────
 class Mapper:
     def __init__(self):
         self.pilot = {}
@@ -161,10 +130,7 @@ class Mapper:
                 "throttle": self.phys_to_pwm("throttle", cmd["climb_mps"])}
 
 
-# ── wind ─────────────────────────────────────────────────────────────────────
 class Wind:
-    """Mean + first-order gusts (tau ~2 s) on speed, direction wander, and
-    discrete gust hits of 1.3-1.7x the mean.  Vertical gusts +/-0.4*sigma."""
 
     def __init__(self, bf, rng):
         self.mean, self.sig = BEAUFORT[bf]
@@ -183,7 +149,7 @@ class Wind:
         self.g += -a * self.g + self.sig * math.sqrt(2 * a) * r.gauss(0, 1)
         self.gd += -a * self.gd + math.radians(15) * math.sqrt(2 * a) * r.gauss(0, 1)
         self.gz += -(dt / 1.0) * self.gz + 0.4 * self.sig * math.sqrt(2 * dt) * r.gauss(0, 1)
-        if t - self.hit_t > 2.0 and r.random() < dt / 4.0:     # a gust every ~4 s
+        if t - self.hit_t > 2.0 and r.random() < dt / 4.0:
             self.hit_t, self.hit_amp = t, self.mean * r.uniform(0.3, 0.7)
         hit = self.hit_amp * math.sin(math.pi * min(1.0, (t - self.hit_t) / 1.5)) \
             if t - self.hit_t < 1.5 else 0.0
@@ -192,11 +158,6 @@ class Wind:
         return s * math.cos(d), s * math.sin(d), self.gz
 
 
-# ── the airframe ─────────────────────────────────────────────────────────────
-# ArduCopter's ALT_HOLD (rc_input_to_roll_pitch) limits the TOTAL tilt, not each
-# axis: roll and pitch become one horizontal-thrust vector whose length is held
-# to tan(ANGLE_MAX).  Without this, 35 deg of lean plus 36 of bank flies here as
-# a 46 deg tilt the FC would never give.  SIM_TILT_LIMIT=0 = the old per-axis sim.
 TILT_LIMIT = os.environ.get("SIM_TILT_LIMIT", "1") == "1"
 
 
@@ -205,14 +166,12 @@ def tilt_limit(lean, bank):
     n, cap = math.hypot(tx, ty), math.tan(ANGLE_MAX)
     if n > cap:
         tx, ty = tx * cap / n, ty * cap / n
-    # back as per-axis angles whose tangents ARE that vector, because step()
-    # turns each angle into g * tan(angle) of horizontal acceleration
     return math.atan(tx), math.atan(ty)
 
 
 class Drone:
     TAU_ATT, TAU_YAW, TAU_CLIMB = 0.15, 0.12, 0.40
-    DRAG = 0.0159                     # ~15 m/s at 20 deg of lean
+    DRAG = 0.0159
 
     def __init__(self, p, yaw, lean0=0.0, bank0=0.0, v0=(0.0, 0.0)):
         self.p = list(p)
@@ -230,7 +189,6 @@ class Drone:
         if TILT_LIMIT:
             lean_c, bank_c = tilt_limit(lean_c, bank_c)
         k = dt / (self.TAU_ATT + dt)
-        # a gust also knocks the attitude a little before the FC rejects it
         self.lean += k * (lean_c - self.lean) + rng.gauss(0, 0.002) * (1 + abs(wind[0]) + abs(wind[1]))
         self.bank += k * (bank_c - self.bank) + rng.gauss(0, 0.002) * (1 + abs(wind[0]) + abs(wind[1]))
         want = self.yaw_rate + (dt / (self.TAU_YAW + dt)) * (yr_c - self.yaw_rate)
@@ -244,7 +202,6 @@ class Drone:
         asp = math.hypot(avx, avy)
         self.v[0] += (ax - self.DRAG * asp * avx) * dt
         self.v[1] += (ay - self.DRAG * asp * avy) * dt
-        # ALT_HOLD rejects most of a vertical gust, not all of it
         self.v[2] = self.climb + 0.35 * wind[2]
         for i in range(3):
             self.p[i] += self.v[i] * dt
@@ -268,12 +225,7 @@ class Drone:
         return exl * c + eyl * s, -exl * s + eyl * c, rng_m
 
 
-# ── the enemy ────────────────────────────────────────────────────────────────
 def make_target(kind, speed, p0, own_p, rng):
-    """kind: hover | toward | away | cross | zigzag | climb_cross |
-    angle_in (crossing at 45 deg while closing) | angle_out (45 deg while opening) |
-    come<deg> (flying in, <deg> off the line to us: 0 = straight at us, 90 =
-    crossing) | go<deg> (flying away, <deg> off straight away)."""
     dx, dy = own_p[0] - p0[0], own_p[1] - p0[1]
     to_us = math.atan2(dy, dx)
     if kind.startswith(("come", "go")):
@@ -296,8 +248,6 @@ def make_target(kind, speed, p0, own_p, rng):
         if kind == "hover" or speed == 0:
             return (p0[0] + 0.3 * math.sin(0.7 * t), p0[1] + 0.3 * math.cos(0.5 * t), p0[2])
         if kind == "zigzag":
-            # sideways at up to `speed`, reversing every half period, while
-            # drifting toward us at 30% of it
             w = 2 * math.pi / period
             side = (speed / w) * math.sin(w * t)
             return (p0[0] + side * math.cos(heading) + 0.3 * speed * t * math.cos(to_us),
@@ -308,7 +258,6 @@ def make_target(kind, speed, p0, own_p, rng):
     return pos
 
 
-# ── one engagement ───────────────────────────────────────────────────────────
 def engage(args):
     (bf, kind, speed, rng0, el0, az0, h0, seed, vfov_real, hfov_real) = args
     import mission as M
@@ -318,21 +267,17 @@ def engage(args):
     mp = Mapper()
     wind = Wind(bf, rng)
     m = M.Mission(mp, log=lambda *_a: None, accel_z=2.5, jerk_z=5.0)
-    if os.environ.get("SIM_PUSH"):                  # default: the app's own (SLOW, 20 deg)
+    if os.environ.get("SIM_PUSH"):
         m.set_level("push", os.environ["SIM_PUSH"])
-    # the mission's AI level is the one the law was built with; an AUTO run may
-    # ask for its own (ai_level_now), applied below as the tracker does
     lv_law = os.environ.get("SIM_SPEED") or "MEDIUM"
     m.set_level("ai", lv_law)
     for kv in filter(None, os.environ.get("SIM_AUTOP", "").split(",")):
         k, _, v = kv.partition("=")
         assert m.set_auto_param(k, v) == "", kv
 
-    # pilot hovering in ALT_HOLD, trimmed into the MEAN wind (no GPS: by hand)
     wx, wy = wind.mean * math.cos(wind.dir), wind.mean * math.sin(wind.dir)
     yaw0 = rng.uniform(-math.pi, math.pi)
     trim_tilt = math.atan(Drone.DRAG * wind.mean * wind.mean / G)
-    # lean/bank that push AGAINST the wind in body axes
     f = (math.cos(yaw0), math.sin(yaw0))
     r = (-math.sin(yaw0), math.cos(yaw0))
     if wind.mean > 0:
@@ -341,26 +286,25 @@ def engage(args):
         bank0 = trim_tilt * (ux * r[0] + uy * r[1])
     else:
         lean0 = bank0 = 0.0
-    lean0 += math.radians(rng.gauss(0, 1.0))        # the pilot is not perfect
+    lean0 += math.radians(rng.gauss(0, 1.0))
     bank0 += math.radians(rng.gauss(0, 1.0))
     dr = Drone((0.0, 0.0, h0), yaw0, lean0, bank0, v0=(rng.gauss(0, 0.3), rng.gauss(0, 0.3)))
     mp.pilot = {"pitch": mp.phys_to_pwm("pitch", math.degrees(lean0)),
                 "roll": mp.phys_to_pwm("roll", math.degrees(bank0)),
                 "yaw": 1500, "throttle": 1500}
 
-    # target: range / elevation / azimuth relative to where the camera looks
     a = yaw0 + math.radians(az0)
     hz = rng0 * math.cos(math.radians(el0))
     p0 = (hz * math.cos(a), hz * math.sin(a), h0 + rng0 * math.sin(math.radians(el0)))
-    if H0:                                          # same target, another start height
+    if H0:
         h0 = float(H0)
         dr.p[2] = h0
     tgt_at = make_target(kind, speed, p0, dr.p, rng)
 
     dt = 0.005
     det_period, det_lat = 1 / 25.0, 0.12
-    hist = []                                     # (t, measurement, att)
-    pending = []                                  # detections in the pipe
+    hist = []
+    pending = []
     ctx = dict(gate_ok=True, gate_why="", att=None, height=h0, climb=0.0,
                ai_cmd=None, ai_t=None, det_t=None, det_conf=None)
     next_det, next_tx, t_last_det = 0.0, 0.0, None
@@ -369,32 +313,31 @@ def engage(args):
     max_bank = 0.0
     engaged_at = 0.0
     ctx["height"] = h0
-    m.cycle(0.0, ctx)                             # PILOT -> HOVER
+    m.cycle(0.0, ctx)
     pressed = True
     if AUTO:
         ctx["att"] = dict(roll=dr.bank, pitch=dr.lean, yaw=dr.yaw)
         m.set_auto_enabled(True)
-        m.request_auto(True)                      # AUTO: climb, find, align, go
+        m.request_auto(True)
     elif ENGAGE_ON_DET:
-        pressed = False                           # the pilot waits for it on screen
+        pressed = False
     else:
         m.request_engage()
-    t_seen = None                                 # first confirmed detection
+    t_seen = None
     out = {}
     T_END = 45.0 if HORIZON else 30.0 if AUTO else 16.0
     t = 0.0
     phases = set()
-    t_push = None           # when the push began (AUTO: the second line)
-    # ── the turn metrics (the field complaint: it turns PAST the target) ──
-    t_ai0 = None            # when the AI first steered
-    az_ai0 = 0.0            # target bearing off the nose at that instant, deg
-    overshoot = 0.0         # deg the nose swung PAST the target, other side
-    peak_yr = 0.0           # deg/s, the airframe
-    sweep = 0.0             # total heading swept after takeover, deg
-    lost_after = 0          # frames with the target OUT of the picture, post takeover
+    t_push = None
+    t_ai0 = None
+    az_ai0 = 0.0
+    overshoot = 0.0
+    peak_yr = 0.0
+    sweep = 0.0
+    lost_after = 0
     frames_after = 0
-    bank_hist = []          # (t, commanded bank deg)
-    bank_jump = 0.0         # biggest change of commanded bank inside 0.2 s
+    bank_hist = []
+    bank_jump = 0.0
     passed_latch = False
     while t < T_END:
         tgt = tgt_at(t)
@@ -406,15 +349,12 @@ def engage(args):
         if dr.p[2] < 0.3:
             crashed = True
             break
-        # true bearing of the target off the nose
         dxy = (tgt[0] - dr.p[0], tgt[1] - dr.p[1])
         az_true = math.degrees(math.atan2(-math.sin(dr.yaw) * dxy[0] + math.cos(dr.yaw) * dxy[1],
                                           math.cos(dr.yaw) * dxy[0] + math.sin(dr.yaw) * dxy[1]))
         az_pre = az_true
         if t_ai0 is None and (m._push_steer or m.phase == "AI"):
             t_ai0, az_ai0 = t, az_true
-        # once it has gone PAST the target (range opening again after a close
-        # approach), what follows is the pass, not the turn: stop scoring it
         passed = (best < 10.0 and d > best + 2.0) or passed_latch \
             or (d < 8.0 and abs(az_pre) > 75.0)
         passed_latch = passed
@@ -425,7 +365,6 @@ def engage(args):
                 overshoot = max(overshoot, abs(az_true) - 2.0)
             peak_yr = max(peak_yr, abs(math.degrees(dr.yaw_rate)))
             sweep += abs(math.degrees(dr.yaw_rate)) * dt
-        # camera frame
         if t >= next_det:
             next_det += det_period
             meas = dr.measure(tgt, vfov_real, hfov_real)
@@ -445,10 +384,9 @@ def engage(args):
                     frames_in += 1
                     focal = (FW / 2) / math.tan(math.radians(hfov_real / 2))
                     bw = focal * TARGET_W / max(0.2, rng_m)
-                    # detection odds: poor below ~6 px, good above ~14 px
                     p_det = 0.93 * max(0.0, min(1.0, (bw - 4.0) / 10.0))
                     if bw > 0.6 * FH:
-                        p_det *= 0.2                 # fills the frame: drops out
+                        p_det *= 0.2
                     if rng.random() < p_det:
                         conf = min(0.95, 0.25 + 0.03 * bw) * rng.uniform(0.8, 1.0)
                         nx = rng.gauss(0, 2.0 + 0.04 * bw)
@@ -456,24 +394,15 @@ def engage(args):
                         bwn = bw * rng.uniform(0.85, 1.15)
                         pending.append((t + det_lat + rng.uniform(-0.02, 0.03),
                                         t, ex + nx, ey + ny, bwn, conf, att))
-        # detections arriving at the Jetson's control code
         while pending and pending[0][0] <= t:
             arr, cap, ex, ey, bwn, conf, att = pending.pop(0)
             ddt = det_period if t_last_det is None else max(1e-3, arr - t_last_det)
             t_last_det = arr
-            # attitude interpolated to capture time, ~10 ms residual error
             cmd = law.compute(ex, ey, FW, FH, dt=ddt, bbox_w=bwn, bbox_h=bwn,
                               att=att, capture_age=arr - cap)
             ctx.update(ai_cmd=cmd, ai_t=t, det_t=t, det_conf=conf)
-        # TX thread, 50 Hz
         if t >= next_tx:
             next_tx += 0.02
-            # As AcroCommander._mission_tx: the AI command reaches the mission
-            # only while a real detection is younger than target_timeout
-            # (0.5 s).  Keeping the last one in ctx for ever let a stale
-            # TERMINAL command renew the mission's terminal hold every cycle:
-            # the sim then flew the frozen sticks for many seconds after a
-            # pass, often into the ground -- a crash the real code cannot make.
             if ctx["det_t"] is not None and t - ctx["det_t"] > 0.5:
                 ctx["ai_cmd"] = ctx["ai_t"] = None
             ctx["height"] = dr.p[2] + rng.gauss(0, 0.25)
@@ -486,13 +415,13 @@ def engage(args):
             out = m.cycle(t, ctx)
             phases.add(m.phase)
             lv = m.ai_level_now()
-            if lv != lv_law:                       # the tracker's per-frame sync
+            if lv != lv_law:
                 set_level(law, lv)
                 lv_law = lv
             if t_push is None and m.phase == "PUSH":
                 t_push = t
             if m.phase in ("HOVER",) and t > 0.5 and pressed:
-                break                                   # the attempt is over
+                break
         wv = wind.step(t, dt)
         if out:
             lean = math.radians(mp.pwm_to_phys("pitch", out.get("pitch", 1500)))
@@ -505,7 +434,7 @@ def engage(args):
                 bank_jump = max(bank_jump, max(abs(bd - b) for _, b in bank_hist))
             yr = math.radians(mp.pwm_to_phys("yaw", out.get("yaw", 1500)))
             cl = mp.pwm_to_phys("throttle", out.get("throttle", 1500))
-        else:                                           # released: pilot's trim
+        else:
             lean, bank, yr, cl = lean0, bank0, 0.0, 0.0
         max_bank = max(max_bank, abs(math.degrees(dr.bank)))
         dr.step(lean, bank, yr, cl, wv, dt, rng)
@@ -525,7 +454,6 @@ _LAW = None
 
 
 def set_level(law, level):
-    """An AI level onto a live law, exactly as tracker.DroneTracker.set_mode."""
     import tracker
 
     class _S:
@@ -553,7 +481,6 @@ def build_law_cached():
     return copy.deepcopy(_LAW._pristine)
 
 
-# ── the campaign ─────────────────────────────────────────────────────────────
 def scenarios(n_seeds, vfov_real=VFOV_LAW, hfov_real=HFOV):
     if HORIZON:
         return scenarios_horizon(n_seeds, vfov_real, hfov_real)
@@ -575,9 +502,6 @@ def scenarios(n_seeds, vfov_real=VFOV_LAW, hfov_real=HFOV):
 
 
 def scenarios_ground(n_seeds, vfov_real=VFOV_LAW, hfov_real=HFOV):
-    """SIM_START=ground: just off the ground (1.5 m), the enemy 25-50 m out
-    and 6-25 m up, within 25 deg of the nose -- often above the frame or too
-    small to detect yet, as when AUTO is pressed in the field."""
     rng = random.Random(4321)
     rows = []
     motions = [("hover", 0.0), ("toward", 5.0), ("toward", 10.0), ("away", 3.0),
@@ -598,11 +522,6 @@ HORIZON_ALTS = {"low": (5.0, 12.0), "mid": (15.0, 25.0), "high": (30.0, 45.0)}
 
 
 def scenarios_horizon(n_seeds, vfov_real=VFOV_LAW, hfov_real=HFOV):
-    """SIM_START=horizon: from 1.5 m (SIM_H0 to change), the enemy within 15
-    deg of the nose, at a low / mid / high altitude band above the ground.
-    COMING: it appears 60-80 m out and flies in, 0 / 30 / 60 / 90 deg off the
-    line to us, at 5 / 10 / 15 m/s.  GOING: 20-40 m out, flying away, 0 / 30
-    / 60 deg off straight away, at 5 / 10 m/s."""
     rng = random.Random(777)
     rows = []
     paths = [(f"come{a}", v, (60, 80)) for a in (0, 30, 60, 90) for v in (5.0, 10.0, 15.0)]
@@ -702,7 +621,6 @@ def report_turns(res):
 
 
 def compare_speeds(allres):
-    """One table: every target motion x wind, SLOW / MEDIUM / FAST side by side."""
     speeds = [sp for sp in ("SLOW", "MEDIUM", "FAST", "MAX") if sp in allres]
     print("\n=== AI SPEED COMPARISON: touch rate (< 0.5 m), PUSH at %s ===" % (os.environ.get("SIM_PUSH") or "SLOW (the default, 20 deg)"))
     print(f"  {'target':<22s}" + "".join(f"{'Bf' + str(b):>16s}" for b in (0, 1, 2, 3)))
@@ -764,7 +682,7 @@ def main():
         for sp in ("SLOW", "MEDIUM", "FAST", "MAX"):
             os.environ["SIM_SPEED"] = sp
             _LAW = None
-            build_law_cached()                       # forked workers inherit it
+            build_law_cached()
             rows = scenarios(n, a.vfov or VFOV_LAW, a.hfov or HFOV)
             with Pool() as p:
                 allres[sp] = p.map(engage, rows, chunksize=4)

@@ -1,12 +1,4 @@
 #!/usr/bin/env python3
-"""The phone app (src/mission_ui.html) driven in a REAL browser.
-
-Serves the page from a fake server that records every /cmd, opens it in
-headless Firefox inside a same-origin harness, synthesises pointer events and
-reads the DOM back.  SKIPS (exit 0, says so) when Firefox is not installed.
-
-    ../.env/yolo/bin/python tests/test_ui_browser.py
-"""
 import json
 import os
 import shutil
@@ -29,10 +21,9 @@ def check(label, ok, detail=""):
         FAILED.append(label)
 
 
-# The page's AUTO settings must be the mission's: same keys, choices, defaults.
 sys.path.insert(0, HERE)
-import re                                                          # noqa: E402
-import mission as _M                                               # noqa: E402
+import re
+import mission as _M
 _ui = {}
 for mm in re.finditer(r'\{k: "(\w+)".*?c: \[([^\]]*)\], d: ("?\w+(?:\.\d+)?"?)', PAGE.decode()):
     ch = [x.strip().strip('"') for x in mm.group(2).split(",")]
@@ -59,7 +50,6 @@ ST = dict(linked=True, armed=True, fc_mode="ALT_HOLD", target="DRONE", tilt_deg=
                        target_fresh=True, target_az_deg=1.2, target_el_deg=-18.5),
           console_seq=2)
 ST["mission"]["auto_params"] = {k: getattr(_M.Mission, a[0]) for k, a, _c in _M.Mission.AUTO_SETTINGS}
-# what the Jetson powers up with: the same as now, so nothing starts "this flight only"
 ST["mission"]["auto_defaults"] = dict(ST["mission"]["auto_params"])
 ST["mission"]["level_defaults"] = dict(ST["mission"]["levels"])
 ST["follower_default"] = True
@@ -68,7 +58,6 @@ CONSOLE = [[1, "12:00:00", "[MISSION] PILOT -> HOVER  (armed in ALT_HOLD)"],
 CMDS, REP, SIMPOLLS = [], [], []
 SLOW, DEAD = {"on": False}, {"on": False}
 
-# Each step: JS run in the harness, then a wait (ms).  rep(...) sends a report.
 STEPS = [
     ("rep({step:'boot', phase:d.body.getAttribute('data-phase'), alt:q('#alt').textContent, card:!!q('#hdr')||!!q('#phase')||!!q('#hint'),"
      " hbL:q('#hbox').getBoundingClientRect().left, hbT:q('#hbox').getBoundingClientRect().top, hbBg:W.getComputedStyle(q('#hbox')).backgroundColor,"
@@ -116,7 +105,6 @@ STEPS = [
      " fetch('/set?phase=HOVER&locked=0').then(function(){ fetch('/reset'); });});", 400),
     ("until(function(){return !q('#b_lock').classList.contains('on') && !q('#b_yl').disabled},3000);", 3100),
     ("rep({step:'unlocked', cls:q('#b_lock').className, txt:q('#locktxt').textContent}); fetch('/reset');", 300),
-    # the degree scroll: drag up 60 px in slow steps, lift -> the YES / NO pop-up
     ("var dl=q('#dial'); pey(dl,'pointerdown',300);"
      " [1,2,3,4,5,6].forEach(function(k){ setTimeout(function(){ pey(dl,'pointermove',300-10*k); }, 80*k); });"
      " setTimeout(function(){ rep({step:'dragging', ask:q('#ask').classList.contains('on'), drag:dl.classList.contains('drag')});"
@@ -131,7 +119,6 @@ STEPS = [
      " setTimeout(function(){ cmds().then(function(c){ rep({step:'ask_no', ask:q('#ask').classList.contains('on'), cmds:c}); fetch('/reset'); }); }, 300);", 700),
     ("var dl=q('#dial'); pey(dl,'pointerdown',200); pey(dl,'pointerup',200);"
      " setTimeout(function(){ rep({step:'dial_tap', ask:q('#ask').classList.contains('on')}); }, 200);", 400),
-    # TEST: the same screen drives the pretend drone at /sim/...
     ("fetch('/set?phase=HOVER&armed=0').then(function(){ return until(function(){return !q('#t_sim').disabled},3000); })"
      ".then(function(){ fetch('/reset'); q('#t_menu').click(); q('#t_test').click(); setTimeout(function(){ rep({step:'sim_menu', dis:q('#t_sim').disabled,"
      " menu:q('#sh_menu').classList.contains('open'), test:q('#sh_test').classList.contains('open'),"
@@ -159,8 +146,6 @@ STEPS = [
     ("cmds().then(function(c){rep({step:'hold_up', n:c.filter(function(x){return x.indexOf('hold=up')>=0}).length,"
      " rel:c.some(function(x){return x.indexOf('release=')>=0}), pin:c.every(function(x){return x.indexOf('k=')<0})});"
      " fetch('/reset');});", 300),
-    # reset FIRST, then tap: the previous step's async reset could otherwise
-    # land after the tap's command and erase it
     ("until(function(){return !q('#b_yl').disabled},3000).then(function(){ return fetch('/reset'); }).then(function(){"
      " pe(q('#b_yl'),'pointerdown'); setTimeout(function(){pe(q('#b_yl'),'pointerup');},120); });", 3300),
     ("cmds().then(function(c){rep({step:'tap', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})}); fetch('/reset');});", 300),
@@ -215,8 +200,6 @@ STEPS = [
      ".then(function(ok){ rep({step:'chip', on:ok, n:d.querySelectorAll('.unsaved.on').length}); q('.unsaved[data-save=\"lvl:vert\"]').click(); });", 3800),
     ("cmds().then(function(c){rep({step:'chipsave', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})}); fetch('/set?phase=HOVER&lvl_vert=SLOW');"
      " q('#sh_speed [data-close]').click(); rep({step:'closed', open:q('#sh_speed').classList.contains('open')}); fetch('/reset');});", 400),
-    # AUTO: greyed out while OFF in PARAMETERS, sends auto=on when ON, shows
-    # its state while flying; MAX on the AI row; the PARAMETERS switch
     ("fetch('/set?phase=HOVER&auto=0').then(function(){ return until(function(){return q('#b_auto').disabled},3000); })"
      ".then(function(){ var a=q('#b_auto').getBoundingClientRect(), l=q('#b_lock').getBoundingClientRect();"
      " rep({step:'auto_off', dis:q('#b_auto').disabled, above:a.bottom<=l.top, dl:Math.abs(a.left-l.left), w:a.width, h:a.height});"
@@ -240,7 +223,6 @@ STEPS = [
      " q('.seg[data-g=ai] button[data-lv=MAX]').click(); q('#autoseg [data-autoen=off]').click(); });", 3400),
     ("cmds().then(function(c){rep({step:'max_autoen', askMax:q('#defask').classList.contains('on'), cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
      " q('#def_no').click(); fetch('/reset');});", 400),
-    # PARAMETERS: two big tabs; AUTO's settings on the AUTO tab
     ("q('#t_menu').click(); q('#t_par').click(); setTimeout(function(){"
      " rep({step:'hub', heads:[].map.call(d.querySelectorAll('#sh_speed .acch b'),function(x){return x.textContent}),"
      " tag:q('#autotag').textContent, tagIn:q('#ptab_auto').contains(q('#autotag')), cats:d.querySelectorAll('.cat').length});"
@@ -282,15 +264,11 @@ f.onload=function(){ var d=f.contentDocument, W=f.contentWindow, q=function(s){r
  function pey(el,t,x){ var r=el.getBoundingClientRect(); el.dispatchEvent(new W.PointerEvent(t,{bubbles:true,cancelable:true,
    pointerId:2,isPrimary:true,clientX:x,clientY:r.top+r.height/2})); }
  function cmds(){ return fetch('/cmds').then(function(r){return r.json()}); }
- // wait for a CONDITION, not a fixed time: the Jetson running the real tracker
- // next to headless Firefox makes fixed waits flaky
  function until(fn, ms){ return new Promise(function(res){ var t0=Date.now();
    (function t(){ var ok=false; try{ ok=fn(); }catch(e){} if(ok||Date.now()-t0>ms) res(ok); else setTimeout(t,50); })(); }); }
  var S=%s; var i=0;
  function go(){ if(i>=S.length) return; try{ eval(S[i][0]); }catch(e){ rep({step:'error',err:String(e),at:i}); }
    var w=S[i][1]; i++; setTimeout(go, w); }
- // start only once the page has painted its first /state (fonts etc. can
- // delay it past a fixed wait, which made the boot step flaky)
  (function ready(){ if(d.body.getAttribute('data-phase')) go(); else setTimeout(ready, 50); })(); };
 </script></body></html>""" % json.dumps(STEPS)).encode()
 
@@ -472,7 +450,7 @@ check("TEST look: plain black (no stripes, no purple); no az / el readout, no 'p
       b"repeating-linear-gradient" not in PAGE and not any(c in PAGE for c in (b"#6d28d9", b"#5b21b6", b"#2e1065", b"#facc15"))
       and b'id="offs"' not in PAGE and b"TEST \xc2\xb7 pretend drone" not in PAGE)
 check("in TEST the buttons go to the pretend drone ONLY (/sim/cmd): LOCK, a wind gust",
-      sorted(sc.get("cmds", [])) == ["SIM gust=r", "SIM lock=on"], str(sc))   # sent together: any order
+      sorted(sc.get("cmds", [])) == ["SIM gust=r", "SIM lock=on"], str(sc))
 check("EXIT: back to the real drone, the TEST keys gone", sf.get("sim") is False and sf.get("bar") == "none" and sf.get("x") == "none", str(sf))
 check("drone armed: TEST cannot be started", R.get("sim_armed", {}).get("dis") is True, str(R.get("sim_armed")))
 hd = R.get("held", {}).get("cls", "")
@@ -554,7 +532,7 @@ check("AI row has SLOW / MEDIUM / FAST / MAX; PUSH row has no MAX",
 check("PARAMETERS has the AUTO ON / OFF switch, showing ON", ab.get("autoseg") == ["on", "off"]
       and ab.get("autoOn") == "on", str(ab))
 check("MAX sends lvl=ai:MAX (and asks about the default); the AUTO switch sends autoen=off and asks nothing more",
-      sorted(R.get("max_autoen", {}).get("cmds") or []) == ["autoen=off", "lvl=ai:MAX"]   # sent together: any order
+      sorted(R.get("max_autoen", {}).get("cmds") or []) == ["autoen=off", "lvl=ai:MAX"]
       and R.get("max_autoen", {}).get("askMax"),
       str(R.get("max_autoen")))
 hb, apg = R.get("hub", {}), R.get("autopage", {})
@@ -571,7 +549,7 @@ check("AUTO section: the AUTO button, then 12 settings in three sections, each l
 check("AUTO button (OFF) and SKY GATE (ON) are marked as fixed power-up values",
       apg.get("autoenDef") == "off" and apg.get("skyDef") == "on", str(apg))
 check("a tap on the default value sends autop=height:15 and asks nothing; RESET sends autoreset=1 (factory = default: no question)",
-      sorted(R.get("autoset", {}).get("cmds") or []) == ["autop=height:15", "autoreset=1"]   # sent together: any order
+      sorted(R.get("autoset", {}).get("cmds") or []) == ["autop=height:15", "autoreset=1"]
       and R.get("autoset", {}).get("ask") is False,
       str(R.get("autoset")))
 aa, adf = R.get("autoask", {}), R.get("autodef", {})
@@ -580,7 +558,6 @@ check("HEIGHT 20 m: asks to make it the default (default now 15 m); YES sends de
       and adf.get("cmds") == ["autop=height:20", "def=auto:height"] and adf.get("ask") is False, f"{aa} {adf}")
 check("link dead: the red cover shows", R.get("dead", {}).get("cover") is True)
 
-# ── the same page on a tablet and a desktop: one frame per screen size ─────
 DEAD["on"] = False
 SIZES = [("tablet upright", 820, 1180), ("tablet upright small", 768, 1024), ("tablet sideways", 1180, 820),
          ("tablet sideways small", 1024, 768), ("laptop", 1366, 657), ("desktop", 1920, 1080)]

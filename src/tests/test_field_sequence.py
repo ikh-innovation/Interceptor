@@ -1,6 +1,3 @@
-"""Walk the EXACT sequence that will be flown today, against the simulated FC.
-Covers the three things asked: it goes at the target, it follows a MOVING target,
-and it works the throttle itself."""
 import sys, math
 from time import perf_counter, sleep
 from pathlib import Path
@@ -14,12 +11,11 @@ def ck(n, c, d=""):
     print(f"  [{'PASS' if c else 'FAIL'}] {n}" + (f"  {d}" if d else ""))
     if not c: bad.append(n)
 
-fc = FakeArduPilot(PORT, sysid_mygcs=255, armed=False, mode=0)   # DISARMED, STABILIZE
+fc = FakeArduPilot(PORT, sysid_mygcs=255, armed=False, mode=0)
 fc.start(); sleep(0.4)
 fc.att.update(roll=0.0, pitch=0.0, yaw=0.0, yawspeed=0.0)
-fc.radio[6] = 2000                                # commit switch UP
+fc.radio[6] = 2000
 
-# EXACTLY the shipped config: CAM_TILT_DEG=10 COMMIT_CHAN=6 ./run.py
 law = InterceptLaw(cam_tilt_deg=10.0, roll_pn_gain=45.0, max_lean_deg=20.0,
                    max_bank_deg=30.0, climb_gain=8.0, climb_lead=3.0,
                    kp_yaw=4.5, stick_limit=0.90, slew_per_s=11.0,
@@ -35,12 +31,8 @@ def px(az_deg, el_deg=0.0):
     return (320.0*math.tan(math.radians(az_deg))/HALF_H,
             -320.0*math.tan(math.radians(el_deg))/HALF_V)
 
-TILT = 10.0          # matches cam_tilt_deg above
+TILT = 10.0
 def drive(sec, az=8.0, el_world=None, el=0.0):
-    """el_world is the target's elevation ABOUT THE HORIZON. The camera is tilted
-    up TILT deg and the fake FC reports a level airframe, so a target on the
-    boresight is really TILT deg above the horizon -- convert, or the test asks
-    the wrong question."""
     if el_world is not None:
         el = el_world - TILT
     t0 = perf_counter(); cmd = None
@@ -86,7 +78,6 @@ ck("target crossing -> BANKS to cut the corner", peak > 8.0, f"peak bank {peak:+
 ck("bank stays inside its ceiling", peak <= 30.0+1e-9)
 ck("bank reaches the drone as real stick travel", abs(fc.overrides[1]-1500) > 40,
    f"ch1={fc.overrides[1]}")
-# the regression that mattered: its OWN yaw must not fake a turn
 c.update(c.neutral_command(), None, have_target=False); sleep(0.15)
 worst = 0.0
 for k in range(70):
@@ -101,17 +92,17 @@ ck("its OWN turning does NOT fake a bank (no spin-out)", worst < 1.0,
 
 print("\n== 3) IT WORKS THE THROTTLE ITSELF ==")
 c.update(c.neutral_command(), None, have_target=False); sleep(0.15)
-up = drive(1.2, az=2.0, el_world=+12.0)   # target ABOVE the horizon
+up = drive(1.2, az=2.0, el_world=+12.0)
 ch3_up = fc.overrides.get(3, 0)
 ck("target ABOVE -> commands CLIMB", up["climb_mps"] > 0.2, f"{up['climb_mps']:+.2f} m/s")
 ck("...and the throttle stick goes ABOVE mid", ch3_up > 1540, f"ch3={ch3_up}")
 c.update(c.neutral_command(), None, have_target=False); sleep(0.15)
-dn = drive(1.2, az=2.0, el_world=-12.0)   # target BELOW the horizon
+dn = drive(1.2, az=2.0, el_world=-12.0)
 ch3_dn = fc.overrides.get(3, 0)
 ck("target BELOW -> commands DESCEND", dn["climb_mps"] < -0.2, f"{dn['climb_mps']:+.2f} m/s")
 ck("...and the throttle stick goes BELOW mid", 0 < ch3_dn < 1460, f"ch3={ch3_dn}")
 c.update(c.neutral_command(), None, have_target=False); sleep(0.15)
-lv = drive(1.2, az=2.0, el_world=0.0)     # target LEVEL with the drone
+lv = drive(1.2, az=2.0, el_world=0.0)
 ck("target LEVEL -> holds altitude (throttle at mid)",
    abs(lv["climb_mps"]) < 0.35 and abs(fc.overrides.get(3,0)-1500) < 130,
    f"{lv['climb_mps']:+.2f} m/s, ch3={fc.overrides.get(3)}")

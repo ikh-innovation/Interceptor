@@ -1,18 +1,3 @@
-"""
-desk_sim.py  -  a pretend drone for the phone app's TEST mode
-======================================================================
-The REAL mission.Mission (LOCK, ramps, refusals: the exact code that flies),
-driven against a model of ArduPilot's yaw hold in ALT_HOLD and gusty wind.
-It never touches the FC: its "sticks" go to the model and nowhere else.
-
-The server (mjpeg_stream) serves it at /sim/state and /sim/cmd, and refuses
-/sim/cmd while the REAL drone is armed.  It runs only while someone uses it:
-idle for IDLE_S and it stops; the next request starts a fresh one.
-
-The model is the one in tests/sim_lock_wind.py (heading target, the
-attitude-error limit that lets a strong gust drag it, a rate loop, finite yaw
-authority), cut down to what the phone needs.
-"""
 import math
 import random
 import threading
@@ -23,45 +8,20 @@ import mission as M
 DT = 0.002
 ANG_P, ERR_MAX, RATE_MAX = 4.5, 120.0 / 4.5, 202.5
 RATE_BW, RATE_I, I_MAX, ACC_MAX = 8.0, 4.0, 60.0, 150.0
-BEAUFORT = {0: (0.0, 0.0), 1: (1.0, 0.4), 2: (2.5, 0.8), 3: (4.4, 1.3)}   # mean, sigma m/s
-SENS = 40.0                     # deg/s^2 of yaw push from a 5 m/s broadside wind
-# The pretend ENEMY drone: a point in the world, TGT_RANGE m out at compass
-# bearing TGT_BRG from where the test starts, TGT_ELEV0 deg above the horizon
-# seen from the start height, bobbing a little as a hovering drone does.  The
-# test starts ON THE GROUND (tree tops round the field at the bottom of the
-# picture) facing START_HDG, 30 deg off it, so a newcomer does what the real
-# flight needs: climb toward the clouds, turn to find it, bring it under the
-# aim line, ENGAGE.  Everything the picture shows follows from this geometry:
-# climbing moves it (and the clouds) down the picture, turning moves it
-# across, the PUSH lean tilts the whole view down, flying at it makes it grow.
-#
-# While it is in the camera's view the pretend detector sees it, with the
-# closed-loop sim's odds (tests/sim_sky_wind.py: none below ~4 px across, near
-# certain from ~14 px), and hands the REAL mission what the tracker would: its
-# bearing / elevation / rates / range, and an AI command that chases it (yaw
-# onto it, climb / sink to its height, the AI level's lean, eased off near it
-# for MAX).  So ENGAGE shows PUSH then AI, and AUTO climbs, lines up and goes,
-# exactly as on the drone.  Within HIT_R it is hit; RESTART_S later the test
-# starts over by itself.
-TGT_BRG, TGT_RANGE, TGT_ELEV0, TGT_SPAN = 140.0, 60.0, 20.0, 0.8   # deg, m, deg, m across
-# It does not wait there: it flies in from the right, from TGT_BRG0 (out of
-# the starting view) across to TGT_BRG at TGT_V, then hovers.  So AUTO pressed
-# at the start is seen to climb and WATCH before the drone shows up, and the
-# arrow at the frame's edge says where it is coming from.
+BEAUFORT = {0: (0.0, 0.0), 1: (1.0, 0.4), 2: (2.5, 0.8), 3: (4.4, 1.3)}
+SENS = 40.0
+TGT_BRG, TGT_RANGE, TGT_ELEV0, TGT_SPAN = 140.0, 60.0, 20.0, 0.8
 TGT_BRG0, TGT_V = 178.0, 3.5
-START_HDG, START_H = 110.0, 0.5      # on the ground, just off it
-TILT = 30.0                     # deg, the camera's up-tilt (flight_config's sky mount)
+START_HDG, START_H = 110.0, 0.5
+TILT = 30.0
 HFOV, VFOV = 62.2, 48.8
-# The CAMERA switch: 60 fps sees the centre of the 30 fps view, as a share of
-# tan(angle) (tracker.CAM_MODES' crop; not imported: that pulls in the model).
 CAM_CROP = {30: (1.0, 1.0), 60: (2560 / 3280, 1440 / 2464)}
-HIT_R, RESTART_S = 2.0, 3.5     # m; s after a hit, or after a miss has played out
-G, DRAG = 9.80665, 0.0159       # forward speed: g tan(lean) = DRAG v^2, the closed-loop
-                                # sim's drag: ~15 m/s at a 20 deg lean, ~21 at 35 (MAX)
+HIT_R, RESTART_S = 2.0, 3.5
+G, DRAG = 9.80665, 0.0159
 FOCAL_PX, FRAME_W = 640.0 / math.tan(math.radians(HFOV / 2)), 1280.0
-AI_LEAN = {"SLOW": 12.0, "MEDIUM": 20.0, "FAST": 22.0, "MAX": 35.0}   # tracker MODES
-MAX_NEAR, NEAR_FAR, NEAR_NEAR = 0.3, 0.007, 0.03   # MAX's ease-off (InterceptLaw)
-LEAN_TAU = 0.25                 # s, the airframe settling onto a lean command
+AI_LEAN = {"SLOW": 12.0, "MEDIUM": 20.0, "FAST": 22.0, "MAX": 35.0}
+MAX_NEAR, NEAR_FAR, NEAR_NEAR = 0.3, 0.007, 0.03
+LEAN_TAU = 0.25
 
 
 def wrap180(a):
@@ -69,7 +29,6 @@ def wrap180(a):
 
 
 class _Yaw:
-    """ArduPilot's yaw in ALT_HOLD: the stick is a rate into a heading target."""
 
     def __init__(self, psi):
         self.psi, self.r, self.tgt, self.i = psi, 0.0, psi, 0.0
@@ -77,7 +36,7 @@ class _Yaw:
     def step(self, stick, dist, dt):
         self.tgt = (self.tgt + stick * dt) % 360.0
         e = wrap180(self.tgt - self.psi)
-        if abs(e) > ERR_MAX:                     # a strong gust drags the target
+        if abs(e) > ERR_MAX:
             self.tgt = (self.psi + math.copysign(ERR_MAX, e)) % 360.0
             e = math.copysign(ERR_MAX, e)
         er = max(-RATE_MAX, min(RATE_MAX, ANG_P * e + stick)) - self.r
@@ -87,7 +46,7 @@ class _Yaw:
 
 
 class _Mapper:
-    V_FOV = math.radians(VFOV)      # the camera's, for the mission's aim mark
+    V_FOV = math.radians(VFOV)
 
     def phys_to_pwm(self, axis, v):
         if axis == "yaw":
@@ -109,27 +68,26 @@ class DeskSim:
 
     def __init__(self, bf=2, seed=None):
         self.bf = bf
-        self.sky_gate = True                # the SKY GATE switch (no camera here: shown only)
-        self.follower = True                # the FOLLOWER switch (shown only, like the sky gate)
-        self.cam = 30                       # the CAMERA switch: the view the picture and detector get
+        self.sky_gate = True
+        self.follower = True
+        self.cam = 30
         self._lk = threading.Lock()
         self._thread = None
         self._touch = 0.0
         self._reset(seed)
 
-    # ── life cycle ─────────────────────────────────────────────────────────
     def _reset(self, seed=None):
         self.rng = random.Random(seed)
-        self.yaw = _Yaw(START_HDG)          # 30 deg off the pretend drone
-        self.lean = 0.0                     # deg of pitch, negative = nose down
+        self.yaw = _Yaw(START_HDG)
+        self.lean = 0.0
         self.mp = _Mapper()
         self._set_cam(self.cam)
         self.lines, self.seq = [], 0
         self.m = M.Mission(self.mp, log=self._log)
-        self.m.auto_enabled = True          # TEST shows AUTO with one press
-        M.load_auto_params(self.m)          # the AUTO settings saved for flight
+        self.m.auto_enabled = True
+        M.load_auto_params(self.m)
         self.h, self.vz = START_H, 0.0
-        self.x = self.y = self.v = self.odo = 0.0          # m east, m north, m/s forward, m flown
+        self.x = self.y = self.v = self.odo = 0.0
         b, b0 = math.radians(TGT_BRG), math.radians(TGT_BRG0)
         self.tx, self.ty = TGT_RANGE * math.sin(b0), TGT_RANGE * math.cos(b0)
         self.tx1, self.ty1 = TGT_RANGE * math.sin(b), TGT_RANGE * math.cos(b)
@@ -142,12 +100,11 @@ class DeskSim:
         self.g = self.gd = self.turb = 0.0
         self.kick_until, self.kick_acc = 0.0, 0.0
         self.out = {}
-        self.det = None                     # (ai_cmd, t) of the last detection
+        self.det = None
         self.t0 = time.perf_counter()
         self._log("[SIM] ΔΟΚΙΜΗ: a pretend drone, hovering in ALT_HOLD. Nothing reaches the FC.")
 
     def _set_cam(self, cam):
-        """The camera's view, deg, for the picture, the detector and the aim mark."""
         cx, cy = CAM_CROP[cam]
         self.cam = cam
         self.hfov = 2.0 * math.degrees(math.atan(cx * math.tan(math.radians(HFOV / 2.0))))
@@ -155,7 +112,6 @@ class DeskSim:
         self.mp.V_FOV = math.radians(self.vfov)
 
     def touch(self):
-        """Every request: keeps it running (starts a fresh one if it slept)."""
         with self._lk:
             self._touch = time.perf_counter()
             if self._thread is None or not self._thread.is_alive():
@@ -173,8 +129,6 @@ class DeskSim:
             return [r for r in self.lines if r[0] > since]
 
     def _geo(self, now):
-        """Where the enemy is from here: bearing, elevation above the horizon,
-        range; and where that puts it in the camera (az / el off its axis)."""
         dx, dy = self.tx - self.x, self.ty - self.y
         dz = self.talt + 0.4 * math.sin(1.3 * now) - self.h
         dh = math.hypot(dx, dy)
@@ -183,7 +137,6 @@ class DeskSim:
         return dict(brg=brg, elw=elw, rng=math.sqrt(dh * dh + dz * dz), dz=dz,
                     az=wrap180(brg - self.yaw.psi), el=elw - TILT - self.lean)
 
-    # ── 50 Hz, like the Jetson's TX thread ─────────────────────────────────
     def _run(self):
         t_next = time.perf_counter()
         while time.perf_counter() - self._touch < self.IDLE_S:
@@ -193,15 +146,13 @@ class DeskSim:
             time.sleep(max(0.0, t_next - time.perf_counter()))
 
     def _detect(self, now):
-        """The pretend detector: in view, and the odds of a target this many
-        pixels across.  On a hit, what the tracker would hand the mission."""
         g = self.geo
         if self.hit_t is not None or abs(g["az"]) >= self.hfov / 2 or abs(g["el"]) >= self.vfov / 2:
             return
         bw = FOCAL_PX * TGT_SPAN / max(0.5, g["rng"])
         if self.rng.random() >= 0.93 * max(0.0, min(1.0, (bw - 4.0) / 10.0)) * 0.5:
-            return                          # the detector runs at ~half the 50 Hz
-        lv = self.m.ai_level_now()          # an AUTO run's own, else the AI setting
+            return
+        lv = self.m.ai_level_now()
         lean = AI_LEAN.get(lv, 20.0)
         if lv == "MAX":
             near = max(0.0, min(1.0, (bw / FRAME_W - NEAR_FAR) / (NEAR_NEAR - NEAR_FAR)))
@@ -250,14 +201,13 @@ class DeskSim:
             self.yaw.step(stick, dist, DT)
         self.vz += (vz_cmd - self.vz) * 0.1
         self.h = max(0.5, self.h + self.vz * 0.02)
-        # forward flight from the lean (nose down = negative lean)
         a = G * math.tan(math.radians(max(0.0, -self.lean))) - DRAG * self.v * self.v
         self.v = max(0.0, self.v + a * 0.02)
         psi = math.radians(self.yaw.psi)
         self.x += self.v * math.sin(psi) * 0.02
         self.y += self.v * math.cos(psi) * 0.02
         self.odo += self.v * 0.02
-        if self.hit_t is None:               # the enemy flying in, then hovering
+        if self.hit_t is None:
             ex, ey = self.tx1 - self.tx, self.ty1 - self.ty
             d = math.hypot(ex, ey)
             if d > 0.05:
@@ -265,7 +215,7 @@ class DeskSim:
                 self.tx += ex * s
                 self.ty += ey * s
         g2 = self._geo(now)
-        for k in self.rate:                  # smoothed rates: the phone extrapolates between polls
+        for k in self.rate:
             d = (wrap180(g2[k] - g[k]) if k == "brg" else g2[k] - g[k]) / 0.02
             self.rate[k] += (d - self.rate[k]) * 0.2
         self.geo = g2
@@ -273,24 +223,21 @@ class DeskSim:
             self.hit_t = now
             self._log("[SIM] HIT: the pretend enemy drone is down")
         if self.attempt and self.end_t is None and self.hit_t is None and ph not in ("PUSH", "AI", "STOP"):
-            self.end_t = now                  # a miss has played out
+            self.end_t = now
         t_end = self.hit_t if self.hit_t is not None else self.end_t
         if t_end is not None and now - t_end > RESTART_S:
             self._restart()
 
     def _restart(self):
-        """Start over (after a hit or a miss), keeping the wind and the
-        PARAMETERS the user picked."""
         bf, lv, ae, ap = self.bf, dict(self.m.level), self.m.auto_enabled, self.m.auto_params()
         self._reset()
         self.bf = bf
         self.m.level.update(lv)
         self.m.auto_enabled = ae
-        for k, v in ap.items():             # the AUTO settings picked in TEST
+        for k, v in ap.items():
             self.m.set_auto_param(k, v)
         self._log("[SIM] again: facing 110, the enemy flying in from the right")
 
-    # ── what the phone sees / sends ────────────────────────────────────────
     def state(self):
         self.touch()
         with self._lk:
@@ -306,9 +253,6 @@ class DeskSim:
                         target_el_deg=round(self.geo["el"], 1), pwm=dict(self.out))
             now = time.perf_counter() - self.t0
             g, r = self.geo, self.rate
-            # what the phone draws: the enemy (world bearing / elevation /
-            # range and their rates, to extrapolate between polls), the lean,
-            # the speed and distance flown (the ground rushing by), a gust
             scene = dict(brg=round(g["brg"], 2), elw=round(g["elw"], 2), rng=round(g["rng"], 2),
                          brg_r=round(r["brg"], 2), elw_r=round(r["elw"], 2), rng_r=round(r["rng"], 2),
                          span=TGT_SPAN, lean=round(self.lean, 2), spd=round(self.v, 2), odo=round(self.odo, 2),
@@ -325,8 +269,6 @@ class DeskSim:
                     sim=dict(bf=self.bf, scene=scene))
 
     def command(self, key, value):
-        """The phone's commands, plus the test-only ones: gust=l|r, wind=0..3,
-        reset=1."""
         self.touch()
         with self._lk:
             now = time.perf_counter() - self.t0
@@ -359,7 +301,7 @@ class DeskSim:
                 self.follower = v in ("on", "1", "true")
                 self._log(f"[SIM] follower {'ON' if self.follower else 'OFF'}")
                 return ""
-            if key == "cam":                # as the tracker's set_camera
+            if key == "cam":
                 try:
                     cam = int(str(value).strip())
                 except ValueError:

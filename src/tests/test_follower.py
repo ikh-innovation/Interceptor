@@ -1,27 +1,4 @@
 #!/usr/bin/env python3
-"""The follower: once detected, a tiny target is not let go.
-
-    ../.env/yolo/bin/python tests/test_follower.py
-
-Runs the tracker's REAL _process (Kalman, track gate, ROI, the follower)
-on synthetic sky video: a cloudy sky that drifts, the camera shaking, and a
-drone 3-14 px across that moves, weaves and speeds up.  The detector is a
-stand-in that sees the target only on a fraction of the frames (like the
-field on 2026-09-30) and now and then fires on a cloud instead.
-
-Checks, per target size:
-  * after the first detection the target is TRACKED (a measurement: a
-    detection or a follower hit, never a bare Kalman guess) on nearly every
-    frame it is in the picture, and the track stays on it (error small);
-  * the same run with the follower off, for comparison (today's tracker);
-  * the target LEAVES the picture (or vanishes): the follower lets go and
-    does not invent a target on the clouds;
-  * a false detection on a cloud does not steal the track;
-  * a detection in the top corner while the target sits in the middle --
-    a cloud speck at 0.9 on EVERY frame, or a second, identical drone --
-    never takes the track, even while the detector misses the target;
-  * while the follower holds, one detector call per frame (fps).
-"""
 import contextlib
 import io
 import math
@@ -36,8 +13,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 with contextlib.redirect_stdout(io.StringIO()):
-    import tracker as T                                            # noqa: E402
-from follower import TargetFollower                                # noqa: E402
+    import tracker as T
+from follower import TargetFollower
 
 FAILED = []
 W = H = 640
@@ -49,19 +26,16 @@ def check(label, ok, detail=""):
         FAILED.append(label)
 
 
-# ── a sky ────────────────────────────────────────────────────────────────────
 def cloud_field(rng, n=1024):
-    """Grey clouds on a pale sky: smoothed noise at a few scales, 0..255."""
     f = np.zeros((n, n), np.float32)
     for sc, amp in ((96, 1.0), (32, 0.5), (12, 0.25), (4, 0.10)):
         g = rng.standard_normal((n // sc + 2, n // sc + 2)).astype(np.float32)
         f += amp * cv2.resize(g, (n, n), interpolation=cv2.INTER_CUBIC)
     f = (f - f.min()) / (f.max() - f.min())
-    return (150 + 90 * f).astype(np.float32)            # 150..240: bright cloud / pale sky
+    return (150 + 90 * f).astype(np.float32)
 
 
 def drone_sprite(size):
-    """A small quad seen from below: a dark body and four darker rotors."""
     s = max(3, int(size))
     k = s * 4 + 1
     img = np.zeros((k, k), np.float32)
@@ -71,7 +45,7 @@ def drone_sprite(size):
         for dx, dy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
             cv2.circle(img, (c + dx * s, c + dy * (s // 2 + 1)), max(1, s // 3), 1.0, -1, lineType=cv2.LINE_AA)
     img = cv2.resize(img, (k // 2 | 1, k // 2 | 1), interpolation=cv2.INTER_AREA)
-    return img                                          # alpha 0..1, ~2*size across
+    return img
 
 
 def render(field, ox, oy, sprite, tx, ty, rng, dark=70.0):
@@ -84,12 +58,11 @@ def render(field, ox, oy, sprite, tx, ty, rng, dark=70.0):
             a = sprite[ya - y0:yb - y0, xa - x0:xb - x0]
             reg = fr[ya:yb, xa:xb]
             fr[ya:yb, xa:xb] = reg * (1 - a) + dark * a
-    fr += rng.normal(0, 2.0, fr.shape).astype(np.float32)      # sensor noise
+    fr += rng.normal(0, 2.0, fr.shape).astype(np.float32)
     fr = np.clip(fr, 0, 255).astype(np.uint8)
     return cv2.cvtColor(fr, cv2.COLOR_GRAY2BGR)
 
 
-# ── the tracker, with a stand-in detector ───────────────────────────────────
 def make_tracker(follow=True):
     t = T.DroneTracker.__new__(T.DroneTracker)
     t.fw, t.fh = W, H
@@ -107,14 +80,10 @@ def make_tracker(follow=True):
 
 
 class FakeDetector:
-    """Sees the target in `region` with probability p (box jittered by 1 px);
-    fires on a random cloud spot with probability p_false; and on a fixed
-    DISTRACTOR (x, y, w, h, p, conf) when it is inside the region, which
-    beats the target (a higher confidence, the live model's max_det=1)."""
 
     def __init__(self, rng, p, p_false=0.0):
         self.rng, self.p, self.p_false = rng, p, p_false
-        self.truth = None             # (cx, cy, w, h) or None
+        self.truth = None
         self.distractor = None
         self.calls = 0
 
@@ -140,10 +109,6 @@ class FakeDetector:
 
 def run(size, follow, seed, p_det=0.15, p_false=0.0, frames=900, leave_at=None, vanish_at=None,
         distract=None):
-    """Returns per-frame (tracked_by_measurement, error_px, in_view, layer).
-    distract = (from_frame, to_frame, (x, y, w, h, p, conf), twin, blind):
-    the detector fires there; twin = a second drone is drawn there too;
-    blind = the detector misses the real target meanwhile."""
     rng = np.random.default_rng(seed)
     pr = random.Random(seed)
     field = cloud_field(rng)
@@ -151,7 +116,6 @@ def run(size, follow, seed, p_det=0.15, p_false=0.0, frames=900, leave_at=None, 
     t = make_tracker(follow)
     det = FakeDetector(pr, p_det, p_false)
     t._detect_region = det
-    # the target: weaving, speeding up, across the frame; the camera: drift + shake
     x, y = 180.0, 330.0
     vx, vy = 2.2, -0.6
     ox, oy = 150.0, 150.0
@@ -161,19 +125,19 @@ def run(size, follow, seed, p_det=0.15, p_false=0.0, frames=900, leave_at=None, 
         ang = 0.02 * math.sin(i / 40.0)
         vx, vy = vx * math.cos(ang) - vy * math.sin(ang), vx * math.sin(ang) + vy * math.cos(ang)
         if leave_at is not None and i >= leave_at:
-            vx, vy = 9.0, 0.0                               # heads out of the right edge
+            vx, vy = 9.0, 0.0
         x, y = x + vx, y + vy
         if leave_at is None and (x < 60 or x > W - 60):
             vx = -vx
         if leave_at is None and (y < 60 or y > H - 60):
             vy = -vy
-        ox += 0.4 + pr.gauss(0, 1.2)                        # drift + shake (camera)
+        ox += 0.4 + pr.gauss(0, 1.2)
         oy += 0.15 + pr.gauss(0, 1.2)
         ox, oy = float(np.clip(ox, 0, 1024 - W - 1)), float(np.clip(oy, 0, 1024 - H - 1))
         visible = (vanish_at is None or i < vanish_at) and 0 <= x < W and 0 <= y < H
         fr = render(field, ox, oy, sprite if visible else None, x, y, rng)
         on = distract is not None and distract[0] <= i < distract[1]
-        if on and distract[3]:                               # a second, identical drone
+        if on and distract[3]:
             g = render(field, ox, oy, sprite, distract[2][0], distract[2][1], rng)
             k = sprite.shape[0] + 6
             dx0, dy0 = int(distract[2][0]) - k // 2, int(distract[2][1]) - k // 2
@@ -276,22 +240,19 @@ for size in (5, 10):
           per <= 1.02)
 
 print("=== 7. cost ===")
-import time                                                        # noqa: E402
+import time
 rng = np.random.default_rng(11)
 field = cloud_field(rng)
 fr = render(field, 100, 100, drone_sprite(6), 320, 320, rng)
 g = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
 f = TargetFollower()
 f.seed(fr, 320, 320, 12, 7, 0.0)
-f.seed(fr, 320, 320, 12, 7, 0.03)                                  # confirmed: armed
+f.seed(fr, 320, 320, 12, 7, 0.03)
 for radius in (60, 120):
     t0 = time.perf_counter()
     for i in range(200):
         hit = f.track(fr, 322, 318, radius, 0.05)
     ms = (time.perf_counter() - t0) / 200 * 1000
-    # Budget: a quarter of a 30 fps frame at the widest window.  Measured at
-    # 15 W: 3.8 ms / 7.2 ms (60 / 120 px) with the strips on 4 threads; 4.5 /
-    # 19.9 ms before them.  The 2 ms asked here earlier was never met.
     check(f"one follower search ({radius} px radius, three scales) takes {ms:.2f} ms on this CPU",
           hit is not None and ms < 8.0)
 

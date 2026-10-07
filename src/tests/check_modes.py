@@ -1,26 +1,4 @@
 #!/usr/bin/env python3
-"""check_modes.py — is the mode the tracker steers in actually REACHABLE?
-
-The gap this closes.  run.py's preflight warns when the FC is not *currently* in
-the steering mode, but it never asks the question that killed a demo: is that
-mode assigned to ANY position of the pilot's mode switch?  On this airframe it
-was not.  FLTMODE1..6 read 0,0,0,4,0,1 — STABILIZE/STABILIZE/STABILIZE/GUIDED/
-STABILIZE/ACRO — with ALT_HOLD (mode 2) nowhere.  The mode gate can then never
-open, the AI can never steer, and every log line says only "PILOT has control",
-which reads like a tracking problem rather than a one-parameter FC problem.
-
-It also checks the commit channel, which has its own trap: COMMIT_CHAN must not
-be FLTMODE_CH.  fc_control only rejects a commit channel that collides with a
-DRIVEN axis, so the flight-mode channel slips through — and then "commit" is
-really the mode switch.  README and SCENARIO both say channel 6, which is
-exactly FLTMODE_CH on this board.
-
-Read-only: it sends no override and changes no parameter.  Safe armed or not.
-
-    python3 tests/check_modes.py                       # auto-detect the FC
-    python3 tests/check_modes.py --connect /dev/ttyACM0
-    python3 tests/check_modes.py --steer-mode ACRO --commit-chan 7
-"""
 import argparse
 import glob
 import os
@@ -29,7 +7,6 @@ import time
 
 from pymavlink import mavutil
 
-# ArduPilot Copter flight-mode numbers, as they appear in FLTMODEn.
 COPTER_MODES = {
     0: "STABILIZE", 1: "ACRO", 2: "ALT_HOLD", 3: "AUTO", 4: "GUIDED",
     5: "LOITER", 6: "RTL", 7: "CIRCLE", 9: "LAND", 11: "DRIFT",
@@ -39,7 +16,6 @@ COPTER_MODES = {
     26: "AUTOROTATE", 27: "AUTO_RTL", 28: "TURTLE",
 }
 
-# The six PWM bands ArduPilot maps FLTMODE1..6 onto, on FLTMODE_CH.
 SWITCH_BANDS = ["<= 1230", "1231-1360", "1361-1490",
                 "1491-1620", "1621-1749", ">= 1750"]
 
@@ -54,7 +30,6 @@ def find_port():
 
 
 def read_params(m, names, timeout=25.0):
-    """Fetch a set of parameters by name, retrying the ones that do not answer."""
     got, deadline = {}, time.time() + timeout
     pending = list(names)
     while pending and time.time() < deadline:
@@ -156,7 +131,6 @@ def main():
         print(f"  [ok] STABILIZE (take-off + abort) reachable at: "
               f"{', '.join(map(str, have_stab))}")
 
-    # ── the commit channel ────────────────────────────────────────────────────
     driven = {}
     for axis in ("roll", "pitch", "throttle", "yaw"):
         k = f"RCMAP_{axis.upper()}"
@@ -196,7 +170,6 @@ def main():
         else:
             print(f"  [ok] ch{cc} is neither a driven stick nor the mode channel")
 
-    # ── live RC, so the pilot can prove the switch reaches the position ───────
     if a.watch > 0:
         print(f"\n== live RC in, {a.watch:.0f}s — TURN THE TRANSMITTER ON and flick "
               f"the mode switch ==")

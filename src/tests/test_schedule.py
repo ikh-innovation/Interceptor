@@ -1,26 +1,11 @@
 #!/usr/bin/env python3
-"""The range-scheduled turn authority, and the operator sensitivity slider.
-
-Needs no FC and no camera.  Two things are being pinned down here:
-
-  1. THE SCHEDULE IS A NO-OP UNLESS A MODE ASKS FOR IT.  With no bank_far
-     set, the defaults must be bit-for-bit the unscheduled law.
-
-  2. THE GAIN FLOOR IS NEVER CROSSED.  The law was measured LOSING a hard
-     zigzag outright at roll_pn_gain=25.  The slider and the schedule may
-     therefore only ever ADD gain; "calmer" is bought from the BANK CEILING.
-     A sensitivity control that could quietly de-tune the tracker below its
-     measured-good gain would be a trap, not a feature.
-
-    python3 tests/test_schedule.py
-"""
 import math
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fc_control import InterceptLaw          # noqa: E402
+from fc_control import InterceptLaw
 
 FAILED = []
 
@@ -39,7 +24,6 @@ def law(**kw):
 
 
 def drive(L, fill, n=60, dt=0.05):
-    """Run the schedule to steady state at a given bbox fill fraction."""
     fw = 640.0
     for _ in range(n):
         L._fill += (dt / (L.fill_tau + dt)) * (fill - L._fill)
@@ -62,7 +46,7 @@ check("sensitivity defaults to neutral", abs(L.sens - 0.5) < 1e-9, f"{L.sens}")
 
 print("\n=== 2. the gain floor is never crossed ===")
 worst = None
-for sv in [i / 20.0 for i in range(11)]:            # 0.00 .. 0.50
+for sv in [i / 20.0 for i in range(11)]:
     st = drive(law(**dict(bank_far_deg=12.0, sens=sv, pn_near_mult=1.4)), 0.001)
     worst = st["gain_eff"] if worst is None else min(worst, st["gain_eff"])
 check("no sensitivity at or below neutral reduces the gain",

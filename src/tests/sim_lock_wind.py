@@ -1,37 +1,4 @@
 #!/usr/bin/env python3
-"""LOCK against gusts that try to turn the drone: does the heading stay put?
-
-    ../.env/yolo/bin/python tests/sim_lock_wind.py            # full campaign
-    ../.env/yolo/bin/python tests/sim_lock_wind.py --quick
-
-Hovering in ALT_HOLD, 60 s per run, gusty wind Bf 0-3 (the same wind model as
-sim_sky_wind.py).  Two ways to fly the same gusts:
-
-  FC ONLY   the phone's LOCK off: yaw stick centred, ArduPilot's own heading
-            hold is all there is.
-  LOCK      the real mission.Mission with LOCK on, closing the loop on the
-            FC's ATTITUDE.yaw at 50 Hz, exactly as on the Jetson.
-
-REAL      Mission (LOCK loop, ramps, rate limits), the PWM round trip.
-MODELLED  ArduPilot's yaw controller in ALT_HOLD:
-            * the yaw stick is a RATE; the FC integrates it into its heading
-              TARGET and holds that target (ATC_ANG_YAW_P = 4.5);
-            * a rate loop with an integrator, and a hard ceiling on the yaw
-              acceleration the motors can make (yaw is a quad's weakest axis);
-            * the attitude-error LIMIT: ArduPilot keeps the yaw error within
-              AC_ATTITUDE_ACCEL_Y_CONTROLLER_MAX (120 deg/s^2) / ATC_ANG_YAW_P
-              = ~27 deg; a gust that pushes it further DRAGS the target along,
-              and the FC then holds the NEW heading.  That is how a gust
-              permanently turns a drone that nothing is correcting.
-          The gust torque: weathervaning (the airframe tends to turn its nose
-          into the wind, stronger with airspeed^2 and with sideslip) plus
-          turbulence.  How strongly an airframe weathervanes is not known for
-          this one, so three sensitivities are run.
-          The heading read by the Jetson: 20 ms late, 0.3 deg of noise.
-
-Assumes the FC's heading ESTIMATE is right (a compass).  Neither mode can fix
-an estimate that drifts: LOCK holds what the FC believes.
-"""
 import argparse
 import contextlib
 import io
@@ -45,21 +12,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
-import mission as M                                                # noqa: E402
+import mission as M
 
 with contextlib.redirect_stdout(io.StringIO()):
-    import sim_sky_wind as W                                       # noqa: E402
+    import sim_sky_wind as W
 
 DT = 0.002
-# ArduPilot yaw, ALT_HOLD
 ANG_P = 4.5
-ERR_MAX = 120.0 / ANG_P             # deg: beyond this the target is dragged
-RATE_MAX = 202.5                    # deg/s
-RATE_BW = 8.0                       # 1/s, the rate loop
-RATE_I = 4.0                        # 1/s^2
-I_MAX = 60.0                        # deg/s^2 the integrator may supply
-ACC_MAX = 150.0                     # deg/s^2 the motors can make in yaw
-# yaw disturbance at 5 m/s airspeed, broadside, deg/s^2
+ERR_MAX = 120.0 / ANG_P
+RATE_MAX = 202.5
+RATE_BW = 8.0
+RATE_I = 4.0
+I_MAX = 60.0
+ACC_MAX = 150.0
 SENS = {"low": 15.0, "medium": 40.0, "high": 90.0}
 
 
@@ -69,9 +34,9 @@ def wrap180(a):
 
 class FcYaw:
     def __init__(self, psi0):
-        self.psi = psi0                 # true heading, deg
-        self.r = 0.0                    # yaw rate, deg/s
-        self.tgt = psi0                 # the FC's heading target
+        self.psi = psi0
+        self.r = 0.0
+        self.tgt = psi0
         self.i = 0.0
         self.drags = 0
         self._dragging = False
@@ -79,7 +44,7 @@ class FcYaw:
     def step(self, stick_rate, dist_acc, dt):
         self.tgt = (self.tgt + stick_rate * dt) % 360.0
         e = wrap180(self.tgt - self.psi)
-        if abs(e) > ERR_MAX:            # the error limit: the target is dragged
+        if abs(e) > ERR_MAX:
             self.tgt = (self.psi + math.copysign(ERR_MAX, e)) % 360.0
             e = math.copysign(ERR_MAX, e)
             if not self._dragging:
@@ -118,7 +83,7 @@ def run(args):
     fc = FcYaw(psi0)
     mp = Mapper()
     m = M.Mission(mp, log=lambda *_a: None)
-    hist = []                                       # (t, psi) for the 20 ms lag
+    hist = []
     ctx = dict(gate_ok=True, gate_why="", att=dict(yaw=math.radians(psi0)), height=6.0,
                climb=0.0, ai_cmd=None, ai_t=None, det_t=None, det_conf=None)
     m.cycle(0.0, ctx)
@@ -142,7 +107,7 @@ def run(args):
         wx, wy, _ = wind.step(t, DT)
         v = math.hypot(wx, wy)
         if v > 0.05:
-            upwind = math.degrees(math.atan2(-wy, -wx))       # where the wind comes FROM
+            upwind = math.degrees(math.atan2(-wy, -wx))
             beta = wrap180(upwind - fc.psi)
             k = SENS[sens] * (v / 5.0) ** 2
             a = DT / 0.5

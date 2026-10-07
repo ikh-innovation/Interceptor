@@ -1,16 +1,3 @@
-"""Live camera check for the Jetson CSI camera (IMX219).
-
-Standalone on purpose: imports nothing from the project, so it runs on the
-system python as well as the yolo env, and needs neither the flight controller
-nor the YOLO weights.  This is the "is the camera alive" test, nothing more.
-
-    python3 tests/cameraTest.py              # live window, q to quit
-    python3 tests/cameraTest.py --record     # also write data/cameratest_<stamp>.mp4
-    python3 tests/cameraTest.py --headless   # no window, just frame stats
-
-Environment overrides: CAM_SENSOR_ID, CAM_SENSOR_MODE, CAM_WIDTH, CAM_HEIGHT,
-CAM_FPS, CAM_FLIP_METHOD  (same names tracker.py uses).
-"""
 
 import argparse
 import os
@@ -22,10 +9,6 @@ from pathlib import Path
 import cv2
 
 SENSOR_ID   = int(os.getenv("CAM_SENSOR_ID", "0"))
-# IMX219 modes: 0:3280x2464@21  1:3280x1848@28  2:1920x1080@30
-#               3:1640x1232@30  4:1280x720@60
-# Mode 3 = the full array binned (62.2 x 48.8 deg, what the control law
-# assumes); mode 4 is a centre crop.  Same defaults as tracker.CameraConfig.
 SENSOR_MODE = int(os.getenv("CAM_SENSOR_MODE", "3"))
 WIDTH       = int(os.getenv("CAM_WIDTH", "1280"))
 HEIGHT      = int(os.getenv("CAM_HEIGHT", "960"))
@@ -105,8 +88,6 @@ def main() -> int:
             ok, frame = cap.read()
             if not ok:
                 failures += 1
-                # nvarguscamerasrc drops the odd buffer; only a run of failures
-                # means the camera is actually gone.
                 if failures >= 30:
                     print("\n[FAIL] 30 consecutive read failures — camera lost.",
                           file=sys.stderr)

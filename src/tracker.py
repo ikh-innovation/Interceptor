@@ -1,65 +1,3 @@
-"""
-tracker.py  –  Drone Intercept Tracker  (SKY-GATED + ADAPTIVE ZOOM)
-==============================================================================
-Final tracker.  Detects SMALL / DISTANT drones in the sky that the plain
-640x640 pipeline misses, while staying lightweight on big/close targets.
-
-Key idea
---------
-The source footage is 1440x1080.  Resizing it to 640x640 before inference
-(as the original did) shrinks a far drone to ~1 px and YOLO loses it.  Instead:
-
-  1. ZOOM into the sky  (only when the target is SMALL/far).
-     We crop the NATIVE sky bounding box and run YOLO on just that crop at a
-     LARGER imgsz (IMGSZ_SEARCH, e.g. 1280).  The crop is smaller than the full
-     frame AND inferred at higher resolution, so a distant drone keeps far more
-     pixels than in the original.  Ground is excluded from the crop, so it is
-     also cheaper than a naive full-frame high-res pass.
-
-  2. BOOST CONTRAST (CLAHE)  — optional, OFF by default.
-     A black drone differs from bright sky mostly in luminance.  CLAHE on the
-     crop's L channel stretches that gap.  Disabled by default because this
-     model was trained on un-equalised footage and CLAHE was measured to
-     SUPPRESS valid detections; flip USE_CLAHE on only after fine-tuning.
-
-ADAPTIVE SIZE GATE  (the "only zoom small drones" rule)
--------------------------------------------------------
-The zoom + CLAHE are only worth their cost on tiny targets.  Once the drone is
-CLOSE (its box exceeds BIG_OBJ_FRAC of the frame height) it already has plenty
-of pixels, so the tracker drops to a plain low-res ROI pass (IMGSZ_CLOSE) with
-no zoom and no CLAHE — cheaper, and it can never distort an easy big target.
-The on-screen tag reads ZOOM for small targets and CLOSE for big ones.
-
-Zoom inset
-----------
-A bottom-right picture-in-picture shows a ~100x100 native-px window around the
-detection, magnified, so even a sub-pixel-on-screen drone is actually visible.
-
-Sky gate
---------
-The sky mask is colour-thresholded (bright + blue/low-sat) and then refined with
-a ground-from-bottom pass: only a non-sky region that rises from the bottom edge
-of the frame counts as ground.  Dark/blue-ish blobs floating inside the sky are
-reclaimed as sky rather than rejected as ground, and sky-only footage yields no
-ground at all.
-
-Flight control output
----------------------
-Steering goes to the FC as STICK COMMANDS while the pilot flies in ACRO — see
-fc_control.py for the full rationale.  In ACRO a stick deflection commands a
-body angular RATE, which is exactly what "rotate until the target is centred"
-needs: yaw rate nulls the horizontal pixel error and pitch rate nulls the
-vertical one.  Roll, throttle and arming always stay with the pilot.
-
-This replaces the previous GUIDED velocity setpoints, which could never move
-this airframe: GUIDED is a mode the drone is never in (so nothing was ever
-transmitted), and a velocity setpoint needs an EKF position estimate the
-gimbal-mounted airframe does not have.
-
-The commander streams the latest command at a fixed rate independent of the
-detection FPS, and releases every channel back to the pilot whenever the target
-is lost, the FC is disarmed, or the tracker exits.
-"""
 
 import math
 import os
@@ -75,21 +13,8 @@ from collections import deque
 from pathlib import Path
 from time import perf_counter, sleep
 from datetime import datetime
-# NEVER let ultralytics pip-install at runtime.  Loading the TensorRT engine
-# made it silently downgrade numpy 1.24.4 -> 1.23.5 in this venv on
-# 2026-09-25 (TensorRT 8.5's bindings use np.bool, gone in numpy 1.24, so 1.23.5
-# is in fact what the engine needs -- and is now installed).  In the field
-# there is no internet: an install attempt at startup is a hang, not a fix.
 os.environ.setdefault("YOLO_AUTOINSTALL", "false")
 from ultralytics import YOLO
-# Importing ultralytics runs cv2.setNumThreads(0) (for its training DataLoader),
-# which puts EVERY cv2 call in this loop on one core: the 1280x960 -> 640x640
-# display resize measured 6.5 ms/frame in the field [PROF] against 2.2 ms with
-# 4 threads.  The output is bit-identical (checked on resize and both sky-mask
-# scales), so detection, the sky gate and the steering see the same pixels.
-# 4, not 6: past 4 the resize gets no faster, and the other two cores stay free
-# for the GStreamer capture thread and the FC tx thread.  getNumThreads() still
-# reports 6 while it is serialised, so do not trust it to check this.
 cv2.setNumThreads(int(os.environ.get("CV_THREADS", "4")))
 from dataclasses import dataclass, replace as _dc_replace
 
@@ -100,9 +25,6 @@ import mission as mission_mod
 from follower import TargetFollower, search_radius
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SKY DETECTOR  (color sky + ground-from-bottom reclaim)
-# ══════════════════════════════════════════════════════════════════════════════
 
 class SkyDetector:
     V_MIN  = 150
@@ -115,25 +37,10 @@ class SkyDetector:
 
     TOP_BAND = 3
 
-    # ── ground-from-bottom reclaim ──────────────────────────────────────────────
-    # A non-sky region is only believed to be GROUND if its connected component
-    # rises from the BOTTOM of the frame.  Dark / blue-ish blobs that float
-    # inside the sky (haze, dark clouds, distant terrain on the horizon, codec
-    # noise) are NOT connected to that bottom mass, so they are reclaimed as SKY
-    # instead of being mistaken for ground — which is what used to make the
-    # sky-gate reject valid detections over them.
-    BOTTOM_BAND     = 3      # rows at the bottom edge that seed the ground mass
-    # Guard for sky-only footage: a non-sky blob that merely clips the bottom
-    # edge must cover at least this fraction of the frame to be trusted as real
-    # ground.  Below it the scene is treated as all-sky → no false ground.
+    BOTTOM_BAND     = 3
     GROUND_MIN_FRAC = 0.02
 
     def __init__(self, scale=1.0):
-        # scale < 1: compute the SAME mask on a downscaled frame and upsample it.
-        # Measured 2026-09-25 on 30 recorded field frames at 0.5: 21 -> 6.6 ms
-        # per frame, 99.5% pixel agreement, the sky-gate verdict differs on
-        # 0.25% of boxes.  The morphology kernel shrinks with the frame so it
-        # means the same thing.
         self.scale = float(scale)
         k = 7 if self.scale >= 1.0 else max(3, int(round(7 * self.scale)) | 1)
         self._k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
@@ -172,22 +79,12 @@ class SkyDetector:
         return self._reclaim_embedded_blobs(top_sky)
 
     def _reclaim_embedded_blobs(self, sky):
-        """Treat as SKY any non-sky region that is not part of the ground mass.
-
-        Ground is modelled as the non-sky pixels connected to the BOTTOM edge of
-        the frame and large enough to be real terrain.  Everything that is not
-        that bottom-rising mass — dark blue-ish blobs nestled inside the sky
-        included — is reclaimed as sky, so the sky-gate stops rejecting
-        detections that sit over such blobs.  When no bottom-connected mass is
-        large enough (sky-only footage) the whole frame becomes sky and nothing
-        is ever flagged as ground.
-        """
         Hm, Wm  = sky.shape
         non_sky = (sky == 0).astype(np.uint8)
 
         n, labels, stats, _ = cv2.connectedComponentsWithStats(non_sky)
         if n <= 1:
-            return np.full_like(sky, 255)        # frame is entirely sky-coloured
+            return np.full_like(sky, 255)
 
         band          = max(1, self.BOTTOM_BAND)
         bottom_labels = np.unique(labels[Hm - band:, :])
@@ -199,7 +96,7 @@ class SkyDetector:
 
         ground = np.isin(labels, keep) if keep else np.zeros(sky.shape, bool)
         out    = np.where(ground, 0, 255).astype(np.uint8)
-        out[sky > 0] = 255                       # never drop genuine top sky
+        out[sky > 0] = 255
         return out
 
     def background_is_sky(self, mask, bbox):
@@ -225,9 +122,6 @@ class SkyDetector:
         return (ring_sky / ring_total) >= self.SKY_FRAC
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# KALMAN  (unchanged)
-# ══════════════════════════════════════════════════════════════════════════════
 
 class KalmanTracker:
     def __init__(self):
@@ -272,9 +166,6 @@ class KalmanTracker:
         return float(np.sqrt(abs(float(P[0, 0])))), float(np.sqrt(abs(float(P[1, 1]))))
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# DRONE TRACKER  (sky-gated + sky-crop zoom + CLAHE)
-# ══════════════════════════════════════════════════════════════════════════════
 
 class DroneTracker:
     _WIN = "WASP DRONE TRACKER  [SKY + ADAPTIVE ZOOM]"
@@ -284,120 +175,71 @@ class DroneTracker:
         "PREDICT": (0,   165, 255),
     }
 
-    # ── HUD palette (BGR) — clean targeting-system look ─────────────────────────
-    C_LOCK    = ( 96, 255, 120)   # locked: green
-    C_SEARCH  = ( 70, 180, 255)   # searching: amber
-    C_PREDICT = (230, 200, 100)   # coasting on Kalman: cyan
-    C_HUD     = (200, 230, 205)   # neutral chrome (lines, reticle, labels)
-    C_DIM     = (110, 120, 110)   # de-emphasised
-    C_WARN    = ( 70,  70, 240)   # red (lost / rejected)
-    C_INK     = ( 22,  26,  22)   # translucent panel fill
+    C_LOCK    = ( 96, 255, 120)
+    C_SEARCH  = ( 70, 180, 255)
+    C_PREDICT = (230, 200, 100)
+    C_HUD     = (200, 230, 205)
+    C_DIM     = (110, 120, 110)
+    C_WARN    = ( 70,  70, 240)
+    C_INK     = ( 22,  26,  22)
     _ACCENT   = {"SEARCH": C_SEARCH, "LOCK": C_LOCK, "PREDICT": C_PREDICT}
 
-    # The SAME three colours the phone dashboard paints its header with, so the
-    # video and the app never disagree about which law is flying.  OpenCV is
-    # BGR, so these are the #1e6fd9 / #e07b1f of the dashboard, reversed.
-    C_ALT     = (217, 111,  30)   # ALT_HOLD  blue
-    C_ACRO    = ( 31, 123, 224)   # ACRO      orange
-    C_PILOT   = (190, 200, 195)   # neither: the pilot has every channel
+    C_ALT     = (217, 111,  30)
+    C_ACRO    = ( 31, 123, 224)
+    C_PILOT   = (190, 200, 195)
     _HUD_FONT = cv2.FONT_HERSHEY_DUPLEX
 
-    # ── zoom-inset (picture-in-picture) ─────────────────────────────────────────
-    INSET_SRC  = 100   # native-px window cropped around the detection
-    INSET_DISP = 180   # on-screen size of the inset (square, bottom-right)
+    INSET_SRC  = 100
+    INSET_DISP = 180
 
-    # ── zoom / enhancement parameters ──────────────────────────────────────────
-    IMGSZ_SEARCH = 640   # high-res inference on the sky crop (SMALL/far target)
-    IMGSZ_TRACK  = 640    # ROI inference for a SMALL target once locked
-    IMGSZ_CLOSE  = 416    # cheap ROI inference for a BIG/close target (no zoom)
-    CROP_PAD     = 24     # native px of padding added around the sky bbox
+    IMGSZ_SEARCH = 640
+    IMGSZ_TRACK  = 640
+    IMGSZ_CLOSE  = 416
+    CROP_PAD     = 24
 
-    # Size gate: the zoom (high imgsz) + CLAHE are only worth their cost on
-    # small/distant drones.  Once the target is CLOSE it already has plenty of
-    # pixels, so we drop to a plain low-res pass — cheaper, and it also avoids
-    # CLAHE ever distorting an easy big target.  A target counts as "big" when
-    # the longer side of its last box exceeds BIG_OBJ_FRAC of the frame height.
-    BIG_OBJ_FRAC = 0.06   # ~38 px in a 640-tall display frame
+    BIG_OBJ_FRAC = 0.06
 
-    # Detection outlier gate — see _gate_detection().
-    # The on-frame telemetry block.  Off: the dashboard owns the numbers.
     HUD_PANEL       = os.environ.get("HUD_PANEL", "0") == "1"
 
     GATE_ENABLE     = True
-    # Tuned by replaying the real flights through the gate.  At 900 px/s + 26 px
-    # it threw away 10-13% of detections on 20260909 — too eager, it would start
-    # suppressing real motion.  At 1500 + 60 it rejects 2.4-4.4%, and the median
-    # REJECTED jump is 140-224 px: 14-22 deg of bearing inside a single frame,
-    # which no real target can do.  Catch the outliers, leave the rest alone.
-    GATE_PX_PER_S   = 1500.0  # a real target's centre cannot cross faster
-    GATE_FLOOR_PX   = 60.0    # plus a fixed allowance for centroid jitter
-    GATE_MAX_REJECT = 3       # then yield, so a real move can re-acquire.
-                              # MISS_TO_SEARCH is 20, so gating alone can never
-                              # drop the lock.
-    # CLAHE is OFF by default: this model was trained on un-equalised footage,
-    # so histogram-equalising the crop shifts the pixel distribution and was
-    # measured to SUPPRESS valid small-drone detections (e.g. a conf-0.37 hit
-    # at imgsz=1280 vanished with CLAHE on).  The ZOOM (crop + high imgsz) is
-    # what recovers small drones here.  Flip this to True only if you retrain /
-    # fine-tune the model on contrast-enhanced data.
-    USE_CLAHE    = False  # contrast-boost the crop before inference
+    GATE_PX_PER_S   = 1500.0
+    GATE_FLOOR_PX   = 60.0
+    GATE_MAX_REJECT = 3
+    USE_CLAHE    = False
 
-    # ── the CAMERA switch (30 / 60 fps, see CAM_MODES) ─────────────────────────
-    # Every frame count in here (MISS_TO_*, GATE_MAX_REJECT, YIELD_MISSES) was
-    # tuned on the 30 fps camera; _frames() keeps them the same TIME at 60.
     REF_FPS     = 30.0
     cam_mode    = 30
     cam_aspect  = 4.0 / 3.0
-    ref_display = None    # the 30 fps working frame; None = the current one
+    ref_display = None
     _ui_fps     = 0.0
 
     def __init__(
         self,
         model_path      = "/runs/detect/v0/weights/best.pt",
-        # ── live camera (GStreamer pipeline, required) ────────────────────────
-        camera_pipeline = None,   # GStreamer pipeline string
-        camera_fps      = 30.0,   # fallback FPS when cap.get(CAP_PROP_FPS) returns 0
-        # The CameraConfig the pipeline was built from.  With it the phone can
-        # switch the camera 30 <-> 60 fps (set_camera); without it, no switch.
+        camera_pipeline = None,
+        camera_fps      = 30.0,
         camera_config   = None,
-        # ─────────────────────────────────────────────────────────────────────
         conf_thresh    = 0.05,
         display_size   = (640, 640),
         skip_frames    = 0,
         show_sky       = True,
-        use_sky_mask   = True,    # False → detect on the FULL frame (no sky gate/crop)
+        use_sky_mask   = True,
         record_dir     = None,
         record_pad_sec = 2.0,
-        log_dir        = None,   # command CSV dir; None → ./data next to tracker.py
-        run_stamp      = None,   # shared per-run timestamp (video/log/csv share it)
+        log_dir        = None,
+        run_stamp      = None,
         headless       = False,
         max_frames     = None,
-        # ── remote seeker view (MJPEG over WiFi) ──────────────────────────────
-        # The Jetson has no screen in the field, so the annotated frame that
-        # would have gone to cv2.imshow is also served over HTTP.  Any phone or
-        # laptop on the same WiFi opens http://<jetson-ip>:<stream_port>/ .
-        # None disables it entirely; see mjpeg_stream.py for the cost model
-        # (nothing is encoded unless somebody is watching).
         stream_port    = None,
-        stream_quality = 70,     # JPEG quality 1-100
-        stream_fps     = 15.0,   # encode cap, independent of capture FPS
-        # Flight-control link.  Pass a ready-made AcroCommander, or leave it None
-        # and one is built from the environment (see fc_control.commander_from_env
-        # for every knob: MAV_CONN, FC_TRANSPORT, CONTROL_AXES, KP_*, CAM_*FOV_DEG,
-        # YAW_REVERSED / PITCH_REVERSED, STICK_LIMIT, ...).
+        stream_quality = 70,
+        stream_fps     = 15.0,
         commander      = None,
     ):
-        # An .engine carries no architecture, so ultralytics has to be told
-        # what it is; a .pt knows already.
         self.model        = (YOLO(model_path, task="detect")
                              if str(model_path).endswith(".engine")
                              else YOLO(model_path))
         names = self.model.names
         names = names if isinstance(names, dict) else dict(enumerate(names))
-        # ONE class is tracked, whatever the model calls it.  The sky model is
-        # single-class and calls it '0'.  An explicit TARGET_CLASS wins, else
-        # the only class there is.  Anything ambiguous is an error that names
-        # the options rather than a silent guess.
         want = os.environ.get("TARGET_CLASS")
         if want is not None and want != "":
             match = None
@@ -424,11 +266,6 @@ class DroneTracker:
         self.camera_pipeline = camera_pipeline
         self.camera_fps      = float(camera_fps)
         self.camera_config   = camera_config
-        # A TensorRT engine is built for ONE input shape (640 here), so the
-        # per-pass imgsz choices cannot apply — ultralytics letterboxes to the
-        # engine's shape whatever is asked.  Say so once and align the constants
-        # rather than leaving three numbers in the code that do nothing.  No
-        # loss: inference measured flat across 640/512/416 anyway.
         self.using_engine = str(model_path).endswith(".engine")
         if self.using_engine:
             self.IMGSZ_SEARCH = self.IMGSZ_TRACK = self.IMGSZ_CLOSE = 640
@@ -437,20 +274,19 @@ class DroneTracker:
         self.conf_thresh  = conf_thresh
         self.display_size = display_size
         self.fw, self.fh  = display_size
-        self.ref_display  = tuple(display_size)   # at 30 fps; 60 crops it
+        self.ref_display  = tuple(display_size)
         self.skip_frames  = max(0, int(skip_frames))
         self.show_sky     = show_sky
         self.use_sky_mask = use_sky_mask
         self.record_dir      = record_dir
         self.record_pad_sec  = float(record_pad_sec)
-        # One timestamp per run ties the video, log, and command CSV together.
         self.run_stamp = run_stamp or datetime.now().strftime("%Y%m%d_%H%M%S")
         self.headless     = headless
         self.max_frames   = max_frames
         self.stream_port    = int(stream_port) if stream_port else None
         self.stream_quality = int(stream_quality)
         self.stream_fps     = float(stream_fps)
-        self.stream         = None      # MJPEGServer, created in _run()
+        self.stream         = None
 
         self.kalman  = KalmanTracker()
         self.ap      = commander or commander_from_env(
@@ -475,15 +311,8 @@ class DroneTracker:
         self.full_w = self.full_h = None
 
         self.MISS_TO_PREDICT = 2
-        # The follower (follower.py): once the detector has found the target,
-        # it is followed by its own picture on every frame the detector
-        # misses, so a 10 px drone is not dropped between detections.
-        # FOLLOW=0 starts with it off; the phone's FOLLOWER switch
-        # (set_follower) turns it on / off in flight.
         self.follower        = TargetFollower()
         self.use_follower    = os.environ.get("FOLLOW", "1") != "0"
-        # The FOLLOWER default saved from the phone ("make it the default?"),
-        # unless FOLLOW is set for this run.  The SKY GATE is never saved.
         _saved = mission_mod.load_detection_defaults()
         if "follow" in _saved and "FOLLOW" not in os.environ:
             self.use_follower = _saved["follow"]
@@ -493,37 +322,26 @@ class DroneTracker:
         self.gated_total     = 0
         self.gate_note       = ""
         self._t_last_frame   = None
-        self._frame_dt       = None     # between detection frames, for the ROI margin
+        self._frame_dt       = None
         self.mode_name       = os.environ.get("WASP_MODE_SPEED", "MEDIUM").upper()
-        # The target is always a drone.
         self.target_kind     = os.environ.get("TARGET_KIND", "DRONE").upper()
         self.model_path      = model_path
         self._last_cmd       = None
         self._last_sent      = False
         self._ui_fps         = 0.0
         self._t_ui_prev      = None
-        # Per-stage timing.  "Optimise the pipeline" is unanswerable without
-        # it: inference measured 34 ms flat at imgsz 640, 512 AND 416, which
-        # says the cost is per-call overhead rather than pixels — so the rest
-        # of the loop had to be measured instead of assumed.
         self._prof = {}
         self._prof_n = 0
         self.prof_ms = {}
         self.PROFILE = os.environ.get("PROFILE", "1") == "1"
-        # The named mode is the operator-facing control; push it into the law
-        # now so the banner and the dashboard agree from the first frame.
         self.set_mode(self.mode_name)
         self.MISS_TO_SEARCH  = 20
         self.MIN_ROI_HALF    = 50
 
-        # Jetson camera bring-up resilience (see _open_capture).
-        self.CAM_OPEN_RETRIES  = 5     # full pipeline re-opens on first-buffer failure
-        self.CAM_WARMUP_READS  = 30    # reads per attempt to catch the first good frame
-        self.CAM_RETRY_WAIT_S  = 0.8   # settle time between re-opens
+        self.CAM_OPEN_RETRIES  = 5
+        self.CAM_WARMUP_READS  = 30
+        self.CAM_RETRY_WAIT_S  = 0.8
 
-        # The camera mode, 30 or 60 fps: CAM_MODE for this run, else what the
-        # phone saved as the default, else 30.  _apply_cam_mode sets the
-        # pipeline, the working frame and the law's field of view together.
         self.cam_default = 30
         start = 30
         if self.camera_config is not None:
@@ -532,16 +350,12 @@ class DroneTracker:
             _env_cam = os.environ.get("CAM_MODE", "").strip()
             start = int(_env_cam) if _env_cam.isdigit() and int(_env_cam) in CAM_MODES \
                 else self.cam_default
-        self._cam_req  = None          # posted by the phone, done by the loop
+        self._cam_req  = None
         self._cam_busy = False
         self._apply_cam_mode(start)
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # helpers
-    # ──────────────────────────────────────────────────────────────────────────
 
     def _enhance(self, crop):
-        """Local-contrast boost on the L channel so dark drones stand out."""
         if not self.USE_CLAHE:
             return crop
         lab = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB)
@@ -550,7 +364,6 @@ class DroneTracker:
         return cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
 
     def _accept_box(self, x1n, y1n, x2n, y2n, conf):
-        """Native-space box → display space, with the sky gate applied."""
         sx = self.fw / self.full_w
         sy = self.fh / self.full_h
         dx1, dy1 = x1n * sx, y1n * sy
@@ -567,7 +380,6 @@ class DroneTracker:
         return (cx, cy, int(dx1), int(dy1), bbox[2], bbox[3], float(conf))
 
     def _detect_region(self, frame_full, region_native, imgsz, enhance):
-        """Run one YOLO pass on a native sub-region; return best sky-valid box."""
         x1r, y1r, x2r, y2r = region_native
         x1r = max(0, x1r); y1r = max(0, y1r)
         x2r = min(self.full_w, x2r); y2r = min(self.full_h, y2r)
@@ -578,7 +390,6 @@ class DroneTracker:
         if enhance:
             crop = self._enhance(crop)
 
-        # one class only; max_det=1 → a single object.
         res = self.model(crop, imgsz=imgsz, classes=[self.target_class],
                          max_det=1, verbose=False)
         if not res or not res[0].boxes:
@@ -595,52 +406,8 @@ class DroneTracker:
                 return det
         return None
 
-    # ── the operator's control surface (driven from the phone dashboard) ─────
 
-    # Three named settings instead of a continuous bar.  These map onto the
-    # law's 0..1 sensitivity: below 0.5 trims the BANK CEILING only, above it
-    # multiplies the turn gain.  The gain floor is never crossed in either
-    # direction — see InterceptLaw._schedule_values.
-    # ONE control.  SPEED, STEER and STABILISER were three separate toggles and
-    # in the field that is three things to get wrong while a drone is closing.
-    # A mode now sets all of it: how fast it flies, how hard it turns, and how
-    # much the sticks are allowed to twitch.
-    #
-    #   climb_limit  ceiling under the FC's PILOT_SPEED_UP (set once to 25 m/s)
-    #   max_lean     the forward-speed channel
-    #   sens         steering authority, 0..1 (0.5 = the configured turn gain)
-    #   slew/tau/deadband   the stabiliser
-    #
-    # Climb is NOT in here as a gain any more.  With CLIMB_LOS the vertical
-    # command is v_forward * tan(elevation), so picking a faster mode buys a
-    # proportionally faster climb and never a steeper one — which is the whole
-    # point.  The ceiling is only a cap for the corrective term.
-    # Retuned 2026-09-25 for the mission app (FC now 25 m/s up, 40 deg lean,
-    # camera fixed 30 deg up) in the closed-loop sim: hover at 10 m, enemy
-    # 40 m out on the aim mark, 6 directions x 5/10 m/s x 4 winds (calm,
-    # 5 and 8 m/s crosswind, 8 m/s headwind), PUSH 30 then AI:
-    #   stabiliser 14/.13 (old) 67/96 touches, 8/.18 66, 6/.22 65 -> 6/.22,
-    #   the smoothest with no accuracy cost.  2.5/.60 ("SMOOTH") was too slow
-    #   for a MOVING target: 35-39/48 vs 44-48/48.
-    #   lean 20 (MEDIUM) and 22 (FAST) touch alike; 30 deg lean loses the
-    #   target out of the 30-deg-up camera more often (27/36 vs 34-36/36).
-    #   SLOW (12 deg) can NOT beat an 8 m/s headwind: 0/9.  Calm air only.
-    # slew 3 (was 6) since 2026-09-26: sim, 1440 engagements (0-10 m/s enemy,
-    # gusty 3-5 m/s wind, both detector models): touches 64 -> 63% (noise),
-    # the biggest bank-command change in 0.2 s p95 48 -> 31 deg, roll rate p95
-    # 300 -> 201 deg/s.  A third less "snap" for the same result.
     _STAB = dict(slew_per_s=3.0, rate_tau=0.22, deadband_frac=0.050,
-                 # THE CIRCLES (field, 2026-09-25): with the seeker at KP_YAW 4.5
-                 # and no yaw ceiling, a target first seen at the frame edge
-                 # commanded ~140 deg/s of yaw; the logs show the heading
-                 # sweeping 150-330 deg in 2-3 s and a line-of-sight rate of
-                 # 40-126 deg/s where the geometry allows ~14.  That excess is
-                 # the airframe's OWN yaw leaking into lambda = yaw + az through
-                 # any timing/FOV error, and PN banks on it.  Sim with the FC's
-                 # yaw-accel limit and attitude 80 ms late (or FOV 15% off):
-                 # today's yaw circles 6/16 (4/16); kp 2.0 + 40 deg/s: 0/16 in
-                 # every case, touches 14-16/16.  PN (roll) does the steering;
-                 # yaw only has to keep the target in the picture.
                  kp_yaw=2.0, yaw_cap_dps=40.0)
     MODES = {
         "SLOW":   dict(climb_limit_mps=8.0,  max_lean_deg=12.0, lean_near=1.0, sens=0.35,
@@ -649,15 +416,6 @@ class DroneTracker:
                        climb_trim=6.0, **_STAB),
         "FAST":   dict(climb_limit_mps=25.0, max_lean_deg=22.0, lean_near=1.0, sens=0.65,
                        climb_trim=8.0, **_STAB),
-        # MAX (AI only, 2026-10-06): the law's 35 deg lean ceiling, ~21 m/s in
-        # the sim's drag model (25 m/s would need ~45 deg, over ANGLE_MAX),
-        # eased to 30% of it as the target closes (lean_near: the end game,
-        # see InterceptLaw).  sim_sky_wind, PUSH 30, 1920 engagements each,
-        # total tilt held to ANGLE_MAX as the FC does: touches MEDIUM 72 /
-        # FAST 67 / MAX 68% (62% without the ease-off), median time to touch
-        # 5.0 / 4.9 / 4.5 s; targets coming at it 49 / 71 / 82%.  Turn gain
-        # left at 45 on purpose (55 -> 59%, 62 -> 54%); ANGLE_MAX 50 bought
-        # nothing; a 40 or 45 deg camera tilt lost 15-25 points everywhere.
         "MAX":    dict(climb_limit_mps=25.0, max_lean_deg=35.0, lean_near=0.3,
                        sens=0.65, climb_trim=8.0, **_STAB),
     }
@@ -665,7 +423,6 @@ class DroneTracker:
     _STAB_KEYS  = ("slew_per_s", "rate_tau", "deadband_frac")
 
     def set_mode(self, name):
-        """Apply one of MODES by name.  Returns the name actually set."""
         key = str(name).strip().upper()
         if key not in self.MODES:
             return self.mode_name
@@ -687,9 +444,6 @@ class DroneTracker:
         return key
 
     def set_sky_gate(self, value):
-        """The phone's SKY GATE switch: on = detections over the ground are
-        rejected and the search covers the sky only; off = the whole frame.
-        One bool store; the next frame's _process picks it up."""
         v = str(value).strip().lower()
         if v not in ("on", "off", "1", "0", "true", "false"):
             return "bad SKY GATE value"
@@ -700,10 +454,6 @@ class DroneTracker:
         return ""
 
     def set_follower(self, value):
-        """The phone's FOLLOWER switch: on = the follower holds the target
-        between detections; off = the detector alone (the Kalman coast
-        guides the search, never the steering).  One bool store, like the
-        SKY GATE; _process drops the follower's pictures on its own thread."""
         v = str(value).strip().lower()
         if v not in ("on", "off", "1", "0", "true", "false"):
             return "bad FOLLOWER value"
@@ -714,10 +464,6 @@ class DroneTracker:
         return ""
 
     def set_camera(self, value):
-        """The phone's CAMERA switch: 30 or 60 fps.  Only POSTS the request;
-        the main loop owns the capture and reopens it between two frames
-        (_switch_camera).  The picture is dark for a moment while it does,
-        so it is refused while anything flies on the picture."""
         try:
             want = int(str(value).strip())
         except ValueError:
@@ -736,7 +482,6 @@ class DroneTracker:
         return ""
 
     def _camera_locked(self):
-        """Why the camera may not switch right now, or ''."""
         if self._cam_busy:
             return "the camera is switching"
         m = getattr(self.ap, "mission", None)
@@ -747,7 +492,6 @@ class DroneTracker:
         return ""
 
     def state_snapshot(self):
-        """Everything the dashboard shows, read off the live objects."""
         ap = getattr(self, "ap", None)
         law = getattr(ap, "law", None)
         cmd = self._last_cmd or {}
@@ -758,8 +502,6 @@ class DroneTracker:
             gated=self.gated_total, gate_note=self.gate_note,
             prof=self.prof_ms,
             fps=round(self._ui_fps, 1),
-            # Readiness, for the phone: which detector really runs, and how
-            # long a frame spends from capture to command.
             detector=("TensorRT" if str(getattr(self, "model_path", "")).endswith(".engine")
                       else "PyTorch"),
             lat_ms=(None if not self._last_cmd or not self._last_cmd.get("latency_s")
@@ -771,7 +513,6 @@ class DroneTracker:
             sky_gate=bool(self.use_sky_mask),
             follower=bool(self.use_follower),
             follower_default=bool(getattr(self, "follower_default", self.use_follower)),
-            # the CAMERA switch, and the picture's shape for the overlays
             cam_fps=self.cam_mode, cam_default=getattr(self, "cam_default", 30),
             cam_busy=bool(getattr(self, "_cam_busy", False)
                           or getattr(self, "_cam_req", None) is not None),
@@ -783,7 +524,7 @@ class DroneTracker:
         if hasattr(ap, "mission_state"):
             try:
                 out["mission"] = ap.mission_state()
-            except Exception as exc:              # never take the flight down
+            except Exception as exc:
                 out["mission"] = dict(error=str(exc))
         with _CONSOLE_LOCK:
             out["console_seq"] = _CONSOLE_SEQ[0]
@@ -795,10 +536,6 @@ class DroneTracker:
                       ("v_fwd_mps", 1)):
             v = cmd.get(k)
             out[k] = None if v is None else round(float(v), dp)
-        # The schedule comes STRAIGHT off the law, not from the last frame.
-        # sens_state() is a pure recomputation, so a mode button confirms on the
-        # very next poll instead of waiting for a detection frame — and while
-        # the seeker is in SEARCH there are no detection frames at all.
         if law is not None and hasattr(law, "sens_state"):
             try:
                 live = law.sens_state()
@@ -834,31 +571,6 @@ class DroneTracker:
         return out
 
     def _gate_detection(self, det, kf_pred, dt):
-        """Reject a detection that has teleported.  True = accept.
-
-        MEASURED, flight 20260909_110654 (3233 engaged frames): the bbox centre
-        moved 0 px between frames at the median and 16-23 px at p90 — but 73-99
-        px at p99, with single-frame jumps up to 500 px on a 640 px frame.  Those
-        outliers are the detector latching onto something else for a frame, not
-        the target moving.
-
-        They matter far more than their 1% share suggests, because the LOS rate
-        the guidance law banks on is a DERIVATIVE.  A 100 px jump at 30 Hz is
-        ~10 deg in 33 ms, i.e. ~300 deg/s of apparent LOS rate — and the log
-        shows exactly that: |los_az_dps| peaking at 159 and the commanded bank
-        moving up to 27.8 deg in a single frame.  That is the twitch.
-
-        NOT vibration: over the same frames the camera-frame elevation moved
-        0.31 deg per frame on average (p95 1.40), which is smooth.  The airframe
-        was steady; the detector was not.
-
-        The gate is a plausibility check against the Kalman prediction, sized by
-        how fast a real target can cross the frame plus a floor for centroid
-        jitter and the target's own size.  A rejected frame counts as a miss, so
-        the tracker coasts on the filter — and after GATE_MAX_REJECT consecutive
-        rejections it yields, because a target that really has moved must be
-        able to re-acquire rather than be gated out for ever.
-        """
         if not self.GATE_ENABLE or kf_pred is None or det is None:
             return True
         jump = math.hypot(det[0] - kf_pred[0], det[1] - kf_pred[1])
@@ -868,7 +580,7 @@ class DroneTracker:
             return True
         self._gate_rejects += 1
         if self._gate_rejects > self._frames(self.GATE_MAX_REJECT):
-            self._gate_rejects = 0      # it has insisted; believe it
+            self._gate_rejects = 0
             self.gate_note = "REACQ"
             return True
         self.gate_note = f"GATE {jump:.0f}px"
@@ -876,25 +588,18 @@ class DroneTracker:
         return False
 
     def _frames(self, n):
-        """`n` frames of the 30 fps camera as frames of THIS loop, so a count
-        means the same time in either camera mode.  At 30 fps it is `n`.  At
-        60 fps the detector, not the camera, sets the loop's pace; if that is
-        faster than 30 Hz the count grows with it, never below `n`."""
         if self.cam_mode <= self.REF_FPS:
             return n
         return max(n, int(round(n * self._ui_fps / self.REF_FPS)))
 
     def _gate_allow(self, dt):
-        """How far, px, a real target's centre can plausibly move from the
-        Kalman prediction in one frame (the track gate's radius)."""
         dt = dt if (dt and dt > 1e-3) else (1.0 / 30.0)
         size = max(self.last_bbox[2], self.last_bbox[3]) if self.last_bbox else 0
         return self.GATE_PX_PER_S * dt + self.GATE_FLOOR_PX + 0.5 * size
 
-    # ── the follower: hard to take, impossible to steal ─────────────────────
-    VERIFY_MIN    = 0.50   # a detection away from the track must look this much like the target
-    VERIFY_BETTER = 0.10   # ...and, to overrule a follower hit, this much MORE than it does
-    YIELD_MISSES  = 2      # follower misses in a row before an unlike, near detection is taken
+    VERIFY_MIN    = 0.50
+    VERIFY_BETTER = 0.10
+    YIELD_MISSES  = 2
 
     def _follow(self, frame_disp, kf_pred, now):
         vx, vy = self.kalman.velocity()
@@ -904,45 +609,23 @@ class DroneTracker:
                                    now)
 
     def _adjudicate(self, frame_disp, det, kf_pred, dt, now):
-        """A detection while the follower holds a confirmed target.  Returns
-        (detection or None, follower hit or None); at most one is not None.
-
-        The target cannot be in two places.  A detection where the follower
-        is (or where the filter predicts) confirms the target and re-seeds
-        the follower.  A detection ELSEWHERE is a second object -- a bird, a
-        cloud edge, the airframe, a bench-test ceiling speck -- unless it
-        LOOKS like the target the follower holds (verify, against the
-        anchor: the detector's own pictures, never the follower's).  It is
-        never believed just for insisting: while the follower holds, there
-        is no REACQ count.
-
-        And never from where the target cannot be.  The picture can only
-        jump by what the target can fly in a frame (the track gate) plus
-        what the airframe's own rotation moves it (the gyro).  A detection
-        beyond that -- the top corner while the target sat in the middle --
-        is not the target however much it looks like one: a second drone,
-        say.  Only losing the target for MISS_TO_SEARCH frames frees it.
-        """
         size = max(self.last_bbox[2], self.last_bbox[3]) if self.last_bbox else 10
         agree = max(8.0, float(size))
         jump = math.hypot(det[0] - kf_pred[0], det[1] - kf_pred[1])
         if jump <= agree:
             self._gate_rejects = 0
-            return det, None                        # right where it should be
+            return det, None
         fol = self._follow(frame_disp, kf_pred, now)
         if fol is not None and math.hypot(det[0] - fol[0], det[1] - fol[1]) <= agree:
             self._gate_rejects = 0
-            return det, None                        # both on it: the detector's box
+            return det, None
         allow = self._gate_allow(dt) + max(self._rotation_margin())
         if jump > allow:
             self.gate_note = f"DISTRACT {jump:.0f}px"
             self.gated_total += 1
-            return None, fol                        # physically impossible
+            return None, fol
         like = self.follower.verify(frame_disp, det[0], det[1])
         if fol is not None:
-            # Two places.  The follower SEES the target: the detection wins
-            # only if it is plausible AND clearly more like the target than
-            # the follower's own spot (the follower had slid off).
             if (like >= self.VERIFY_MIN
                     and like >= (self.follower.a_score or 0.0) + self.VERIFY_BETTER):
                 self.gate_note = "DET>FOLLOW"
@@ -950,9 +633,6 @@ class DroneTracker:
             self.gate_note = f"DISTRACT {jump:.0f}px"
             self.gated_total += 1
             return None, fol
-        # The follower lost it this frame: a plausible detection that looks
-        # like the target is taken; an unlike one only once the follower
-        # has lost it YIELD_MISSES frames in a row (its look changed).
         if like >= self.VERIFY_MIN or self.follower.misses >= self._frames(self.YIELD_MISSES):
             self._gate_rejects = 0
             return det, None
@@ -961,22 +641,13 @@ class DroneTracker:
         return None, None
 
     def _target_is_small(self):
-        """True when the last known target is small/distant (→ zoom + CLAHE),
-        False when it is big/close (→ plain cheap pass).  Unknown ⇒ small."""
         if self.last_bbox is None:
             return True
         bw, bh = self.last_bbox[2], self.last_bbox[3]
-        # of the 30 fps frame's height: at 60 fps the frame is a crop at the
-        # same pixel scale, so the same target is the same number of pixels
         ref_h = self.ref_display[1] if self.ref_display else self.fh
         return max(bw, bh) < ref_h * self.BIG_OBJ_FRAC
 
     def _sky_bbox_native(self):
-        """Bounding box of the sky mask, in native coords, padded.
-
-        With the sky mask disabled, the search region is the entire frame so
-        YOLO detects anywhere in the image.
-        """
         if not self.use_sky_mask:
             return (0, 0, self.full_w, self.full_h)
         if self.sky_mask is None:
@@ -992,9 +663,6 @@ class DroneTracker:
         y2 = int(ys.max() * sy) + self.CROP_PAD
         return (x1, y1, x2, y2)
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # VELOCITY-ADAPTIVE ROI  (display coords)
-    # ──────────────────────────────────────────────────────────────────────────
 
     def _predict_roi(self):
         px, py = self.kalman.predict()
@@ -1012,15 +680,6 @@ class DroneTracker:
         )
 
     def _rotation_margin(self):
-        """Extra ROI half-size, px, for how far the IMAGE moves between two
-        detection frames because the airframe itself is rotating.
-
-        The Kalman filter works in pixels and knows nothing of the airframe's
-        turn.  Field 2026-09-25: at ~140 deg/s of yaw the picture moved ~144 px
-        between detection frames against a +/-50 px search window, so a locked
-        target left the window within 3-4 frames and was "lost" while still in
-        view.  The gyro says how fast the image is moving; widen by that.
-        """
         ap = getattr(self, "ap", None)
         b = getattr(ap, "backend", None)
         if b is None or not hasattr(b, "attitude"):
@@ -1044,17 +703,10 @@ class DroneTracker:
         return (int(roi[0] * sx), int(roi[1] * sy),
                 int(roi[2] * sx), int(roi[3] * sy))
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # FRAME PROCESSING
-    # ──────────────────────────────────────────────────────────────────────────
 
     def _process(self, frame_full, frame_disp):
-        # sky_mask None ⇒ no sky gate in _accept_box and full-frame region in
-        # _sky_bbox_native, i.e. YOLO runs on the whole image.
         self.sky_mask = self.sky.mask(frame_disp) if self.use_sky_mask else None
         self._ground_rejected = False
-        # An AUTO run may fly its own AI level (PARAMETERS -> AUTO -> AI, e.g.
-        # MAX); otherwise this is the AI setting and nothing changes.
         _m = getattr(self.ap, "mission", None)
         if _m is not None:
             _want = _m.ai_level_now()
@@ -1071,12 +723,6 @@ class DroneTracker:
 
         small = self._target_is_small()  
 
-        # ONE detector call per frame while coasting.  Replay of field video
-        # through this function (2026-09-26): 86% of frames had no detection,
-        # and each such frame in LOCK/PREDICT ran the ROI AND the sky search --
-        # two calls, 53 ms/frame, 18.7 fps.  After the FIRST miss (both, so a
-        # target that just left the window is found at once) the two now
-        # alternate frame by frame.  ALT_SEARCH=0 restores both-every-frame.
         _alt = (self.missed >= 1 and os.environ.get("ALT_SEARCH", "1") == "1")
         _sky_turn = _alt and (self._frame_idx % 2 == 1)
         if self.state in ("LOCK", "PREDICT") and kf_pred and _sky_turn:
@@ -1090,10 +736,6 @@ class DroneTracker:
             track_imgsz = self.IMGSZ_TRACK if small else self.IMGSZ_CLOSE
             yolo_det = self._detect_region(frame_full, self._roi_disp_to_native(roi),
                                            track_imgsz, enhance=(self.USE_CLAHE and small))
-            # The follower HOLDS a confirmed target (it or the detector found
-            # it last frame): no second, whole-sky call on a ROI miss.  It
-            # would cost a model pass for nothing -- the follower looks for
-            # the target itself -- and could only bring a distractor.
             _hold = (self.use_follower and self.follower.armed and self.missed == 0)
             if yolo_det is None and not _alt and not _hold:
                 sky_bbox = self._sky_bbox_native()
@@ -1115,21 +757,16 @@ class DroneTracker:
         self._t_last_frame = _now
         if _dt is not None and 0.0 < _dt < 1.0:
             self._frame_dt = _dt
-        # The follower (follower.py).  Once it holds a CONFIRMED target, every
-        # detection is judged against it (_adjudicate): the same place
-        # confirms it; somewhere else it must look like the target, and a
-        # detection that merely insists never takes the track.  Otherwise
-        # the track gate as before.
         fol_hit = None
         if not self.use_follower and self.follower.active:
-            self.follower.reset()        # switched off: a later ON starts afresh
+            self.follower.reset()
         armed = (self.use_follower and self.follower.armed and kf_pred is not None
                  and self.state != "SEARCH")
         if armed and yolo_det is not None:
             yolo_det, fol_hit = self._adjudicate(frame_disp, yolo_det, kf_pred, _dt, _now)
         else:
             if yolo_det is not None and not self._gate_detection(yolo_det, kf_pred, _dt):
-                yolo_det = None          # treat as a miss: coast on the filter
+                yolo_det = None
             if armed and yolo_det is None:
                 fol_hit = self._follow(frame_disp, kf_pred, _now)
 
@@ -1155,7 +792,7 @@ class DroneTracker:
             self.state     = "LOCK"
             fused          = (cx, cy)
             self.follow_hits += 1
-            self.layer     = f"FOLLOW {score:.2f}"     # self.conf: the detector's last
+            self.layer     = f"FOLLOW {score:.2f}"
         elif kf_pred and self.state != "SEARCH":
             self.missed += 1
             if self.missed >= self._frames(self.MISS_TO_SEARCH):
@@ -1186,9 +823,6 @@ class DroneTracker:
         self.gate_note = ""
         self.follower.reset()
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # VISUALISATION  (unchanged)
-    # ──────────────────────────────────────────────────────────────────────────
 
     def _draw_sky(self, frame, color):
         if self.sky_mask is None:
@@ -1201,8 +835,6 @@ class DroneTracker:
             self._dashed_poly(frame, c, color, dash=8, gap=7, thick=1)
 
     def _draw_inset(self, frame, frame_full, pos):
-        """Bottom-right picture-in-picture: a ~100x100 native-px window around
-        the detection, magnified, so the (tiny) object is actually visible."""
         if pos is None or frame_full is None:
             return
         src = self.INSET_SRC
@@ -1231,11 +863,9 @@ class DroneTracker:
         if y0 >= 0 and x0 >= 0:
             frame[y0:y0 + self.INSET_DISP, x0:x0 + self.INSET_DISP] = z
 
-    # ── HUD primitives ──────────────────────────────────────────────────────────
 
     @staticmethod
     def _panel(frame, p1, p2, fill, alpha, border=None):
-        """Translucent filled rectangle with an optional 1px border."""
         x1, y1 = p1; x2, y2 = p2
         x1 = max(0, x1); y1 = max(0, y1)
         x2 = min(frame.shape[1], x2); y2 = min(frame.shape[0], y2)
@@ -1247,7 +877,6 @@ class DroneTracker:
             cv2.rectangle(frame, (x1, y1), (x2 - 1, y2 - 1), border, 1, cv2.LINE_AA)
 
     def _text(self, frame, txt, org, scale, color, thick=1, font=None):
-        """Anti-aliased text with a soft shadow for legibility over video."""
         font = font or self._HUD_FONT
         cv2.putText(frame, txt, (org[0] + 1, org[1] + 1), font, scale,
                     (0, 0, 0), thick + 1, cv2.LINE_AA)
@@ -1255,7 +884,6 @@ class DroneTracker:
 
     @staticmethod
     def _corner_box(frame, x1, y1, x2, y2, color, length=16, thick=2):
-        """Target bracket: only the four corners (targeting-system style)."""
         L = max(5, int(min(length, (x2 - x1) / 2, (y2 - y1) / 2)))
         for (cx, cy, sx, sy) in ((x1, y1, 1, 1), (x2, y1, -1, 1),
                                  (x1, y2, 1, -1), (x2, y2, -1, -1)):
@@ -1263,7 +891,6 @@ class DroneTracker:
             cv2.line(frame, (cx, cy), (cx, cy + sy * L), color, thick, cv2.LINE_AA)
 
     def _reticle(self, frame, cx, cy, color):
-        """Centre gunsight: gapped cross + dot."""
         gap, arm = 9, 16
         cv2.line(frame, (cx - gap - arm, cy), (cx - gap, cy), color, 1, cv2.LINE_AA)
         cv2.line(frame, (cx + gap, cy), (cx + gap + arm, cy), color, 1, cv2.LINE_AA)
@@ -1287,7 +914,6 @@ class DroneTracker:
 
     @staticmethod
     def _dashed_poly(frame, pts, color, dash=8, gap=7, thick=1):
-        """Dashed polyline that keeps a continuous dash pattern along a contour."""
         pts = pts.reshape(-1, 2).astype(float)
         if len(pts) < 2:
             return
@@ -1314,7 +940,6 @@ class DroneTracker:
                 carry += step
 
     def _draw_frame_ticks(self, frame, color):
-        """Subtle bracket in each viewport corner — frames the scene."""
         h, w = frame.shape[:2]
         m, L = 6, 22
         for (cx, cy, sx, sy) in ((m, m, 1, 1), (w - m, m, -1, 1),
@@ -1322,16 +947,8 @@ class DroneTracker:
             cv2.line(frame, (cx, cy), (cx + sx * L, cy), color, 1, cv2.LINE_AA)
             cv2.line(frame, (cx, cy), (cx, cy + sy * L), color, 1, cv2.LINE_AA)
 
-    # ── HUD panels ───────────────────────────────────────────────────────────────
 
     def mode_color(self):
-        """The flight mode's colour, identical to the phone dashboard's header.
-
-        The video and the app must never disagree about which law is flying, so
-        both read the same three states off the same source and paint the same
-        three colours: blue ALT_HOLD, orange ACRO, neutral when the pilot has
-        every channel.
-        """
         m = getattr(getattr(self, "ap", None), "mode_name", None)
         if m == "ALT_HOLD":
             return self.C_ALT
@@ -1340,21 +957,11 @@ class DroneTracker:
         return self.C_PILOT
 
     def _draw_header(self, frame, accent):
-        """A single bar in the flight-mode colour, and nothing else.
-
-        The name of the product, the name of the company and the word SEARCH
-        were three things on screen that never once changed what the operator
-        should do.  The phone carries the state in words; the video carries it
-        as a colour you can read at a glance without reading at all.
-        """
         w = frame.shape[1]
         cv2.rectangle(frame, (0, 0), (w, 4), self.mode_color(), -1)
 
-    # ── flight-command panel ─────────────────────────────────────────────────────
 
     def _hbar(self, frame, x, y, w, h, frac, color, bidirectional=True):
-        """Small horizontal gauge.  bidirectional: centre tick, fill grows left
-        (frac<0) or right (frac>0).  Otherwise fills 0→right."""
         cv2.rectangle(frame, (x, y), (x + w, y + h), self.C_DIM, 1, cv2.LINE_AA)
         frac = float(np.clip(frac, -1.0, 1.0))
         if bidirectional:
@@ -1374,32 +981,10 @@ class DroneTracker:
                               color, -1, cv2.LINE_AA)
 
     def _draw_flightcmd(self, frame, cmd, pos, cx_f, cy_f, sent, accent):
-        """Flight panel: target deviation, the STICK command going to the FC
-        right now, and the FC's own reported state.
-
-        The lamp reports what actually happened to the command, never merely
-        that one was computed — the old HUD showed "TX" while the tracker was
-        transmitting nothing at all, which is exactly how a dead control path
-        went unnoticed:
-            DRIVE   sticks sent AND the FC echoed them back (confirmed)
-            TX      sticks sent, confirmation still pending
-            REFUSED sticks sent but the FC is discarding them
-            PILOT   the FC is not in ACRO — the pilot holds every channel
-            ARM?    a target is locked but the FC is disarmed
-            IDLE    channels released to the pilot (no target)
-            SIM     no flight controller attached
-        """
-        # The numbers moved to the phone dashboard, which is where the operator
-        # is actually looking and where they can be read without squinting at a
-        # 640 px video over WiFi.  The frame keeps only what has to be spatial —
-        # the reticle, the target bracket and the state lamp.  HUD_PANEL=1
-        # brings the old block back for bench work.
         if not self.HUD_PANEL:
             return
 
         h, _ = frame.shape[:2]
-        # The intercept law drives four channels instead of two, so it needs two
-        # more gauge rows and the panel has to grow or the FC line collides.
         intercept = bool(getattr(self.ap, "is_intercept", False))
         pw, ph = 252, (188 if intercept else 130)
         x1 = 10
@@ -1418,8 +1003,6 @@ class DroneTracker:
         elif sent:
             lamp, tag = self.C_LOCK, ("DRIVE" if confirmed else "TX")
         elif not getattr(self.ap, "rate_mode_ok", True):
-            # The pilot's mode switch is out of ACRO, so we are deliberately
-            # hands-off.  Distinct from IDLE (no target) and ARM? (disarmed).
             lamp, tag = self.C_WARN, "PILOT"
         elif pos is not None and not self.ap.armed:
             lamp, tag = self.C_SEARCH, "ARM?"
@@ -1437,16 +1020,9 @@ class DroneTracker:
             dev = "DEV ----,----px  AZ----- EL-----"
         self._text(frame, dev, (tx, y1 + 36), 0.36, self.C_HUD, 1)
 
-        # Gauges show the commanded BODY RATE, not the raw stick, so the bar and
-        # the number always agree: with YAW_REVERSED/PITCH_REVERSED set the stick
-        # sign is flipped to suit a reversed axis while the physical intent is
-        # unchanged, and it is the intent the operator needs to read.
         lim = max(1e-3, self.ap.law.stick_limit)
         bar_x, bar_w, bar_h = tx + 42, 110, 8
         if intercept:
-            # One row per driven channel, each showing the PHYSICAL quantity it
-            # commands rather than the stick, and each scaled by its own ceiling:
-            # bank and lean are angles, climb is a rate, yaw is a rate.
             law = self.ap.law
             max_bank = max(1e-3, np.degrees(law.max_bank))
             max_lean = max(1e-3, np.degrees(law.max_lean))
@@ -1474,9 +1050,6 @@ class DroneTracker:
             self._hbar(frame, bar_x, y, bar_w, bar_h, frac, accent, True)
             self._text(frame, val, (bar_x + bar_w + 8, y + bar_h), 0.38, self.C_HUD, 1)
 
-        # FC truth: what mode it is really in and whether the motors are live.
-        # With no link there is no arm state to report, so say that rather than
-        # printing a stale flag next to "offline".
         fc_y = y1 + (144 if intercept else 104)
         if self.ap.linked:
             head = f"FC {self.ap.mode_name}"
@@ -1489,9 +1062,6 @@ class DroneTracker:
         self._text(frame, arm_txt, (tx + mw + 10, fc_y), 0.36, arm_col, 1)
 
         if intercept:
-            # Range, latency and terminal state are the three things that decide
-            # whether an intercept run is healthy, and none of them is visible
-            # anywhere else in the HUD.
             rng = cmd.get("range_m")
             extra = (f"R {'--' if rng is None else f'{rng:.1f}m'}  "
                      f"lat {cmd.get('latency_s', 0.0) * 1000:.0f}ms  "
@@ -1504,9 +1074,6 @@ class DroneTracker:
             self._text(frame, extra, (tx, y1 + 124), 0.34, col, 1)
 
         if intercept:
-            # The operator's sensitivity slider, read back out of the law and
-            # drawn into the frame the slider's own page is watching.  This is
-            # the loop that confirms a remote change actually landed.
             sens = cmd.get("sens")
             if sens is not None:
                 s_txt = (f"SENS {sens:.2f}  gain {cmd.get('pn_gain_eff', 0.0):.0f}"
@@ -1518,18 +1085,7 @@ class DroneTracker:
         self._text(frame, f"{self.ap.send_hz:.0f}Hz stream  (skip {self.skip_frames})",
                    (tx, y1 + ph - 8), 0.34, self.C_DIM, 1)
 
-    # ── operator sensitivity, exposed to the HUD page ────────────────────────────
 
-    # ── recording, off the control loop ──────────────────────────────────────
-    #
-    # MEASURED on this Jetson: cv2.VideoWriter.write() of a 640x640 mp4v frame
-    # costs 9.42 ms.  A frame copy costs 0.10 ms.  So the recording cost was
-    # never the buffering — it was the ENCODER, running on the control loop, and
-    # 9.4 ms out of a 48 ms budget is the difference between 21 and 26 fps.
-    #
-    # The reel is evidence, not flight-critical, so it goes to a worker thread
-    # behind a bounded queue and DROPS frames if the encoder cannot keep up.
-    # Guidance must never wait on a video file.
 
     def _rec_start_thread(self):
         self._rec_q = queue.Queue(maxsize=90)
@@ -1553,21 +1109,14 @@ class DroneTracker:
                 if self._writer is not None:
                     size = (frame.shape[1], frame.shape[0])
                     if size != getattr(self, "_rec_size", size):
-                        # the CAMERA switch changed the frame size: one mp4
-                        # holds one size, so a new segment starts here
                         self._rec_rotate(frame)
                     self._writer.write(frame)
                     self._rec_seg_n = getattr(self, "_rec_seg_n", 0) + 1
                     if self._rec_seg_n >= self._rec_seg_frames():
                         self._rec_rotate(frame)
             except Exception:
-                pass                      # a bad reel never stops the flight
+                pass
 
-    # The reel is written in SEGMENTS.  An mp4 is only readable once its writer
-    # is released (the moov atom goes at the end), and in the field the run
-    # ends when the battery is pulled: the 11:43 and 12:52 AI flights of
-    # 2026-09-25 left 243 MB and 119 MB of unreadable video.  Closing a segment
-    # every REC_SEGMENT_S (default 20 s) bounds the loss to the last segment.
     def _rec_seg_frames(self):
         fps = getattr(self, "_rec_fps", 0.0) or 30.0
         return max(30, int(float(os.environ.get("REC_SEGMENT_S", "20")) * fps))
@@ -1582,14 +1131,13 @@ class DroneTracker:
         w = cv2.VideoWriter(str(nxt), fourcc, getattr(self, "_rec_fps", 30.0),
                             (frame.shape[1], frame.shape[0]))
         if not w.isOpened():
-            return                        # keep writing the current segment
+            return
         old, self._writer = self._writer, w
         self._rec_size = (frame.shape[1], frame.shape[0])
-        old.release()                     # the finished segment is now playable
+        old.release()
         self._rec_seg_n = 0
 
     def _rec_submit(self, frame):
-        """Hand a frame to the writer thread.  Never blocks."""
         try:
             self._rec_q.put_nowait(frame)
             return True
@@ -1611,7 +1159,6 @@ class DroneTracker:
                   f"could not keep up; guidance was not delayed for them.")
 
     def _lap(self, name, t_prev):
-        """Accumulate one stage's time.  Returns the new mark."""
         if not self.PROFILE:
             return t_prev
         now = perf_counter()
@@ -1619,7 +1166,6 @@ class DroneTracker:
         return now
 
     def _prof_report(self, every=60):
-        """Average the stage times over `every` frames and publish them."""
         if not self.PROFILE:
             return
         self._prof_n += 1
@@ -1629,8 +1175,6 @@ class DroneTracker:
         self.prof_ms = {k: round(v / n * 1000.0, 2)
                         for k, v in sorted(self._prof.items(),
                                            key=lambda kv: -kv[1])}
-        # Keys indented with two spaces are BREAKDOWNS of a stage above them
-        # (model/kalman live inside detect), so they must not be added again.
         total = sum(v for k, v in self.prof_ms.items()
                     if not k.startswith("  "))
         self.prof_ms["TOTAL"] = round(total, 2)
@@ -1641,15 +1185,7 @@ class DroneTracker:
         self._prof_n = 0
 
     def _command(self, key, value):
-        """One operator command from the dashboard.  Runs on the HTTP thread.
-
-        Nothing here touches anything the control loop is mid-way through: the
-        steering mode is a single clamped float store into the law, and the
-        mission commands only post requests under the mission's lock.
-        """
         if key in ("mode", "sens"):
-            # "speed"/"sens" kept as aliases so an old bookmarked dashboard
-            # still drives the one control instead of silently doing nothing.
             self.set_mode(value)
             m = getattr(self.ap, "mission", None)
             if m is not None:
@@ -1670,14 +1206,11 @@ class DroneTracker:
         return ""
 
     def _mission_command(self, key, value):
-        """The phone's mission buttons.  Only POSTS a request to the mission;
-        the commander's TX thread decides.  Returns '' or a refusal reason."""
         m = getattr(self.ap, "mission", None)
         if m is None:
             return "mission app not running (WASP_APP=mission, FC linked?)"
         if ((key == "engage" or (key == "auto" and str(value).strip().lower() in ("1", "on", "true")))
                 and (self._cam_busy or self._cam_req is not None)):
-            # the CAMERA switch is reopening the camera: no picture to fly on yet
             return "the camera is switching: ENGAGE / AUTO in a moment"
         if key == "lvl":
             group, _, level = str(value).partition(":")
@@ -1686,8 +1219,6 @@ class DroneTracker:
                     return "unknown speed"
                 self.set_mode(level.strip().upper())
         if key == "def":
-            # the phone's YES to "make it the default": saved on the Jetson,
-            # what it powers up with.  A change alone lasts until a reboot.
             r = mission_mod.save_default(m, value)
             if r == "":
                 print(f"[PARAMS] default saved: {value}")
@@ -1696,7 +1227,6 @@ class DroneTracker:
 
     def _save_detection_default(self, key):
         if key == "cam":
-            # the mode asked for, even if the reopen is still under way
             want = self._cam_req or self.cam_mode
             r = mission_mod.save_detection_default("cam", want)
             if r == "":
@@ -1704,14 +1234,13 @@ class DroneTracker:
                 print(f"[PARAMS] default saved: camera {want} fps")
             return r
         if key != "follow":
-            return mission_mod.save_detection_default(key, True)   # the refusal
+            return mission_mod.save_detection_default(key, True)
         r = mission_mod.save_detection_default("follow", self.use_follower)
         if r == "":
             self.follower_default = self.use_follower
             print(f"[PARAMS] default saved: follower {'ON' if self.use_follower else 'OFF'}")
         return r
 
-    # ── master draw ──────────────────────────────────────────────────────────────
 
     def _draw(self, frame, frame_full, pos, roi, cmd, sent):
         h, w       = frame.shape[:2]
@@ -1738,22 +1267,15 @@ class DroneTracker:
                             (max(12, int(sx * 3)), max(12, int(sy * 3))),
                             0, 0, 360, self.C_PREDICT, 1, cv2.LINE_AA)
 
-            # A RING in the flight-mode colour, sized to the target: a box says
-            # "here is a detection", a ring says "this is the thing I am flying
-            # at", and at 640 px a circle survives being small far better than
-            # four corner brackets do.
             bw, bh = (self.last_bbox[2], self.last_bbox[3]) if self.last_bbox else (20, 20)
             rad = int(max(14, max(bw, bh) * 0.62 + 6))
             mc = self.mode_color()
             if self.state == "PREDICT":
-                # Coasting on the filter: broken ring, so "I am guessing" is
-                # visible without a word for it.
                 for a0 in range(0, 360, 40):
                     cv2.ellipse(frame, (px, py), (rad, rad), 0, a0, a0 + 22,
                                 mc, 2, cv2.LINE_AA)
             else:
                 cv2.circle(frame, (px, py), rad, mc, 2, cv2.LINE_AA)
-                # four short ticks on the ring -- a sight, not a rectangle
                 for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                     cv2.line(frame, (px + dx * (rad - 5), py + dy * (rad - 5)),
                              (px + dx * (rad + 6), py + dy * (rad + 6)),
@@ -1769,36 +1291,19 @@ class DroneTracker:
         self._draw_header(frame, accent)
         self._draw_flightcmd(frame, cmd, pos, cx_f, cy_f, sent, accent)
 
-        # (the zoom inset is deliberately not drawn: it covered a corner of the
-        #  very image the operator is trying to read)
         
         
-    # ──────────────────────────────────────────────────────────────────────────
-    # CAPTURE FACTORY  ← new helper that opens the right source
-    # ──────────────────────────────────────────────────────────────────────────
 
     def _open_capture(self):
-        """Open the live camera from its GStreamer pipeline.
-
-        Returns (cap, src_fps, source_label).
-        """
         if self.camera_pipeline is None:
             raise RuntimeError("camera_pipeline is required (no capture source set).")
 
         print(f"[CAP] Opening GStreamer pipeline:\n      {self.camera_pipeline}")
-        # On Jetson, nvarguscamerasrc intermittently fails to map the FIRST
-        # capture buffer ("NvBufSurfaceFromFd Failed" / "dmabuf_fd -1 mapped
-        # entry NOT found").  When it does, that error propagates and KILLS
-        # the source thread, so no frame ever arrives — retrying read() on the
-        # same handle is useless because the thread is already dead.  The only
-        # recovery is to tear the pipeline down and open a FRESH one; because
-        # the failure is a startup race it usually clears within a few tries.
         cap  = None
         warm = None
         for attempt in range(self.CAM_OPEN_RETRIES):
             cap = cv2.VideoCapture(self.camera_pipeline, cv2.CAP_GSTREAMER)
             if cap.isOpened():
-                # Warm up: pull frames until one arrives or the source dies.
                 for _ in range(self.CAM_WARMUP_READS):
                     ok, warm = cap.read()
                     if ok and warm is not None:
@@ -1807,7 +1312,6 @@ class DroneTracker:
                 if attempt:
                     print(f"[CAP] camera came up on attempt {attempt + 1}")
                 break
-            # This attempt is dead — release and try a clean re-open.
             cap.release()
             cap = None
             print(f"[CAP] no frames on attempt {attempt + 1}/"
@@ -1829,7 +1333,6 @@ class DroneTracker:
                 f"Pipeline: {self.camera_pipeline}"
             )
 
-        # GStreamer appsink usually reports 0 for FPS — fall back to caller's value
         reported = cap.get(cv2.CAP_PROP_FPS)
         src_fps  = reported if (reported and reported == reported and reported > 1) \
                    else self.camera_fps
@@ -1838,15 +1341,6 @@ class DroneTracker:
         return cap, src_fps, label
 
     def _apply_cam_mode(self, mode):
-        """Point everything at camera mode `mode` (CAM_MODES): the pipeline,
-        the working frame and the law's field of view, together.
-
-        The 60 fps window is the centre of the 30 fps one at the same sensor
-        pixel scale, so the working frame is cropped the same way (640 x 640
-        -> 500 x 374): one working-frame pixel is the same angle in both
-        modes, and every pixel constant in this file (track gate, ROI,
-        follower, sky mask, BIG_OBJ_FRAC) keeps its meaning.  The law is told
-        the crop, so its angles stay true (InterceptLaw.set_crop)."""
         spec = CAM_MODES[mode]
         cx, cy = spec["crop"]
         self.cam_mode = mode
@@ -1867,13 +1361,6 @@ class DroneTracker:
             law.set_crop(cx, cy)
 
     def _switch_camera(self, pre_buf):
-        """Reopen the camera in the mode the phone asked for (set_camera).
-
-        On the main loop, which owns the capture, between two frames.  The
-        track is dropped (its pixels belong to the old picture), the pre-roll
-        is emptied and the reel starts a new segment at the new size.  If the
-        new mode does not come up the old one is reopened; if that fails too
-        the run ends as any camera fault does."""
         want = self._cam_req
         if want is None or want == self.cam_mode:
             self._cam_req = None
@@ -1884,13 +1371,11 @@ class DroneTracker:
             print(f"[CAM] {want} fps not switched: {why}")
             return
         old = self.cam_mode
-        # busy BEFORE the request is cleared: ENGAGE / AUTO are refused on
-        # either, so there is no instant when neither says "switching"
         self._cam_busy = True
         self._cam_req = None
         try:
             print(f"[CAM] {old} -> {want} fps: reopening the camera")
-            self._apply_cam_mode(want)          # the mode IS `want` from here on
+            self._apply_cam_mode(want)
             try:
                 self._cap.release()
             except Exception:
@@ -1914,51 +1399,32 @@ class DroneTracker:
         finally:
             self._cam_busy = False
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # MAIN LOOP
-    # ──────────────────────────────────────────────────────────────────────────
 
     def run(self):
-        """Run the tracker, guaranteeing the sticks go back to the pilot.
-
-        Whatever happens in the loop — Ctrl-C, a camera fault, an unhandled
-        exception — the finally block releases every overridden channel and
-        closes the link.  Without it a crash mid-steer would leave the last
-        override latched on the FC until RC_OVERRIDE_TIME expired.
-        """
         try:
             self._run()
         finally:
             self.ap.close()
             if self.stream is not None:
-                self.stream.stop()      # also covers Ctrl-C and a mid-run raise
+                self.stream.stop()
                 self.stream = None
 
     def _run(self):
-        # Identify the firmware, read the FC's own RC map/rates, and print every
-        # blocker BEFORE a single frame is processed.  Fails loudly if the link
-        # is dead or the board is not something we can steer.
         self.ap.connect()
 
         try:
             cap, src_fps, source_label = self._open_capture()
         except RuntimeError as exc:
-            # a saved 60 fps default must not cost the flight its seeker
             if self.cam_mode == 30 or self.camera_config is None:
                 raise
             print(f"[CAM] {self.cam_mode} fps did not come up "
                   f"({str(exc).splitlines()[0]}) — starting at 30 fps")
             self._apply_cam_mode(30)
             cap, src_fps, source_label = self._open_capture()
-        self._cap = cap                 # replaced by the CAMERA switch
+        self._cap = cap
         print(f"[RUN] Source: {source_label}")
-        # The reel and its pre-roll count LOOP frames, one per processed frame,
-        # and the detector, not the camera, sets the loop's pace (~30 Hz): a
-        # 60 fps camera mostly gives fresher frames, not more of them.  So the
-        # reel stays at 30 fps, near real time in either camera mode.
         src_fps = min(src_fps, self.REF_FPS)
             
-        # ── recording setup ────────────────────────────────────────────────────
         rec_on       = self.record_dir is not None
         pad          = max(1, int(round(self.record_pad_sec * src_fps)))
         pre_buf      = deque(maxlen=pad)
@@ -1970,15 +1436,10 @@ class DroneTracker:
             out_dir = Path(self.record_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            out_path = out_dir / f"{self.run_stamp}.mp4"   # new file per run
+            out_path = out_dir / f"{self.run_stamp}.mp4"
             print(f"[REC] reel -> {out_path.resolve()}  | fps={src_fps:.2f}  "
                   f"pad={pad}f (~{self.record_pad_sec:.1f}s each side)")            
 
-        # ── remote seeker view ─────────────────────────────────────────────────
-        # Independent of `headless`: on the Jetson there is no local window at
-        # all, and the stream is the ONLY way anyone sees what the seeker sees.
-        # A failure to bind must never take the flight down with it, so this is
-        # best-effort and the tracker runs on without it.
         if self.stream_port:
             try:
                 self.stream = MJPEGServer(port=self.stream_port,
@@ -1998,11 +1459,6 @@ class DroneTracker:
 
         period = self.skip_frames + 1
 
-        # The reel is only a playable mp4 once the writer is released — that is
-        # what writes the moov atom.  Ctrl-C is the NORMAL way this program
-        # ends, so releasing after the loop is not enough: the run that matters
-        # most (the one you stopped to go look at) is exactly the one that would
-        # be left as an unreadable stub.  Hence try/finally.
         try:
             self._loop(cap, src_fps, period, rec_on, pad, pre_buf, out_path,
                        fourcc)
@@ -2013,9 +1469,6 @@ class DroneTracker:
                 cv2.destroyAllWindows()
 
     def _finish_recording(self):
-        """Close the reel and report it.  Safe to call twice."""
-        # Flush and stop the encoder thread FIRST, or the last queued frames
-        # are written to a file that has already been released.
         self._rec_finish()
         writer = getattr(self, "_writer", None)
         if writer is not None:
@@ -2033,8 +1486,6 @@ class DroneTracker:
 
     def _loop(self, cap, src_fps, period, rec_on, pad, pre_buf, out_path,
               fourcc):
-        # Recording state lives on self so _finish_recording() can close the
-        # reel from the finally block above, whatever ended the loop.
         self._writer      = None
         self._rec_on      = rec_on
         if rec_on:
@@ -2049,11 +1500,8 @@ class DroneTracker:
 
         while self._cap.isOpened():
             if self._cam_req is not None:
-                self._switch_camera(pre_buf)      # the phone's CAMERA switch
+                self._switch_camera(pre_buf)
             ret, frame_full = self._cap.read()
-            # Stamped the instant the frame lands, so the control law can measure
-            # its own end-to-end latency instead of assuming the frame interval.
-            # At intercept speed the difference is metres of stale geometry.
             t_cap = perf_counter()
             if not ret or frame_full is None:
                 break
@@ -2070,7 +1518,6 @@ class DroneTracker:
             self._frame_idx += 1
             is_yolo_frame = (self._frame_idx % period == 0)
 
-            # Display FPS, smoothed, for the dashboard.
             if self._t_ui_prev is not None:
                 _d = t_cap - self._t_ui_prev
                 if _d > 1e-6:
@@ -2082,8 +1529,6 @@ class DroneTracker:
                     frame_full, frame_disp)
                 _tp = self._lap("detect", _tp)
                 if self.PROFILE:
-                    # _process reports the model call separately, so "detect"
-                    # minus this is the crop/Kalman/bookkeeping around it.
                     self._prof["  model"] = (self._prof.get("  model", 0.0)
                                              + _t_yolo / 1000.0)
                     self._prof["  kalman"] = (self._prof.get("  kalman", 0.0)
@@ -2096,54 +1541,30 @@ class DroneTracker:
                     self.pos   = fused
                     self.layer = "KF-SKIP"
 
-            # ── STEERING COMMAND ─────────────────────────────────────────────
-            # Each detection frame recomputes the stick command that centres the
-            # target; the commander's tx thread streams the latest one to the FC
-            # at a FIXED rate (SEND_HZ, default 20 Hz) independent of the
-            # detection FPS, so a slow YOLO frame never starves the FC and skip
-            # frames do not create gaps in the stream.
-            #   • target in view (LOCK/PREDICT) → yaw + pitch rates null the
-            #     pixel offset, so the airframe rotates onto the target.
-            #   • no target (SEARCH)            → sticks released to the pilot.
-            # The sticks are driven ONLY while the FC is armed and a target is
-            # locked; every other instant the channels go back to the pilot.
             target_off = None
-            # Mission app: the AI steers ONLY on real detections.  Field logs
-            # 2026-09-25 (11:43, 12:52): the AI was driven by the Kalman COAST
-            # 74-76% of the time, turned 92-117 deg per engagement on it
-            # against 11-22 deg on real detections, and every engagement ended
-            # chasing a prediction -- the pixel-space filter extrapolates a
-            # target leaving the RIGHT edge further right, knowing nothing of
-            # the airframe's own turn.  The filter still guides the detector's
-            # search window; it just no longer moves the drone.
             _mission_on = getattr(self.ap, "mission", None) is not None
             if is_yolo_frame:
                 if fused and _mission_on and not detected:
                     target_off = (fused[0] - cx_f, fused[1] - cy_f)
-                    cmd = self._last_cmd           # coasting: HUD only, no steer
+                    cmd = self._last_cmd
                 else:
                     if fused:
                         target_off = (fused[0] - cx_f, fused[1] - cy_f)
-                        # last_bbox and t_cap are ignored by the servo law and used
-                        # by the intercept law for the range estimate, the
-                        # terminal trigger and the latency measurement.
                         cmd = self.ap.compute(target_off[0], target_off[1],
                                               self.state, self.fw, self.fh,
                                               bbox=self.last_bbox, capture_t=t_cap)
                     else:
-                        cmd = self.ap.neutral_command()  # no target: centre + release
+                        cmd = self.ap.neutral_command()
                     self.ap.update(cmd, target_off, have_target=bool(fused),
                                    detected=bool(detected),
                                    conf=self.conf if detected else None,
                                    bbox=self.last_bbox if detected else None)
                     self._last_cmd = cmd
             else:
-                cmd = self._last_cmd               # HUD display only
+                cmd = self._last_cmd
                 if fused:
                     target_off = (fused[0] - cx_f, fused[1] - cy_f)
 
-            # The commander's own live flag — true only when stick values are
-            # really going out AND the FC is armed to act on them.
             actually_sent = self.ap.steering
             self._last_sent = bool(actually_sent)
 
@@ -2151,28 +1572,10 @@ class DroneTracker:
             self._draw(frame_disp, frame_full, fused, roi, cmd, actually_sent)
             _tp = self._lap("draw", _tp)
 
-            # Same fully annotated frame the local window would show, pushed to
-            # whoever is watching over WiFi.  One memcpy, no encode, no socket
-            # work on this thread — see mjpeg_stream.publish().
             if self.stream is not None:
                 self.stream.publish(frame_disp)
             _tp = self._lap("stream", _tp)
 
-            # ── detection-gated recording ──────────────────────────────────────
-            # This block CLAIMED to be detection-gated and was not: post_left
-            # was re-armed to `pad` on every frame and never decremented, so the
-            # gate opened once and stayed open.  The reel therefore ran
-            # continuously (174 MB for one field session) AND a full 640x640
-            # frame was deep-copied into a pre-roll buffer on every single frame
-            # that nothing would ever read again.  Measured at 10.3 ms per frame
-            # of the 80 ms budget — the second largest cost in the loop after
-            # inference, spent on a buffer for a window that had already opened.
-            #
-            # Now: a detection arms the window and each frame without one spends
-            # one frame of the post-roll.  The pre-roll copy happens ONLY while
-            # idle, which is exactly when pre-roll is what it is for — so during
-            # an engagement, when the frame rate actually matters, that memcpy
-            # is gone.
             if rec_on:
                if fused:
                    if post_left == 0:
@@ -2185,9 +1588,6 @@ class DroneTracker:
                                (frame_disp.shape[1], frame_disp.shape[0]))
                            self._rec_size = (frame_disp.shape[1], frame_disp.shape[0])
                            if not self._writer.isOpened():
-                               # Say so once, here, rather than leaving a stub
-                               # file and a silent gap where the evidence
-                               # should be.
                                print(f"[REC][WARN] could not open {out_path} "
                                      "for writing — this run will NOT be "
                                      "recorded.")
@@ -2202,19 +1602,13 @@ class DroneTracker:
                                  f"(~{self._frame_idx / src_fps:.1f}s)")
                    post_left = pad
                if rec_on and post_left > 0:
-                   # A copy, because the loop keeps drawing on frame_disp after
-                   # this and the encoder may not have consumed it yet.  0.10 ms
-                   # measured, against the 9.42 ms encode it displaces.
                    self._rec_submit(frame_disp.copy())
                    last_written = self._frame_idx; self._rec_frames += 1
                    post_left -= 1
                elif rec_on:
-                   # Idle: keep a rolling pre-roll so the next window starts
-                   # `pad` frames BEFORE the detection that opened it.
                    pre_buf.append((self._frame_idx, frame_disp.copy()))
 
             _tp = self._lap("record", _tp)
-            # Print ONLY the real controller command steering the drone.
             print(self.ap.format_command(
                 self.state, cmd, target_off, actually_sent,
                 live=self.ap.linked, is_yolo=is_yolo_frame))
@@ -2231,10 +1625,7 @@ class DroneTracker:
             if self.max_frames is not None and self._frame_idx >= self.max_frames:
                 break
 
-        # Releasing the channels, the reel, the camera and the window is the
-        # caller's finally block — reaching the end of the loop normally is only
-        # one of the ways out, and the others matter more.
-        self.ap.close()        # releases every channel, then closes the link
+        self.ap.close()
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -2246,36 +1637,15 @@ def env_bool(name: str, default: bool) -> bool:
 
 @dataclass
 class CameraConfig:
-    # Camera selection
     sensor_id: int = int(os.getenv("CAM_SENSOR_ID", "0"))
-    # Sensor mode MUST be able to produce the width/height/fps requested below.
-    # On the IMX219 the modes are:
-    #   0: 3280x2464@21  1: 3280x1848@28  2: 1920x1080@30
-    #   3: 1640x1232@30  4: 1280x720@60
-    # Mode 0 (full-res, 21 fps) cannot output 1280x720@30 — that mismatch makes
-    # nvarguscamerasrc fail with "Frame Rate specified is greater than supported"
-    # / InvalidState.  Set CAM_SENSOR_MODE=-1 to let Argus auto-select.
-    #
-    # MODE 3 IS THE 30 FPS DEFAULT (2026-09-26).  Read off nv_imx219.ko's
-    # register tables: mode 4 is a CENTRE CROP (x 360-2919, y 512-1951 =
-    # 2560x1440 of the 3280x2464 array, 2x2 binned), so its real FOV is
-    # 50.4 x 29.7 deg.  Flown once with the law told 62.2 x 48.8, every
-    # azimuth read 28% large and every elevation 71% large.  Mode 3 is the
-    # FULL array 2x2 binned, i.e. exactly 62.2 x 48.8; 1280x960 keeps it 4:3
-    # (square pixels).  Sim (tests/sim_sky_wind.py): touches Bf0/Bf3 66/42%
-    # -> 82/76%.  Mode 4 is now the phone's 60 fps CAMERA setting, with the
-    # law told the crop (CAM_MODES below), never the full-view numbers.
     sensor_mode: int = int(os.getenv("CAM_SENSOR_MODE", "3"))
 
-    # Video mode
     width: int = int(os.getenv("CAM_WIDTH", "1280"))
     height: int = int(os.getenv("CAM_HEIGHT", "960"))
     fps: int = int(os.getenv("CAM_FPS", "30"))
 
-    # Image orientation
     flip_method: int = int(os.getenv("CAM_FLIP_METHOD", "0"))
 
-    # Auto/manual controls
     ae_lock: bool = env_bool("CAM_AE_LOCK", False)
     awb_lock: bool = env_bool("CAM_AWB_LOCK", False)
 
@@ -2283,29 +1653,17 @@ class CameraConfig:
     gain: float = float(os.getenv("CAM_GAIN", "0"))
     digital_gain: float = float(os.getenv("CAM_DIGITAL_GAIN", "0"))
 
-    # Image processing
     tnr_mode: int = int(os.getenv("CAM_TNR_MODE", "1"))
     tnr_strength: float = float(os.getenv("CAM_TNR_STRENGTH", "0.5"))
 
     ee_mode: int = int(os.getenv("CAM_EE_MODE", "1"))
     ee_strength: float = float(os.getenv("CAM_EE_STRENGTH", "0.5"))
 
-    # Appsink
     drop: bool = env_bool("CAM_DROP", True)
     max_buffers: int = int(os.getenv("CAM_MAX_BUFFERS", "1"))
     sync: bool = env_bool("CAM_SYNC", False)
 
 
-# The phone's CAMERA switch (PARAMETERS -> DETECTION), live, and CAM_MODE=30|60
-# for one run.  30 = CameraConfig as configured (sensor mode 3, the whole
-# array, 62.2 x 48.8 deg).  60 = sensor mode 4: the centre 2560 x 1440 of the
-# same array, binned 2x2 the same way, so the same pixels at the same focal
-# length through a smaller window: 50.4 x 29.7 deg.  `crop` is that window as
-# a share of the full view in SENSOR PIXELS, which is a share of tan(angle)
-# (pinhole), so the law's angles follow exactly (InterceptLaw.set_crop).
-# The price: +/-14.85 deg vertically instead of +/-24.4.  A lined-up target
-# (the aim mark, ~-10 deg at 60) stays in the picture under a lean of up to
-# ~25 deg; PUSH / the straight line at 30-40 deg tips it out of the top.
 CAM_MODES = {
     30: dict(crop=(1.0, 1.0)),
     60: dict(crop=(2560 / 3280, 1440 / 2464),
@@ -2322,8 +1680,6 @@ def make_pipeline(cfg: CameraConfig) -> str:
         f"ee-strength={cfg.ee_strength}",
     ]
 
-    # Pin the sensor mode only when explicitly chosen (>= 0).  A negative value
-    # means "let Argus auto-select the mode that satisfies the caps below".
     if cfg.sensor_mode >= 0:
         props.insert(1, f"sensor-mode={cfg.sensor_mode}")
 
@@ -2333,17 +1689,14 @@ def make_pipeline(cfg: CameraConfig) -> str:
     if cfg.awb_lock:
         props.append("awblock=true")
 
-    # Manual exposure
     if cfg.exposure_us > 0:
         props.append(
             f'exposuretimerange="{cfg.exposure_us} {cfg.exposure_us}"'
         )
 
-    # Manual analog gain
     if cfg.gain > 0:
         props.append(f'gainrange="{cfg.gain} {cfg.gain}"')
 
-    # Manual digital gain
     if cfg.digital_gain > 0:
         props.append(
             f'ispdigitalgainrange="{cfg.digital_gain} {cfg.digital_gain}"'
@@ -2368,17 +1721,10 @@ def make_pipeline(cfg: CameraConfig) -> str:
     return pipeline
 
 
-# -----------------------------------------------------------------------------
 
-# All persistent run outputs (video, console log, command CSV) land here, next
-# to tracker.py, so they survive across runs regardless of the launch cwd.
 _DATA_DIR = Path(__file__).resolve().parent / "data"
 
 
-# The last few hundred IMPORTANT console lines, for the phone's console panel.
-# Per-frame chatter ([CTRL], [PROF]) and GStreamer's banner are left out: the
-# point is to read what HAPPENED (phase changes, refusals, FC messages) at arm's
-# length, not to scroll a firehose.
 CONSOLE = collections.deque(maxlen=300)
 _CONSOLE_SEQ = [0]
 _CONSOLE_LOCK = threading.Lock()
@@ -2388,7 +1734,6 @@ _CONSOLE_SKIP = ("[CTRL]", "[PROF]", "GST_", "CONSUMER", "[ WARN", "   ",
 
 
 def console_since(seq):
-    """[(seq, 'HH:MM:SS', line)] newer than `seq`."""
     with _CONSOLE_LOCK:
         return [x for x in CONSOLE if x[0] > seq]
 
@@ -2404,17 +1749,10 @@ def _console_add(line):
 
 
 class _Tee:
-    """Duplicate a stream to the console AND a log file (line-buffered), so the
-    full console output is persisted offline while still showing live.
-
-    Every line written to the FILE is prefixed with a wall-clock timestamp
-    (HH:MM:SS.mmm) so log entries can be lined up against the recorded video —
-    the video file is named with this run's start time, so log-time minus that
-    start is the position in the reel.  The live console stays unprefixed."""
     def __init__(self, stream, fh):
         self._stream, self._fh = stream, fh
-        self._need_prefix = True          # at the start of a fresh line
-        self._partial = ""                # for the phone's console buffer
+        self._need_prefix = True
+        self._partial = ""
 
     @staticmethod
     def _prefix():
@@ -2422,8 +1760,8 @@ class _Tee:
         return f"[{now.strftime('%H:%M:%S')}.{now.microsecond // 1000:03d}] "
 
     def write(self, data):
-        self._stream.write(data)          # console: unchanged
-        out = []                          # file: timestamp each line start
+        self._stream.write(data)
+        out = []
         for ch in data:
             if self._need_prefix:
                 out.append(self._prefix())
@@ -2444,15 +1782,6 @@ class _Tee:
 
 
 def _run_stamp(data_dir):
-    """The per-run file stem, unique even with no real clock.
-
-    The Jetson has no RTC battery: in the field (no network, no NTP) every
-    boot starts at 1970-01-01 02:00, so two boots reaching this line in the
-    same second would get the same stamp and the second run would OVERWRITE
-    the first one's video and log.  With the clock unsynced, a persistent run
-    counter goes in the name (nosync_r0042_020109) and keeps runs in order;
-    with a real clock the date stamp stays, made unique if it is ever taken.
-    """
     now = datetime.now()
     stamp = now.strftime("%Y%m%d_%H%M%S")
     if now.year < 2024:
@@ -2473,10 +1802,8 @@ def _run_stamp(data_dir):
 
 
 if __name__ == "__main__":
-    # Single timestamp for this run: <stamp>.mp4 / <stamp>.log / commands_<stamp>.csv
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
     RUN_STAMP = _run_stamp(_DATA_DIR)
-    # fc_control names its control_<stamp>.csv from this, so all three match
     os.environ["WASP_RUN_STAMP"] = RUN_STAMP
     _log_fh = open(_DATA_DIR / f"{RUN_STAMP}.log", "w", buffering=1)
     sys.stdout = _Tee(sys.stdout, _log_fh)
@@ -2485,11 +1812,6 @@ if __name__ == "__main__":
 
     cam_cfg = CameraConfig()
     CAP_PIPELINE = make_pipeline(cam_cfg)
-    # WASP_MODEL points at the local sky weights; unset, the repo's own
-    # runs/detect/v0/weights/best.pt is used.  Checked here rather than at
-    # first inference: a missing weights file in the field should stop the
-    # run at startup with the path in the message, not three minutes later
-    # inside a detect call.
     _model_env = os.environ.get("WASP_MODEL", "").strip()
     model_pth = str(Path(_model_env).expanduser().resolve() if _model_env else
                     Path(__file__).resolve().parent.parent
@@ -2498,33 +1820,13 @@ if __name__ == "__main__":
         print(f"[MODEL] no weights file at {model_pth}", file=sys.stderr)
         sys.exit(1)
 
-    # PREFER A TENSORRT ENGINE next to the weights.  Measured on this Jetson,
-    # same 1280x720 input the tracker actually feeds it:
-    #
-    #     PyTorch  best.pt      35.5 ms   28 fps
-    #     TensorRT best.engine  28.1 ms   36 fps   (FP16, built here)
-    #
-    # and 21 ms of that 28 is inference — the other 7 is CPU letterboxing of the
-    # full frame, which is why imgsz makes no difference (34 ms flat at 640, 512
-    # AND 416 in PyTorch: the cost is per-call overhead, not pixels).
-    #
-    # An engine is tied to the exact GPU and TensorRT version that built it, so
-    # this is best-effort with a hard fallback: a stale or foreign engine must
-    # degrade to the .pt, not stop the flight.  Rebuild with
-    #     yolo export model=runs/detect/v0/weights/best.pt format=engine half=True imgsz=640
     if os.environ.get("USE_ENGINE", "1") == "1":
         _eng = Path(model_pth).with_suffix(".engine")
         if _eng.is_file() and _eng.stat().st_mtime >= Path(model_pth).stat().st_mtime:
             try:
                 _probe = YOLO(str(_eng), task="detect")
-                # An engine model has no .names until its first inference
-                # (ultralytics 8.4): without this warm-up the probe raised and
-                # the tracker ALWAYS fell back to the .pt, silently.
                 _probe.predict(np.zeros((640, 640, 3), np.uint8), verbose=False)
                 if len(_probe.names) > 100:
-                    # No embedded metadata: the class map is a placeholder
-                    # ("class0".."class998"), so target-class resolution would be
-                    # a guess.  Refuse it rather than track an arbitrary index.
                     print(f"[MODEL] ignoring {_eng.name}: no class metadata "
                           f"({len(_probe.names)} placeholder names) — "
                           f"re-export it with ultralytics.")
@@ -2540,38 +1842,23 @@ if __name__ == "__main__":
     print(f"[TARGET] {os.environ['TARGET_KIND']} (fixed for this run)")
 
     DroneTracker(
-        #model_path   = "./runs/detect/v0/weights/best.pt",
         model_path   = model_pth,
         camera_pipeline=CAP_PIPELINE,
         camera_fps=cam_cfg.fps,
-        camera_config=cam_cfg,          # the phone's 30 / 60 fps CAMERA switch
+        camera_config=cam_cfg,
         conf_thresh  = 0.01,
         display_size = (640, 640),
         skip_frames  = 0,
         show_sky     = False,
-        use_sky_mask = True,       # ground rejection: the SkyDetector sky gate
-        record_dir      = str(_DATA_DIR),   # <stamp>.mp4 lands here
+        use_sky_mask = True,
+        record_dir      = str(_DATA_DIR),
         record_pad_sec  = 1.5,
-        log_dir         = str(_DATA_DIR),   # commands_<stamp>.csv lands here
-        run_stamp       = RUN_STAMP,        # share the run timestamp
+        log_dir         = str(_DATA_DIR),
+        run_stamp       = RUN_STAMP,
         headless     = os.environ.get("TRACKER_HEADLESS") == "1",
-        # Remote seeker view over WiFi.  ON by default because the Jetson flies
-        # without a screen and this is the only way to see the HUD; STREAM=0
-        # turns it off, STREAM_PORT moves it off 8080.
-        #   phone / laptop on the same WiFi -> http://<jetson-ip>:8080/
         stream_port    = (int(os.environ.get("STREAM_PORT", "8080"))
                           if env_bool("STREAM", True) else None),
         stream_quality = int(os.environ.get("STREAM_QUALITY", "70")),
         stream_fps     = float(os.environ.get("STREAM_FPS", "15")),
-        # The flight-control link is configured entirely from the environment —
-        # see fc_control.commander_from_env for the full list.  The defaults are
-        # the deployed ones: talk to the FC through the local MAVProxy router on
-        # udpin:127.0.0.1:14551, auto-detect the firmware, and drive yaw + pitch
-        # in ACRO.  Useful overrides:
-        #   MAV_CONN=/dev/ttyACM0   bypass the router, own the FC serial port
-        #   MAV_CONN=none           offline: commands computed and printed only
-        #   YAW_REVERSED=1 / PITCH_REVERSED=1   if an axis drives the wrong way
-        #   KP_YAW=3.0 KP_PITCH=3.0             more aggressive centring
-        #   STICK_LIMIT=0.35                    gentler authority ceiling
         commander    = commander_from_env(log_dir=str(_DATA_DIR)),
     ).run()

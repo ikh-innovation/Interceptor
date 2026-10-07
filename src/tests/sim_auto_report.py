@@ -1,19 +1,4 @@
 #!/usr/bin/env python3
-"""Turn tests/sim_auto_scenarios.py results into one page you can watch.
-
-    ../.env/yolo/bin/python tests/sim_auto_scenarios.py --seeds 48 --traces 2 --json after.json
-    ../.env/yolo/bin/python tests/sim_auto_report.py after.json -o auto_trials.html
-    ../.env/yolo/bin/python tests/sim_auto_report.py after.json --before before.json -o auto_trials.html
-
-Open the .html in any browser (it needs nothing else; offline it falls back
-to the system fonts).  It shows the hit rate of every scenario, why the misses
-missed, and a replay deck: pick an engagement and watch it from above, from
-the side and through the drone's own camera, phase by phase.  With --before
-(a run of the SAME campaign on older code: same seeds, same engagements) every
-number shows before -> after, and every replay can be flipped between the two.
-
-Only runs recorded with --traces can be replayed.
-"""
 import argparse
 import json
 import math
@@ -24,15 +9,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
-import types                                              # noqa: E402
-if "ultralytics" not in sys.modules:                      # only SCENARIOS is needed
+import types
+if "ultralytics" not in sys.modules:
     sys.modules["ultralytics"] = types.ModuleType("ultralytics")
     sys.modules["ultralytics"].YOLO = None
-import mission as M                                       # noqa: E402
-import sim_auto_scenarios as A                            # noqa: E402
+import mission as M
+import sim_auto_scenarios as A
 
 WHYS = ("never_seen", "no_go", "lost_line", "lost_chase", "near_miss", "crash")
-SCALE = 10                    # traces ship as integers, 0.1 resolution
+SCALE = 10
 
 
 def pct(xs):
@@ -58,7 +43,6 @@ def cell(rs):
 
 
 def turned(trace):
-    """Rotate a trace so our nose at t = 0 points north (up on the map)."""
     if not trace:
         return []
     y0 = math.radians(trace[0][4])

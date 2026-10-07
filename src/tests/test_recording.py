@@ -1,17 +1,8 @@
 #!/usr/bin/env python3
-"""The reel survives a pulled battery: it is written in closed segments.
-
-2026-09-25: both AI flights left unreadable mp4s (243 MB and 119 MB) because
-the Jetson lost power before the writer was released.  Now every
-REC_SEGMENT_S the segment is closed and the next one opened, so a power cut
-loses at most the segment in progress.
-
-    ../.env/yolo/bin/python tests/test_recording.py
-"""
 import contextlib, io, os, sys, tempfile, time
 from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-os.environ["REC_SEGMENT_S"] = "1"                       # 30 frames at 30 fps
+os.environ["REC_SEGMENT_S"] = "1"
 import cv2
 import numpy as np
 with contextlib.redirect_stdout(io.StringIO()):
@@ -40,7 +31,6 @@ for i in range(100):
     t._rec_submit(f)
     time.sleep(0.004)
 time.sleep(1.0)
-# POWER CUT: the worker and the current writer are simply abandoned, never released.
 files = sorted(d.glob("20260926_120000*.mp4"))
 names = [p.name for p in files]
 counts = {}
