@@ -404,7 +404,7 @@
     <section class="param-block" id="flight_mode_params" aria-labelledby="flight_mode_title">
       <h4 class="param-title" id="flight_mode_title"><span class="num">1</span>Flight mode</h4>
       <div class="seg mode-seg" id="flightmodes">
-        <button data-flightmode="normal" aria-pressed="false" disabled>Normal drone<i>OFF</i></button>
+        <button data-flightmode="normal" aria-pressed="false" disabled>Seeker drone<i>OFF</i></button>
         <button data-flightmode="wasp" aria-pressed="false" disabled>Wasp drone<i>OFF</i></button>
       </div>
       <button class="mount-chip" id="mountstatus" disabled aria-label="Confirm camera angle">--°</button>
@@ -422,9 +422,9 @@
       </div></div>
     </section>
     <section class="param-block" id="flight_params" aria-labelledby="flight_params_title">
-      <h4 class="param-title" id="flight_params_title"><span class="num">3</span>Flight parameters<span class="tag" id="flight_mode_tag">NORMAL</span></h4>
+      <h4 class="param-title" id="flight_params_title"><span class="num">3</span>Flight parameters<span class="tag" id="flight_mode_tag">SEEKER</span></h4>
       <div id="normal_params" data-only="normal">
-        <div class="flight-tabs" role="group" aria-label="Normal flight parameters">
+        <div class="flight-tabs" role="group" aria-label="Seeker flight parameters">
           <button id="ptab_semi" data-acc="semi" aria-expanded="true" aria-controls="pp_semi">Manual</button>
           <button id="ptab_auto" data-acc="auto" aria-expanded="false" aria-controls="pp_auto">Auto <span id="autotag">OFF</span></button>
         </div>
@@ -854,7 +854,7 @@
     $("mode_confirm").disabled = choosing || !!j.armed || j.control === "other";
     $("mode_cancel").disabled = choosing;
     if (pendingMode && j.armed) T("mode_note", "Disarm to change mode.");
-    T("flight_mode_tag", wasp ? "WASP" : "NORMAL");
+    T("flight_mode_tag", wasp ? "WASP" : "SEEKER");
     document.querySelectorAll("[data-only]").forEach(function (el) { el.hidden = el.getAttribute("data-only") !== currentMode; });
     $("b_auto").style.display = wasp ? "none" : "";
     $("b_wasp_abort").style.display = wasp ? "" : "none";

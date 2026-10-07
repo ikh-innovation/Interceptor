@@ -294,7 +294,7 @@ camera toward the aircraft nose.
 | Up | 180° |
 | Left | 270° |
 
-Normal drone → physical camera 30° → Confirm. Refresh retains the active mode;
+Seeker drone → physical camera 30° → Confirm. Refresh retains the active mode;
 after a service restart, select the mode and confirm the camera again.
 
 ## 9. Checks

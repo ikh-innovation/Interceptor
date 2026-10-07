@@ -76,8 +76,8 @@ async function main(){
  await check('startup is read-only',(await req('/commands')).length===0);
  await check('TensorRT FPS stays green',q('#c_ai_k').textContent==='TensorRT'&&q('#c_ai').classList.contains('ok'));
  parameters();
- await check('three parameter sections in order',[...f.contentDocument.querySelectorAll('.param-title')].map(x=>x.textContent).join('|')==='1Flight mode|2Detection|3Flight parametersNORMAL');
- await check('Normal ON and Wasp OFF',q('[data-flightmode="normal"]').getAttribute('aria-pressed')==='true'&&q('[data-flightmode="wasp"]').getAttribute('aria-pressed')==='false');
+ await check('three parameter sections in order',[...f.contentDocument.querySelectorAll('.param-title')].map(x=>x.textContent).join('|')==='1Flight mode|2Detection|3Flight parametersSEEKER');
+ await check('Seeker ON and Wasp OFF',q('[data-flightmode="normal"]').textContent.startsWith('Seeker drone')&&q('[data-flightmode="normal"]').getAttribute('aria-pressed')==='true'&&q('[data-flightmode="wasp"]').getAttribute('aria-pressed')==='false');
  await check('detection always visible',visible('#skyseg')&&visible('#folseg')&&visible('#camseg'));
  const start=(await req('/commands')).length;
  q('[data-flightmode="wasp"]').click();await until(()=>visible('#modechange'));
