@@ -239,6 +239,10 @@ class DroneTracker:
                              if str(model_path).endswith(".engine")
                              else YOLO(model_path))
         names = self.model.names
+        # Ultralytics changes OpenCV's global thread count while loading. Apply
+        # the capture/resize setting after that initialization, not before it.
+        cv2.setNumThreads(int(os.environ.get("CV_THREADS", "4")))
+        print(f"[CPU] OpenCV threads: {cv2.getNumThreads()}")
         names = names if isinstance(names, dict) else dict(enumerate(names))
         want = os.environ.get("TARGET_CLASS")
         if want is not None and want != "":
@@ -658,15 +662,15 @@ class DroneTracker:
             return (0, 0, self.full_w, self.full_h)
         if self.sky_mask is None:
             return None
-        ys, xs = np.where(self.sky_mask > 0)
-        if xs.size == 0:
+        x, y, w, h = cv2.boundingRect(self.sky_mask)
+        if w == 0 or h == 0:
             return None
         sx = self.full_w / self.fw
         sy = self.full_h / self.fh
-        x1 = int(xs.min() * sx) - self.CROP_PAD
-        x2 = int(xs.max() * sx) + self.CROP_PAD
-        y1 = int(ys.min() * sy) - self.CROP_PAD
-        y2 = int(ys.max() * sy) + self.CROP_PAD
+        x1 = int(x * sx) - self.CROP_PAD
+        x2 = int((x + w - 1) * sx) + self.CROP_PAD
+        y1 = int(y * sy) - self.CROP_PAD
+        y2 = int((y + h - 1) * sy) + self.CROP_PAD
         return (x1, y1, x2, y2)
 
 

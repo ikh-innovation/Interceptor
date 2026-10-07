@@ -21,9 +21,12 @@ def observe(g, x=0, y=0, att=None, t=100.0, camera_roll=0):
     return c
 
 
-def project(world, att):
+def project(world, att, camera_roll=0):
     x, y, z = rotate(rotation(att), world, inverse=True)
-    return y/-z/TH*320, x/-z/TV*240
+    right, down = y/-z, x/-z
+    angle = math.radians(camera_roll)
+    return ((right*math.cos(angle)+down*math.sin(angle))/TH*320,
+            (-right*math.sin(angle)+down*math.cos(angle))/TV*240)
 
 
 def backend():
@@ -63,15 +66,18 @@ class GuidanceTests(unittest.TestCase):
                         self.assertAlmostEqual(p, 0)
 
     def test_ego_rotation_is_not_target_velocity(self):
-        g = WaspGuidance()
         world = unit((0.15, 0.1, -1))
-        for i in range(15):
-            att = dict(roll=i*.01, pitch=-i*.009, yaw=i*.02)
-            x, y = project(world, att)
-            c = observe(g, x, y, att, 100+i*.02)
-            for a, b in zip(c["bearing"], world):
-                self.assertAlmostEqual(a, b, places=10)
-            self.assertLess(math.sqrt(sum(v*v for v in c["bearing_rate"])), 1e-10)
+        for camera_roll in (0, 90, 180, 270):
+            g = WaspGuidance()
+            # Changing motion on all three axes, with a rigid mounted camera.
+            for i in range(60):
+                att = dict(roll=.15*math.sin(i*.13), pitch=.12*math.cos(i*.09),
+                           yaw=.6*math.sin(i*.07))
+                x, y = project(world, att, camera_roll)
+                c = observe(g, x, y, att, 100+i*.02, camera_roll)
+                for a, b in zip(c["bearing"], world):
+                    self.assertAlmostEqual(a, b, places=10)
+                self.assertLess(math.sqrt(sum(v*v for v in c["bearing_rate"])), 1e-10)
 
     def test_capture_latency_reprojects_into_current_body(self):
         c = observe(WaspGuidance())
@@ -115,7 +121,8 @@ class GuidanceTests(unittest.TestCase):
             target = rotate(start, unit((.13, .12, -1)))
             mat = start
             g = WaspGuidance()
-            for i in range(100):
+            # The gentler default gain of 2 gets two simulated seconds to settle.
+            for i in range(200):
                 att = {"rotation": mat}
                 x, y = project(target, att)
                 c = observe(g, x, y, att, 100+i*.01)
@@ -243,13 +250,26 @@ class LifecycleTests(unittest.TestCase):
         self.mapper.armed = False
         self.assertTrue(self.m.set_wasp_param("throttle", .75))
         self.assertTrue(self.m.set_wasp_param("duration", 1))
-        self.assertEqual(self.m.wasp.params["duration"], 2)
+        self.assertEqual(self.m.wasp.params["duration"], 10)
         self.assertEqual(self.m.set_wasp_param("straight", 0), "")
         self.assertEqual(self.m.set_wasp_param("duration", 1), "")
         self.assertTrue(self.m.set_wasp_param("blend", 1))
         self.assertEqual(self.m.set_wasp_param("duration", 5), "")
         self.assertEqual(self.m.set_wasp_param("straight", 2), "")
         self.assertEqual(self.m.set_wasp_param("blend", 1), "")
+
+    def test_45_degree_choice_limits_combined_steering(self):
+        self.mapper.armed = False
+        self.assertEqual(self.m.set_wasp_param("rate", 45), "")
+        self.mapper.armed = True
+        self.mapper.wasp_pwm = lambda rates, throttle: rates
+        self.launch()
+        for i in range(1, 201):
+            now = 100+i*.01
+            self.ctx.update(ai_cmd=observe(WaspGuidance(), x=1000, y=700, t=now), det_t=now)
+            rates = self.m.cycle(now, self.ctx)
+            self.assertLessEqual(math.hypot(*rates[:2]), math.radians(45)+1e-10)
+        self.assertAlmostEqual(math.hypot(*rates[:2]), math.radians(45))
 
     def test_every_timing_choice_and_zero_delay(self):
         self.mapper.wasp_pwm = lambda rates, throttle: rates
@@ -325,8 +345,12 @@ class LifecycleTests(unittest.TestCase):
 
     def test_timeout_releases_with_live_detection(self):
         self.launch()
-        self.ctx.update(ai_cmd=observe(WaspGuidance(), t=102), det_t=102)
-        self.assertEqual(self.m.cycle(102, self.ctx), {})
+        for now in (100.5, 101.25, 101.75, 102, 105, 109.99):
+            self.ctx.update(ai_cmd=observe(WaspGuidance(), t=now), det_t=now)
+            self.assertTrue(self.m.cycle(now, self.ctx))
+            self.assertEqual(self.m.phase, "WASP_FLIGHT")
+        self.ctx.update(ai_cmd=observe(WaspGuidance(), t=110), det_t=110)
+        self.assertEqual(self.m.cycle(110, self.ctx), {})
         self.assertIn("time limit", self.m.event)
 
     def test_launch_requires_target_and_confirmation(self):

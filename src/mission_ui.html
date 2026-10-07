@@ -25,9 +25,6 @@
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;
     user-select:none;-webkit-touch-callout:none}
   [hidden]{display:none!important}
-  #modechooser{overflow-y:auto}
-  #modechooser button:disabled{opacity:.4}
-  #modechooser small{display:block;margin-top:8px;font-size:12px;font-weight:400;letter-spacing:0}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);overflow:hidden;
     font:15px/1.3 var(--sans)}
   .app{height:100%;display:flex;flex-direction:column;gap:8px;
@@ -169,7 +166,48 @@
   .seg button.isdef::after{content:"DEFAULT";display:block;font:normal 9.5px/1 var(--sans);letter-spacing:.08em;
                             color:var(--faint);margin-top:5px}
   .seg button.on.isdef::after{color:var(--acc-ink)}
-  #sh_speed, #defask{--acc:#1f3b63;--acc-ink:#ffffff}
+  #sh_speed, #modechange{--acc:#1f3b63;--acc-ink:#ffffff}
+  #sh_speed .param-block{margin:0 0 14px;padding:16px;background:var(--bg2);border:1px solid var(--line);border-radius:16px}
+  #sh_speed .param-title{display:flex;align-items:center;gap:9px;margin:0 0 16px;font:700 15px/1.2 var(--sans);letter-spacing:.02em}
+  #sh_speed .param-title .num{display:flex;align-items:center;justify-content:center;width:25px;height:25px;border-radius:8px;background:var(--acc);color:#fff;font:700 12px/1 var(--mono)}
+  #sh_speed .param-title .tag{margin-left:auto}
+  #sh_speed .seg{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px}
+  #sh_speed .seg button{min-width:0;min-height:44px;padding:12px 3px;font-size:13px;letter-spacing:0;white-space:nowrap}
+  #sh_speed .seg button i{font-size:10px;letter-spacing:-.2px}
+  #sh_speed .seg button.isdef::after{display:none}
+  #sh_speed .grp{margin:0 0 16px;min-width:0}
+  #sh_speed .grp:last-child{margin-bottom:0}
+  #sh_speed .lbl{font:500 13px/1.25 var(--sans);letter-spacing:0;color:var(--dim)}
+  #sh_speed .gh{margin-bottom:7px;min-height:24px}
+  #sh_speed .gh .lbl{font-weight:500}
+  #sh_speed .detection-row{display:grid;grid-template-columns:96px minmax(0,1fr);align-items:center;gap:12px;margin-bottom:12px}
+  #sh_speed .detection-row:last-child{margin-bottom:0}
+  #sh_speed .detection-label{display:flex;align-items:center;justify-content:space-between;gap:4px;min-width:0}
+  #sh_speed .detection-label .lbl{margin:0}
+  #sh_speed .parameter-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+  #sh_speed .parameter-grid > .grp{margin:0}
+  #sh_speed .flight-tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:16px;padding:4px;background:var(--bg3);border-radius:12px}
+  #sh_speed .flight-tabs button{min-height:40px;border:0;border-radius:9px;background:none;color:var(--dim);font:700 13px/1 var(--sans)}
+  #sh_speed .flight-tabs button[aria-expanded="true"]{background:var(--acc);color:#fff}
+  #sh_speed .ppane{padding:0}
+  #sh_speed .pcard{padding:12px;margin-bottom:12px;background:var(--bg3);border-radius:12px}
+  #sh_speed .pcard:last-child{margin-bottom:0}
+  #sh_speed .pcard > .sec{font:700 11px/1 var(--sans);letter-spacing:.07em;margin-bottom:14px}
+  #sh_speed .unsaved{width:26px;height:24px;padding:0;border:0;border-radius:6px;background:var(--bg3);color:var(--acc);font:700 15px/1 var(--sans)}
+  #sh_speed .unsaved.on{display:inline-flex;align-items:center;justify-content:center}
+  #sh_speed .reset{margin:12px 0 0;min-height:40px;padding:10px;font-size:12px;letter-spacing:0}
+  #sh_speed .mode-seg button{min-height:64px;font-size:14px}
+  #sh_speed .mode-seg button i{font:700 10px/1 var(--sans);letter-spacing:.08em;margin-top:8px}
+  #sh_speed .mount-chip{display:block;margin:10px 0 0 auto;padding:5px 8px;border:0;border-radius:7px;background:var(--bg3);color:var(--dim);font:500 11px/1 var(--sans)}
+  #sh_speed .mount-chip.warn{color:#8a5900;background:#fff6dc}
+  #waspfcstatus{margin:0 0 14px;color:var(--bad);font:500 12px/1.3 var(--sans)}
+  #modechange{z-index:110}
+  #modechange .q{letter-spacing:.04em}
+  #modechange button{font-size:14px;letter-spacing:0}
+  #modechange button:disabled{opacity:.4}
+  #mode_note:empty{display:none}
+  @media(min-width:620px){#sh_speed .parameter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media(max-width:360px){#sh_speed.sheet{padding-left:12px;padding-right:12px}#sh_speed .param-block{padding:12px}#sh_speed .seg button{font-size:12px}#sh_speed .detection-row{grid-template-columns:82px minmax(0,1fr);gap:8px}}
   .acc{margin:0 0 10px}
   .acch{position:relative;display:flex;align-items:center;gap:12px;width:100%;min-width:0;padding:14px 12px;border-radius:16px;
         border:1px solid #cdd3da;background:#e2e6eb;color:var(--ink);text-align:left;box-shadow:0 1px 2px rgba(16,19,23,.06)}
@@ -300,7 +338,7 @@
     .toast{left:50%;right:auto;transform:translateX(-50%);max-width:42%;bottom:calc(var(--K) * .4)}
   }
 </style></head>
-<body><div class="app" inert>
+<body><div class="app">
 
   <div class="top">
     <button class="burger" id="t_menu" aria-label="menu"><i></i><i></i><i></i></button>
@@ -355,133 +393,83 @@
 <div class="sheet" id="sh_menu">
   <h3><span>MENU</span><button data-close aria-label="close">&#x2715;</button></h3>
   <div class="body">
-    <button class="row" id="t_mode"><div>FLIGHT MODE<small id="mode_summary">Choose Normal or Wasp</small></div><span>›</span></button>
-    <button class="row" id="t_par"><div>PARAMETERS<small>SEMI-AUTO, AUTO, WASP and detection</small></div><span>›</span></button>
-    <button class="row" id="t_log"><div>MESSAGES<small>What the Jetson reports</small></div><span>›</span></button>
+    <button class="row" id="t_par"><div>PARAMETERS</div><span>›</span></button>
+    <button class="row" id="t_log"><div>MESSAGES</div><span>›</span></button>
     <div class="byline"><img src="/img/ikd-logo.svg" alt="IKnowHow Defence"><span>WASP INTERCEPTOR</span></div>
   </div>
 </div>
 <div class="sheet sub" id="sh_speed">
-  <h3><span>PARAMETERS<small>APPLIED AT ONCE</small></span><button data-close aria-label="close">&#x2715;</button></h3>
+  <h3><span>PARAMETERS</span><button data-close aria-label="close">&#x2715;</button></h3>
   <div class="body">
-    <div class="pcard">
-          <div class="grp"><div class="lbl">PHYSICAL CAMERA MOUNT</div>
-            <div class="help">WASP: fix the camera at 90°, looking along upward propeller thrust. AUTO / SEMI-AUTO: physically restore 30°. These buttons confirm a manual change; they do not move the camera.</div>
-            <div class="seg"><button data-mount="90" data-only="wasp">CONFIRM 90°<i>WASP · fixed upward</i></button><button data-mount="30" data-only="normal">CONFIRM 30°<i>AUTO / SEMI-AUTO</i></button></div>
-            <div class="help" id="mountstatus">Mount not confirmed</div>
+    <section class="param-block" id="flight_mode_params" aria-labelledby="flight_mode_title">
+      <h4 class="param-title" id="flight_mode_title"><span class="num">1</span>Flight mode</h4>
+      <div class="seg mode-seg" id="flightmodes">
+        <button data-flightmode="normal" aria-pressed="false" disabled>Normal drone<i>OFF</i></button>
+        <button data-flightmode="wasp" aria-pressed="false" disabled>Wasp drone<i>OFF</i></button>
+      </div>
+      <button class="mount-chip" id="mountstatus" disabled aria-label="Confirm camera angle">--°</button>
+    </section>
+    <section class="param-block" id="detection_params" aria-labelledby="detection_title">
+      <h4 class="param-title" id="detection_title"><span class="num">2</span>Detection</h4>
+      <div class="detection-row"><div class="detection-label"><div class="lbl">Sky gate</div></div><div class="seg" id="skyseg">
+        <button data-sky="on">ON</button><button data-sky="off">OFF</button>
+      </div></div>
+      <div class="detection-row"><div class="detection-label"><div class="lbl">Follower</div><button class="unsaved" data-save="det:follow" aria-label="Save follower default" title="Save default">↧</button></div><div class="seg" id="folseg">
+        <button data-fol="on">ON</button><button data-fol="off">OFF</button>
+      </div></div>
+      <div class="detection-row"><div class="detection-label"><div class="lbl">Camera</div><button class="unsaved" data-save="det:cam" aria-label="Save camera default" title="Save default">↧</button></div><div class="seg" id="camseg">
+        <button data-cam="30">30 FPS</button><button data-cam="60">60 FPS</button>
+      </div></div>
+    </section>
+    <section class="param-block" id="flight_params" aria-labelledby="flight_params_title">
+      <h4 class="param-title" id="flight_params_title"><span class="num">3</span>Flight parameters<span class="tag" id="flight_mode_tag">NORMAL</span></h4>
+      <div id="normal_params" data-only="normal">
+        <div class="flight-tabs" role="group" aria-label="Normal flight parameters">
+          <button id="ptab_semi" data-acc="semi" aria-expanded="true" aria-controls="pp_semi">Manual</button>
+          <button id="ptab_auto" data-acc="auto" aria-expanded="false" aria-controls="pp_auto">Auto <span id="autotag">OFF</span></button>
+        </div>
+        <div class="ppane on" id="pp_semi" role="region" aria-labelledby="ptab_semi">
+          <div class="parameter-grid">
+            <div class="grp"><div class="gh"><div class="lbl">Climb / descent</div><button class="unsaved" data-save="lvl:vert" aria-label="Save climb and descent default" title="Save default">↧</button></div><div class="seg" data-g="vert"></div></div>
+            <div class="grp"><div class="gh"><div class="lbl">Turn speed</div><button class="unsaved" data-save="lvl:yaw" aria-label="Save turn speed default" title="Save default">↧</button></div><div class="seg" data-g="yaw"></div></div>
+            <div class="grp"><div class="gh"><div class="lbl">Forward lean</div><button class="unsaved" data-save="lvl:push" aria-label="Save forward lean default" title="Save default">↧</button></div><div class="seg" data-g="push"></div></div>
+            <div class="grp"><div class="gh"><div class="lbl">AI speed</div><button class="unsaved" data-save="lvl:ai" aria-label="Save AI speed default" title="Save default">↧</button></div><div class="seg" data-g="ai"></div></div>
+            <div class="grp"><div class="gh"><div class="lbl">Search time</div><button class="unsaved" data-save="lvl:search" aria-label="Save search time default" title="Save default">↧</button></div><div class="seg" data-g="search"></div></div>
           </div>
-    </div>
-    <section class="acc" data-only="wasp">
-      <button class="acch" id="ptab_wasp" data-acc="wasp" aria-expanded="false" aria-controls="pp_wasp">
-        <span class="pt-ico">W</span><span class="pt-txt"><b>WASP</b><small>platform launch · fixed upward camera</small></span>
-        <span class="tag" id="wasptag">OFF</span><span class="chev" aria-hidden="true">›</span></button>
-      <div class="ppane" id="pp_wasp" role="region" aria-labelledby="ptab_wasp">
-        <div class="pcard"><div class="sec">WASP MODE</div>
-          <div class="help">Set up while disarmed. Selecting WASP turns AUTO off. Aim the platform yourself, then arm in ACRO and press LAUNCH WASP. Phone movement buttons are disabled in WASP.</div>
-          <div class="help" id="waspfcstatus">Checking the flight controller…</div>
-          <div class="grp"><div class="lbl">LAUNCH THROTTLE</div><div class="seg" data-wp="throttle" data-values="0.25,0.5,1" data-labels="25%,50%,100%"></div></div>
-          <div class="grp"><div class="lbl">MAXIMUM FLIGHT TIME</div><div class="seg" data-wp="duration" data-values="1,2,3,5" data-labels="1 s,2 s,3 s,5 s"></div></div>
-          <div class="grp"><div class="lbl">STRAIGHT LAUNCH</div><div class="seg" data-wp="straight" data-values="0,0.5,1,2" data-labels="Off,0.5 s,1 s,2 s"></div></div>
-          <div class="grp"><div class="lbl">STEERING BLEND TIME</div><div class="seg" data-wp="blend" data-values="0.25,0.5,1" data-labels="0.25 s,0.5 s,1 s"></div></div>
-          <div class="help">Launch throttle starts immediately. Straight launch requests zero turn rate, then steering gradually follows the live target. It does not guarantee a straight ground path. Maximum flight time includes both stages and must exceed their sum; increase it first for longer settings. Fresh detection is required throughout.</div>
-          <div class="help">Ground rejection (sky gate) and Follower are available below in DETECTION for both Normal and Wasp.</div>
-          <div class="grp"><div class="lbl">MAXIMUM STEERING RATE</div><div class="seg" data-wp="rate" data-values="30,60,90" data-labels="30°/s,60°/s,90°/s"></div></div>
-          <div class="grp"><div class="lbl">STEERING GAIN</div><div class="seg" data-wp="gain" data-values="2,4,6" data-labels="2,4,6"></div></div>
-          <div class="grp"><div class="lbl">TARGET MOTION LEAD</div><div class="seg" data-wp="lead" data-values="0,0.08,0.15" data-labels="0 ms,80 ms,150 ms"></div></div>
-          <div class="grp"><div class="lbl">CAMERA IMAGE ROTATION</div><div class="help">At 0°, image right is drone right and image bottom points toward its nose. Verify roll and pitch directions with props removed.</div><div class="seg" data-wp="camera_roll" data-values="0,90,180,270" data-labels="0°,90°,180°,270°"></div></div>
-          <div class="help">Target loss, stale attitude, timeout or ABORT releases every channel to the pilot. This is not an automatic hover or landing. Disarm before another attempt. Settings apply to this session only.</div>
+        </div>
+        <div class="ppane" id="pp_auto" role="region" aria-labelledby="ptab_auto">
+          <div class="grp"><div class="lbl">Auto</div><div class="seg" id="autoseg"><button data-autoen="on">ON</button><button data-autoen="off">OFF</button></div></div>
+          <div id="autoparams"></div>
+          <button class="reset" id="autoreset">Reset Auto</button>
+        </div>
+      </div>
+      <div id="pp_wasp" data-only="wasp">
+        <div id="waspfcstatus" role="status" hidden></div>
+        <div class="parameter-grid">
+          <div class="grp"><div class="lbl">Launch throttle</div><div class="seg" data-wp="throttle" data-values="0.25,0.5,1" data-labels="25%,50%,100%"></div></div>
+          <div class="grp"><div class="lbl">Flight time</div><div class="seg" data-wp="duration" data-values="1,2,3,5,10" data-labels="1 s,2 s,3 s,5 s,10 s"></div></div>
+          <div class="grp"><div class="lbl">Straight launch</div><div class="seg" data-wp="straight" data-values="0,0.5,1,2" data-labels="OFF,0.5 s,1 s,2 s"></div></div>
+          <div class="grp"><div class="lbl">Steering blend</div><div class="seg" data-wp="blend" data-values="0.25,0.5,1" data-labels="0.25 s,0.5 s,1 s"></div></div>
+          <div class="grp"><div class="lbl">Steering rate</div><div class="seg" data-wp="rate" data-values="30,45,60,90" data-labels="30°/s,45°/s,60°/s,90°/s"></div></div>
+          <div class="grp"><div class="lbl">Steering gain</div><div class="seg" data-wp="gain" data-values="2,4,6" data-labels="2,4,6"></div></div>
+          <div class="grp"><div class="lbl">Target lead</div><div class="seg" data-wp="lead" data-values="0,0.08,0.15" data-labels="0 ms,80 ms,150 ms"></div></div>
+          <div class="grp"><div class="lbl">Camera alignment</div><div class="seg" data-wp="camera_roll" data-values="0,90,180,270" data-labels="0°,90°,180°,270°"></div></div>
         </div>
       </div>
     </section>
-    <section class="acc" data-only="normal">
-      <button class="acch" id="ptab_auto" data-acc="auto" aria-expanded="false" aria-controls="pp_auto">
-        <span class="pt-ico">A</span>
-        <span class="pt-txt"><b>AUTO</b><small id="sum_auto">one button: find and go</small></span>
-        <span class="tag" id="autotag">OFF</span><span class="chev" aria-hidden="true">›</span></button>
-      <div class="ppane" id="pp_auto" role="region" aria-labelledby="ptab_auto">
-      <div class="pcard"><div class="sec">AUTO BUTTON</div>
-        <div class="grp"><div class="gh"><div class="lbl">AUTO</div><span class="fixed">OFF AT EVERY POWER-UP</span></div>
-          <div class="help">OFF = the AUTO button above LOCK is greyed out · never saved as a default, on purpose</div><div class="seg" id="autoseg">
-          <button data-autoen="on">ON<i>usable</i></button><button data-autoen="off">OFF<i>greyed out</i></button></div></div>
-      </div>
-      <div id="autoparams"></div>
-      <button class="reset" id="autoreset">RESET AUTO TO FACTORY SETTINGS</button>
-      <div class="phint">AUTO settings cannot be changed while AUTO is flying.</div>
-    
-      </div>
-    </section>
-    <section class="acc" data-only="normal">
-      <button class="acch" id="ptab_semi" data-acc="semi" aria-expanded="false" aria-controls="pp_semi">
-        <span class="pt-ico"><svg viewBox="0 0 24 24"><path d="M12 4v16M4 12h16M8 8l4-4 4 4M8 16l4 4 4-4"/></svg></span>
-        <span class="pt-txt"><b>SEMI-AUTO</b><small id="sum_semi">you fly, then ENGAGE</small></span>
-        <span class="chev" aria-hidden="true">›</span></button>
-      <div class="ppane" id="pp_semi" role="region" aria-labelledby="ptab_semi">
-      <div class="pcard"><div class="sec">FLIGHT · THE ▲▼ ⟲⟳ PAD</div>
-        <div class="grp"><div class="gh"><div class="lbl">▲▼ HEIGHT SPEED</div><button class="unsaved" data-save="lvl:vert">THIS FLIGHT ONLY · SAVE</button></div>
-          <div class="help">climb / descent while ▲ ▼ is held</div><div class="seg" data-g="vert"></div></div>
-        <div class="grp"><div class="gh"><div class="lbl">⟲⟳ TURN SPEED</div><button class="unsaved" data-save="lvl:yaw">THIS FLIGHT ONLY · SAVE</button></div>
-          <div class="help">turn rate while held · the size of one tap</div><div class="seg" data-g="yaw"></div></div>
-      </div>
-      <div class="pcard"><div class="sec">ENGAGE · PUSH, THEN THE AI</div>
-        <div class="grp"><div class="gh"><div class="lbl">PUSH · FORWARD LEAN</div><button class="unsaved" data-save="lvl:push">THIS FLIGHT ONLY · SAVE</button></div>
-          <div class="help">the straight line after ENGAGE · less lean leaves the AI more to see</div><div class="seg" data-g="push"></div></div>
-        <div class="grp"><div class="gh"><div class="lbl">AI · APPROACH SPEED</div><button class="unsaved" data-save="lvl:ai">THIS FLIGHT ONLY · SAVE</button></div>
-          <div class="help">how fast the AI flies at it · MAX is the fastest</div><div class="seg" data-g="ai"></div></div>
-        <div class="grp"><div class="gh"><div class="lbl">SEARCH</div><button class="unsaved" data-save="lvl:search">THIS FLIGHT ONLY · SAVE</button></div>
-          <div class="help">after ENGAGE, how long PUSH looks for a target before the soft stop</div><div class="seg" data-g="search"></div></div>
-        <div class="phint">Sim, 960 runs each: <b>PUSH 20° + AI MEDIUM</b> hit most (77%). <b>AI MAX</b> is fastest and best against a drone coming straight at you.</div>
-      </div>
-    
-      </div>
-    </section>
-    <section class="acc">
-      <button class="acch" id="ptab_det" data-acc="det" aria-expanded="false" aria-controls="pp_det">
-        <span class="pt-ico"><svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
-        <span class="pt-txt"><b>DETECTION</b><small id="sum_det">ground rejection, follower, camera</small></span>
-        <span class="chev" aria-hidden="true">›</span></button>
-      <div class="ppane" id="pp_det" role="region" aria-labelledby="ptab_det">
-      <div class="pcard"><div class="sec">BOTH MODES · WHAT COUNTS AS A TARGET</div>
-        <div class="grp"><div class="gh"><div class="lbl">GROUND REJECTION · SKY GATE</div><span class="fixed">ON AT EVERY POWER-UP</span></div>
-          <div class="help">ignore detections over the ground · never saved as a default, on purpose</div><div class="seg" id="skyseg">
-          <button data-sky="on">ON<i>sky only</i></button><button data-sky="off">OFF<i>whole frame</i></button></div></div>
-        <div class="grp"><div class="gh"><div class="lbl">FOLLOWER</div><button class="unsaved" data-save="det:follow">THIS FLIGHT ONLY · SAVE</button></div>
-          <div class="help">hold the target between detections</div><div class="seg" id="folseg">
-          <button data-fol="on">ON<i>detector + follower</i></button><button data-fol="off">OFF<i>detector only</i></button></div></div>
-        <div class="help" data-only="wasp">Follower helps retain the target between detections. Wasp still requires a fresh detector confirmation within 0.25 s; follower alone cannot keep the launch running.</div>
-      </div>
-      <div class="pcard"><div class="sec">CAMERA · FULL VIEW OR FRESHER FRAMES</div>
-        <div class="grp"><div class="gh"><div class="lbl">CAMERA</div><button class="unsaved" data-save="det:cam">THIS FLIGHT ONLY · SAVE</button></div>
-          <div class="help">60 fps: each frame up to 17 ms fresher, but only the centre of the picture · the AI
-            flies the same either way · not while ENGAGE or AUTO flies (dark a moment while it switches)</div><div class="seg" id="camseg">
-          <button data-cam="30">30 FPS<i>full view 62°×49°</i></button><button data-cam="60">60 FPS<i>narrow 50°×30°</i></button></div></div>
-        <div class="phint" data-only="normal">At <b>60 fps</b> the picture is ±15° high, not ±24°: past ~25° of lean (PUSH / the straight line at
-          30° or 40°) a lined-up drone leaves the top of the picture. Use <b>PUSH 20°</b> and <b>line 20°</b> with it.</div>
-      </div>
-      </div>
-    </section>
-    <div class="phint"><b>DEFAULT</b> marks what the Jetson starts with after a power-up. After every change it asks whether
-      to make the new value the default; say no and it lasts until the next reboot.</div>
   </div>
 </div>
 <div class="sheet sub" id="sh_log">
   <h3><span>MESSAGES<small>FROM THE JETSON</small></span><button data-close aria-label="close">&#x2715;</button></h3>
   <div class="body" id="logbody"><div class="log" id="log"></div></div>
 </div>
-<div class="ask on" id="modechooser" role="dialog" aria-modal="true" aria-labelledby="mode_title" style="z-index:110"><div>
-  <div class="q" id="mode_title">CHOOSE FLIGHT MODE</div>
-  <p class="sub">Choose each time you open or refresh the app.</p>
-  <button class="yes" id="choose_normal" disabled>NORMAL · AUTO / SEMI-AUTO<br><small>Camera at 30°</small></button>
-  <button class="yes" id="choose_wasp" disabled>WASP · PLATFORM LAUNCH<br><small>Camera fixed at 90°</small></button>
-  <p class="sub" id="mode_note">Connecting to the Jetson…</p>
-  <button class="no" id="choose_abort" style="display:none">ABORT ACTIVE FLIGHT</button>
-</div></div>
-<div class="ask defask" id="defask" role="dialog" aria-modal="true" aria-labelledby="defk"><div>
-  <div class="q">MAKE IT THE DEFAULT?</div>
-  <div class="dk" id="defk">--</div>
-  <div class="deg" id="defv">--</div>
-  <div class="sub" id="defsub"></div>
-  <button class="yes" id="def_yes">YES, MAKE IT THE DEFAULT</button>
-  <button class="no" id="def_no">ONLY THIS FLIGHT</button>
+<div class="ask" id="modechange" role="dialog" aria-modal="true" aria-labelledby="mode_title"><div>
+  <div class="q" id="mode_title">CAMERA ANGLE</div>
+  <div class="deg" id="mode_degrees">90°</div>
+  <div class="sub">Move camera before confirming.</div>
+  <div class="sub" id="mode_note" role="status"></div>
+  <button class="yes" id="mode_confirm">Confirm</button>
+  <button class="no" id="mode_cancel">Cancel</button>
 </div></div>
 <div class="ask" id="ask"><div>
   <div class="q">LOCK AT</div>
@@ -504,32 +492,61 @@
 
   var C = rid();
   var VIEW = false;
-  var MODE_READY = false, UI_MODE = null, choosing = false;
+  var MODE_READY = false, UI_MODE = null, choosing = false, pendingMode = null;
 
-  function showModeChooser() {
-    MODE_READY = false;
+  function askMode(mode) {
+    if (!LAST || LAST.armed || choosing || VIEW || LAST.control === "other") return;
+    releaseAll();
+    pendingMode = mode;
+    T("mode_degrees", mode === "wasp" ? "90°" : "30°");
+    T("mode_note", "");
+    $("modechange").classList.add("on");
     document.querySelector(".app").inert = true;
-    document.querySelectorAll(".sheet").forEach(function (x) { x.classList.remove("open"); });
-    $("modechooser").classList.add("on");
-    if (LAST) paint(LAST);
+    $("sh_speed").inert = true;
+    $("mode_confirm").focus();
   }
-  function chooseMode(mode) {
+  function closeMode() {
     if (choosing) return;
-    choosing = true;
-    cmd("flightmode=" + mode).then(function (j) {
-      choosing = false;
-      if (!j || j.refused) { T("mode_note", j && j.refused ? j.refused : "Could not select mode. Check the connection."); return; }
-      UI_MODE = mode; MODE_READY = true;
-      document.querySelector(".app").inert = false;
-      $("modechooser").classList.remove("on");
-      paint(j);
-      if (!j.armed) { openAcc(mode === "wasp" ? "wasp" : "semi"); openSheet("sh_speed"); }
-    });
+    pendingMode = null;
+    $("modechange").classList.remove("on");
+    document.querySelector(".app").inert = false;
+    $("sh_speed").inert = false;
+    var button = document.querySelector('[data-flightmode="' + UI_MODE + '"]');
+    if (button) button.focus();
   }
-  $("choose_normal").onclick = function () { chooseMode("normal"); };
-  $("choose_wasp").onclick = function () { chooseMode("wasp"); };
-  $("choose_abort").onclick = function () { cmd("abort=1"); };
-  $("t_mode").onclick = function () { releaseAll(); showModeChooser(); };
+  document.querySelectorAll("[data-flightmode]").forEach(function (b) {
+    b.onclick = function () {
+      var mode = b.getAttribute("data-flightmode"), m = (LAST && LAST.mission) || {};
+      if (mode === UI_MODE && Number(m.camera_mount_deg) === (mode === "wasp" ? 90 : 30)
+          && (mode !== "wasp" || m.wasp_camera_confirmed)) return;
+      askMode(mode);
+    };
+  });
+  $("mountstatus").onclick = function () { askMode(UI_MODE); };
+  $("mode_cancel").onclick = closeMode;
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && pendingMode) closeMode();
+  });
+  $("mode_confirm").onclick = function () {
+    if (!pendingMode || choosing || !LAST || LAST.armed) return;
+    var mode = pendingMode;
+    choosing = true;
+    paint(LAST);
+    cmd("flightmode=" + mode).then(function (j) {
+      if (!j || j.refused) return j;
+      return cmd("mount=" + (mode === "wasp" ? 90 : 30));
+    }).then(function (j) {
+      choosing = false;
+      if (!j || j.refused) {
+        T("mode_note", j && j.refused ? j.refused : "Connection lost. Try again.");
+        if (LAST) paint(LAST);
+        return;
+      }
+      closeMode();
+      if (mode === "normal") openAcc("semi");
+      paint(j);
+    });
+  };
 
   var HFOV = 62.2, VFOV = 48.8, TILT = 30, CAMAR = 4 / 3;
   var LEVELS = ["SLOW", "MEDIUM", "FAST"];
@@ -704,21 +721,21 @@
   });
 
   var AUTO_UI = [
-    {sec: "LEG 1 · CLIMB AND WATCH"},
+    {sec: "CLIMB"},
     {k: "height", t: "HEIGHT", h: "climbs straight up to this, then holds and watches", c: [5, 10, 15, 20], d: 15, f: function (v) { return v + " m"; }},
     {k: "climb", t: "CLIMB SPEED", h: "how fast it goes up", c: [2, 3, 5], d: 3, f: function (v) { return v + " m/s"; }},
-    {sec: "LINING UP · AFTER THE FIRST DETECTION"},
+    {sec: "ALIGN"},
     {k: "turn", t: "TURN SPEED", h: "the fastest it turns to centre the drone", c: [20, 30, 45], d: 30, f: function (v) { return v + "°/s"; }},
-    {k: "adjust", t: "HEIGHT ADJUST", h: "the fastest it climbs to put the drone on the aim line", c: [3, 5, 8], d: 5, f: function (v) { return v + " m/s"; }},
-    {k: "window", t: "READY WINDOW", h: "how close to the aim mark counts as lined up", c: [3, 5, 8], d: 5, f: function (v) { return "±" + v + "°"; }},
-    {k: "ready", t: "HOLD, THEN GO", h: "lined up this long, then it goes", c: [0.25, 0.5, 1], d: 0.25, f: function (v) { return v + " s"; }},
-    {k: "giveup", t: "GO ANYWAY AFTER", h: "not lined up by then, but near the nose: it goes", c: [1, 2, 3, 5], d: 2, f: function (v) { return v + " s"; }},
-    {k: "closing", t: "GO AT ONCE IF CLOSING", h: "a drone this close in time goes at once, lined up or not", c: [0, 2, 3, 4], d: 3, f: function (v) { return v ? "< " + v + " s" : "OFF"; }},
-    {k: "floor", t: "LOWEST", h: "lining up never descends below this", c: [2, 3, 5], d: 3, f: function (v) { return v + " m"; }},
-    {sec: "LEG 2 · THE RUN"},
-    {k: "line", t: "STRAIGHT-LINE LEAN", h: "nose-down lean of the straight line · more = faster", c: [0, 20, 30, 40], d: 30, f: function (v) { return v ? v + "°" : "= PUSH"; }},
+    {k: "adjust", t: "Height adjustment", h: "the fastest it climbs to put the drone on the aim line", c: [3, 5, 8], d: 5, f: function (v) { return v + " m/s"; }},
+    {k: "window", t: "Aim window", h: "how close to the aim mark counts as lined up", c: [3, 5, 8], d: 5, f: function (v) { return "±" + v + "°"; }},
+    {k: "ready", t: "Aim hold", h: "lined up this long, then it goes", c: [0.25, 0.5, 1], d: 0.25, f: function (v) { return v + " s"; }},
+    {k: "giveup", t: "Align timeout", h: "not lined up by then, but near the nose: it goes", c: [1, 2, 3, 5], d: 2, f: function (v) { return v + " s"; }},
+    {k: "closing", t: "Closing threshold", h: "a drone this close in time goes at once, lined up or not", c: [0, 2, 3, 4], d: 3, f: function (v) { return v ? "< " + v + " s" : "OFF"; }},
+    {k: "floor", t: "Minimum height", h: "lining up never descends below this", c: [2, 3, 5], d: 3, f: function (v) { return v + " m"; }},
+    {sec: "RUN"},
+    {k: "line", t: "Forward lean", h: "nose-down lean of the straight line · more = faster", c: [0, 20, 30, 40], d: 30, f: function (v) { return v ? v + "°" : "= PUSH"; }},
     {k: "ai", t: "AI SPEED", h: "the AI level the run hands over to · MAX ≈ 21 m/s, the fastest", c: ["SAME", "MEDIUM", "FAST", "MAX"], d: "MAX", f: function (v) { return v === "SAME" ? "= AI" : v; }},
-    {k: "steer", t: "AI STEERS AFTER", h: "the AI's first steering, after the straight line starts", c: [0, 0.3, 0.6], d: 0.6, f: function (v) { return v + " s"; }}
+    {k: "steer", t: "Steering delay", h: "the AI's first steering, after the straight line starts", c: [0, 0.3, 0.6], d: 0.6, f: function (v) { return v + " s"; }}
   ];
   (function buildAuto() {
     var box = $("autoparams"), card = null;
@@ -729,9 +746,9 @@
         card.appendChild(h); box.appendChild(card); return;
       }
       var g = document.createElement("div"); g.className = "grp";
-      g.innerHTML = '<div class="gh"><div class="lbl"></div><button class="unsaved">THIS FLIGHT ONLY · SAVE</button></div>'
-        + '<div class="help"></div><div class="seg"></div>';
-      g.querySelector(".lbl").textContent = p.t; g.querySelector(".help").textContent = p.h;
+      g.innerHTML = '<div class="gh"><div class="lbl"></div><button class="unsaved" title="Save default">↧</button></div><div class="seg"></div>';
+      g.querySelector(".lbl").textContent = p.t;
+      g.querySelector(".unsaved").setAttribute("aria-label", "Save " + p.t.toLowerCase() + " default");
       g.querySelector(".unsaved").setAttribute("data-save", "auto:" + p.k);
       p.c.forEach(function (v) {
         var b = document.createElement("button");
@@ -746,6 +763,7 @@
   $("autoreset").onclick = function () { setThen("autoreset=1", "auto:*", null); };
 
   function openAcc(t) {
+    if (t !== "auto") t = "semi";
     document.querySelectorAll("[data-acc]").forEach(function (b) {
       var k = b.getAttribute("data-acc"), on = k === t;
       b.setAttribute("aria-expanded", String(on));
@@ -756,58 +774,12 @@
   document.querySelectorAll("[data-acc]").forEach(function (b) {
     b.onclick = function () {
       var k = b.getAttribute("data-acc");
-      openAcc(b.getAttribute("aria-expanded") === "true" ? "" : k);
+      openAcc(k);
     };
   });
-  try { var _pa = localStorage.getItem("wasp_pacc"); if (_pa === "semi" || _pa === "auto" || _pa === "det") openAcc(_pa); } catch (e) {}
+  try { var _pa = localStorage.getItem("wasp_pacc"); if (_pa === "semi" || _pa === "auto") openAcc(_pa); } catch (e) {}
 
-  var LV_WORDS = {vert: "▲▼ HEIGHT SPEED", yaw: "⟲⟳ TURN SPEED", push: "PUSH · FORWARD LEAN", ai: "AI · APPROACH SPEED", search: "SEARCH"};
-  function autoUi(k) { for (var i = 0; i < AUTO_UI.length; i++) if (AUTO_UI[i].k === k) return AUTO_UI[i]; return null; }
-  function words(what, v) {
-    var kind = what.split(":")[0], key = what.split(":")[1], m = (LAST && LAST.mission) || {};
-    if (kind === "lvl") {
-      var d = (m.level_defaults || {})[key];
-      var vw = function (L) { return L + (VAL && VAL[key] ? " · " + VAL[key](L) : ""); };
-      return [LV_WORDS[key] || key, vw(v), d === undefined ? null : vw(d), d === undefined ? null : d === v];
-    }
-    if (kind === "auto") {
-      var p = autoUi(key), d2 = (m.auto_defaults || {})[key];
-      return [p ? p.t : key, p ? p.f(v) : String(v), d2 === undefined ? null : (p ? p.f(d2) : String(d2)),
-              d2 === undefined ? null : String(d2) === String(v)];
-    }
-    if (key === "cam") {
-      var cd = LAST ? LAST.cam_default : undefined;
-      return ["CAMERA", v + " FPS", cd === undefined ? null : cd + " FPS", cd === undefined ? null : Number(cd) === Number(v)];
-    }
-    var fd = LAST ? LAST.follower_default : undefined;
-    return ["FOLLOWER", v ? "ON" : "OFF", fd === undefined ? null : (fd ? "ON" : "OFF"), fd === undefined ? null : !!fd === !!v];
-  }
-  var DEFQ = null;
-  function askDefault(what, v) {
-    if (what === "auto:*") {
-      var m = (LAST && LAST.mission) || {}, ad = m.auto_defaults || {}, same = true;
-      AUTO_UI.forEach(function (p) { if (p.k && ad[p.k] !== undefined && String(ad[p.k]) !== String(p.d)) same = false; });
-      if (same) return;
-      T("defk", "EVERY AUTO SETTING"); T("defv", "FACTORY");
-      T("defsub", "The Jetson starts AUTO with the factory settings after every power-up, instead of the ones saved before.");
-    } else {
-      var w = words(what, v);
-      if (w[3]) return;
-      T("defk", w[0]); T("defv", w[1]);
-      T("defsub", "The Jetson starts with it after every power-up." + (w[2] ? " Default now: " + w[2] + "." : ""));
-    }
-    DEFQ = what;
-    $("defask").classList.add("on");
-  }
-  function closeDef() { DEFQ = null; $("defask").classList.remove("on"); }
-  $("def_yes").onclick = function () {
-    var what = DEFQ; closeDef();
-    if (what) cmd("def=" + what);
-  };
-  $("def_no").onclick = closeDef;
-  function setThen(q, what, v) {
-    cmd(q).then(function (j) { if (j && !j.refused) askDefault(what, v); });
-  }
+  function setThen(q) { return cmd(q); }
   document.querySelectorAll("[data-save]").forEach(function (b) {
     b.onclick = function () { cmd("def=" + b.getAttribute("data-save")); };
   });
@@ -871,14 +843,18 @@
     var m = j.mission || {}, ph = m.phase || "PILOT";
     var wasp = !!m.wasp_enabled;
     var currentMode = wasp ? "wasp" : "normal";
-    if (MODE_READY && UI_MODE !== currentMode) {
-      MODE_READY = false; document.querySelector(".app").inert = true; $("modechooser").classList.add("on");
-    }
-    $("choose_normal").disabled = choosing || (!!j.armed && wasp);
-    $("choose_wasp").disabled = choosing || (!!j.armed && !wasp);
-    $("choose_abort").style.display = j.armed ? "" : "none";
-    T("mode_note", j.armed ? "Drone armed: reopen " + (wasp ? "WASP" : "NORMAL") + ". Disarm to change modes." : "Selecting a mode does not arm or launch the drone.");
-    T("mode_summary", wasp ? "WASP · camera 90°" : "NORMAL · AUTO / SEMI-AUTO · camera 30°");
+    MODE_READY = true; UI_MODE = currentMode;
+    document.querySelectorAll("[data-flightmode]").forEach(function (b) {
+      var on = b.getAttribute("data-flightmode") === currentMode;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", String(on));
+      b.querySelector("i").textContent = on ? "ON" : "OFF";
+      b.disabled = choosing || !!j.armed || j.control === "other";
+    });
+    $("mode_confirm").disabled = choosing || !!j.armed || j.control === "other";
+    $("mode_cancel").disabled = choosing;
+    if (pendingMode && j.armed) T("mode_note", "Disarm to change mode.");
+    T("flight_mode_tag", wasp ? "WASP" : "NORMAL");
     document.querySelectorAll("[data-only]").forEach(function (el) { el.hidden = el.getAttribute("data-only") !== currentMode; });
     $("b_auto").style.display = wasp ? "none" : "";
     $("b_wasp_abort").style.display = wasp ? "" : "none";
@@ -983,7 +959,7 @@
                search: function (L) {
                  var D = {20: [19, 42, 69], 30: [28, 61, 97], 40: [39, 80, 125]}[sp.push] || [19, 42, 69];
                  return "~" + D[LEVELS.indexOf(L)] + " m"; },
-               ai: function (L) { return {SLOW: "≈11 m/s ↑8", MEDIUM: "≈15 m/s ↑15", FAST: "≈16 m/s ↑25", MAX: "≈21 m/s ↑25"}[L]; }};
+               ai: function (L) { return {SLOW: "≈11 m/s", MEDIUM: "≈15 m/s", FAST: "≈16 m/s", MAX: "≈21 m/s"}[L]; }};
     VAL = val;
     var ap = m.auto_params || {}, flying = inAuto || autoRun;
     var ad = m.auto_defaults || {}, ld = m.level_defaults || {};
@@ -1003,22 +979,19 @@
         && Number(j.cam_default) !== Number(j.cam_fps);
       x.classList.toggle("on", off);
     });
-    var spx = m.speeds || {};
-    if (lv.vert) T("sum_semi", "▲▼ " + lv.vert + " · PUSH " + spx.push + "° · AI " + lv.ai + " · search " + spx.search + " s");
-    if (ap.height !== undefined) T("sum_auto", "up to " + ap.height + " m · line " + (ap.line ? ap.line + "°" : "= PUSH")
-      + " · AI " + (ap.ai === "SAME" ? "= AI" : ap.ai));
-    T("sum_det", "sky gate " + (j.sky_gate ? "ON" : "OFF") + " · follower " + (j.follower ? "ON" : "OFF")
-      + (j.cam_fps ? " · camera " + j.cam_fps + " fps" : ""));
     var tag = $("autotag"); tag.textContent = m.auto_enabled ? "ON" : "OFF"; tag.className = "tag" + (m.auto_enabled ? " on" : "");
     document.querySelectorAll("[data-autoen]").forEach(function (x) {
       x.classList.toggle("on", m.auto_enabled !== undefined && (x.getAttribute("data-autoen") === "on") === !!m.auto_enabled);
       x.disabled = wasp && x.getAttribute("data-autoen") === "on";
     });
-    T("wasptag", wasp ? "ON" : "OFF"); $("wasptag").classList.toggle("on", wasp);
-    T("waspfcstatus", m.wasp_setup_why ? "FC setup: " + m.wasp_setup_why :
-      m.wasp_attitude_fresh ? "FC configuration checked · attitude fresh · ACRO required for launch" : "Waiting for fresh FC attitude");
-    T("mountstatus", "Declared mount: " + (m.camera_mount_deg || 30) + "° · " +
-      (wasp ? (m.wasp_camera_confirmed ? "90° confirmed for WASP" : "confirm the 90° mount before arming") : "30° required for AUTO / SEMI-AUTO"));
+    var setup = m.wasp_setup_why || (m.wasp_attitude_fresh === false ? "Waiting for attitude" : "");
+    if (setup.indexOf("RC_OVERRIDE_TIME") >= 0) setup = "RC timeout must be ≤1 s";
+    T("waspfcstatus", setup); $("waspfcstatus").hidden = !setup;
+    var requiredMount = wasp ? 90 : 30;
+    var mountOK = Number(m.camera_mount_deg) === requiredMount && (!wasp || m.wasp_camera_confirmed);
+    T("mountstatus", requiredMount + "°" + (mountOK ? " ✓" : " required"));
+    $("mountstatus").classList.toggle("warn", !mountOK);
+    $("mountstatus").disabled = arm || VIEW || ctl === "other" || choosing;
     document.querySelectorAll("[data-waspen]").forEach(function (x) {
       x.classList.toggle("on", (x.getAttribute("data-waspen") === "on") === wasp);
       x.disabled = arm || VIEW || ctl === "other" || (x.getAttribute("data-waspen") === "on" && !!m.auto_enabled);
@@ -1035,16 +1008,18 @@
     });
     document.querySelectorAll("[data-sky]").forEach(function (x) {
       x.classList.toggle("on", j.sky_gate !== undefined && (x.getAttribute("data-sky") === "on") === !!j.sky_gate);
+      x.disabled = VIEW || ctl === "other";
     });
     document.querySelectorAll("[data-fol]").forEach(function (x) {
       x.classList.toggle("on", j.follower !== undefined && (x.getAttribute("data-fol") === "on") === !!j.follower);
+      x.disabled = VIEW || ctl === "other";
       x.classList.toggle("isdef", j.follower_default !== undefined && (x.getAttribute("data-fol") === "on") === !!j.follower_default);
     });
     document.querySelectorAll("[data-cam]").forEach(function (x) {
       var f = Number(x.getAttribute("data-cam"));
       x.classList.toggle("on", Number(j.cam_fps || 30) === f);
       x.classList.toggle("isdef", Number(j.cam_default || 30) === f);
-      x.disabled = !!j.cam_busy;
+      x.disabled = !!j.cam_busy || VIEW || ctl === "other" || flying || m.engaged || ph === "WASP_FLIGHT";
     });
     document.querySelectorAll("[data-sky=on], [data-autoen=off]").forEach(function (x) { x.classList.add("isdef"); });
     document.querySelectorAll(".seg[data-g]").forEach(function (seg) {
@@ -1079,7 +1054,8 @@
       }).catch(function () {}).then(function () { pulling = false; });
   }
 
-  var tape = $("tape"), tctx = tape.getContext("2d"), hdgDisp = null, tPrev = 0, lastKey = "";
+  var tape = $("tape"), tctx = tape.getContext("2d"), dialc = $("dialc"), dctx = dialc.getContext("2d"),
+      hdgDisp = null, tPrev = 0, lastKey = "", dialKey = "";
   var CARD = {0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW"};
   function wrap(a) { a %= 360; return a < 0 ? a + 360 : a; }
   function adiff(a, b) { var d = wrap(a - b); return d > 180 ? d - 360 : d; }
@@ -1188,7 +1164,7 @@
     c.beginPath(); c.moveTo(w / 2 - 5, 19); c.lineTo(w / 2 + 5, 19); c.lineTo(w / 2, h); c.closePath(); c.fill();
     c.fillStyle = "#1a0d00"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(txt, w / 2, 11);
   }
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { lastKey = ""; });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { lastKey = ""; dialKey = ""; });
   requestAnimationFrame(drawTape);
 
   var v = $("v");

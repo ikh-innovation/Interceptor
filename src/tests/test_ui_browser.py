@@ -60,184 +60,49 @@ CMDS, REP = [], []
 SLOW, DEAD = {"on": False}, {"on": False}
 
 STEPS = [
-    ("rep({step:'chooser', visible:q('#modechooser').classList.contains('on'), inert:q('.app').inert}); q('#choose_normal').click();", 600),
+    ("rep({step:'startup', chooser:!!q('#modechooser'), popup:q('#modechange').classList.contains('on'), inert:q('.app').inert});", 600),
     ("fetch('/reset');", 200),
-    ("rep({step:'boot', phase:d.body.getAttribute('data-phase'), alt:q('#alt').textContent, card:!!q('#hdr')||!!q('#phase')||!!q('#hint'),"
-     " hbL:q('#hbox').getBoundingClientRect().left, hbT:q('#hbox').getBoundingClientRect().top, hbBg:W.getComputedStyle(q('#hbox')).backgroundColor,"
-     " dialBg:W.getComputedStyle(q('#dial')).backgroundColor, dialT:q('#dial').getBoundingClientRect().top,"
-     " dialR:q('#dial').getBoundingClientRect().right, dialW:q('#dial').getBoundingClientRect().width,"
-     " vbB:q('#vbox').getBoundingClientRect().bottom, vbL:q('#vbox').getBoundingClientRect().left,"
-     " lockL:q('#b_lock').getBoundingClientRect().left, lockT:q('#b_lock').getBoundingClientRect().top,"
-     " engL:q('#b_eng').getBoundingClientRect().left, engT:q('#b_eng').getBoundingClientRect().top,"
-     " engR:q('#b_eng').getBoundingClientRect().right, padL:q('.pad').getBoundingClientRect().left,"
-     " abort:!!q('#b_abort'), eng:q('#b_eng').className, engtxt:q('#engtxt').textContent,"
-     " aimTop:q('#aim').style.top, badge:q('#badge').textContent, ai:q('#c_ai_k').textContent+' '+q('#c_ai').textContent,"
-     " aicls:q('#c_ai').className, tgtbtn:!!q('#t_tgt'), engInVid:q('#vbox').contains(q('#b_eng')),"
-     " engW:q('#b_eng').getBoundingClientRect().width,"
-     " engRightOfPad:q('#b_eng').getBoundingClientRect().left>=q('.pad').getBoundingClientRect().right,"
-     " engVsPad:Math.abs((q('#b_eng').getBoundingClientRect().top+q('#b_lock').getBoundingClientRect().bottom)/2"
-     "-(q('.pad').getBoundingClientRect().top+q('.pad').getBoundingClientRect().bottom)/2),"
-     " ticker:!!q('#ticker'), tools:!!q('.tools'), menu:!!q('#t_menu'),"
-     " menuTL:q('#t_menu').getBoundingClientRect().left<40 && q('#t_menu').getBoundingClientRect().top<60,"
-     " bodyBg:W.getComputedStyle(d.body).backgroundColor, btnBg:W.getComputedStyle(q('#b_up')).backgroundColor,"
-     " grpC:Math.abs((q('.pad').getBoundingClientRect().left+q('#b_eng').getBoundingClientRect().right)/2-W.innerWidth/2),"
-     " lockAbove:q('#b_lock').getBoundingClientRect().bottom<=q('#b_eng').getBoundingClientRect().top,"
-     " lockW:q('#b_lock').getBoundingClientRect().width, lockBg:W.getComputedStyle(q('#b_lock')).backgroundColor,"
-     " lockTxt:q('#b_lock').textContent, pills:d.querySelectorAll('.top .pill, #c_lock, #c_ctl').length,"
-     " lockB:q('#b_lock').getBoundingClientRect().bottom, lockR:q('#b_lock').getBoundingClientRect().right,"
-     " engR2:q('#b_eng').getBoundingClientRect().right,"
-     " dialL:q('#dial').getBoundingClientRect().left, vbR:q('#vbox').getBoundingClientRect().right, dialH:q('#dial').getBoundingClientRect().height,"
-     " dialOff:q('#dial').classList.contains('off'), vbL:q('#vbox').getBoundingClientRect().left,"
-     " vbH:q('#vbox').getBoundingClientRect().height, vbW:q('#vbox').getBoundingClientRect().width,"
-     " padC:Math.abs((q('.pad').getBoundingClientRect().left+q('.pad').getBoundingClientRect().right)/2-W.innerWidth/2)}); fetch('/reset');", 400),
-    ("var cv=q('#tape'), vb=q('#vbox').getBoundingClientRect(), r=cv.getBoundingClientRect();"
-     " window._ink=function(x0,x1){var c=cv.getContext('2d'), d=c.getImageData(Math.round(cv.width*x0),0,"
-     "Math.max(1,Math.round(cv.width*(x1-x0))),cv.height).data, n=0; for(var i=3;i<d.length;i+=4) if(d[i]>100) n++; return n;};"
-     " rep({step:'tape', top:r.top-vb.top, wdiff:Math.abs(r.width-vb.width), h:r.height, left:_ink(0,0.35), right:_ink(0.65,1)});"
-     " fetch('/set?phase=HOVER&heading=352');", 900),
+    ("rep({step:'boot', phase:d.body.getAttribute('data-phase'), alt:q('#alt').textContent, card:!!q('#hdr')||!!q('#phase')||!!q('#hint'), hbL:q('#hbox').getBoundingClientRect().left, hbT:q('#hbox').getBoundingClientRect().top, hbBg:W.getComputedStyle(q('#hbox')).backgroundColor, dialBg:W.getComputedStyle(q('#dial')).backgroundColor, dialT:q('#dial').getBoundingClientRect().top, dialR:q('#dial').getBoundingClientRect().right, dialW:q('#dial').getBoundingClientRect().width, vbB:q('#vbox').getBoundingClientRect().bottom, vbL:q('#vbox').getBoundingClientRect().left, lockL:q('#b_lock').getBoundingClientRect().left, lockT:q('#b_lock').getBoundingClientRect().top, engL:q('#b_eng').getBoundingClientRect().left, engT:q('#b_eng').getBoundingClientRect().top, engR:q('#b_eng').getBoundingClientRect().right, padL:q('.pad').getBoundingClientRect().left, abort:!!q('#b_abort'), eng:q('#b_eng').className, engtxt:q('#engtxt').textContent, aimTop:q('#aim').style.top, badge:q('#badge').textContent, ai:q('#c_ai_k').textContent+' '+q('#c_ai').textContent, aicls:q('#c_ai').className, tgtbtn:!!q('#t_tgt'), engInVid:q('#vbox').contains(q('#b_eng')), engW:q('#b_eng').getBoundingClientRect().width, engRightOfPad:q('#b_eng').getBoundingClientRect().left>=q('.pad').getBoundingClientRect().right, engVsPad:Math.abs((q('#b_eng').getBoundingClientRect().top+q('#b_lock').getBoundingClientRect().bottom)/2-(q('.pad').getBoundingClientRect().top+q('.pad').getBoundingClientRect().bottom)/2), ticker:!!q('#ticker'), tools:!!q('.tools'), menu:!!q('#t_menu'), menuTL:q('#t_menu').getBoundingClientRect().left<40 && q('#t_menu').getBoundingClientRect().top<60, bodyBg:W.getComputedStyle(d.body).backgroundColor, btnBg:W.getComputedStyle(q('#b_up')).backgroundColor, grpC:Math.abs((q('.pad').getBoundingClientRect().left+q('#b_eng').getBoundingClientRect().right)/2-W.innerWidth/2), lockAbove:q('#b_lock').getBoundingClientRect().bottom<=q('#b_eng').getBoundingClientRect().top, lockW:q('#b_lock').getBoundingClientRect().width, lockBg:W.getComputedStyle(q('#b_lock')).backgroundColor, lockTxt:q('#b_lock').textContent, pills:d.querySelectorAll('.top .pill, #c_lock, #c_ctl').length, lockB:q('#b_lock').getBoundingClientRect().bottom, lockR:q('#b_lock').getBoundingClientRect().right, engR2:q('#b_eng').getBoundingClientRect().right, dialL:q('#dial').getBoundingClientRect().left, vbR:q('#vbox').getBoundingClientRect().right, dialH:q('#dial').getBoundingClientRect().height, dialOff:q('#dial').classList.contains('off'), vbL:q('#vbox').getBoundingClientRect().left, vbH:q('#vbox').getBoundingClientRect().height, vbW:q('#vbox').getBoundingClientRect().width, padC:Math.abs((q('.pad').getBoundingClientRect().left+q('.pad').getBoundingClientRect().right)/2-W.innerWidth/2)}); fetch('/reset');", 400),
+    ("var cv=q('#tape'), vb=q('#vbox').getBoundingClientRect(), r=cv.getBoundingClientRect(); window._ink=function(x0,x1){var c=cv.getContext('2d'), d=c.getImageData(Math.round(cv.width*x0),0,Math.max(1,Math.round(cv.width*(x1-x0))),cv.height).data, n=0; for(var i=3;i<d.length;i+=4) if(d[i]>100) n++; return n;}; rep({step:'tape', top:r.top-vb.top, wdiff:Math.abs(r.width-vb.width), h:r.height, left:_ink(0,0.35), right:_ink(0.65,1)}); fetch('/set?phase=HOVER&heading=352');", 900),
     ("rep({step:'tape352', left:_ink(0,0.35), right:_ink(0.65,1)}); fetch('/set?phase=HOVER&heading=123'); fetch('/reset');", 500),
-    ("until(function(){return !q('#b_lock').disabled},3000).then(function(){ return fetch('/reset'); })"
-     ".then(function(){ pe(q('#b_lock'),'pointerdown'); });", 3400),
-    ("cmds().then(function(c){rep({step:'lock_on', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
-     " fetch('/set?phase=HOVER&locked=1&lock_hdg=352');});", 800),
-    ("until(function(){return q('#b_lock').classList.contains('on')},3000).then(function(){"
-     " rep({step:'locked', cls:q('#b_lock').className, txt:q('#locktxt').textContent, phase:d.body.getAttribute('data-phase'),"
-     "});"
-     " fetch('/reset').then(function(){ pe(q('#b_lock'),'pointerdown'); }); });", 3600),
-    ("cmds().then(function(c){rep({step:'lock_off', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
-     " fetch('/set?phase=HOVER&locked=0').then(function(){ fetch('/reset'); });});", 400),
+    ("until(function(){return !q('#b_lock').disabled},3000).then(function(){ return fetch('/reset'); }).then(function(){ pe(q('#b_lock'),'pointerdown'); });", 3400),
+    ("cmds().then(function(c){rep({step:'lock_on', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})}); fetch('/set?phase=HOVER&locked=1&lock_hdg=352');});", 800),
+    ("until(function(){return q('#b_lock').classList.contains('on')},3000).then(function(){ rep({step:'locked', cls:q('#b_lock').className, txt:q('#locktxt').textContent, phase:d.body.getAttribute('data-phase'),}); fetch('/reset').then(function(){ pe(q('#b_lock'),'pointerdown'); }); });", 3600),
+    ("cmds().then(function(c){rep({step:'lock_off', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})}); fetch('/set?phase=HOVER&locked=0').then(function(){ fetch('/reset'); });});", 400),
     ("until(function(){return !q('#b_lock').classList.contains('on') && !q('#b_yl').disabled},3000);", 3100),
     ("rep({step:'unlocked', cls:q('#b_lock').className, txt:q('#locktxt').textContent}); fetch('/reset');", 300),
-    ("var dl=q('#dial'); pey(dl,'pointerdown',300);"
-     " [1,2,3,4,5,6].forEach(function(k){ setTimeout(function(){ pey(dl,'pointermove',300-10*k); }, 80*k); });"
-     " setTimeout(function(){ rep({step:'dragging', ask:q('#ask').classList.contains('on'), drag:dl.classList.contains('drag')});"
-     " pey(dl,'pointerup',240); }, 600);", 900),
-    ("cmds().then(function(c){ rep({step:'asked', ask:q('#ask').classList.contains('on'), deg:q('#ask_deg').textContent,"
-     " sub:q('#ask_sub').textContent, cmds:c}); q('#ask_yes').click(); });", 500),
-    ("cmds().then(function(c){rep({step:'ask_yes', ask:q('#ask').classList.contains('on'),"
-     " cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})}); return fetch('/reset'); }).then(function(){"
-     " var dl=q('#dial'); pey(dl,'pointerdown',100); setTimeout(function(){ pey(dl,'pointermove',140); },80);"
-     " setTimeout(function(){ pey(dl,'pointermove',180); },160); setTimeout(function(){ pey(dl,'pointerup',180); },240); });", 700),
-    ("rep({step:'asked_down', deg:q('#ask_deg').textContent}); q('#ask_no').click();"
-     " setTimeout(function(){ cmds().then(function(c){ rep({step:'ask_no', ask:q('#ask').classList.contains('on'), cmds:c}); fetch('/reset'); }); }, 300);", 700),
-    ("var dl=q('#dial'); pey(dl,'pointerdown',200); pey(dl,'pointerup',200);"
-     " setTimeout(function(){ rep({step:'dial_tap', ask:q('#ask').classList.contains('on')}); }, 200);", 400),
-    ("until(function(){return !q('#b_up').disabled},3000).then(function(){ return fetch('/reset'); })"
-     ".then(function(){ pe(q('#b_up'),'pointerdown'); setTimeout(function(){"
-     " rep({step:'held', cls:q('#b_up').className}); pe(q('#b_up'),'pointerup'); },1200); });", 4600),
-    ("cmds().then(function(c){rep({step:'hold_up', n:c.filter(function(x){return x.indexOf('hold=up')>=0}).length,"
-     " rel:c.some(function(x){return x.indexOf('release=')>=0}), pin:c.every(function(x){return x.indexOf('k=')<0})});"
-     " fetch('/reset');});", 300),
-    ("until(function(){return !q('#b_yl').disabled},3000).then(function(){ return fetch('/reset'); }).then(function(){"
-     " pe(q('#b_yl'),'pointerdown'); setTimeout(function(){pe(q('#b_yl'),'pointerup');},120); });", 3300),
+    ("var dl=q('#dial'); pey(dl,'pointerdown',300); [1,2,3,4,5,6].forEach(function(k){ setTimeout(function(){ pey(dl,'pointermove',300-10*k); }, 80*k); }); setTimeout(function(){ rep({step:'dragging', ask:q('#ask').classList.contains('on'), drag:dl.classList.contains('drag')}); pey(dl,'pointerup',240); }, 600);", 900),
+    ("cmds().then(function(c){ rep({step:'asked', ask:q('#ask').classList.contains('on'), deg:q('#ask_deg').textContent, sub:q('#ask_sub').textContent, cmds:c}); q('#ask_yes').click(); });", 500),
+    ("cmds().then(function(c){rep({step:'ask_yes', ask:q('#ask').classList.contains('on'), cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})}); return fetch('/reset'); }).then(function(){ var dl=q('#dial'); pey(dl,'pointerdown',100); setTimeout(function(){ pey(dl,'pointermove',140); },80); setTimeout(function(){ pey(dl,'pointermove',180); },160); setTimeout(function(){ pey(dl,'pointerup',180); },240); });", 700),
+    ("rep({step:'asked_down', deg:q('#ask_deg').textContent}); q('#ask_no').click(); setTimeout(function(){ cmds().then(function(c){ rep({step:'ask_no', ask:q('#ask').classList.contains('on'), cmds:c}); fetch('/reset'); }); }, 300);", 700),
+    ("var dl=q('#dial'); pey(dl,'pointerdown',200); pey(dl,'pointerup',200); setTimeout(function(){ rep({step:'dial_tap', ask:q('#ask').classList.contains('on')}); }, 200);", 400),
+    ("until(function(){return !q('#b_up').disabled},3000).then(function(){ return fetch('/reset'); }).then(function(){ pe(q('#b_up'),'pointerdown'); setTimeout(function(){ rep({step:'held', cls:q('#b_up').className}); pe(q('#b_up'),'pointerup'); },1200); });", 4600),
+    ("cmds().then(function(c){rep({step:'hold_up', n:c.filter(function(x){return x.indexOf('hold=up')>=0}).length, rel:c.some(function(x){return x.indexOf('release=')>=0}), pin:c.every(function(x){return x.indexOf('k=')<0})}); fetch('/reset');});", 300),
+    ("until(function(){return !q('#b_yl').disabled},3000).then(function(){ return fetch('/reset'); }).then(function(){ pe(q('#b_yl'),'pointerdown'); setTimeout(function(){pe(q('#b_yl'),'pointerup');},120); });", 3300),
     ("cmds().then(function(c){rep({step:'tap', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})}); fetch('/reset');});", 300),
-    ("until(function(){return !q('#b_yr').disabled},3000).then(function(){ return fetch('/reset'); })"
-     ".then(function(){ pe(q('#b_yr'),'pointerdown'); });", 3500),
+    ("until(function(){return !q('#b_yr').disabled},3000).then(function(){ return fetch('/reset'); }).then(function(){ pe(q('#b_yr'),'pointerdown'); });", 3500),
     ("W.dispatchEvent(new W.Event('blur'));", 600),
-    ("cmds().then(function(c){rep({step:'blur', n:c.filter(function(x){return x.indexOf('hold=yawr')>=0}).length,"
-     " rel:c.some(function(x){return x.indexOf('release=')>=0})}); fetch('/reset');});", 700),
+    ("cmds().then(function(c){rep({step:'blur', n:c.filter(function(x){return x.indexOf('hold=yawr')>=0}).length, rel:c.some(function(x){return x.indexOf('release=')>=0})}); fetch('/reset');});", 700),
     ("cmds().then(function(c){rep({step:'after_blur', n:c.filter(function(x){return x.indexOf('hold=')>=0}).length}); fetch('/reset');});", 300),
-    ("until(function(){return !q('#b_eng').disabled},3000).then(function(){ return fetch('/reset'); })"
-     ".then(function(){ pe(q('#b_eng'),'pointerdown'); setTimeout(function(){pe(q('#b_eng'),'pointerup');},80); });", 3400),
+    ("until(function(){return !q('#b_eng').disabled},3000).then(function(){ return fetch('/reset'); }).then(function(){ pe(q('#b_eng'),'pointerdown'); setTimeout(function(){pe(q('#b_eng'),'pointerup');},80); });", 3400),
     ("cmds().then(function(c){rep({step:'engage_tap', n:c.filter(function(x){return x.indexOf('engage=')>=0}).length}); fetch('/reset');});", 300),
     ("fetch('/set?phase=AI&engaged=1');", 100),
-    ("until(function(){return q('#b_eng').classList.contains('go')},3000).then(function(){ rep({step:'ai', eng:q('#b_eng').className, engtxt:q('#engtxt').textContent, dis:q('#b_eng').disabled,"
-     " up:q('#b_up').disabled}); fetch('/set?phase=HOVER&engaged=1'); });", 3200),
+    ("until(function(){return q('#b_eng').classList.contains('go')},3000).then(function(){ rep({step:'ai', eng:q('#b_eng').className, engtxt:q('#engtxt').textContent, dis:q('#b_eng').disabled, up:q('#b_up').disabled}); fetch('/set?phase=HOVER&engaged=1'); });", 3200),
     ("until(function(){return d.body.getAttribute('data-phase')!=='AI'},3000);", 3100),
-    ("rep({step:'latched', eng:q('#b_eng').className, dis:q('#b_eng').disabled, engtxt:q('#engtxt').textContent});"
-     " fetch('/set?phase=HOVER&engaged=0');", 100),
+    ("rep({step:'latched', eng:q('#b_eng').className, dis:q('#b_eng').disabled, engtxt:q('#engtxt').textContent}); fetch('/set?phase=HOVER&engaged=0');", 100),
     ("until(function(){return !q('#b_eng').classList.contains('go')},3000);", 3100),
-    ("rep({step:'reset', eng:q('#b_eng').className, dis:q('#b_eng').disabled}); q('#t_menu').click(); q('#t_par').click();", 400),
-    ("var sh=q('#sh_speed'), cs=W.getComputedStyle(sh); rep({step:'speeds', open:sh.classList.contains('open'),"
-     " pos:cs.position, h:sh.getBoundingClientRect().height, winh:W.innerHeight,"
-     " search:[].map.call(d.querySelectorAll('.seg[data-g=search] button'),function(x){return x.textContent}),"
-     " searchOn:(q('.seg[data-g=search] button.on')||{}).textContent,"
-     " fol:[].map.call(d.querySelectorAll('#folseg button'),function(x){return x.textContent}),"
-     " folOn:(q('#folseg button.on')||{}).textContent,"
-     " heads:[].map.call(d.querySelectorAll('#sh_speed .acc:not([hidden]) .acch b'),function(x){return x.textContent}),"
-     " nOpen:d.querySelectorAll('#sh_speed .ppane.on').length,"
-     " homes:[q('#pp_semi').contains(q('.seg[data-g=search]')), q('#pp_auto').contains(q('#autoparams')) && q('#pp_auto').contains(q('#autoseg')),"
-     " q('#pp_det').contains(q('#skyseg')) && q('#pp_det').contains(q('#folseg'))],"
-     " sums:[q('#sum_semi').textContent, q('#sum_auto').textContent, q('#sum_det').textContent],"
-     " acc:W.getComputedStyle(q('.seg[data-g=search] button.on')).backgroundColor, boxBg:W.getComputedStyle(q('#ptab_auto')).backgroundColor,"
-     " unsaved:d.querySelectorAll('.unsaved.on').length,"
-     " isdef:(q('.seg[data-g=vert] .isdef')||{getAttribute:function(){return null}}).getAttribute('data-lv'),"
-     " ask:q('#defask').classList.contains('on')});"
-     " q('#ptab_semi').click(); rep({step:'semiopen', semi:q('#pp_semi').classList.contains('on'), auto:q('#pp_auto').classList.contains('on'),"
-     " det:q('#pp_det').classList.contains('on'), exp:q('#ptab_semi').getAttribute('aria-expanded')});"
-     " q('.seg[data-g=vert] button[data-lv=FAST]').click();", 500),
-    ("until(function(){return q('#defask').classList.contains('on')},3000).then(function(){ return cmds(); }).then(function(c){"
-     " rep({step:'ask1', ask:q('#defask').classList.contains('on'), k:q('#defk').textContent, v:q('#defv').textContent,"
-     " sub:q('#defsub').textContent, cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})}); q('#def_yes').click(); });", 3400),
-    ("cmds().then(function(c){rep({step:'def1', ask:q('#defask').classList.contains('on'), cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
-     " fetch('/reset').then(function(){ q('.seg[data-g=search] button[data-lv=FAST]').click(); });});", 500),
-    ("until(function(){return q('#defask').classList.contains('on')},3000).then(function(ok){"
-     " rep({step:'ask2', ask:ok, v:q('#defv').textContent}); q('#def_no').click(); });", 3400),
-    ("cmds().then(function(c){rep({step:'lvl', ask:q('#defask').classList.contains('on'), cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
-     " fetch('/reset').then(function(){ q('#folseg [data-fol=off]').click(); });});", 400),
-    ("until(function(){return q('#defask').classList.contains('on')},3000).then(function(){ return cmds(); }).then(function(c){"
-     " rep({step:'fol', ask:q('#defask').classList.contains('on'), k:q('#defk').textContent, v:q('#defv').textContent, cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
-     " q('#def_no').click(); return fetch('/set?phase=HOVER&lvl_vert=FAST'); }).then(function(){ return fetch('/reset'); })"
-     ".then(function(){ return until(function(){return q('.unsaved[data-save=\"lvl:vert\"]').classList.contains('on')},3000); })"
-     ".then(function(ok){ rep({step:'chip', on:ok, n:d.querySelectorAll('.unsaved.on').length}); q('.unsaved[data-save=\"lvl:vert\"]').click(); });", 3800),
-    ("cmds().then(function(c){rep({step:'chipsave', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})}); fetch('/set?phase=HOVER&lvl_vert=SLOW');"
-     " q('#sh_speed [data-close]').click(); rep({step:'closed', open:q('#sh_speed').classList.contains('open')}); fetch('/reset');});", 400),
-    ("fetch('/set?phase=HOVER&auto=0').then(function(){ return until(function(){return q('#b_auto').disabled},3000); })"
-     ".then(function(){ var a=q('#b_auto').getBoundingClientRect(), l=q('#b_lock').getBoundingClientRect();"
-     " rep({step:'auto_off', dis:q('#b_auto').disabled, above:a.bottom<=l.top, dl:Math.abs(a.left-l.left), w:a.width, h:a.height});"
-     " fetch('/set?phase=HOVER&auto=1'); });", 3200),
-    ("until(function(){return !q('#b_auto').disabled},3000).then(function(){ return fetch('/reset'); })"
-     ".then(function(){ pe(q('#b_auto'),'pointerdown'); });", 3400),
-    ("cmds().then(function(c){rep({step:'auto_tap', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
-     " fetch('/set?phase=AUTO_HOLD&auto=1');});", 400),
-    ("until(function(){return q('#b_auto').classList.contains('on')},3000).then(function(){"
-     " rep({step:'auto_hold', cls:q('#b_auto').className, dis:q('#b_auto').disabled, txt:q('#autotxt').textContent,"
-     " yl:q('#b_yl').disabled, yr:q('#b_yr').disabled, up:q('#b_up').disabled, lock:q('#b_lock').disabled, eng:q('#b_eng').disabled});"
-     " fetch('/set?phase=AUTO_ALIGN&auto=1'); });", 3200),
-    ("until(function(){return q('#autotxt').textContent.indexOf('LINING')>=0},3000).then(function(){"
-     " rep({step:'auto_align', txt:q('#autotxt').textContent, yl:q('#b_yl').disabled});"
-     " fetch('/set?phase=HOVER&auto=1'); });", 3200),
-    ("until(function(){return !q('#b_auto').classList.contains('on')},3000).then(function(){ return fetch('/reset'); })"
-     ".then(function(){ rep({step:'ai_btns', ai:[].map.call(d.querySelectorAll('.seg[data-g=ai] button'),function(x){return x.getAttribute('data-lv')}),"
-     " push:[].map.call(d.querySelectorAll('.seg[data-g=push] button'),function(x){return x.getAttribute('data-lv')}),"
-     " autoseg:[].map.call(d.querySelectorAll('#autoseg button'),function(x){return x.getAttribute('data-autoen')}),"
-     " autoOn:(q('#autoseg button.on')||{getAttribute:function(){return null}}).getAttribute('data-autoen')});"
-     " q('.seg[data-g=ai] button[data-lv=MAX]').click(); q('#autoseg [data-autoen=off]').click(); });", 3400),
-    ("cmds().then(function(c){rep({step:'max_autoen', askMax:q('#defask').classList.contains('on'), cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
-     " q('#def_no').click(); fetch('/reset');});", 400),
-    ("q('#t_menu').click(); q('#t_par').click(); setTimeout(function(){"
-     " rep({step:'hub', heads:[].map.call(d.querySelectorAll('#sh_speed .acc:not([hidden]) .acch b'),function(x){return x.textContent}),"
-     " tag:q('#autotag').textContent, tagIn:q('#ptab_auto').contains(q('#autotag')), cats:d.querySelectorAll('.cat').length});"
-     " q('#ptab_auto').click(); }, 300);", 700),
-    ("rep({step:'autopage', auto:q('#pp_auto').classList.contains('on'), semi:q('#pp_semi').classList.contains('on'),"
-     " exp:q('#ptab_auto').getAttribute('aria-expanded'),"
-     " n:d.querySelectorAll('#pp_auto [data-ap]').length, secs:[].map.call(d.querySelectorAll('#pp_auto .pcard .sec'),function(x){return x.textContent}),"
-     " on:[].map.call(d.querySelectorAll('#pp_auto [data-ap].on'),function(x){return x.getAttribute('data-ap')+'='+x.getAttribute('data-av')}),"
-     " dflt:d.querySelectorAll('#pp_auto [data-ap].isdef').length, chips:d.querySelectorAll('#pp_auto .unsaved').length,"
-     " autoenDef:(q('#autoseg .isdef')||{getAttribute:function(){return null}}).getAttribute('data-autoen'),"
-     " skyDef:(q('#skyseg .isdef')||{getAttribute:function(){return null}}).getAttribute('data-sky')});"
-     " q('#pp_auto [data-ap=height][data-av=\"15\"]').click(); q('#autoreset').click();", 600),
-    ("cmds().then(function(c){rep({step:'autoset', ask:q('#defask').classList.contains('on'), cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
-     " fetch('/reset').then(function(){ q('#pp_auto [data-ap=height][data-av=\"20\"]').click(); });});", 400),
-    ("until(function(){return q('#defask').classList.contains('on')},3000).then(function(ok){"
-     " rep({step:'autoask', ask:ok, k:q('#defk').textContent, v:q('#defv').textContent, sub:q('#defsub').textContent}); q('#def_yes').click(); });", 3400),
-    ("cmds().then(function(c){rep({step:'autodef', ask:q('#defask').classList.contains('on'), cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
-     " q('#ptab_semi').click(); rep({step:'autoback', semi:q('#pp_semi').classList.contains('on'), auto:q('#pp_auto').classList.contains('on')});"
-     " q('#ptab_semi').click(); rep({step:'toggle', semi:q('#pp_semi').classList.contains('on'), exp:q('#ptab_semi').getAttribute('aria-expanded')});"
-     " d.querySelectorAll('.sheet').forEach(function(x){x.classList.remove('open')}); fetch('/reset');});", 400),
+    ("rep({step:'reset', eng:q('#b_eng').className, dis:q('#b_eng').disabled});", 400),
+    ("fetch('/set?phase=HOVER&auto=0').then(function(){ return until(function(){return q('#b_auto').disabled},3000); }).then(function(){ var a=q('#b_auto').getBoundingClientRect(), l=q('#b_lock').getBoundingClientRect(); rep({step:'auto_off', dis:q('#b_auto').disabled, above:a.bottom<=l.top, dl:Math.abs(a.left-l.left), w:a.width, h:a.height}); fetch('/set?phase=HOVER&auto=1'); });", 3200),
+    ("until(function(){return !q('#b_auto').disabled},3000).then(function(){ return fetch('/reset'); }).then(function(){ pe(q('#b_auto'),'pointerdown'); });", 3400),
+    ("cmds().then(function(c){rep({step:'auto_tap', cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})}); fetch('/set?phase=AUTO_HOLD&auto=1');});", 400),
+    ("until(function(){return q('#b_auto').classList.contains('on')},3000).then(function(){ rep({step:'auto_hold', cls:q('#b_auto').className, dis:q('#b_auto').disabled, txt:q('#autotxt').textContent, yl:q('#b_yl').disabled, yr:q('#b_yr').disabled, up:q('#b_up').disabled, lock:q('#b_lock').disabled, eng:q('#b_eng').disabled}); fetch('/set?phase=AUTO_ALIGN&auto=1'); });", 3200),
+    ("until(function(){return q('#autotxt').textContent.indexOf('LINING')>=0},3000).then(function(){ rep({step:'auto_align', txt:q('#autotxt').textContent, yl:q('#b_yl').disabled}); fetch('/set?phase=HOVER&auto=1'); });", 3200),
     ("q('#t_log').click();", 400),
-    ("rep({step:'console', lines:[].map.call(d.querySelectorAll('#log .ln'),function(l){return l.textContent})});"
-     " var lg=q('#sh_log'); rep({step:'logsheet', open:lg.classList.contains('open'), pos:W.getComputedStyle(lg).position,"
-     " h:lg.getBoundingClientRect().height, winh:W.innerHeight});"
-     " q('#sh_log [data-close]').click(); rep({step:'logclosed', open:q('#sh_log').classList.contains('open')}); q('#sh_menu [data-close]').click();"
-     " fetch('/set?phase=PUSH&engaged=1');", 100),
-    ("until(function(){return d.body.getAttribute('data-phase')==='PUSH'},3000).then(function(){"
-     " rep({step:'push', up:q('#b_up').disabled, eng:q('#b_eng').disabled, aimTop:q('#aim').style.top, lockdis:q('#b_lock').disabled});"
-     " rep({step:'push_dial', off:q('#dial').classList.contains('off')}); var dl=q('#dial'); pey(dl,'pointerdown',300);"
-     " pey(dl,'pointermove',200); pey(dl,'pointerup',200); setTimeout(function(){ rep({step:'push_dial2', ask:q('#ask').classList.contains('on')});"
-     " fetch('/set?phase=HOVER&engaged=0'); fetch('/dead?1'); }, 200); });", 4800),
+    ("rep({step:'console', lines:[].map.call(d.querySelectorAll('#log .ln'),function(l){return l.textContent})}); var lg=q('#sh_log'); rep({step:'logsheet', open:lg.classList.contains('open'), pos:W.getComputedStyle(lg).position, h:lg.getBoundingClientRect().height, winh:W.innerHeight}); q('#sh_log [data-close]').click(); rep({step:'logclosed', open:q('#sh_log').classList.contains('open')}); q('#sh_menu [data-close]').click(); fetch('/set?phase=PUSH&engaged=1');", 100),
+    ("until(function(){return d.body.getAttribute('data-phase')==='PUSH'},3000).then(function(){ rep({step:'push', up:q('#b_up').disabled, eng:q('#b_eng').disabled, aimTop:q('#aim').style.top, lockdis:q('#b_lock').disabled}); rep({step:'push_dial', off:q('#dial').classList.contains('off')}); var dl=q('#dial'); pey(dl,'pointerdown',300); pey(dl,'pointermove',200); pey(dl,'pointerup',200); setTimeout(function(){ rep({step:'push_dial2', ask:q('#ask').classList.contains('on')}); fetch('/set?phase=HOVER&engaged=0'); fetch('/dead?1'); }, 200); });", 4800),
     ("rep({step:'dead', cover:q('#cover').classList.contains('on'), done:1});", 0),
 ]
+
 HARNESS = ("""<!doctype html><html><body><iframe id=f src="/" width=390 height=844></iframe><script>
 function rep(o){fetch('/report?'+encodeURIComponent(JSON.stringify(o)));}
 var f=document.getElementById('f');
@@ -402,7 +267,7 @@ check("PUSH: the degree scroll is off and a drag asks nothing",
       R.get("push_dial", {}).get("off") and R.get("push_dial2", {}).get("ask") is False,
       f"{R.get('push_dial')} {R.get('push_dial2')}")
 check("Test mode removed from the phone app", b'id="t_test"' not in PAGE and b'/sim' not in PAGE)
-check("opening the page requires a flight mode choice", R.get("chooser", {}).get("visible") and R.get("chooser", {}).get("inert"))
+check("opening the page uses the active mode without a prompt", R.get("startup", {}).get("chooser") is False and R.get("startup", {}).get("popup") is False and R.get("startup", {}).get("inert") is False)
 hd = R.get("held", {}).get("cls", "")
 check("while ▲ is held and the Jetson accepts it: highlighted (held) AND marked sending (tx)",
       "held" in hd and "tx" in hd, hd)
@@ -421,41 +286,6 @@ check("after the attempt: still green 'DONE ✓', still disabled",
       "go" in l.get("eng", "") and l.get("dis") and "DONE" in l.get("engtxt", ""), str(l))
 check("pilot STAB -> ALT_HOLD: ENGAGE red and enabled again",
       "go" not in R.get("reset", {}).get("eng", "go") and R.get("reset", {}).get("dis") is False)
-sp = R.get("speeds", {})
-check("☰ → PARAMETERS opens FULL-SCREEN", sp.get("open") and sp.get("pos") == "fixed"
-      and sp.get("h", 0) >= 0.95 * sp.get("winh", 1), str(sp))
-so2 = R.get("semiopen", {})
-check("PARAMETERS: three grey sections AUTO, SEMI-AUTO, DETECTION (in that order), all closed at first, each with what it has set; dark blue, not orange",
-      sp.get("heads") == ["AUTO", "SEMI-AUTO", "DETECTION"] and sp.get("nOpen") == 0
-      and "PUSH" in (sp.get("sums") or [""])[0] and "15 m" in (sp.get("sums") or ["", ""])[1] and "MAX" in (sp.get("sums") or ["", ""])[1]
-      and sp.get("acc") == "rgb(31, 59, 99)" and sp.get("boxBg") == "rgb(226, 230, 235)"
-      and "follower ON" in (sp.get("sums") or ["", "", ""])[2], str({k: sp.get(k) for k in ("heads", "nOpen", "sums", "acc", "boxBg")}))
-check("...every setting lives in its own section (speeds in SEMI-AUTO, AUTO's in AUTO, sky gate + follower in DETECTION)",
-      sp.get("homes") == [True, True, True], str(sp.get("homes")))
-check("a tap on SEMI-AUTO opens it and only it", so2.get("semi") and not so2.get("auto") and not so2.get("det")
-      and so2.get("exp") == "true", str(so2))
-check("...each setting's DEFAULT marked (▲▼ SLOW here); nothing 'this flight only' yet; no question open",
-      sp.get("isdef") == "SLOW" and sp.get("unsaved") == 0 and sp.get("ask") is False, str(sp))
-a1, d1 = R.get("ask1", {}), R.get("def1", {})
-check("a speed button sends lvl=vert:FAST, then asks: make it the default? (name, value, the default now)",
-      a1.get("cmds") == ["lvl=vert:FAST"] and a1.get("ask") and "HEIGHT SPEED" in (a1.get("k") or "")
-      and (a1.get("v") or "").startswith("FAST") and "SLOW" in (a1.get("sub") or ""), str(a1))
-check("YES: sends def=lvl:vert, the question closes", d1.get("cmds") == ["lvl=vert:FAST", "def=lvl:vert"]
-      and d1.get("ask") is False, str(d1))
-check("SEARCH: 4 s / 6 s / 8 s with the distance at PUSH 20°, 4 s selected; 8 s sends lvl=search:FAST",
-      sp.get("search") == ["4 s~19 m", "6 s~42 m", "8 s~69 m"] and sp.get("searchOn") == "4 s~19 m"
-      and R.get("lvl", {}).get("cmds") == ["lvl=search:FAST"], f"{sp.get('search')} {sp.get('searchOn')} {R.get('lvl')}")
-check("ONLY THIS FLIGHT: nothing more is sent, the question closes",
-      R.get("ask2", {}).get("ask") and R.get("lvl", {}).get("ask") is False and "def=" not in str(R.get("lvl")), str(R.get("lvl")))
-fo = R.get("fol", {})
-check("FOLLOWER: ON / OFF after the SKY GATE, ON lit from the status; OFF sends follow=off, then asks too",
-      sp.get("fol") == ["ONdetector + follower", "OFFdetector only"] and sp.get("folOn") == "ONdetector + follower"
-      and fo.get("cmds") == ["follow=off"] and fo.get("ask") and fo.get("k") == "FOLLOWER" and fo.get("v") == "OFF",
-      f"{sp.get('fol')} {sp.get('folOn')} {fo}")
-check("a level that differs from its default shows THIS FLIGHT ONLY · SAVE; a tap sends def=lvl:vert; ✕ closes",
-      R.get("chip", {}).get("on") and R.get("chip", {}).get("n") == 1
-      and R.get("chipsave", {}).get("cmds") == ["def=lvl:vert"] and R.get("closed", {}).get("open") is False,
-      f"{R.get('chip')} {R.get('chipsave')}")
 check("console shows the tracker's printed lines", len(R.get("console", {}).get("lines", [])) == 2)
 lg = R.get("logsheet", {})
 check("MESSAGES opens FULL-SCREEN (not a pop-up) and ✕ closes it",
@@ -476,36 +306,6 @@ check("...⟲ ⟳ usable to look around, ▲ and LOCK not; ENGAGE (go now) usabl
       and ah.get("eng") is False, str(ah))
 check("AUTO lining up: says LINING UP, ⟲ ⟳ off", "LINING UP" in (R.get("auto_align", {}).get("txt") or "")
       and R.get("auto_align", {}).get("yl") is True, str(R.get("auto_align")))
-ab = R.get("ai_btns", {})
-check("AI row has SLOW / MEDIUM / FAST / MAX; PUSH row has no MAX",
-      ab.get("ai") == ["SLOW", "MEDIUM", "FAST", "MAX"] and ab.get("push") == ["SLOW", "MEDIUM", "FAST"], str(ab))
-check("PARAMETERS has the AUTO ON / OFF switch, showing ON", ab.get("autoseg") == ["on", "off"]
-      and ab.get("autoOn") == "on", str(ab))
-check("MAX sends lvl=ai:MAX (and asks about the default); the AUTO switch sends autoen=off and asks nothing more",
-      sorted(R.get("max_autoen", {}).get("cmds") or []) == ["autoen=off", "lvl=ai:MAX"]
-      and R.get("max_autoen", {}).get("askMax"),
-      str(R.get("max_autoen")))
-hb, apg = R.get("hub", {}), R.get("autopage", {})
-check("PARAMETERS: no sub-pages any more; the AUTO section carries the ON tag",
-      hb.get("heads") == ["AUTO", "SEMI-AUTO", "DETECTION"] and hb.get("cats") == 0 and hb.get("tag") == "ON" and hb.get("tagIn"), str(hb))
-check("a tap on AUTO opens it and closes SEMI-AUTO; SEMI-AUTO again swaps back; a second tap closes it",
-      apg.get("auto") and not apg.get("semi") and apg.get("exp") == "true"
-      and R.get("autoback", {}).get("semi") and not R.get("autoback", {}).get("auto")
-      and R.get("toggle", {}).get("semi") is False and R.get("toggle", {}).get("exp") == "false",
-      str(apg) + str(R.get("autoback")) + str(R.get("toggle")))
-check("AUTO section: the AUTO button, then 12 settings in three sections, each lit and its default marked, each with a SAVE chip",
-      apg.get("secs") == ["AUTO BUTTON", "LEG 1 · CLIMB AND WATCH", "LINING UP · AFTER THE FIRST DETECTION", "LEG 2 · THE RUN"]
-      and apg.get("n", 0) >= 36 and len(apg.get("on", [])) == 12 and apg.get("dflt") == 12 and apg.get("chips") == 12, str(apg))
-check("AUTO button (OFF) and SKY GATE (ON) are marked as fixed power-up values",
-      apg.get("autoenDef") == "off" and apg.get("skyDef") == "on", str(apg))
-check("a tap on the default value sends autop=height:15 and asks nothing; RESET sends autoreset=1 (factory = default: no question)",
-      sorted(R.get("autoset", {}).get("cmds") or []) == ["autop=height:15", "autoreset=1"]
-      and R.get("autoset", {}).get("ask") is False,
-      str(R.get("autoset")))
-aa, adf = R.get("autoask", {}), R.get("autodef", {})
-check("HEIGHT 20 m: asks to make it the default (default now 15 m); YES sends def=auto:height",
-      aa.get("ask") and aa.get("k") == "HEIGHT" and aa.get("v") == "20 m" and "15 m" in (aa.get("sub") or "")
-      and adf.get("cmds") == ["autop=height:20", "def=auto:height"] and adf.get("ask") is False, f"{aa} {adf}")
 check("link dead: the red cover shows", R.get("dead", {}).get("cover") is True)
 
 DEAD["on"] = False

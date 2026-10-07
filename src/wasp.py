@@ -93,7 +93,7 @@ class WaspGuidance:
                     el_cam_deg=-math.degrees(math.atan(2*ey/fh*tan_v)), have_att=True)
 
     @staticmethod
-    def rates(observation, att, now, gain=4.0, lead_s=0.08, max_rate_dps=90.0):
+    def rates(observation, att, now, gain=2.0, lead_s=0.08, max_rate_dps=90.0):
         age = now - observation["capture_t"]
         if not 0 <= age <= 0.25:
             raise ValueError("camera observation stale")
@@ -116,16 +116,16 @@ class WaspGuidance:
 
 class Wasp:
     """Launch lifecycle; output is released, never a blind full-throttle search."""
-    SETTINGS = {"throttle": (0.25, 0.5, 1.0), "duration": (1.0, 2.0, 3.0, 5.0),
+    SETTINGS = {"throttle": (0.25, 0.5, 1.0), "duration": (1.0, 2.0, 3.0, 5.0, 10.0),
                 "straight": (0.0, 0.5, 1.0, 2.0), "blend": (0.25, 0.5, 1.0),
-                "rate": (30.0, 60.0, 90.0), "gain": (2.0, 4.0, 6.0),
+                "rate": (30.0, 45.0, 60.0, 90.0), "gain": (2.0, 4.0, 6.0),
                 "lead": (0.0, 0.08, 0.15), "camera_roll": (0.0, 90.0, 180.0, 270.0)}
 
     def __init__(self):
         self.enabled = False
         self.camera_confirmed = False
-        self.params = dict(throttle=1.0, duration=2.0, straight=1.0, blend=0.5,
-                           rate=60.0, gain=4.0, lead=0.08, camera_roll=0.0)
+        self.params = dict(throttle=1.0, duration=10.0, straight=1.0, blend=0.5,
+                           rate=60.0, gain=2.0, lead=0.08, camera_roll=0.0)
         self.started = None
         self.used = False
         self._output_t = None
