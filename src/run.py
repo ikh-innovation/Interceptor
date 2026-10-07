@@ -375,7 +375,8 @@ def banner(intercept):
         tilt = float(env["CAM_TILT_DEG"])
         lean = float(env["MAX_LEAN_DEG"])
         ok, lo, hi, advice = geometry_check(tilt, lean)
-        print(f"  camera tilt  : {tilt:.1f} deg UP  <-- must match the REAL mount")
+        print(f"  normal tilt  : {tilt:.1f} deg UP (AUTO / SEMI-AUTO guidance)")
+        print(f"  camera mount : {env.get('CAMERA_MOUNT_DEG', tilt)} deg; confirm on the phone")
         print(f"  visible band : {lo:+.0f} .. {hi:+.0f} deg about the horizon at "
               f"{lean:.0f} deg of lean;  "
               f"{-_LENS_HALF_V_DEG + tilt:+.0f} .. {_LENS_HALF_V_DEG + tilt:+.0f} "
@@ -510,15 +511,18 @@ def main():
         os.environ.setdefault(k, v)
 
     HARDCODED_CAM_TILT_DEG = "30"
+    from flight_config import MOUNT_TILT_DEG
+    os.environ.setdefault("CAMERA_MOUNT_DEG", str(MOUNT_TILT_DEG))
 
     if intercept and "CAM_TILT_DEG" not in os.environ:
         os.environ["CAM_TILT_DEG"] = HARDCODED_CAM_TILT_DEG
         print(f"""
 [SETUP] CAM_TILT_DEG was not set — using the sky-mode {HARDCODED_CAM_TILT_DEG} deg.
 
-  This is an ASSUMPTION about the hardware, not a measurement.  The measured
-  mount angle belongs in flight_config.py (MOUNT_TILT_DEG); start-wasp.sh
-  exports it.  Overriding still works and still wins:
+  This is the NORMAL guidance profile. The physical mount belongs in
+  flight_config.py (MOUNT_TILT_DEG), exported as CAMERA_MOUNT_DEG.
+  WASP uses separate fixed-90-degree guidance selected on the phone.
+  CAM_TILT_DEG overrides the legacy guidance profile:
 
       CAM_TILT_DEG=<measured> ./run.py
 

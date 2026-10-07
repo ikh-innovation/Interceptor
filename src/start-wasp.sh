@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 
 set -u
-cd /home/iknowhow/Documents/Interceptor-1/src || exit 1
+WASP_SRC_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+cd "$WASP_SRC_DIR" || exit 1
 
-export PATH=/home/iknowhow/Documents/Interceptor-1/.env/yolo/bin:$PATH
+export PATH="$WASP_SRC_DIR/../.env/yolo/bin:$PATH"
 
 CONFIG_ENV="$(python3 flight_config.py --shell)" || {
     echo "[boot] flight_config.py refused — see the error above.  Not starting."
@@ -20,13 +21,15 @@ while IFS='=' read -r _k _v; do
 done <<< "${CONFIG_ENV}"
 
 echo "[boot] mode: ${WASP_MODE} — ${WASP_MODE_LABEL}"
-echo "[boot] camera tilt ${CAM_TILT_DEG} deg, target width ${TARGET_WIDTH_M} m"
+echo "[boot] normal guidance tilt ${CAM_TILT_DEG} deg; physical camera mount ${CAMERA_MOUNT_DEG} deg"
+echo "[boot] choose Normal or Wasp on the phone; target width for normal guidance ${TARGET_WIDTH_M} m"
 echo "[boot] visible band ${WASP_MODE_BAND}"
 
-export DISPLAY=:0
-export XAUTHORITY=/run/user/1000/gdm/Xauthority
-
 export TRACKER_HEADLESS=${TRACKER_HEADLESS:-1}
+if [ "$TRACKER_HEADLESS" != "1" ]; then
+    export DISPLAY=${DISPLAY:-:0}
+    export XAUTHORITY=${XAUTHORITY:-/run/user/$(id -u)/gdm/Xauthority}
+fi
 
 export YOLO_AUTOINSTALL=false
 

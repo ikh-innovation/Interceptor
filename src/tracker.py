@@ -14,7 +14,6 @@ from pathlib import Path
 from time import perf_counter, sleep
 from datetime import datetime
 os.environ.setdefault("YOLO_AUTOINSTALL", "false")
-from ultralytics import YOLO
 cv2.setNumThreads(int(os.environ.get("CV_THREADS", "4")))
 from dataclasses import dataclass, replace as _dc_replace
 
@@ -146,7 +145,7 @@ class KalmanTracker:
 
     def predict(self):
         p = self.kf.predict()
-        return int(p[0]), int(p[1])
+        return int(p[0, 0]), int(p[1, 0])
 
     def update(self, x, y):
         if not self.initialized:
@@ -157,7 +156,7 @@ class KalmanTracker:
     def velocity(self):
         if not self.initialized:
             return 0.0, 0.0
-        return float(self.kf.statePost[2]), float(self.kf.statePost[3])
+        return float(self.kf.statePost[2, 0]), float(self.kf.statePost[3, 0])
 
     def pos_sigma(self):
         if not self.initialized:
@@ -235,6 +234,7 @@ class DroneTracker:
         stream_fps     = 15.0,
         commander      = None,
     ):
+        from ultralytics import YOLO
         self.model        = (YOLO(model_path, task="detect")
                              if str(model_path).endswith(".engine")
                              else YOLO(model_path))
@@ -485,7 +485,7 @@ class DroneTracker:
         if self._cam_busy:
             return "the camera is switching"
         m = getattr(self.ap, "mission", None)
-        if m is not None and m.phase in ("PUSH", "AI", "STOP") + mission_mod.AUTO_PHASES:
+        if m is not None and m.phase in ("PUSH", "AI", "STOP", "WASP_READY", "WASP_FLIGHT") + mission_mod.AUTO_PHASES:
             return f"not during {m.phase}: the picture is dark a moment while it switches"
         if m is None and self._last_sent:
             return "not while the AI steers: the picture is dark a moment while it switches"
@@ -568,6 +568,9 @@ class DroneTracker:
                 out["climb_max"] = round(float(_mc), 1)
             if _ct is not None:
                 out["tilt_deg"] = round(math.degrees(float(_ct)), 0)
+        m = getattr(ap, "mission", None)
+        if m is not None:
+            out["tilt_deg"] = m.camera_mount_deg
         return out
 
     def _gate_detection(self, det, kf_pred, dt):
@@ -575,6 +578,9 @@ class DroneTracker:
             return True
         jump = math.hypot(det[0] - kf_pred[0], det[1] - kf_pred[1])
         allow = self._gate_allow(dt)
+        m = getattr(self.ap, "mission", None)
+        if m is not None and m.wasp.enabled:
+            allow += max(self._rotation_margin())
         if jump <= allow:
             self._gate_rejects = 0
             return True
@@ -693,6 +699,13 @@ class DroneTracker:
         dt = self._frame_dt or 0.1
         fx = (self.fw / 2.0) / math.tan(getattr(ap, "H_FOV", math.radians(62.2)) / 2.0)
         fy = (self.fh / 2.0) / math.tan(getattr(ap, "V_FOV", math.radians(48.8)) / 2.0)
+        m = getattr(ap, "mission", None)
+        if m is not None and m.wasp.enabled:
+            # With an upward camera roll/pitch move the target; yaw spins the
+            # image. Bound all three axes, including arbitrary camera roll.
+            rate = sum(abs(att.get(k) or 0.0) for k in ("rollspeed", "pitchspeed", "yawspeed"))
+            angle = min(1.0, rate * min(dt, 0.25))
+            return int(angle * fx * 2), int(angle * fy * 2)
         mx = abs(att.get("yawspeed") or 0.0) * dt * fx * 1.3
         my = abs(att.get("pitchspeed") or 0.0) * dt * fy * 1.3
         return int(mx), int(my)
@@ -1198,7 +1211,7 @@ class DroneTracker:
             return self.set_camera(value)
         elif key == "def" and str(value).startswith("det:"):
             return self._save_detection_default(str(value)[4:].strip().lower())
-        elif key in ("hold", "release", "step", "engage", "abort", "lvl", "lock", "auto", "autoen",
+        elif key in ("hold", "release", "step", "engage", "abort", "lvl", "lock", "auto", "autoen", "waspen", "waspp", "mount", "flightmode",
                      "autop", "autoreset", "def"):
             return self._mission_command(key, str(value))
         else:
@@ -1824,6 +1837,7 @@ if __name__ == "__main__":
         _eng = Path(model_pth).with_suffix(".engine")
         if _eng.is_file() and _eng.stat().st_mtime >= Path(model_pth).stat().st_mtime:
             try:
+                from ultralytics import YOLO
                 _probe = YOLO(str(_eng), task="detect")
                 _probe.predict(np.zeros((640, 640, 3), np.uint8), verbose=False)
                 if len(_probe.names) > 100:

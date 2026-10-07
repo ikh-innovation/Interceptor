@@ -35,7 +35,7 @@ def _load_page():
 class MJPEGServer:
 
     CONTROL_KEYS = ("hold", "release", "step", "engage", "lvl", "mode", "lock", "auto", "autoen", "autop", "autoreset",
-                    "sky", "follow", "cam", "def")
+                    "sky", "follow", "cam", "def", "waspen", "waspp", "mount", "flightmode")
     ALL_KEYS = CONTROL_KEYS + ("abort",)
     LEASE_S = 2.0
 
@@ -64,13 +64,6 @@ class MJPEGServer:
         self._encoder   = None
         self._n_encoded = 0
 
-    def _desk_sim(self):
-        with self._lease_lock:
-            if getattr(self, "_sim_obj", None) is None:
-                import desk_sim
-                self._sim_obj = desk_sim.DeskSim()
-            return self._sim_obj
-
     def start(self) -> "MJPEGServer":
         server = self
 
@@ -94,8 +87,6 @@ class MJPEGServer:
                     self._cmd()
                 elif path == "/console":
                     self._console()
-                elif path in ("/sim/state", "/sim/cmd", "/sim/console"):
-                    self._sim(path[5:])
                 elif path.startswith("/font/") and path[6:] in _FONTS:
                     self._send_font(path[6:])
                 elif path.startswith("/img/") and path[5:] in _IMGS:
@@ -164,36 +155,6 @@ class MJPEGServer:
                 st["applied"] = applied
                 st["refused"] = refused
                 st["control"] = server._lease_status(client, renew=True)
-                self._json(st)
-
-            def _sim(self, what):
-                sim = server._desk_sim()
-                q = parse_qs(urlparse(self.path).query)
-                real = self._read_state() or {}
-                real_armed = bool(real.get("armed")) if server.state_get else False
-                if what == "console":
-                    try:
-                        since = int((q.get("since") or ["0"])[0])
-                    except ValueError:
-                        since = 0
-                    self._json([list(r) for r in sim.console_get(since)])
-                    return
-                if what == "cmd":
-                    if real_armed:
-                        self._json(dict(error="the real drone is armed: no test mode"), code=409)
-                        return
-                    refused = ""
-                    for key in [k for k in server.ALL_KEYS + ("gust", "wind", "reset") if k in q]:
-                        try:
-                            refused = sim.command(key, q[key][0]) or refused
-                        except Exception as exc:
-                            refused = f"{key}: {exc}"
-                    st = sim.state()
-                    st["refused"] = refused
-                else:
-                    st = sim.state()
-                st["control"] = "you"
-                st["real_armed"] = real_armed
                 self._json(st)
 
             def _send_page(self):

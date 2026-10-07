@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import time
+from browser_support import available, launch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote
 
@@ -36,8 +37,8 @@ check("same choices and the same default for every one",
       all(_norm(_ui[k][0]) == _norm(_ms[k][0]) and _norm([_ui[k][1]]) == _norm([_ms[k][1]]) for k in _ms if k in _ui),
       str({k: (_ui.get(k), _ms[k]) for k in _ms if k in _ui and (_norm(_ui[k][0]) != _norm(_ms[k][0]) or _norm([_ui[k][1]]) != _norm([_ms[k][1]]))}))
 
-if not shutil.which("firefox"):
-    print("  [SKIP] firefox not installed -- browser test not run")
+if not available():
+    print("  [SKIP] headless browser not installed -- browser test not run")
     sys.exit(0)
 
 ST = dict(linked=True, armed=True, fc_mode="ALT_HOLD", target="DRONE", tilt_deg=30.0,
@@ -55,10 +56,12 @@ ST["mission"]["level_defaults"] = dict(ST["mission"]["levels"])
 ST["follower_default"] = True
 CONSOLE = [[1, "12:00:00", "[MISSION] PILOT -> HOVER  (armed in ALT_HOLD)"],
            [2, "12:00:01", "[FC] override CONFIRMED"]]
-CMDS, REP, SIMPOLLS = [], [], []
+CMDS, REP = [], []
 SLOW, DEAD = {"on": False}, {"on": False}
 
 STEPS = [
+    ("rep({step:'chooser', visible:q('#modechooser').classList.contains('on'), inert:q('.app').inert}); q('#choose_normal').click();", 600),
+    ("fetch('/reset');", 200),
     ("rep({step:'boot', phase:d.body.getAttribute('data-phase'), alt:q('#alt').textContent, card:!!q('#hdr')||!!q('#phase')||!!q('#hint'),"
      " hbL:q('#hbox').getBoundingClientRect().left, hbT:q('#hbox').getBoundingClientRect().top, hbBg:W.getComputedStyle(q('#hbox')).backgroundColor,"
      " dialBg:W.getComputedStyle(q('#dial')).backgroundColor, dialT:q('#dial').getBoundingClientRect().top,"
@@ -119,27 +122,6 @@ STEPS = [
      " setTimeout(function(){ cmds().then(function(c){ rep({step:'ask_no', ask:q('#ask').classList.contains('on'), cmds:c}); fetch('/reset'); }); }, 300);", 700),
     ("var dl=q('#dial'); pey(dl,'pointerdown',200); pey(dl,'pointerup',200);"
      " setTimeout(function(){ rep({step:'dial_tap', ask:q('#ask').classList.contains('on')}); }, 200);", 400),
-    ("fetch('/set?phase=HOVER&armed=0').then(function(){ return until(function(){return !q('#t_sim').disabled},3000); })"
-     ".then(function(){ fetch('/reset'); q('#t_menu').click(); q('#t_test').click(); setTimeout(function(){ rep({step:'sim_menu', dis:q('#t_sim').disabled,"
-     " menu:q('#sh_menu').classList.contains('open'), test:q('#sh_test').classList.contains('open'),"
-     " rows:[].map.call(d.querySelectorAll('#sh_menu .row'),function(x){return x.firstChild.firstChild.textContent}),"
-     " indent:[].map.call(d.querySelectorAll('#sh_menu .row'),function(x){var rg=d.createRange(); rg.selectNodeContents(x.firstChild.firstChild);"
-     " return Math.round(rg.getBoundingClientRect().left-x.getBoundingClientRect().left)})});"
-     " q('#t_sim').click(); }, 200); });", 3400),
-    ("until(function(){return d.body.classList.contains('sim')},3000).then(function(){ setTimeout(function(){"
-     " var vb=q('#vbox').getBoundingClientRect(), gl=q('#s_gl').getBoundingClientRect(), gr=q('#s_gr').getBoundingClientRect(), x=q('#s_exit').getBoundingClientRect();"
-     " rep({step:'sim_on', bar:W.getComputedStyle(q('#simctl')).display, img:W.getComputedStyle(q('#v')).visibility,"
-     " inPic:q('#vbox').contains(q('#simctl')) && q('#vbox').contains(q('#s_exit')),"
-     " wind:[gl.left-vb.left, gl.top-vb.top, gr.left-gl.right, gl.width], exit:[vb.right-x.right, x.top-vb.top, q('#s_exit').textContent],"
-     " old:!!q('#simbar') || !!q('#s_wind') || !!q('#s_reset'), svg:!!q('#s_gl svg') && !!q('#s_gr svg'),"
-     " sky:(function(){ var cv=q('#simv'), p=cv.getContext('2d').getImageData(Math.round(cv.width/2),Math.round(cv.height*0.2),1,1).data; return [p[0],p[1],p[2],p[3]]; })(),"
-     " words:W.getComputedStyle(q('#badge')).display,"
-     " canv:W.getComputedStyle(q('#simv')).display, sheet:q('#sh_test').classList.contains('open') || q('#sh_menu').classList.contains('open')});"
-     " fetch('/reset').then(function(){ pe(q('#b_lock'),'pointerdown'); q('#s_gr').click(); }); }, 700); });", 1900),
-    ("cmds().then(function(c){ rep({step:'sim_cmds', cmds:c}); q('#s_exit').click();"
-     " setTimeout(function(){ rep({step:'sim_off', sim:d.body.classList.contains('sim'), bar:W.getComputedStyle(q('#simctl')).display, x:W.getComputedStyle(q('#s_exit')).display}); fetch('/reset'); }, 300); });", 900),
-    ("fetch('/set?phase=HOVER&armed=1'); until(function(){return q('#t_sim').disabled},3000).then(function(){"
-     " rep({step:'sim_armed', dis:q('#t_sim').disabled}); });", 3200),
     ("until(function(){return !q('#b_up').disabled},3000).then(function(){ return fetch('/reset'); })"
      ".then(function(){ pe(q('#b_up'),'pointerdown'); setTimeout(function(){"
      " rep({step:'held', cls:q('#b_up').className}); pe(q('#b_up'),'pointerup'); },1200); });", 4600),
@@ -172,7 +154,7 @@ STEPS = [
      " searchOn:(q('.seg[data-g=search] button.on')||{}).textContent,"
      " fol:[].map.call(d.querySelectorAll('#folseg button'),function(x){return x.textContent}),"
      " folOn:(q('#folseg button.on')||{}).textContent,"
-     " heads:[].map.call(d.querySelectorAll('#sh_speed .acch b'),function(x){return x.textContent}),"
+     " heads:[].map.call(d.querySelectorAll('#sh_speed .acc:not([hidden]) .acch b'),function(x){return x.textContent}),"
      " nOpen:d.querySelectorAll('#sh_speed .ppane.on').length,"
      " homes:[q('#pp_semi').contains(q('.seg[data-g=search]')), q('#pp_auto').contains(q('#autoparams')) && q('#pp_auto').contains(q('#autoseg')),"
      " q('#pp_det').contains(q('#skyseg')) && q('#pp_det').contains(q('#folseg'))],"
@@ -224,7 +206,7 @@ STEPS = [
     ("cmds().then(function(c){rep({step:'max_autoen', askMax:q('#defask').classList.contains('on'), cmds:c.map(function(x){return x.replace(/^c=\\w+&/,'')})});"
      " q('#def_no').click(); fetch('/reset');});", 400),
     ("q('#t_menu').click(); q('#t_par').click(); setTimeout(function(){"
-     " rep({step:'hub', heads:[].map.call(d.querySelectorAll('#sh_speed .acch b'),function(x){return x.textContent}),"
+     " rep({step:'hub', heads:[].map.call(d.querySelectorAll('#sh_speed .acc:not([hidden]) .acch b'),function(x){return x.textContent}),"
      " tag:q('#autotag').textContent, tagIn:q('#ptab_auto').contains(q('#autotag')), cats:d.querySelectorAll('.cat').length});"
      " q('#ptab_auto').click(); }, 300);", 700),
     ("rep({step:'autopage', auto:q('#pp_auto').classList.contains('on'), semi:q('#pp_semi').classList.contains('on'),"
@@ -300,14 +282,6 @@ class H(BaseHTTPRequestHandler):
         if p == "/state":
             if SLOW["on"]: time.sleep(0.8)
             return self._j(dict(ST, control="you"))
-        if p == "/sim/state":
-            SIMPOLLS.append(1)
-            return self._j(dict(ST, control="you", real_armed=False, sim=dict(bf=2)))
-        if p == "/sim/console":
-            return self._j([])
-        if p == "/sim/cmd":
-            CMDS.append("SIM " + "&".join(x for x in q.split("&") if not x.startswith(("k=", "c="))))
-            return self._j(dict(ST, control="you", refused="", real_armed=False, sim=dict(bf=2)))
         if p == "/cmd":
             CMDS.append(q)
             return self._j(dict(ST, control="you", refused=""))
@@ -341,15 +315,14 @@ class H(BaseHTTPRequestHandler):
 
 srv = ThreadingHTTPServer(("127.0.0.1", 8199), H); srv.daemon_threads = True
 threading.Thread(target=srv.serve_forever, daemon=True).start()
-prof = tempfile.mkdtemp()
-ff = subprocess.Popen(["firefox", "--headless", "--no-remote", "--profile", prof, "--window-size", "390,844",
-                       "http://127.0.0.1:8199/h"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+prof = tempfile.mkdtemp(prefix=".ui-browser-", dir=HERE)
+ff = launch(prof, "http://127.0.0.1:8199/h")
 t0 = time.time()
 while time.time() - t0 < 120 and not any(r.get("done") or r.get("step") == "error" for r in REP):
     time.sleep(0.3)
-ff.kill(); shutil.rmtree(prof, ignore_errors=True)
+ff.terminate(); ff.wait(timeout=10); shutil.rmtree(prof, ignore_errors=True)
 R = {r["step"]: r for r in REP}
-print("=== the phone app in headless Firefox ===")
+print("=== the phone app in a headless browser ===")
 check("page ran every step", "dead" in R and "error" not in R, str(R.get("error", "")))
 b = R.get("boot", {})
 check("no ABORT button on the page (removed on request)", b.get("abort") is False)
@@ -428,31 +401,8 @@ check("a touch on the scroll without moving asks nothing", R.get("dial_tap", {})
 check("PUSH: the degree scroll is off and a drag asks nothing",
       R.get("push_dial", {}).get("off") and R.get("push_dial2", {}).get("ask") is False,
       f"{R.get('push_dial')} {R.get('push_dial2')}")
-so, sc, sf = R.get("sim_on", {}), R.get("sim_cmds", {}), R.get("sim_off", {})
-sm = R.get("sim_menu", {})
-check("☰ = a MENU with three sections: PARAMETERS, MESSAGES, TEST; TEST opens its own page",
-      sm.get("rows") == ["PARAMETERS", "MESSAGES", "TEST"] and sm.get("menu") and sm.get("test"), str(sm))
-check("menu rows: the text starts at the LEFT of each row (not centred)",
-      sm.get("indent") and all(0 <= x <= 24 for x in sm.get("indent")), str(sm.get("indent")))
-check("TEST → START TEST (drone disarmed): allowed; the menu closes, the TEST keys show, a drawn view instead of the camera",
-      R.get("sim_menu", {}).get("dis") is False and so.get("bar") == "flex" and so.get("img") == "hidden"
-      and so.get("canv") == "block" and so.get("sheet") is False and len(SIMPOLLS) > 2, f"{so} polls {len(SIMPOLLS)}")
-sk = so.get("sky", [0, 0, 0, 0])
-check("TEST: a drawn sky in the picture (blue, not black), and no words over it (no badge)",
-      sk[3] == 255 and sk[2] > sk[0] + 40 and sk[2] > 120 and so.get("words") == "none", f"{sk} badge {so.get('words')}")
-check("TEST: no bar over the picture any more (no GUST / WIND 0-3 / ↺ buttons)", so.get("old") is False, str(so.get("old")))
-wd, ex = so.get("wind", [99, 99, 99, 0]), so.get("exit", [99, 99, ""])
-check("TEST: two small WIND keys with icons INSIDE the picture, top-left under the compass tape",
-      so.get("inPic") and so.get("svg") and 0 <= wd[0] <= 16 and 26 <= wd[1] <= 44 and 0 <= wd[2] <= 10 and 30 <= wd[3] <= 44, str(wd))
-check("TEST: EXIT (just EXIT) inside the picture, top-right", so.get("inPic") and 0 <= ex[0] <= 16 and 26 <= ex[1] <= 44
-      and ex[2].replace("\u2715", "").strip() == "EXIT", str(ex))
-check("TEST look: plain black (no stripes, no purple); no az / el readout, no 'pretend drone' label",
-      b"repeating-linear-gradient" not in PAGE and not any(c in PAGE for c in (b"#6d28d9", b"#5b21b6", b"#2e1065", b"#facc15"))
-      and b'id="offs"' not in PAGE and b"TEST \xc2\xb7 pretend drone" not in PAGE)
-check("in TEST the buttons go to the pretend drone ONLY (/sim/cmd): LOCK, a wind gust",
-      sorted(sc.get("cmds", [])) == ["SIM gust=r", "SIM lock=on"], str(sc))
-check("EXIT: back to the real drone, the TEST keys gone", sf.get("sim") is False and sf.get("bar") == "none" and sf.get("x") == "none", str(sf))
-check("drone armed: TEST cannot be started", R.get("sim_armed", {}).get("dis") is True, str(R.get("sim_armed")))
+check("Test mode removed from the phone app", b'id="t_test"' not in PAGE and b'/sim' not in PAGE)
+check("opening the page requires a flight mode choice", R.get("chooser", {}).get("visible") and R.get("chooser", {}).get("inert"))
 hd = R.get("held", {}).get("cls", "")
 check("while ▲ is held and the Jetson accepts it: highlighted (held) AND marked sending (tx)",
       "held" in hd and "tx" in hd, hd)
@@ -577,13 +527,12 @@ function box(e){var r=e.getBoundingClientRect();return {l:r.left,t:r.top,r:r.rig
                                      for i, (_, w, h) in enumerate(SIZES))).encode()
 HARNESS = LAYOUT
 REP.clear()
-prof = tempfile.mkdtemp()
-ff = subprocess.Popen(["firefox", "--headless", "--no-remote", "--profile", prof, "--window-size", "1920,1080",
-                       "http://127.0.0.1:8199/h"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+prof = tempfile.mkdtemp(prefix=".ui-browser-", dir=HERE)
+ff = launch(prof, "http://127.0.0.1:8199/h", 1920, 1080)
 t0 = time.time()
 while time.time() - t0 < 90 and len({r.get("step") for r in REP if r.get("step", "").startswith("layout_")}) < len(SIZES):
     time.sleep(0.3)
-ff.kill(); shutil.rmtree(prof, ignore_errors=True)
+ff.terminate(); ff.wait(timeout=10); shutil.rmtree(prof, ignore_errors=True)
 R = {r["step"]: r for r in REP}
 print("=== the same page on a tablet and a desktop ===")
 for i, (name, w, h) in enumerate(SIZES):

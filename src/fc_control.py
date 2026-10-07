@@ -7,6 +7,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter, sleep
+from wasp import WaspGuidance, interpolate_rotation
 
 try:
     from pymavlink import mavutil
@@ -1000,6 +1001,7 @@ class ArduPilotAcro(FcBackend):
         return None
 
     def _apply_heartbeat(self, hb):
+        self._heartbeat_t = perf_counter()
         self.mode_name = COPTER_MODES.get(hb.custom_mode, f"MODE{hb.custom_mode}")
         self.armed = bool(hb.base_mode
                           & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
@@ -1052,6 +1054,8 @@ class ArduPilotAcro(FcBackend):
 
         y_rate = self._param("ACRO_Y_RATE")
         rp_rate = self._param("ACRO_RP_RATE")
+        self._param("ACRO_RP_EXPO")
+        self._param("ACRO_Y_EXPO")
         self.acro_yaw_rate = math.radians(y_rate) if y_rate else math.radians(202.5)
         self.acro_rp_rate = math.radians(rp_rate) if rp_rate else math.radians(360.0)
 
@@ -1110,6 +1114,7 @@ class ArduPilotAcro(FcBackend):
     def _read_axis(self, axis, announce=True):
         fallback_chan = {"yaw": 4, "pitch": 2, "roll": 1, "throttle": 3}
         ch = self._param(f"RCMAP_{axis.upper()}")
+        mapping_read = ch is not None
         ch = int(ch) if ch else fallback_chan.get(axis, 0)
         mn = self._param(f"RC{ch}_MIN")
         mx = self._param(f"RC{ch}_MAX")
@@ -1124,6 +1129,7 @@ class ArduPilotAcro(FcBackend):
                    reversed=bool(int(rv)) if rv is not None else False,
                    dz=int(dzp) if dzp else 0,
                    from_fc=from_fc)
+        cfg["wasp_calibrated"] = mapping_read and None not in (mn, mx, tr, rv, dzp)
         src = "from FC" if from_fc else "DEFAULTS (param read failed!)"
         warn = "" if 1 <= cfg["chan"] <= 8 else "  [chan>8 cannot be overridden!]"
         if announce:
@@ -1323,6 +1329,124 @@ class ArduPilotAcro(FcBackend):
                                    for a, b in zip(lo[1:], hi[1:]))
         return dict(roll=r, pitch=p, yaw=y, rollspeed=rs, pitchspeed=ps,
                     yawspeed=ys, age=perf_counter() - t)
+
+    def wasp_attitude(self, at_t=None):
+        # Refuse old frames outside history and gaps rather than silently using
+        # an unrelated attitude. Interpolate rotations across Euler wrap safely.
+        now = perf_counter()
+        with self._lock:
+            hist = list(self._att_hist)
+        if not hist or not 0 <= now - hist[-1][0] <= 0.15:
+            return None
+        if not all(math.isfinite(v) for v in hist[-1]):
+            return None
+        if at_t is None:
+            at_t = hist[-1][0]
+        if not math.isfinite(at_t) or not 0 <= now - at_t <= 0.25:
+            return None
+        if at_t < hist[0][0] or at_t > hist[-1][0] + 0.05:
+            return None
+        sample = hist[-1]
+        mat = None
+        for lo, hi in zip(hist, hist[1:]):
+            if lo[0] <= at_t <= hi[0]:
+                if hi[0] - lo[0] > 0.10 or not all(math.isfinite(v) for v in (*lo, *hi)):
+                    return None
+                f = (at_t-lo[0]) / max(1e-9, hi[0]-lo[0])
+                angles = tuple(a + f*((b-a+math.pi) % (2*math.pi)-math.pi)
+                               for a, b in zip(lo[1:4], hi[1:4]))
+                sample = (at_t,) + angles + hi[4:]
+                mat = interpolate_rotation(lo[1:4], hi[1:4], f)
+                break
+        if not all(math.isfinite(v) for v in sample):
+            return None
+        att = dict(zip(("roll", "pitch", "yaw", "rollspeed", "pitchspeed", "yawspeed"), sample[1:]))
+        if mat is not None:
+            att["rotation"] = mat
+        return att
+
+    def wasp_ready(self):
+        if not self.armed or self.mode_name != "ACRO":
+            return "WASP needs ARMED + ACRO"
+        if perf_counter() - getattr(self, "_heartbeat_t", -1e9) > 1.5:
+            return "no fresh FC heartbeat"
+        why = self.wasp_setup_error()
+        if why:
+            return why
+        if self.wasp_attitude() is None:
+            return "no fresh attitude for WASP"
+        return ""
+
+    def wasp_setup_error(self):
+        """Configuration checks also available while disarmed for preflight."""
+        if self.params.get("ACRO_TRAINER") != 0:
+            return "WASP needs ACRO_TRAINER=0 (no auto-level)"
+        for k in ("ACRO_RP_RATE", "ACRO_Y_RATE"):
+            v = self.params.get(k)
+            if v is None or not math.isfinite(v) or v <= 0:
+                return f"WASP needs a valid {k} read from the FC"
+        for k in ("ACRO_RP_EXPO", "ACRO_Y_EXPO"):
+            v = self.params.get(k)
+            if v is None or not 0 <= v <= 1:
+                return f"WASP needs a valid {k} read from the FC"
+        timeout = self.params.get("RC_OVERRIDE_TIME", 0)
+        if not 0 < timeout <= 1.0:
+            return "WASP needs 0 < RC_OVERRIDE_TIME <= 1 second"
+        if self.blockers:
+            return self.blockers[0]
+        channels = []
+        for axis in ("roll", "pitch", "yaw", "throttle"):
+            cfg = self.rc.get(axis, {})
+            if axis not in self.axes or not cfg.get("wasp_calibrated"):
+                return f"WASP needs calibrated {axis} control"
+            dz_limit = (cfg["max"]-cfg["min"] if axis == "throttle" else
+                        min(cfg["trim"]-cfg["min"], cfg["max"]-cfg["trim"]))
+            if not (1 <= cfg["chan"] <= 8 and cfg["min"] <= cfg["trim"] <= cfg["max"]
+                    and 0 <= cfg["dz"] < dz_limit):
+                return f"invalid {axis} RC calibration"
+            channels.append(cfg["chan"])
+        if len(set(channels)) != 4:
+            return "WASP RC axes must use distinct channels"
+        return ""
+
+    def wasp_pwm(self, rates, throttle):
+        if not all(math.isfinite(v) for v in (*rates, throttle)) or not 0 <= throttle <= 1:
+            raise ValueError("invalid WASP command")
+        sticks = []
+        for axis, rate in zip(("roll", "pitch", "yaw"), rates):
+            prefix = "ACRO_Y" if axis == "yaw" else "ACRO_RP"
+            target = min(1.0, abs(rate) / math.radians(self.params[prefix+"_RATE"]))
+            expo = self.params[prefix+"_EXPO"]
+            lo, hi = 0.0, 1.0
+            for _ in range(24):
+                mid = (lo+hi)/2
+                if (1-expo)*mid + expo*mid**3 < target:
+                    lo = mid
+                else:
+                    hi = mid
+            sticks.append(math.copysign((lo+hi)/2, rate) if rate else 0.0)
+        scale = max(1.0, math.hypot(*sticks[:2]))
+        sticks[:2] = [v/scale for v in sticks[:2]]
+        out = {a: self._exact_pwm(a, v) for a, v in zip(("roll", "pitch", "yaw"), sticks)}
+        cfg = self.rc["throttle"]
+        # ACRO throttle is unipolar. ALT_HOLD's midpoint/deadzone mapping is wrong here.
+        fraction = 1-throttle if cfg["reversed"] else throttle
+        out["throttle"] = round(cfg["min"] + fraction*(cfg["max"]-cfg["min"]))
+        return out
+
+    def steer_wasp_pwm(self, pwm_by_axis):
+        if self.wasp_ready():
+            return self.release()
+        chans = [0] * 8
+        sent = {}
+        for axis in ("roll", "pitch", "yaw", "throttle"):
+            cfg = self.rc[axis]
+            pwm = pwm_by_axis.get(axis)
+            if pwm is None or not math.isfinite(pwm) or not cfg["min"] <= pwm <= cfg["max"]:
+                return self.release()
+            chans[cfg["chan"]-1] = int(pwm)
+            sent[cfg["chan"]] = int(pwm)
+        return self._commit_override(chans, sent)
 
     def commit(self):
         with self._lock:
@@ -2026,6 +2150,9 @@ class AcroCommander:
         self.transport = transport
         self.axes = tuple(axes)
         self.law = law or ControlLaw()
+        self.wasp_guidance = WaspGuidance()
+        self.camera_mount_deg = float(os.environ.get("CAMERA_MOUNT_DEG",
+                                      math.degrees(getattr(self.law, "cam_tilt", math.pi/6))))
         self.steer_modes = frozenset(steer_modes or RATE_MODES)
         self.commit_chan = int(commit_chan or 0)
         self.commit_abort_below = float(commit_abort_below)
@@ -2253,6 +2380,24 @@ class AcroCommander:
         self._tx.start()
 
     def compute(self, err_x, err_y, state, fw, fh, bbox=None, capture_t=None):
+        if self.mission is not None and self.mission.wasp.enabled:
+            cmd = self.law.neutral()
+            if state == "SEARCH":
+                self.wasp_guidance.reset()
+                return cmd
+            b = self.backend
+            att = b.wasp_attitude(at_t=capture_t) if isinstance(b, ArduPilotAcro) else None
+            if att is None or capture_t is None:
+                self.wasp_guidance.reset()
+                return cmd
+            try:
+                cmd.update(self.wasp_guidance.observe(
+                    err_x, err_y, fw, fh, self.law._tan_h, self.law._tan_v,
+                    att, capture_t, self.mission.wasp.params["camera_roll"]))
+                cmd["camera_roll"] = self.mission.wasp.params["camera_roll"]
+            except (ValueError, TypeError, KeyError, ZeroDivisionError):
+                self.wasp_guidance.reset()
+            return cmd
         if state == "SEARCH":
             return self.law.neutral()
 
@@ -2428,15 +2573,32 @@ class AcroCommander:
     def ai_pwm(self, cmd):
         return self.backend.ai_pwm(cmd)
 
+    def wasp_pwm(self, rates, throttle):
+        rates = tuple(-v if getattr(self.law, self._INVERT[a], False) else v
+                      for a, v in zip(("roll", "pitch", "yaw"), rates))
+        return self.backend.wasp_pwm(rates, throttle)
+
     def _mission_gate(self):
         b = self.backend
         if not self.linked:
             return False, "no FC link"
         if self.require_armed and not b.armed:
             return False, "disarmed"
-        if b.mode_name != "ALT_HOLD":
+        wasp = self.mission is not None and self.mission.wasp.enabled
+        if wasp:
+            if not isinstance(b, ArduPilotAcro):
+                return False, "WASP requires ArduPilot MAVLink"
+            if not self.mission.wasp.camera_confirmed or self.mission.camera_mount_deg != 90:
+                return False, "confirm camera fixed at 90 degrees in PARAMETERS > WASP"
+            why = b.wasp_ready()
+            if why:
+                return False, why
+        elif self.mission is not None and (abs(self.mission.camera_mount_deg - 30) > 0.1
+                or abs(math.degrees(getattr(self.law, "cam_tilt", math.pi/6)) - 30) > 0.1):
+            return False, "restore and confirm the 30 degree camera for AUTO / SEMI-AUTO"
+        elif b.mode_name != "ALT_HOLD":
             return False, f"FC in {b.mode_name}, not ALT_HOLD"
-        if self.mission_require_airborne and hasattr(b, "airborne"):
+        if not wasp and self.mission_require_airborne and hasattr(b, "airborne"):
             air, how = b.airborne()
             if not air:
                 return False, f"on the ground ({how})"
@@ -2460,7 +2622,7 @@ class AcroCommander:
         ai_t = det_t if det_t is not None else -1e9
         fresh = (now - ai_t) <= self.target_timeout and off is not None
         ctx = dict(gate_ok=ok, gate_why=why,
-                   att=b.attitude() if ok else None,
+                   att=((b.wasp_attitude() if self.mission.wasp.enabled else b.attitude()) if ok else None),
                    height=None if h is None else h[0],
                    climb=None if h is None else h[1],
                    ai_cmd=cmd if fresh else None,
@@ -2468,7 +2630,7 @@ class AcroCommander:
                    det_t=det_t, det_conf=det_conf)
         out = self.mission.cycle(now, ctx)
         if out:
-            written = b.steer_pwm(out)
+            written = b.steer_wasp_pwm(out) if self.mission.wasp.enabled else b.steer_pwm(out)
         else:
             written = b.release() if self.linked else False
         self._mission_out = dict(out)
@@ -2520,6 +2682,10 @@ class AcroCommander:
                   gate_why=self._mission_why)
         if self.mission is not None:
             st.update(self.mission.snapshot(now))
+            st["wasp_setup_why"] = (b.wasp_setup_error() if isinstance(b, ArduPilotAcro)
+                                    else "WASP requires ArduPilot MAVLink")
+            st["wasp_attitude_fresh"] = bool(isinstance(b, ArduPilotAcro)
+                                            and b.wasp_attitude() is not None)
         h = b.height() if b is not None and hasattr(b, "height") else None
         st["height_m"] = None if h is None else round(h[0], 2)
         st["climb_mps"] = None if h is None else round(h[1], 2)
@@ -2532,6 +2698,9 @@ class AcroCommander:
             det_t, conf = self._det_t, self._det_conf
             cmd = dict(self._cmd)
             fresh = (now - self._last_target_t) <= self.target_timeout
+        if self.mission is not None and self.mission.wasp.enabled:
+            fresh = (bool(cmd.get("wasp")) and bool(cmd.get("have_att"))
+                     and 0 <= now - cmd.get("capture_t", -1e9) <= 0.25)
         st["det_age_s"] = None if det_t is None else round(now - det_t, 2)
         st["det_conf"] = None if conf is None else round(conf, 2)
         st["target_fresh"] = bool(fresh)

@@ -1,10 +1,8 @@
 [Unit]
 Description=WASP drone tracker (auto-start at Jetson power-up, intercept law)
 
-After=graphical-session.target
-PartOf=graphical-session.target
-Wants=nvargus-daemon.service
-After=nvargus-daemon.service
+# A lingering user manager starts this at boot without a desktop login.
+# nvargus-daemon is a system service; the launcher waits for the camera.
 
 StartLimitIntervalSec=0
 
@@ -30,4 +28,4 @@ TimeoutStopSec=25
 KillSignal=SIGINT
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=default.target

@@ -24,6 +24,10 @@
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;
     user-select:none;-webkit-touch-callout:none}
+  [hidden]{display:none!important}
+  #modechooser{overflow-y:auto}
+  #modechooser button:disabled{opacity:.4}
+  #modechooser small{display:block;margin-top:8px;font-size:12px;font-weight:400;letter-spacing:0}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);overflow:hidden;
     font:15px/1.3 var(--sans)}
   .app{height:100%;display:flex;flex-direction:column;gap:8px;
@@ -83,7 +87,6 @@
         background:linear-gradient(180deg,rgba(12,14,17,.85),rgba(12,14,17,.55));border-bottom:1px solid rgba(255,255,255,.12)}
   .tgt{position:absolute;width:7%;aspect-ratio:1/1;transform:translate(-50%,-50%);border:1.5px solid rgba(255,255,255,.75);
        border-radius:3px;box-shadow:0 0 0 1px rgba(0,0,0,.3);pointer-events:none;display:none}
-  body.sim .tgt,body.sim .badge{display:none          }
   .badge{position:absolute;left:50%;top:34px;transform:translateX(-50%);padding:5px 12px;border-radius:999px;
          font:500 13px/1.2 var(--sans);color:#fff;background:rgba(12,14,17,.78);border:1px solid rgba(255,255,255,.15);
          white-space:nowrap}
@@ -202,33 +205,6 @@
   .log .ln{padding:6px 0;border-bottom:1px solid var(--line)}.log .t{color:var(--faint)}
   .log .m{color:#1f4f99}.log .r{color:#b44a00}.log .e{color:var(--bad)}
 
-  .simctl{position:absolute;left:8px;top:34px;z-index:3;display:none;gap:6px}
-  body.sim .simctl{display:flex}
-  .simctl button{width:38px;height:38px;padding:0;border-radius:10px;color:#fff;display:flex;align-items:center;justify-content:center;
-                 background:rgba(14,17,21,.55);border:1px solid rgba(255,255,255,.18);
-                 -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:0 2px 8px rgba(0,0,0,.3)}
-  .simctl button:active{background:var(--acc);color:var(--acc-ink);border-color:var(--acc)}
-  .simctl svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-  .simctl .r svg{transform:scaleX(-1)}
-  .simx{position:absolute;right:8px;top:34px;z-index:3;display:none;height:38px;padding:0 14px;border-radius:10px;
-        color:#fff;font:700 12px/1 var(--sans);letter-spacing:.1em;white-space:nowrap;
-        background:#15171a;border:1px solid rgba(255,255,255,.22);box-shadow:0 2px 8px rgba(0,0,0,.35)}
-  body.sim .simx{display:block}
-  body.sim .vbox{border-color:#15171a;box-shadow:0 0 0 3px #15171a}
-  .simv{position:absolute;inset:0;width:100%;height:100%;display:none}
-  body.sim .simv{display:block}
-  .simcap{position:absolute;left:50%;top:80px;transform:translateX(-50%);z-index:3;display:none;align-items:center;gap:10px;
-          width:max-content;max-width:calc(100% - 24px);padding:8px 14px 8px 8px;border-radius:14px;color:#fff;
-          background:rgba(14,17,21,.72);border:1px solid rgba(255,255,255,.18);box-shadow:0 2px 10px rgba(0,0,0,.35);
-          -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
-  body.sim .simcap.on{display:flex}
-  .simcap .n{flex:0 0 auto;width:30px;height:30px;border-radius:50%;background:var(--acc);color:var(--acc-ink);
-             display:flex;align-items:center;justify-content:center;font:700 15px/1 var(--sans)}
-  .simcap .n:empty{display:none}
-  .simcap.hit .n{background:var(--ok);color:#fff}
-  .simcap b{display:block;font:700 13px/1.2 var(--sans);letter-spacing:.06em}
-  .simcap small{display:block;font:12px/1.3 var(--sans);color:#d9dde2;margin-top:2px}
-  body.sim #v{visibility:hidden}
   .row:disabled{opacity:.4}
   .row small{display:block;font:11px/1.3 var(--sans);letter-spacing:0;color:var(--faint);margin-top:6px;text-align:left}
   .ask{position:fixed;inset:0;z-index:8;display:none;align-items:center;justify-content:center;
@@ -324,7 +300,7 @@
     .toast{left:50%;right:auto;transform:translateX(-50%);max-width:42%;bottom:calc(var(--K) * .4)}
   }
 </style></head>
-<body><div class="app">
+<body><div class="app" inert>
 
   <div class="top">
     <button class="burger" id="t_menu" aria-label="menu"><i></i><i></i><i></i></button>
@@ -336,25 +312,19 @@
     <div class="tile"><span class="k">FC mode</span><span class="v" id="c_mode">--</span></div>
     <div class="tile"><span class="k">Armed</span><span class="v" id="c_arm">--</span></div>
     <div class="tile"><span class="k">Heading</span><span class="v" id="c_hdg">--</span></div>
-    <div class="tile"><span class="k">Target (drone)</span><span class="v" id="c_det">--</span></div>
+    <div class="tile"><span class="k">Target</span><span class="v" id="c_det">--</span></div>
     <div class="tile"><span class="k">Vibration</span><span class="v" id="c_vib">--</span></div>
     <div class="tile"><span class="k" id="c_ai_k">Detector</span><span class="v" id="c_ai">--</span></div>
   </div>
 
   <div class="vidwrap"><div class="vbox" id="vbox">
-    <img id="v" src="/stream.mjpg" alt=""><canvas class="simv" id="simv"></canvas>
+    <img id="v" src="/stream.mjpg" alt="">
     <svg class="arc" id="arc" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
       <path class="sh" id="arc_sh" d="M0,40 L100,40"/><path class="fg" id="arc_fg" d="M0,40 L100,40"/></svg>
     <div class="aim" id="aim"></div><div class="tgt" id="tgt"></div>
     <canvas class="tape" id="tape"></canvas>
     <div class="badge" id="badge" style="display:none"></div>
     <div class="toast" id="toast"></div>
-    <div class="simctl" id="simctl">
-      <button id="s_gl" title="Wind: push the nose LEFT" aria-label="wind left"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.6 4.6A2 2 0 1 1 11 8H5"/><path d="M12.6 19.4A2 2 0 1 0 14 16H5"/><path d="M17.7 7.7A2.5 2.5 0 1 1 19.5 12H2"/><path d="M5 9l-3 3 3 3"/></svg></button>
-      <button class="r" id="s_gr" title="Wind: push the nose RIGHT" aria-label="wind right"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.6 4.6A2 2 0 1 1 11 8H5"/><path d="M12.6 19.4A2 2 0 1 0 14 16H5"/><path d="M17.7 7.7A2.5 2.5 0 1 1 19.5 12H2"/><path d="M5 9l-3 3 3 3"/></svg></button>
-    </div>
-    <button class="simx" id="s_exit">&#x2715; EXIT</button>
-    <div class="simcap" id="simcap"><div class="n" id="simcap_n"></div><div><b id="simcap_t"></b><small id="simcap_s"></small></div></div>
   </div>
   <div class="belt">
     <div class="dial off" id="dial" aria-label="pick a heading"><canvas id="dialc"></canvas></div>
@@ -375,6 +345,7 @@
     </div>
     <div class="acts">
       <button class="rbtn auto" id="b_auto" aria-label="AUTO"><span id="autotxt">AUTO</span></button>
+      <button class="rbtn auto" id="b_wasp_abort" style="display:none;background:#ad3030;border-color:#ad3030" aria-label="Abort Wasp">ABORT</button>
       <button class="rbtn lock" id="b_lock" aria-label="LOCK"><span id="locktxt">LOCK</span></button>
       <button class="rbtn eng" id="b_eng" aria-label="ENGAGE"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE</span></button>
     </div>
@@ -384,16 +355,45 @@
 <div class="sheet" id="sh_menu">
   <h3><span>MENU</span><button data-close aria-label="close">&#x2715;</button></h3>
   <div class="body">
-    <button class="row" id="t_par"><div>PARAMETERS<small>SEMI-AUTO and AUTO settings, detection</small></div><span>›</span></button>
+    <button class="row" id="t_mode"><div>FLIGHT MODE<small id="mode_summary">Choose Normal or Wasp</small></div><span>›</span></button>
+    <button class="row" id="t_par"><div>PARAMETERS<small>SEMI-AUTO, AUTO, WASP and detection</small></div><span>›</span></button>
     <button class="row" id="t_log"><div>MESSAGES<small>What the Jetson reports</small></div><span>›</span></button>
-    <button class="row" id="t_test"><div>TEST<small>A pretend drone: try the buttons without flying</small></div><span>›</span></button>
     <div class="byline"><img src="/img/ikd-logo.svg" alt="IKnowHow Defence"><span>WASP INTERCEPTOR</span></div>
   </div>
 </div>
 <div class="sheet sub" id="sh_speed">
   <h3><span>PARAMETERS<small>APPLIED AT ONCE</small></span><button data-close aria-label="close">&#x2715;</button></h3>
   <div class="body">
-    <section class="acc">
+    <div class="pcard">
+          <div class="grp"><div class="lbl">PHYSICAL CAMERA MOUNT</div>
+            <div class="help">WASP: fix the camera at 90°, looking along upward propeller thrust. AUTO / SEMI-AUTO: physically restore 30°. These buttons confirm a manual change; they do not move the camera.</div>
+            <div class="seg"><button data-mount="90" data-only="wasp">CONFIRM 90°<i>WASP · fixed upward</i></button><button data-mount="30" data-only="normal">CONFIRM 30°<i>AUTO / SEMI-AUTO</i></button></div>
+            <div class="help" id="mountstatus">Mount not confirmed</div>
+          </div>
+    </div>
+    <section class="acc" data-only="wasp">
+      <button class="acch" id="ptab_wasp" data-acc="wasp" aria-expanded="false" aria-controls="pp_wasp">
+        <span class="pt-ico">W</span><span class="pt-txt"><b>WASP</b><small>platform launch · fixed upward camera</small></span>
+        <span class="tag" id="wasptag">OFF</span><span class="chev" aria-hidden="true">›</span></button>
+      <div class="ppane" id="pp_wasp" role="region" aria-labelledby="ptab_wasp">
+        <div class="pcard"><div class="sec">WASP MODE</div>
+          <div class="help">Set up while disarmed. Selecting WASP turns AUTO off. Aim the platform yourself, then arm in ACRO and press LAUNCH WASP. Phone movement buttons are disabled in WASP.</div>
+          <div class="help" id="waspfcstatus">Checking the flight controller…</div>
+          <div class="grp"><div class="lbl">LAUNCH THROTTLE</div><div class="seg" data-wp="throttle" data-values="0.25,0.5,1" data-labels="25%,50%,100%"></div></div>
+          <div class="grp"><div class="lbl">MAXIMUM FLIGHT TIME</div><div class="seg" data-wp="duration" data-values="1,2,3,5" data-labels="1 s,2 s,3 s,5 s"></div></div>
+          <div class="grp"><div class="lbl">STRAIGHT LAUNCH</div><div class="seg" data-wp="straight" data-values="0,0.5,1,2" data-labels="Off,0.5 s,1 s,2 s"></div></div>
+          <div class="grp"><div class="lbl">STEERING BLEND TIME</div><div class="seg" data-wp="blend" data-values="0.25,0.5,1" data-labels="0.25 s,0.5 s,1 s"></div></div>
+          <div class="help">Launch throttle starts immediately. Straight launch requests zero turn rate, then steering gradually follows the live target. It does not guarantee a straight ground path. Maximum flight time includes both stages and must exceed their sum; increase it first for longer settings. Fresh detection is required throughout.</div>
+          <div class="help">Ground rejection (sky gate) and Follower are available below in DETECTION for both Normal and Wasp.</div>
+          <div class="grp"><div class="lbl">MAXIMUM STEERING RATE</div><div class="seg" data-wp="rate" data-values="30,60,90" data-labels="30°/s,60°/s,90°/s"></div></div>
+          <div class="grp"><div class="lbl">STEERING GAIN</div><div class="seg" data-wp="gain" data-values="2,4,6" data-labels="2,4,6"></div></div>
+          <div class="grp"><div class="lbl">TARGET MOTION LEAD</div><div class="seg" data-wp="lead" data-values="0,0.08,0.15" data-labels="0 ms,80 ms,150 ms"></div></div>
+          <div class="grp"><div class="lbl">CAMERA IMAGE ROTATION</div><div class="help">At 0°, image right is drone right and image bottom points toward its nose. Verify roll and pitch directions with props removed.</div><div class="seg" data-wp="camera_roll" data-values="0,90,180,270" data-labels="0°,90°,180°,270°"></div></div>
+          <div class="help">Target loss, stale attitude, timeout or ABORT releases every channel to the pilot. This is not an automatic hover or landing. Disarm before another attempt. Settings apply to this session only.</div>
+        </div>
+      </div>
+    </section>
+    <section class="acc" data-only="normal">
       <button class="acch" id="ptab_auto" data-acc="auto" aria-expanded="false" aria-controls="pp_auto">
         <span class="pt-ico">A</span>
         <span class="pt-txt"><b>AUTO</b><small id="sum_auto">one button: find and go</small></span>
@@ -410,7 +410,7 @@
     
       </div>
     </section>
-    <section class="acc">
+    <section class="acc" data-only="normal">
       <button class="acch" id="ptab_semi" data-acc="semi" aria-expanded="false" aria-controls="pp_semi">
         <span class="pt-ico"><svg viewBox="0 0 24 24"><path d="M12 4v16M4 12h16M8 8l4-4 4 4M8 16l4 4 4-4"/></svg></span>
         <span class="pt-txt"><b>SEMI-AUTO</b><small id="sum_semi">you fly, then ENGAGE</small></span>
@@ -437,23 +437,24 @@
     <section class="acc">
       <button class="acch" id="ptab_det" data-acc="det" aria-expanded="false" aria-controls="pp_det">
         <span class="pt-ico"><svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
-        <span class="pt-txt"><b>DETECTION</b><small id="sum_det">sky gate, follower, camera</small></span>
+        <span class="pt-txt"><b>DETECTION</b><small id="sum_det">ground rejection, follower, camera</small></span>
         <span class="chev" aria-hidden="true">›</span></button>
       <div class="ppane" id="pp_det" role="region" aria-labelledby="ptab_det">
       <div class="pcard"><div class="sec">BOTH MODES · WHAT COUNTS AS A TARGET</div>
-        <div class="grp"><div class="gh"><div class="lbl">SKY GATE</div><span class="fixed">ON AT EVERY POWER-UP</span></div>
+        <div class="grp"><div class="gh"><div class="lbl">GROUND REJECTION · SKY GATE</div><span class="fixed">ON AT EVERY POWER-UP</span></div>
           <div class="help">ignore detections over the ground · never saved as a default, on purpose</div><div class="seg" id="skyseg">
           <button data-sky="on">ON<i>sky only</i></button><button data-sky="off">OFF<i>whole frame</i></button></div></div>
         <div class="grp"><div class="gh"><div class="lbl">FOLLOWER</div><button class="unsaved" data-save="det:follow">THIS FLIGHT ONLY · SAVE</button></div>
           <div class="help">hold the target between detections</div><div class="seg" id="folseg">
           <button data-fol="on">ON<i>detector + follower</i></button><button data-fol="off">OFF<i>detector only</i></button></div></div>
+        <div class="help" data-only="wasp">Follower helps retain the target between detections. Wasp still requires a fresh detector confirmation within 0.25 s; follower alone cannot keep the launch running.</div>
       </div>
       <div class="pcard"><div class="sec">CAMERA · FULL VIEW OR FRESHER FRAMES</div>
         <div class="grp"><div class="gh"><div class="lbl">CAMERA</div><button class="unsaved" data-save="det:cam">THIS FLIGHT ONLY · SAVE</button></div>
           <div class="help">60 fps: each frame up to 17 ms fresher, but only the centre of the picture · the AI
             flies the same either way · not while ENGAGE or AUTO flies (dark a moment while it switches)</div><div class="seg" id="camseg">
           <button data-cam="30">30 FPS<i>full view 62°×49°</i></button><button data-cam="60">60 FPS<i>narrow 50°×30°</i></button></div></div>
-        <div class="phint">At <b>60 fps</b> the picture is ±15° high, not ±24°: past ~25° of lean (PUSH / the straight line at
+        <div class="phint" data-only="normal">At <b>60 fps</b> the picture is ±15° high, not ±24°: past ~25° of lean (PUSH / the straight line at
           30° or 40°) a lined-up drone leaves the top of the picture. Use <b>PUSH 20°</b> and <b>line 20°</b> with it.</div>
       </div>
       </div>
@@ -466,16 +467,14 @@
   <h3><span>MESSAGES<small>FROM THE JETSON</small></span><button data-close aria-label="close">&#x2715;</button></h3>
   <div class="body" id="logbody"><div class="log" id="log"></div></div>
 </div>
-<div class="sheet sub" id="sh_test">
-  <h3><span>TEST<small>WITHOUT FLYING</small></span><button data-close aria-label="close">&#x2715;</button></h3>
-  <div class="body">
-    <p class="txt">The whole screen drives a pretend drone on the Jetson, with wind. It runs the same code as the real flight
-      (LOCK, the heading scroll, ▲▼⟲⟳, ENGAGE, the parameters), and nothing is ever sent to the FC.</p>
-    <p class="txt">Only while the real drone is <b>disarmed</b>. If it arms, the test ends at once.</p>
-    <button class="go" id="t_sim">START TEST</button>
-    <p class="txt" id="t_simtxt"></p>
-  </div>
-</div>
+<div class="ask on" id="modechooser" role="dialog" aria-modal="true" aria-labelledby="mode_title" style="z-index:110"><div>
+  <div class="q" id="mode_title">CHOOSE FLIGHT MODE</div>
+  <p class="sub">Choose each time you open or refresh the app.</p>
+  <button class="yes" id="choose_normal" disabled>NORMAL · AUTO / SEMI-AUTO<br><small>Camera at 30°</small></button>
+  <button class="yes" id="choose_wasp" disabled>WASP · PLATFORM LAUNCH<br><small>Camera fixed at 90°</small></button>
+  <p class="sub" id="mode_note">Connecting to the Jetson…</p>
+  <button class="no" id="choose_abort" style="display:none">ABORT ACTIVE FLIGHT</button>
+</div></div>
 <div class="ask defask" id="defask" role="dialog" aria-modal="true" aria-labelledby="defk"><div>
   <div class="q">MAKE IT THE DEFAULT?</div>
   <div class="dk" id="defk">--</div>
@@ -492,7 +491,7 @@
   <button class="no" id="ask_no">NO</button>
 </div></div>
 <div class="cover" id="cover"><b>CONNECTION LOST</b>
-  <p>The Jetson stops every move on its own within 0.3 s. The pilot has control with the switch.</p></div>
+  <p>Phone movement holds expire after 0.3 s. An active intercept continues until its own stop condition. Use the transmitter mode switch to take control.</p></div>
 
 <script>
 (function () {
@@ -505,6 +504,32 @@
 
   var C = rid();
   var VIEW = false;
+  var MODE_READY = false, UI_MODE = null, choosing = false;
+
+  function showModeChooser() {
+    MODE_READY = false;
+    document.querySelector(".app").inert = true;
+    document.querySelectorAll(".sheet").forEach(function (x) { x.classList.remove("open"); });
+    $("modechooser").classList.add("on");
+    if (LAST) paint(LAST);
+  }
+  function chooseMode(mode) {
+    if (choosing) return;
+    choosing = true;
+    cmd("flightmode=" + mode).then(function (j) {
+      choosing = false;
+      if (!j || j.refused) { T("mode_note", j && j.refused ? j.refused : "Could not select mode. Check the connection."); return; }
+      UI_MODE = mode; MODE_READY = true;
+      document.querySelector(".app").inert = false;
+      $("modechooser").classList.remove("on");
+      paint(j);
+      if (!j.armed) { openAcc(mode === "wasp" ? "wasp" : "semi"); openSheet("sh_speed"); }
+    });
+  }
+  $("choose_normal").onclick = function () { chooseMode("normal"); };
+  $("choose_wasp").onclick = function () { chooseMode("wasp"); };
+  $("choose_abort").onclick = function () { cmd("abort=1"); };
+  $("t_mode").onclick = function () { releaseAll(); showModeChooser(); };
 
   var HFOV = 62.2, VFOV = 48.8, TILT = 30, CAMAR = 4 / 3;
   var LEVELS = ["SLOW", "MEDIUM", "FAST"];
@@ -520,8 +545,6 @@
     place();
     if (mq.addEventListener) mq.addEventListener("change", place); else mq.addListener(place);
   })();
-  var SIM = false;
-  function base() { return SIM ? "/sim" : ""; }
   var SEL = null;
   var CANLOCK = false;
 
@@ -531,23 +554,18 @@
     polling = true;
     var ac = window.AbortController ? new AbortController() : null;
     var to = ac ? setTimeout(function () { ac.abort(); }, 1200) : null;
-    var wasSim = SIM;
-    fetch(base() + "/state?c=" + C, {cache: "no-store", signal: ac ? ac.signal : undefined}).then(function (r) {
-      if (wasSim && r.status === 404) { simMissing(); throw new Error("no sim"); }
+    fetch("/state?c=" + C, {cache: "no-store", signal: ac ? ac.signal : undefined}).then(function (r) {
       if (!r.ok) throw new Error(r.status); return r.json();
-    }).then(function (j) { if (wasSim !== SIM) return; lastOk = Date.now(); paint(j); })
+    }).then(function (j) { lastOk = Date.now(); paint(j); })
       .catch(function () {}).then(function () { clearTimeout(to); polling = false; });
   }
   function cmd(q, quiet) {
-    var wasSim = SIM;
-    return fetch(base() + "/cmd?c=" + C + "&" + q, {cache: "no-store"})
+    if (!MODE_READY && q.indexOf("flightmode=") !== 0 && q.indexOf("abort=") !== 0) return Promise.resolve(null);
+    return fetch("/cmd?c=" + C + "&" + q, {cache: "no-store"})
       .then(function (r) {
-        if (r.status === 404 && wasSim) { simMissing(); return null; }
-        if (r.status === 409 && wasSim) { setSim(false); note("✗ the real drone is armed: leaving TEST", true); return null; }
         if (r.status === 409) { if (!quiet) note("another phone has control", true); return null; }
         return r.ok ? r.json() : null;
       }).then(function (j) {
-        if (j && wasSim !== SIM) return null;
         if (j) { lastOk = Date.now(); if (j.refused && !quiet) note("✗ " + j.refused, true); paint(j); }
         return j;
       }).catch(function () { return null; });
@@ -611,6 +629,9 @@
     var fill = $("engfill"); fill.style.opacity = ".6";
     setTimeout(function () { fill.style.opacity = "0"; }, 180);
     cmd("engage=1");
+  });
+  $("b_wasp_abort").addEventListener("pointerdown", function (e) {
+    e.preventDefault(); cmd("abort=1");
   });
 
   $("b_auto").addEventListener("pointerdown", function (e) {
@@ -763,7 +784,6 @@
   }
   var DEFQ = null;
   function askDefault(what, v) {
-    if (SIM) return;
     if (what === "auto:*") {
       var m = (LAST && LAST.mission) || {}, ad = m.auto_defaults || {}, same = true;
       AUTO_UI.forEach(function (p) { if (p.k && ad[p.k] !== undefined && String(ad[p.k]) !== String(p.d)) same = false; });
@@ -793,7 +813,6 @@
   });
 
   $("t_log").onclick = function () { openSheet("sh_log"); };
-  $("t_test").onclick = function () { openSheet("sh_test"); };
   document.querySelectorAll("[data-close]").forEach(function (b) {
     b.onclick = function () { b.closest(".sheet").classList.remove("open"); };
   });
@@ -808,6 +827,19 @@
   });
   document.querySelectorAll("[data-autoen]").forEach(function (b) {
     b.onclick = function () { cmd("autoen=" + b.getAttribute("data-autoen")); };
+  });
+  ["waspen", "mount"].forEach(function (key) {
+    document.querySelectorAll("[data-" + key + "]").forEach(function (b) {
+      b.onclick = function () { cmd(key + "=" + b.getAttribute("data-" + key)); };
+    });
+  });
+  document.querySelectorAll("[data-wp]").forEach(function (seg) {
+    var labels = seg.getAttribute("data-labels").split(",");
+    seg.getAttribute("data-values").split(",").forEach(function (value, i) {
+      var b = document.createElement("button"); b.textContent = labels[i]; b.setAttribute("data-wv", value);
+      b.onclick = function () { cmd("waspp=" + seg.getAttribute("data-wp") + ":" + value); };
+      seg.appendChild(b);
+    });
   });
   document.querySelectorAll("[data-sky]").forEach(function (b) {
     b.onclick = function () { cmd("sky=" + b.getAttribute("data-sky")); };
@@ -825,57 +857,9 @@
     };
   });
 
-  var capRun = false;
-  function simCaption(m, ph, run) {
-    var el = $("simcap");
-    if (!SIM) { capRun = false; el.className = "simcap"; return; }
-    var hit = !!SC && SC.hit !== null && SC.hit !== undefined;
-    if (run) capRun = true;
-    else if (ph === "HOVER" && !hit) capRun = false;
-    var push = m.line_deg || (m.speeds && m.speeds.push) || 30, lv = m.ai_now || (m.levels && m.levels.ai) || "MEDIUM";
-    var spd = SC ? Math.round(SC.spd) : 0, cap = null;
-    if (capRun && hit) cap = ["✓", "HIT", "the enemy drone is down · the test starts again"];
-    else if (capRun) cap = {
-      AUTO_CLIMB: ["1", "CLIMBING STRAIGHT UP TO " + Math.round(m.auto_height_m || 10) + " m", "heading locked · watching for a drone"],
-      AUTO_HOLD: ["2", "WATCHING", "holding height and heading · waiting for a drone to show up"],
-      AUTO_ALIGN: ["3", "DRONE FOUND · LINING IT UP", "turning and climbing to put it on the aim line"],
-      PUSH: ["4", "STRAIGHT LINE AT IT", "nose down " + push + "° · full speed"],
-      AI: ["5", "THE AI STEERS IT IN", spd + " m/s · AI " + lv],
-      STOP: ["", "MISSED · SOFT STOP", "back to level, then the pilot's sticks"]}[ph] || null;
-    else if (ph === "HOVER" && m.auto_enabled && !hit && !VIEW)
-      cap = ["", "PRESS AUTO", "one press: it climbs, finds the drone, lines it up and goes"];
-    el.className = "simcap" + (cap ? " on" : "") + (cap && cap[0] === "✓" ? " hit" : "");
-    if (cap) { T("simcap_n", cap[0]); T("simcap_t", cap[1]); T("simcap_s", cap[2]); }
-  }
-
-  function setSim(on) {
-    releaseAll();
-    if (drag) dialEnd(false);
-    if ($("ask").classList.contains("on")) closeAsk();
-    SIM = !!on; LAST = null; NOTE = null;
-    document.body.classList.toggle("sim", SIM);
-    consoleSeq = 0; $("log").innerHTML = "";
-    document.querySelectorAll(".sheet").forEach(function (x) { x.classList.remove("open"); });
-    poll(); pullConsole();
-  }
-  function simMissing() {
-    if (!SIM) return;
-    setSim(false);
-    note("✗ TEST is not on this Jetson yet: restart the tracker", true);
-  }
-  $("t_sim").onclick = function () {
-    if (LAST && LAST.armed && !SIM) { note("✗ the drone is armed: TEST only while disarmed", true); return; }
-    setSim(true); cmd("reset=1", true);
-  };
-  $("s_exit").onclick = function () { setSim(false); };
-  $("s_gl").onclick = function () { cmd("gust=l", true); };
-  $("s_gr").onclick = function () { cmd("gust=r", true); };
-
-
   function fmt(x, d) { return (x === null || x === undefined) ? "--" : Number(x).toFixed(d); }
   function paint(j) {
     LAST = j;
-    if (SIM && j.real_armed) { setSim(false); note("✗ the real drone armed: leaving TEST", true); return; }
     var cH = Number(j.cam_hfov), cV = Number(j.cam_vfov), cA = Number(j.cam_aspect);
     HFOV = cH > 0 ? cH : 62.2; VFOV = cV > 0 ? cV : 48.8;
     var car = cA > 0 ? cA : 4 / 3;
@@ -884,15 +868,21 @@
       if (Math.abs(car - 4 / 3) < 1e-3) document.documentElement.style.removeProperty("--ar");
       else document.documentElement.style.setProperty("--ar", car.toFixed(4));
     }
-    if (!SIM) {
-      $("t_sim").disabled = !!j.armed || VIEW;
-      T("t_simtxt", j.armed ? "The drone is ARMED: disarm it to test." : "");
-    }
     var m = j.mission || {}, ph = m.phase || "PILOT";
-    if (SIM && j.sim && j.sim.scene) {
-      SC = j.sim.scene; SCt = performance.now();
-      SCH = {h: Number(m.height_m) || 0, vz: Number(m.climb_mps) || 0};
-    } else if (!SIM) SC = null;
+    var wasp = !!m.wasp_enabled;
+    var currentMode = wasp ? "wasp" : "normal";
+    if (MODE_READY && UI_MODE !== currentMode) {
+      MODE_READY = false; document.querySelector(".app").inert = true; $("modechooser").classList.add("on");
+    }
+    $("choose_normal").disabled = choosing || (!!j.armed && wasp);
+    $("choose_wasp").disabled = choosing || (!!j.armed && !wasp);
+    $("choose_abort").style.display = j.armed ? "" : "none";
+    T("mode_note", j.armed ? "Drone armed: reopen " + (wasp ? "WASP" : "NORMAL") + ". Disarm to change modes." : "Selecting a mode does not arm or launch the drone.");
+    T("mode_summary", wasp ? "WASP · camera 90°" : "NORMAL · AUTO / SEMI-AUTO · camera 30°");
+    document.querySelectorAll("[data-only]").forEach(function (el) { el.hidden = el.getAttribute("data-only") !== currentMode; });
+    $("b_auto").style.display = wasp ? "none" : "";
+    $("b_wasp_abort").style.display = wasp ? "" : "none";
+    $("b_wasp_abort").disabled = VIEW;
     var locked = !!m.locked;
     LOCKHDG = locked && m.lock_hdg !== null && m.lock_hdg !== undefined ? Number(m.lock_hdg) : null;
     document.body.setAttribute("data-phase", locked && ph === "HOVER" ? "LOCKED" : ph);
@@ -902,7 +892,7 @@
 
     var arm = !!j.armed;
     S("c_arm", arm ? "ARMED" : "DISARMED", arm ? "on" : "");
-    S("c_mode", j.linked ? (j.fc_mode || "?") : "NO FC", !j.linked ? "bad" : j.fc_mode === "ALT_HOLD" ? "ok" : "warn");
+    S("c_mode", j.linked ? (j.fc_mode || "?") : "NO FC", !j.linked ? "bad" : j.fc_mode === (wasp ? "ACRO" : "ALT_HOLD") ? "ok" : "warn");
     S("c_hdg", m.heading_deg === null || m.heading_deg === undefined ? "--°" : fmt(m.heading_deg, 0) + "°", "");
     var hadHdg = HDG !== null;
     HDG = (m.heading_deg === null || m.heading_deg === undefined) ? null : Number(m.heading_deg);
@@ -925,12 +915,17 @@
     if ((ph === "AUTO_CLIMB" || ph === "AUTO_HOLD") && !VIEW && ctl !== "other") {
       $("b_yl").disabled = false; $("b_yr").disabled = false;
     }
-    var eng = $("b_eng"), done = !!m.engaged || !!m.ai_steering;
+    var eng = $("b_eng"), done = !!m.engaged || !!m.ai_steering || ph === "WASP_FLIGHT" || ph === "WASP_DONE";
     eng.className = "rbtn eng" + (done ? " go" : ph === "PUSH" ? " push" : "");
     var AUTOPH = ["AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN"], inAuto = AUTOPH.indexOf(ph) >= 0;
     eng.disabled = done || !((ph === "HOVER" || ph === "SCOUT" || inAuto) && !VIEW && ctl !== "other");
     $("engtxt").innerHTML = !done ? (ph === "PUSH" ? "PUSH" : "ENGAGE")
       : (ph === "AI" || ph === "PUSH") ? "AI ✓" : "DONE ✓";
+    if (wasp) {
+      eng.disabled = ph !== "WASP_READY" || !m.wasp_camera_confirmed || !m.target_fresh || !fresh
+        || conf < (m.min_conf || 0.2) || !!m.gate_why || VIEW || ctl === "other";
+      $("engtxt").textContent = ph === "WASP_FLIGHT" ? "WASP FLYING" : ph === "WASP_DONE" ? "DONE · DISARM" : "LAUNCH WASP";
+    }
 
     CANLOCK = ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other";
     dial.classList.toggle("off", !CANLOCK);
@@ -941,7 +936,6 @@
     $("autotxt").innerHTML = "AUTO" + ({AUTO_CLIMB: "<small>UP " + Math.round(m.auto_height_m || 10) + " m</small>",
       AUTO_HOLD: "<small>WATCHING</small>", AUTO_ALIGN: "<small>LINING UP</small>"}[ph] ||
       (autoRun ? "<small>" + ({PUSH: "GO", AI: "AI", STOP: "DONE"}[ph]) + "</small>" : ""));
-    simCaption(m, ph, inAuto || !!m.auto_run);
     var lk = $("b_lock");
     lk.className = "rbtn lock" + (locked ? " on" : "");
     lk.disabled = !(["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other");
@@ -949,14 +943,15 @@
 
     TILT = (j.tilt_deg !== undefined && j.tilt_deg !== null) ? j.tilt_deg : TILT;
     var push = (m.speeds && m.speeds.push) || 20;
-    var aimEl = (ph === "PUSH" || ph === "AI" || ph === "STOP") ? 0 : -Math.min(push, 20);
+    var aimEl = (wasp || ph === "PUSH" || ph === "AI" || ph === "STOP") ? 0 : -Math.min(push, 20);
     aimEl = Math.max(aimEl, -Math.round((VFOV / 2 - 4.4) * 1000) / 1000);
     var ty = function (el) { return 50 - 50 * Math.tan(el * Math.PI / 180) / Math.tan(VFOV / 2 * Math.PI / 180); };
     var tx = function (az) { return 50 + 50 * Math.tan(az * Math.PI / 180) / Math.tan(HFOV / 2 * Math.PI / 180); };
-    var aim = $("aim"); aim.style.left = "50%"; aim.style.top = ty(aimEl) + "%"; AIMY = ty(aimEl);
+    var aim = $("aim"); aim.style.left = "50%"; aim.style.top = ty(aimEl) + "%";
     var AIM_RY_ = 10 * CAMAR, apex = Math.max(2, ty(aimEl) - AIM_RY_);
     var dArc = "M0," + apex.toFixed(2) + " L100," + apex.toFixed(2);
     $("arc_sh").setAttribute("d", dArc); $("arc_fg").setAttribute("d", dArc);
+    $("arc").style.display = wasp ? "none" : "";
     var az = m.target_az_deg, el = m.target_el_deg, tg = $("tgt"), bd = $("badge");
     if (m.target_fresh && az !== null && el !== null) {
       tg.style.display = "block"; tg.style.left = tx(az) + "%"; tg.style.top = ty(el) + "%";
@@ -971,6 +966,12 @@
       tg.style.display = "none"; aim.classList.remove("good"); $("arc").classList.remove("good");
       bd.style.display = (ph === "HOVER" || ph === "SCOUT" || ph === "AUTO_CLIMB" || ph === "AUTO_HOLD") ? "block" : "none"; bd.className = "badge";
       bd.textContent = "no target";
+    }
+    if (wasp) {
+      bd.style.display = "block";
+      var wp = m.wasp_progress || {};
+      var flightLabel = wp.stage === "STRAIGHT" ? "WASP · STRAIGHT " + Number(wp.straight_remaining_s || 0).toFixed(1) + " s" : wp.stage === "BLEND" ? "WASP · BLENDING STEERING" : "WASP · GUIDING";
+      bd.textContent = m.gate_why || (ph === "WASP_DONE" ? "DISARM BEFORE NEXT LAUNCH" : ph === "WASP_FLIGHT" ? flightLabel : "WASP · AIM TARGET AT CENTRE");
     }
 
     var lv = m.levels || {}, sp = m.speeds || {};
@@ -997,10 +998,10 @@
       var w = x.getAttribute("data-save").split(":"), off = false;
       if (w[0] === "auto") off = ad[w[1]] !== undefined && ap[w[1]] !== undefined && String(ad[w[1]]) !== String(ap[w[1]]);
       else if (w[0] === "lvl") off = ld[w[1]] !== undefined && lv[w[1]] !== undefined && ld[w[1]] !== lv[w[1]];
-      else if (w[1] === "follow") off = !SIM && j.follower_default !== undefined && !!j.follower_default !== !!j.follower;
-      else if (w[1] === "cam") off = !SIM && j.cam_default !== undefined && j.cam_fps !== undefined
+      else if (w[1] === "follow") off = j.follower_default !== undefined && !!j.follower_default !== !!j.follower;
+      else if (w[1] === "cam") off = j.cam_default !== undefined && j.cam_fps !== undefined
         && Number(j.cam_default) !== Number(j.cam_fps);
-      x.classList.toggle("on", off && !SIM);
+      x.classList.toggle("on", off);
     });
     var spx = m.speeds || {};
     if (lv.vert) T("sum_semi", "▲▼ " + lv.vert + " · PUSH " + spx.push + "° · AI " + lv.ai + " · search " + spx.search + " s");
@@ -1011,6 +1012,26 @@
     var tag = $("autotag"); tag.textContent = m.auto_enabled ? "ON" : "OFF"; tag.className = "tag" + (m.auto_enabled ? " on" : "");
     document.querySelectorAll("[data-autoen]").forEach(function (x) {
       x.classList.toggle("on", m.auto_enabled !== undefined && (x.getAttribute("data-autoen") === "on") === !!m.auto_enabled);
+      x.disabled = wasp && x.getAttribute("data-autoen") === "on";
+    });
+    T("wasptag", wasp ? "ON" : "OFF"); $("wasptag").classList.toggle("on", wasp);
+    T("waspfcstatus", m.wasp_setup_why ? "FC setup: " + m.wasp_setup_why :
+      m.wasp_attitude_fresh ? "FC configuration checked · attitude fresh · ACRO required for launch" : "Waiting for fresh FC attitude");
+    T("mountstatus", "Declared mount: " + (m.camera_mount_deg || 30) + "° · " +
+      (wasp ? (m.wasp_camera_confirmed ? "90° confirmed for WASP" : "confirm the 90° mount before arming") : "30° required for AUTO / SEMI-AUTO"));
+    document.querySelectorAll("[data-waspen]").forEach(function (x) {
+      x.classList.toggle("on", (x.getAttribute("data-waspen") === "on") === wasp);
+      x.disabled = arm || VIEW || ctl === "other" || (x.getAttribute("data-waspen") === "on" && !!m.auto_enabled);
+    });
+    document.querySelectorAll("[data-mount]").forEach(function (x) {
+      x.disabled = arm || VIEW || ctl === "other" || (wasp && x.getAttribute("data-mount") === "30");
+      x.classList.toggle("on", Number(x.getAttribute("data-mount")) === m.camera_mount_deg && (!wasp || m.wasp_camera_confirmed));
+    });
+    document.querySelectorAll("[data-wp]").forEach(function (seg) {
+      seg.querySelectorAll("button").forEach(function (b) {
+        b.disabled = arm || VIEW || ctl === "other";
+        b.classList.toggle("on", (m.wasp_params || {})[seg.getAttribute("data-wp")] === Number(b.getAttribute("data-wv")));
+      });
     });
     document.querySelectorAll("[data-sky]").forEach(function (x) {
       x.classList.toggle("on", j.sky_gate !== undefined && (x.getAttribute("data-sky") === "on") === !!j.sky_gate);
@@ -1042,10 +1063,8 @@
   var pulling = false;
   function pullConsole() {
     if (pulling) return; pulling = true;
-    var wasSim = SIM;
-    fetch(base() + "/console?since=" + consoleSeq, {cache: "no-store"}).then(function (r) { return r.ok ? r.json() : []; })
+    fetch("/console?since=" + consoleSeq, {cache: "no-store"}).then(function (r) { return r.ok ? r.json() : []; })
       .then(function (rows) {
-        if (wasSim !== SIM) return;
         var L = $("log"), B = $("logbody"), atEnd = (B.scrollTop + B.clientHeight + 40 >= B.scrollHeight);
         rows.forEach(function (x) {
           consoleSeq = Math.max(consoleSeq, x[0]);
@@ -1064,216 +1083,7 @@
   var CARD = {0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW"};
   function wrap(a) { a %= 360; return a < 0 ? a + 360 : a; }
   function adiff(a, b) { var d = wrap(a - b); return d > 180 ? d - 360 : d; }
-  function drawTape(now) { renderTape(now); renderDial(); renderSim(now); requestAnimationFrame(drawTape); }
-  var simv = $("simv"), sctx = simv.getContext("2d");
-  var SC = null, SCt = 0, SCH = {h: 0, vz: 0}, AIMY = 50, SCLEAN = 0, SCLAST = null;
-  var CLOUDS = (function () {
-    var r = 7, out = [];
-    function rnd() { r = (r * 16807) % 2147483647; return r / 2147483647; }
-    for (var i = 0; i < 30; i++) out.push({b: rnd() * 360, d: 220 + rnd() * 480, alt: 90 + rnd() * 200, s: 40 + rnd() * 70, k: rnd()});
-    return out;
-  })();
-  var TREES = (function () {
-    var r = 11, out = [];
-    function rnd() { r = (r * 16807) % 2147483647; return r / 2147483647; }
-    while (out.length < 90) {
-      var b = rnd() * 360;
-      if (b > 118 && b < 185) continue;
-      var d = 28 + rnd() * 60, br = b * Math.PI / 180;
-      out.push({x: d * Math.sin(br), y: d * Math.cos(br), H: 9 + rnd() * 11, W: 3 + rnd() * 3.5, k: rnd()});
-    }
-    return out;
-  })();
-  var STREAKS = [], DEBRIS = [];
-  for (var si = 0; si < 40; si++) STREAKS.push({a: Math.random() * 6.283, r: Math.random()});
-  for (var di = 0; di < 16; di++) DEBRIS.push({a: Math.random() * 6.283, v: 0.6 + Math.random(), s: 0.5 + Math.random()});
-  function drawQuad(c, x, y, s, t) {
-    c.save(); c.translate(x, y); c.rotate(Math.sin(t * 1.7) * 0.06);
-    var arm = s * 0.5, rr = s * 0.22;
-    c.lineCap = "round"; c.strokeStyle = "#1c2026"; c.lineWidth = Math.max(2, s * 0.09);
-    c.beginPath(); c.moveTo(-arm, -arm); c.lineTo(arm, arm); c.moveTo(arm, -arm); c.lineTo(-arm, arm); c.stroke();
-    for (var i = 0; i < 4; i++) {
-      var px = (i & 1 ? 1 : -1) * arm, py = (i & 2 ? 1 : -1) * arm;
-      c.fillStyle = "rgba(28,32,38,.28)"; c.beginPath(); c.arc(px, py, rr, 0, 6.283); c.fill();
-      c.strokeStyle = "rgba(28,32,38,.85)"; c.lineWidth = Math.max(1, s * 0.03); c.stroke();
-      var ang = t * 38 * (i === 0 || i === 3 ? 1 : -1);
-      c.lineWidth = Math.max(1.2, s * 0.045);
-      c.beginPath(); c.moveTo(px - Math.cos(ang) * rr, py - Math.sin(ang) * rr); c.lineTo(px + Math.cos(ang) * rr, py + Math.sin(ang) * rr); c.stroke();
-    }
-    var bw = s * 0.34;
-    c.fillStyle = "#2b3038"; c.strokeStyle = "#111418"; c.lineWidth = Math.max(1, s * 0.03);
-    if (c.roundRect) { c.beginPath(); c.roundRect(-bw / 2, -bw / 2, bw, bw, bw * 0.25); c.fill(); c.stroke(); }
-    else { c.fillRect(-bw / 2, -bw / 2, bw, bw); }
-    if (Math.sin(t * 9) > -0.2) {
-      var lr = Math.max(2, s * 0.06);
-      var gl = c.createRadialGradient(0, 0, 0, 0, 0, lr * 4);
-      gl.addColorStop(0, "rgba(255,59,48,.9)"); gl.addColorStop(1, "rgba(255,59,48,0)");
-      c.fillStyle = gl; c.beginPath(); c.arc(0, 0, lr * 4, 0, 6.283); c.fill();
-      c.fillStyle = "#ff3b30"; c.beginPath(); c.arc(0, 0, lr, 0, 6.283); c.fill();
-    }
-    c.restore();
-  }
-  function brackets(c, x, y, b, t, col) {
-    var k = b * 0.32;
-    c.strokeStyle = col; c.globalAlpha = 0.75 + 0.25 * Math.sin(t * 6); c.lineWidth = 2.5; c.lineCap = "round";
-    c.beginPath();
-    [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(function (q) {
-      var cx = x + q[0] * b, cy = y + q[1] * b;
-      c.moveTo(cx, cy - q[1] * k); c.lineTo(cx, cy); c.lineTo(cx - q[0] * k, cy);
-    });
-    c.stroke(); c.globalAlpha = 1;
-  }
-  function renderSim(now) {
-    if (!SIM) return;
-    var dpr = window.devicePixelRatio || 1, w = simv.clientWidth, h = simv.clientHeight;
-    if (!w || !h) return;
-    if (simv.width !== Math.round(w * dpr) || simv.height !== Math.round(h * dpr)) {
-      simv.width = Math.round(w * dpr); simv.height = Math.round(h * dpr);
-    }
-    var c = sctx, D2R = Math.PI / 180, th = Math.tan(HFOV / 2 * D2R), tv = Math.tan(VFOV / 2 * D2R);
-    var t = now / 1000, hd = hdgDisp === null ? 0 : hdgDisp;
-    var dt = SC ? Math.min(0.35, (now - SCt) / 1000) : 0;
-    SCLEAN += ((SC ? SC.lean : 0) - SCLEAN) * 0.12;
-    var pitch = TILT + SCLEAN, hh = Math.max(0.5, SCH.h + SCH.vz * dt);
-    function sx(az) { return w * (0.5 + 0.5 * Math.tan(az * D2R) / th); }
-    function sy(el) { return h * (0.5 - 0.5 * Math.tan((el - pitch) * D2R) / tv); }
-    c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    var yH = sy(0), g = c.createLinearGradient(0, sy(70), 0, yH);
-    g.addColorStop(0, "#2f62a8"); g.addColorStop(0.7, "#7fa9dc"); g.addColorStop(1, "#cfe0f2");
-    c.fillStyle = g; c.fillRect(0, 0, w, h);
-    var saz = adiff(205, hd);
-    if (Math.abs(saz) < 75) {
-      var sxp = sx(saz), syp = sy(38), sg = c.createRadialGradient(sxp, syp, 0, sxp, syp, w * 0.22);
-      sg.addColorStop(0, "rgba(255,250,225,.95)"); sg.addColorStop(0.08, "rgba(255,246,210,.75)"); sg.addColorStop(1, "rgba(255,246,210,0)");
-      c.fillStyle = sg; c.fillRect(0, 0, w, h);
-    }
-    CLOUDS.forEach(function (cl) {
-      var az = adiff(cl.b, hd);
-      if (Math.abs(az) > HFOV / 2 + 25) return;
-      var el = Math.atan2(cl.alt - hh, cl.d) / D2R, x = sx(az), y = sy(el), r = w / (2 * th) * cl.s / cl.d;
-      if (y < -r * 2 || y > h + r * 2) return;
-      c.fillStyle = "rgba(255,255,255," + (0.55 + 0.3 * cl.k).toFixed(2) + ")";
-      [[0, 0, 1, 0.42], [-0.55, 0.08, 0.55, 0.3], [0.5, 0.06, 0.6, 0.32], [0.1, -0.22, 0.45, 0.3]].forEach(function (e) {
-        c.beginPath(); c.ellipse(x + e[0] * r, y + e[1] * r, e[2] * r, e[3] * r, 0, 0, 6.283); c.fill();
-      });
-    });
-    var spd = SC ? SC.spd : 0, odo = SC ? SC.odo + spd * dt : 0;
-    if (yH < h) {
-      var gg = c.createLinearGradient(0, yH, 0, h);
-      gg.addColorStop(0, "#a9b7a4"); gg.addColorStop(0.08, "#6f8a5a"); gg.addColorStop(1, "#3f5a33");
-      c.fillStyle = gg; c.fillRect(0, yH, w, h - yH);
-      var S = 14, off = odo % S, prev = null, band = Math.floor(odo / S);
-      for (var D = 600; D > 2; D -= S) {
-        var dd = D + (S - off), y = sy(-Math.atan2(hh, dd) / D2R);
-        if (prev !== null && y > yH) {
-          var idx = Math.round((dd + odo) / S);
-          c.fillStyle = idx % 2 ? "rgba(255,255,220,.07)" : "rgba(20,40,10,.10)";
-          c.fillRect(0, prev, w, Math.max(1, y - prev));
-        }
-        prev = Math.max(yH, y);
-      }
-      var vx = sx(0);
-      c.strokeStyle = "rgba(40,60,30,.25)"; c.lineWidth = 1;
-      for (var L = -60; L <= 60; L += 12) {
-        if (!L) continue;
-        c.beginPath(); c.moveTo(vx, yH); c.lineTo(vx + L * w * 0.06, h * 1.6); c.stroke();
-      }
-      c.fillStyle = "rgba(230,236,242,.35)"; c.fillRect(0, yH - 2, w, 4);
-    }
-    var px0 = SC ? SC.x + spd * dt * Math.sin(hd * D2R) : 0, py0 = SC ? SC.y + spd * dt * Math.cos(hd * D2R) : 0;
-    TREES.map(function (tr) {
-      var dx = tr.x - px0, dy = tr.y - py0;
-      return {tr: tr, d: Math.hypot(dx, dy), b: Math.atan2(dx, dy) / D2R};
-    }).sort(function (a, b) { return b.d - a.d; }).forEach(function (o) {
-      var az = adiff(o.b, hd), d = Math.max(2, o.d), tr = o.tr;
-      if (Math.abs(az) > HFOV / 2 + 20) return;
-      var yt = sy(Math.atan2(tr.H - hh, d) / D2R);
-      if (yt > h) return;
-      var yb = Math.min(h + 40, sy(-Math.atan2(hh, d) / D2R)), x = sx(az), hw = w / (2 * th) * tr.W / 2 / d;
-      var gt = c.createLinearGradient(0, yt, 0, yb);
-      gt.addColorStop(0, tr.k > 0.5 ? "#3d6b35" : "#2f5a2c"); gt.addColorStop(1, "#1c3519");
-      c.fillStyle = gt;
-      c.beginPath(); c.moveTo(x, yt);
-      c.quadraticCurveTo(x + hw * 1.25, yt + (yb - yt) * 0.25, x + hw, yb);
-      c.lineTo(x - hw, yb);
-      c.quadraticCurveTo(x - hw * 1.25, yt + (yb - yt) * 0.25, x, yt);
-      c.fill();
-    });
-    if (spd > 3) {
-      var cx0 = sx(0), cy0 = sy(0), a0 = Math.min(0.55, spd / 35);
-      c.strokeStyle = "rgba(255,255,255," + a0.toFixed(2) + ")"; c.lineWidth = 1.5;
-      STREAKS.forEach(function (p) {
-        p.r += spd * 0.0009; if (p.r > 1) { p.r = 0.05; p.a = Math.random() * 6.283; }
-        var R = Math.max(w, h) * 0.8, r1 = R * p.r * p.r, r2 = r1 + R * 0.06 * (0.3 + p.r);
-        c.beginPath(); c.moveTo(cx0 + Math.cos(p.a) * r1, cy0 + Math.sin(p.a) * r1);
-        c.lineTo(cx0 + Math.cos(p.a) * r2, cy0 + Math.sin(p.a) * r2); c.stroke();
-      });
-    }
-    if (SC && SC.gust) {
-      c.strokeStyle = "rgba(255,255,255,.6)"; c.lineWidth = 2; c.lineCap = "round";
-      for (var i = 0; i < 9; i++) {
-        var yy = h * (0.12 + 0.09 * i), ph0 = ((t * 1.8 + i * 0.37) % 1), xx = SC.gust > 0 ? w * (1.1 - ph0 * 1.3) : w * (-0.1 + ph0 * 1.3);
-        c.beginPath(); c.moveTo(xx, yy); c.lineTo(xx + SC.gust * -w * 0.12, yy); c.stroke();
-      }
-    }
-    if (!SC) return;
-    var brg = SC.brg + SC.brg_r * dt, elw = SC.elw + SC.elw_r * dt, rng = Math.max(0.6, SC.rng + SC.rng_r * dt);
-    var az = adiff(brg, hd), size = Math.max(22, Math.min(w * 0.9, w / (2 * th) * SC.span / rng * 1.6));
-    var on = Math.abs(az) < 80, x = on ? sx(az) : (az > 0 ? w * 2 : -w), y = sy(elw);
-    if (SC.hit === null) {
-      SCLAST = {x: x, y: y, s: size};
-      var inView = x > -size && x < w + size && y > -size && y < h + size;
-      if (inView) {
-        var good = $("arc").classList.contains("good"), ax = w / 2, ay = h * AIMY / 100;
-        c.setLineDash([5, 6]); c.strokeStyle = good ? "rgba(34,197,94,.9)" : "rgba(255,255,255,.6)"; c.lineWidth = 2;
-        c.beginPath(); c.moveTo(ax, ay); c.lineTo(x, y); c.stroke(); c.setLineDash([]);
-        drawQuad(c, x, y, size, t);
-        brackets(c, x, y, size * 0.75 + 10, t, good ? "#22c55e" : "#ef4444");
-      }
-      if (x < 0 || x > w || y < 0 || y > h) {
-        var ex = Math.max(28, Math.min(w - 28, x)), ey = Math.max(28, Math.min(h - 28, y));
-        var ang = Math.atan2(y - h / 2, x - w / 2), pul = 1 + 0.12 * Math.sin(t * 7);
-        c.save(); c.translate(ex, ey); c.rotate(ang); c.scale(pul, pul);
-        c.fillStyle = "#ef4444"; c.strokeStyle = "rgba(0,0,0,.45)"; c.lineWidth = 2;
-        c.beginPath(); c.moveTo(16, 0); c.lineTo(-10, -13); c.lineTo(-4, 0); c.lineTo(-10, 13); c.closePath(); c.fill(); c.stroke();
-        c.restore();
-      }
-    } else if (SCLAST) {
-      var k = SC.hit + dt, bx = SCLAST.x, by = SCLAST.y, bs = SCLAST.s;
-      if (k < 0.18) { c.fillStyle = "rgba(255,255,255," + (0.85 * (1 - k / 0.18)).toFixed(2) + ")"; c.fillRect(0, 0, w, h); }
-      if (k < 2.6) {
-        var cap = Math.min(w, h) * 0.45, sr = Math.min(cap, bs * (0.8 + k * 1.6));
-        for (var q = 0; q < 7; q++) {
-          var qa = q * 0.9, qr = sr * (0.35 + 0.08 * q), qx = bx + Math.cos(qa) * sr * 0.45 * Math.min(1, k * 1.5),
-              qy = by - k * bs * 0.5 + Math.sin(qa) * sr * 0.3 * Math.min(1, k * 1.5);
-          var sg2 = c.createRadialGradient(qx, qy, 0, qx, qy, qr);
-          sg2.addColorStop(0, "rgba(70,72,76," + (0.45 * (1 - k / 2.6)).toFixed(2) + ")"); sg2.addColorStop(1, "rgba(70,72,76,0)");
-          c.fillStyle = sg2; c.beginPath(); c.arc(qx, qy, qr, 0, 6.283); c.fill();
-        }
-        if (k < 0.9) {
-          var fr = Math.min(cap, bs * (0.6 + k * 3.2)), fg = c.createRadialGradient(bx, by, 0, bx, by, fr);
-          fg.addColorStop(0, "rgba(255,250,210," + (1 - k / 0.9).toFixed(2) + ")");
-          fg.addColorStop(0.35, "rgba(255,170,40," + (0.9 * (1 - k / 0.9)).toFixed(2) + ")");
-          fg.addColorStop(1, "rgba(220,60,20,0)");
-          c.fillStyle = fg; c.beginPath(); c.arc(bx, by, fr, 0, 6.283); c.fill();
-        }
-        c.fillStyle = "#23272d";
-        DEBRIS.forEach(function (p) {
-          var r = bs * p.v * k * 2.2, px = bx + Math.cos(p.a) * r, py = by + Math.sin(p.a) * r + 160 * k * k;
-          c.fillRect(px - p.s * 3, py - p.s * 3, p.s * 6, p.s * 4);
-        });
-      }
-      if (k > 0.8) {
-        var al = Math.min(1, (k - 0.8) / 0.4), R0 = Math.min(w, h) * 0.13, cx1 = w / 2, cy1 = h / 2;
-        c.globalAlpha = al;
-        c.fillStyle = "rgba(22,163,74,.92)"; c.beginPath(); c.arc(cx1, cy1, R0, 0, 6.283); c.fill();
-        c.strokeStyle = "#fff"; c.lineWidth = R0 * 0.16; c.lineCap = "round"; c.lineJoin = "round";
-        c.beginPath(); c.moveTo(cx1 - R0 * 0.42, cy1 + R0 * 0.02); c.lineTo(cx1 - R0 * 0.1, cy1 + R0 * 0.34); c.lineTo(cx1 + R0 * 0.46, cy1 - R0 * 0.3); c.stroke();
-        c.globalAlpha = 1;
-      }
-    }
-  }
-  var dialc = $("dialc"), dctx = dialc.getContext("2d"), dialKey = "";
+  function drawTape(now) { renderTape(now); renderDial(); requestAnimationFrame(drawTape); }
   function renderDial() {
     var val = SEL !== null ? SEL : (hdgDisp !== null ? hdgDisp : null);
     var dpr = window.devicePixelRatio || 1, w = dialc.clientWidth, h = dialc.clientHeight;

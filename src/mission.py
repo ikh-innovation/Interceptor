@@ -4,6 +4,7 @@ import json
 import math
 import os
 import threading
+from wasp import Wasp
 
 SPEEDS = {
     "climb":   {"SLOW": 1.0, "MEDIUM": 3.0, "FAST": 8.0},
@@ -21,7 +22,8 @@ HOLD_KINDS = {"up": ("throttle", +1), "down": ("throttle", -1),
               "yawl": ("yaw", -1), "yawr": ("yaw", +1)}
 
 PHASES = ("PILOT", "HOVER", "CLIMB", "DESCEND", "SCOUT",
-          "AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN", "PUSH", "AI", "STOP")
+          "AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN", "PUSH", "AI", "STOP",
+          "WASP_READY", "WASP_FLIGHT", "WASP_DONE")
 AUTO_PHASES = ("AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN")
 
 
@@ -214,6 +216,21 @@ def phone_command(m, key, value, now):
         if v not in ("on", "off", "1", "0", "true", "false"):
             return "bad AUTO value"
         return m.set_auto_enabled(v in ("1", "on", "true"))
+    if key == "waspen":
+        v = value.strip().lower()
+        if v not in ("on", "off", "1", "0", "true", "false"):
+            return "bad WASP value"
+        return m.set_wasp_enabled(v in ("1", "on", "true"))
+    if key == "flightmode":
+        v = value.strip().lower()
+        if v not in ("normal", "wasp"):
+            return "flight mode: normal or wasp"
+        return m.set_wasp_enabled(v == "wasp", selection=True)
+    if key == "mount":
+        return m.confirm_mount(value)
+    if key == "waspp":
+        k, _, v = value.partition(":")
+        return m.set_wasp_param(k.strip(), v.strip())
     if key == "abort":
         return m.request_abort()
     if key == "lvl":
@@ -311,6 +328,8 @@ class Mission:
         self._req_abort = False
         self._req_auto = None
         self.auto_enabled = False
+        self.wasp = Wasp()
+        self.camera_mount_deg = float(getattr(mapper, "camera_mount_deg", 30.0))
         for _k, attrs, _c in self.AUTO_SETTINGS:
             for a in attrs:
                 setattr(self, a, getattr(type(self), a))
@@ -354,6 +373,8 @@ class Mission:
         if kind not in HOLD_KINDS:
             return "unknown hold"
         with self._lock:
+            if self.wasp.enabled:
+                return "phone moves are disabled in WASP: aim the platform manually"
             if session in self._dead_sessions:
                 return "hold ended by ABORT: lift the finger and press again"
             if session in self._released:
@@ -398,6 +419,11 @@ class Mission:
 
     def request_engage(self):
         with self._lock:
+            if self.wasp.enabled:
+                if self.phase != "WASP_READY" or self.wasp.used:
+                    return "WASP launch unavailable: check readiness; disarm after each attempt"
+                self._req_engage = True
+                return ""
             if self.engaged:
                 return "already engaged: pilot STAB -> ALT_HOLD for a new try"
             if self.phase not in ("HOVER", "SCOUT") + AUTO_PHASES:
@@ -407,9 +433,80 @@ class Mission:
 
     def set_auto_enabled(self, on):
         with self._lock:
+            if on and self.wasp.enabled:
+                return "turn WASP off before enabling AUTO"
             self.auto_enabled = bool(on)
             if not on and self.phase in AUTO_PHASES:
                 self._req_auto = "off"
+        return ""
+
+    def _configuration_error(self):
+        if getattr(self.mapper, "armed", False):
+            return "disarm before changing WASP or the camera mount"
+        if self.phase not in ("PILOT", "HOVER", "WASP_READY", "WASP_DONE"):
+            return "finish the run before changing WASP or the camera mount"
+        return ""
+
+    def set_wasp_enabled(self, on, selection=False):
+        with self._lock:
+            # Reopening the UI in its current mode must never reset a flight.
+            if selection and bool(on) == self.wasp.enabled:
+                return ""
+            error = self._configuration_error()
+            if error:
+                return error
+            if on and self.auto_enabled and not selection:
+                return "turn AUTO off before enabling WASP"
+            if on and not callable(getattr(self.mapper, "wasp_pwm", None)):
+                return "WASP requires the MAVLink controller (not the hover-only desk simulator)"
+            if selection and on:
+                self.auto_enabled = False
+            self.wasp.enabled = bool(on)
+            self.wasp.camera_confirmed = False
+            self.wasp.started = None
+            self.wasp.used = False
+            self._req_engage = False
+            self._req_auto = None
+            self._hold = None
+            self._reset_motion()
+            self.phase = "PILOT"
+        return ""
+
+    def confirm_mount(self, value):
+        try:
+            value = float(value)
+        except (ValueError, TypeError):
+            return "camera mount: 30 or 90 degrees"
+        if value not in (30.0, 90.0):
+            return "camera mount: 30 or 90 degrees"
+        with self._lock:
+            error = self._configuration_error()
+            if error:
+                return error
+            if self.wasp.enabled and value != 90.0:
+                return "WASP requires the fixed 90 degree camera"
+            self.camera_mount_deg = value
+            self.wasp.camera_confirmed = self.wasp.enabled and value == 90.0
+        return ""
+
+    def set_wasp_param(self, key, value):
+        try:
+            v = float(value)
+        except (ValueError, TypeError):
+            return "bad WASP value"
+        if key not in Wasp.SETTINGS or v not in Wasp.SETTINGS[key]:
+            return "unknown WASP setting or value"
+        with self._lock:
+            error = self._configuration_error()
+            if error:
+                return error
+            params = dict(self.wasp.params, **{key: v})
+            error = self.wasp.timing_error(params)
+            if error:
+                return error
+            self.wasp.params[key] = v
+            if key == "camera_roll":
+                self.wasp.camera_confirmed = False
         return ""
 
     def auto_params(self):
@@ -455,6 +552,8 @@ class Mission:
 
     def request_auto(self, on):
         with self._lock:
+            if on and self.wasp.enabled:
+                return "AUTO and WASP are mutually exclusive"
             if not on:
                 if self.phase in AUTO_PHASES:
                     self._req_auto = "off"
@@ -567,6 +666,9 @@ class Mission:
             lock_req, self._req_lock = self._req_lock, None
             auto_req, self._req_auto = self._req_auto, None
 
+        if self.wasp.enabled:
+            return self._wasp_cycle(now, ctx, engage, abort)
+
         if not ctx.get("gate_ok"):
             if self.phase != "PILOT":
                 self._note(f"PILOT has it: {ctx.get('gate_why') or 'gate'}", now)
@@ -614,6 +716,51 @@ class Mission:
             return self._ai_cycle(now, ctx)
         if self.phase == "STOP":
             return self._stop_cycle(now)
+        return {}
+
+    def _wasp_cycle(self, now, ctx, engage, abort):
+        w = self.wasp
+        if not getattr(self.mapper, "armed", False):
+            w.used = False
+        if abort or not ctx.get("gate_ok"):
+            if w.started is not None:
+                w.used = True
+            w.started = None
+            self._set_phase("WASP_DONE" if w.used else "PILOT", now)
+            if abort:
+                self._note("WASP ABORT: every channel returned to the pilot", now)
+            return {}
+        if w.used and w.started is None:
+            self._set_phase("WASP_DONE", now)
+            return {}
+        if w.started is None:
+            self._set_phase("WASP_READY", now)
+            if not engage:
+                return {}
+            why = w.fault(now, ctx, self.min_conf)
+            why = w.timing_error(w.params) or why
+            if not w.camera_confirmed or self.camera_mount_deg != 90.0:
+                why = "confirm the fixed 90 degree camera before launch"
+            if why:
+                self._refuse(why, now)
+                return {}
+            w.begin(now)
+            self._note(f"WASP launched: {w.params['straight']:g}s straight, then blended guidance", now)
+            self._set_phase("WASP_FLIGHT", now)
+        why = w.fault(now, ctx, self.min_conf)
+        if now - w.started >= w.params["duration"]:
+            why = "launch time limit"
+        height = ctx.get("height")
+        if height is not None and height >= self.ceiling_m:
+            why = "ceiling reached"
+        if not why:
+            try:
+                return w.output(self.mapper, now, ctx)
+            except (ValueError, KeyError, TypeError, OverflowError) as exc:
+                why = str(exc)
+        w.started = None
+        self._note(f"WASP ended: {why}; every channel returned to the pilot", now)
+        self._set_phase("WASP_DONE", now)
         return {}
 
     def _manual(self, now, ctx, hold, step):
@@ -1119,6 +1266,11 @@ class Mission:
             locked=self.lock_hdg is not None,
             auto=self.phase in AUTO_PHASES,
             auto_enabled=bool(self.auto_enabled),
+            wasp_enabled=self.wasp.enabled,
+            wasp_camera_confirmed=self.wasp.camera_confirmed,
+            wasp_params=dict(self.wasp.params),
+            wasp_progress=self.wasp.progress(now),
+            camera_mount_deg=self.camera_mount_deg,
             auto_run=bool(self.auto_run),
             auto_params=self.auto_params(),
             auto_defaults=dict(self.auto_defaults),

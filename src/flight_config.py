@@ -5,7 +5,9 @@ MODE = "sky"
 
 
 
-MOUNT_TILT_DEG = 30
+# Physical mount at boot. AUTO / SEMI-AUTO still use the 30 degree law;
+# the mission gate prevents using it with this 90 degree Wasp installation.
+MOUNT_TILT_DEG = 90
 
 
 
@@ -69,7 +71,7 @@ def resolve():
     cfg = dict(MODES[MODE])
     want = cfg["cam_tilt_deg"]
 
-    if int(MOUNT_TILT_DEG) != int(want):
+    if MOUNT_TILT_DEG not in (want, 90):
         raise ConfigError(
             f"MODE is {MODE!r}, which needs the camera at {want} deg,\n"
             f"  but MOUNT_TILT_DEG says the camera is physically at "
@@ -88,6 +90,7 @@ def resolve():
     if ROLL_PN_GAIN is not None:
         cfg["roll_pn_gain"] = float(ROLL_PN_GAIN)
     cfg["mode"] = MODE
+    cfg["camera_mount_deg"] = MOUNT_TILT_DEG
     cfg["commit_chan"] = int(COMMIT_CHAN)
 
     if cfg.get("model"):
@@ -107,6 +110,7 @@ def as_shell(cfg):
         f"WASP_MODE_LABEL='{cfg['label']}'",
         f"WASP_MODE_BAND='{cfg['band']}'",
         f"CAM_TILT_DEG={cfg['cam_tilt_deg']}",
+        f"CAMERA_MOUNT_DEG={cfg['camera_mount_deg']}",
         f"TARGET_WIDTH_M={cfg['target_width_m']}",
         f"MAX_LEAN_DEG={cfg['max_lean_deg']}",
         f"ROLL_PN_GAIN={cfg['roll_pn_gain']}",
