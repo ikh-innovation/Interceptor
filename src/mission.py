@@ -737,22 +737,34 @@ class Mission:
             self._set_phase("WASP_READY", now)
             if not engage:
                 return {}
-            why = w.fault(now, ctx, self.min_conf)
-            why = w.timing_error(w.params) or why
+            why = w.timing_error(w.params)
+            if ctx.get("att") is None:
+                why = "no fresh attitude"
             if not w.camera_confirmed or self.camera_mount_deg != 90.0:
                 why = "confirm the fixed 90 degree camera before launch"
             if why:
                 self._refuse(why, now)
                 return {}
-            w.begin(now)
-            self._note(f"WASP launched: {w.params['straight']:g}s straight, then blended guidance", now)
+            w.begin(now, target_acquired=False)
+            self._note(f"WASP launched: acquire within {w.params['no_det']:g}s; pilot after timeout", now)
             self._set_phase("WASP_FLIGHT", now)
-        why = w.fault(now, ctx, self.min_conf)
+        why = "no fresh attitude" if ctx.get("att") is None else ""
         if now - w.started >= w.params["duration"]:
             why = "launch time limit"
         height = ctx.get("height")
         if height is not None and height >= self.ceiling_m:
             why = "ceiling reached"
+        if not why and w.acquired_t is None:
+            if now - w.started >= w.params["no_det"]:
+                why = "no detection time limit"
+            elif not w.fault(now, ctx, self.min_conf):
+                try:
+                    w.acquire(now, ctx)
+                    self._note("WASP target acquired: blended steering after straight launch", now)
+                except (ValueError, KeyError, TypeError, OverflowError):
+                    pass  # An unusable bearing cannot end the acquisition wait.
+        if not why and w.acquired_t is not None:
+            why = w.fault(now, ctx, self.min_conf)
         if not why:
             try:
                 return w.output(self.mapper, now, ctx)

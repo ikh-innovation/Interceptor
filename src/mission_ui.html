@@ -206,7 +206,11 @@
   #modechange button{font-size:14px;letter-spacing:0}
   #modechange button:disabled{opacity:.4}
   #mode_note:empty{display:none}
-  @media(min-width:620px){#sh_speed .parameter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media(min-width:620px){
+    #sh_speed .parameter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    #pp_wasp .parameter-grid{grid-auto-flow:row dense}
+    #pp_wasp .no-det{grid-column:2}
+  }
   @media(max-width:360px){#sh_speed.sheet{padding-left:12px;padding-right:12px}#sh_speed .param-block{padding:12px}#sh_speed .seg button{font-size:12px}#sh_speed .detection-row{grid-template-columns:82px minmax(0,1fr);gap:8px}}
   .acc{margin:0 0 10px}
   .acch{position:relative;display:flex;align-items:center;gap:12px;width:100%;min-width:0;padding:14px 12px;border-radius:16px;
@@ -448,6 +452,7 @@
         <div class="parameter-grid">
           <div class="grp"><div class="lbl">Launch throttle</div><div class="seg" data-wp="throttle" data-values="0.25,0.5,1" data-labels="25%,50%,100%"></div></div>
           <div class="grp"><div class="lbl">Flight time</div><div class="seg" data-wp="duration" data-values="1,2,3,5,10" data-labels="1 s,2 s,3 s,5 s,10 s"></div></div>
+          <div class="grp no-det"><div class="lbl">Flight time no det</div><div class="seg" data-wp="no_det" data-values="3,5,7,10" data-labels="3 s,5 s,7 s,10 s"></div></div>
           <div class="grp"><div class="lbl">Straight launch</div><div class="seg" data-wp="straight" data-values="0,0.5,1,2" data-labels="OFF,0.5 s,1 s,2 s"></div></div>
           <div class="grp"><div class="lbl">Steering blend</div><div class="seg" data-wp="blend" data-values="0.25,0.5,1" data-labels="0.25 s,0.5 s,1 s"></div></div>
           <div class="grp"><div class="lbl">Steering rate</div><div class="seg" data-wp="rate" data-values="30,45,60,90" data-labels="30°/s,45°/s,60°/s,90°/s"></div></div>
@@ -898,8 +903,8 @@
     $("engtxt").innerHTML = !done ? (ph === "PUSH" ? "PUSH" : "ENGAGE")
       : (ph === "AI" || ph === "PUSH") ? "AI ✓" : "DONE ✓";
     if (wasp) {
-      eng.disabled = ph !== "WASP_READY" || !m.wasp_camera_confirmed || !m.target_fresh || !fresh
-        || conf < (m.min_conf || 0.2) || !!m.gate_why || VIEW || ctl === "other";
+      eng.disabled = ph !== "WASP_READY" || !m.wasp_camera_confirmed || m.wasp_attitude_fresh === false
+        || !!m.wasp_setup_why || !!m.gate_why || VIEW || ctl === "other";
       $("engtxt").textContent = ph === "WASP_FLIGHT" ? "WASP FLYING" : ph === "WASP_DONE" ? "DONE · DISARM" : "LAUNCH WASP";
     }
 
@@ -946,8 +951,8 @@
     if (wasp) {
       bd.style.display = "block";
       var wp = m.wasp_progress || {};
-      var flightLabel = wp.stage === "STRAIGHT" ? "WASP · STRAIGHT " + Number(wp.straight_remaining_s || 0).toFixed(1) + " s" : wp.stage === "BLEND" ? "WASP · BLENDING STEERING" : "WASP · GUIDING";
-      bd.textContent = m.gate_why || (ph === "WASP_DONE" ? "DISARM BEFORE NEXT LAUNCH" : ph === "WASP_FLIGHT" ? flightLabel : "WASP · AIM TARGET AT CENTRE");
+      var flightLabel = wp.stage === "SEARCH" ? "WASP · NO DET " + Number(wp.no_det_remaining_s || 0).toFixed(1) + " s" : wp.stage === "STRAIGHT" ? "WASP · STRAIGHT " + Number(wp.straight_remaining_s || 0).toFixed(1) + " s" : wp.stage === "BLEND" ? "WASP · BLENDING STEERING" : "WASP · GUIDING";
+      bd.textContent = m.gate_why || (ph === "WASP_DONE" ? "PILOT · DISARM TO RESET" : ph === "WASP_FLIGHT" ? flightLabel : "WASP · READY");
     }
 
     var lv = m.levels || {}, sp = m.speeds || {};

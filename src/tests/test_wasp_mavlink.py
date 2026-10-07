@@ -104,6 +104,43 @@ try:
         fc.armed = False
         until(lambda: not c.armed and not m.wasp.used)
         print(f"PASS: platform {tilt} degrees, {throttle:.0%} throttle, launch timing and channel release", flush=True)
+
+    # Exercise initial acquisition through the real sender and RC release path.
+    target["on"] = False
+    sleep(.35)  # Expire the preceding flight's detection.
+    assert not m.set_wasp_param("duration", 5)
+    assert not m.set_wasp_param("no_det", 3)
+    fc.armed = True
+    until(lambda: m.phase == "WASP_READY")
+    assert not fc.overrides, "no automatic launch without a target"
+    assert not m.request_engage()
+    until(lambda: fc.overrides.get(3) == 2000)
+    launch_t = m.wasp.started
+    until(lambda: perf_counter()-launch_t >= 1.6)
+    assert m.wasp.acquired_t is None
+    assert all(fc.overrides.get(ch) == 1500 for ch in (1, 2, 4)), fc.overrides
+    target["on"] = True
+    until(lambda: m.wasp.acquired_t is not None)
+    acquired_t = m.wasp.acquired_t
+    until(lambda: fc.overrides.get(1, 0) > 1500 and fc.overrides.get(2, 0) > 1500)
+    assert perf_counter()-acquired_t < 1.5, "late target must transition without another full straight delay"
+    target["on"] = False
+    until(lambda: m.phase == "WASP_DONE" and not fc.overrides, timeout=1)
+    print("PASS: no-target launch, late acquisition, steering and target-loss release", flush=True)
+    fc.armed = False
+    until(lambda: not c.armed and not m.wasp.used)
+
+    fc.armed = True
+    until(lambda: m.phase == "WASP_READY")
+    assert not m.request_engage()
+    until(lambda: fc.overrides.get(3) == 2000)
+    until(lambda: m.phase == "WASP_DONE" and not fc.overrides, timeout=4)
+    assert "no detection time limit" in m.event, m.event
+    target["on"] = True
+    sleep(.3)
+    assert not fc.overrides, "new detection after acquisition timeout must not relaunch"
+    assert m.request_engage(), "pilot must disarm before another launch"
+    print("PASS: acquisition timeout releases all channels and latches pilot control", flush=True)
     print("All Wasp MAVLink integration checks passed")
 finally:
     stop.set()

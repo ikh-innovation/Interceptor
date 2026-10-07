@@ -353,14 +353,125 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.m.cycle(110, self.ctx), {})
         self.assertIn("time limit", self.m.event)
 
-    def test_launch_requires_target_and_confirmation(self):
-        for key, value in (("det_conf", .01), ("att", None), ("ai_cmd", {})):
-            ctx = dict(self.ctx, **{key: value})
-            self.m.request_engage()
-            self.assertEqual(self.m.cycle(100, ctx), {})
-            self.assertFalse(self.m.wasp.used)
+    def test_launch_requires_attitude_and_confirmation(self):
+        self.m.request_engage()
+        self.assertEqual(self.m.cycle(100, dict(self.ctx, att=None)), {})
+        self.assertFalse(self.m.wasp.used)
         self.m.wasp.camera_confirmed = False
         self.assertEqual(self.launch(), {})
+
+    def test_no_detection_choices_hold_zero_rates_then_release_and_latch(self):
+        for limit in (3, 5, 7, 10):
+            for tilt in (0, 45, 90):
+                with self.subTest(limit=limit, tilt=tilt):
+                    self.setUp()
+                    self.mapper.armed = False
+                    self.assertEqual(self.m.set_wasp_param("no_det", limit), "")
+                    self.mapper.armed = True
+                    self.ctx.update(ai_cmd=None, det_t=None, det_conf=None,
+                                    att=dict(roll=.2, pitch=math.radians(tilt), yaw=1))
+                    sent = []
+                    self.mapper.wasp_pwm = lambda rates, throttle: sent.append((rates, throttle)) or {"throttle": throttle}
+                    self.assertTrue(self.launch())
+                    for offset in (0, .5, 1.25, limit-.01):
+                        self.assertTrue(self.m.cycle(100+offset, self.ctx))
+                        self.assertEqual(sent[-1], ((0, 0, 0), 1))
+                        progress = self.m.wasp.progress(100+offset)
+                        self.assertEqual(progress["stage"], "SEARCH")
+                        self.assertAlmostEqual(progress["no_det_remaining_s"], limit-offset)
+                    self.assertEqual(self.m.cycle(100+limit, self.ctx), {})
+                    self.assertEqual(self.m.phase, "WASP_DONE")
+                    self.assertTrue(self.m.request_engage())
+                    self.ctx.update(ai_cmd=observe(WaspGuidance(), t=100+limit+.01),
+                                    det_t=100+limit+.01, det_conf=.9)
+                    self.assertEqual(self.m.cycle(100+limit+.01, self.ctx), {})
+
+    def test_first_detection_starts_blend_after_remaining_straight_launch(self):
+        for acquired in (.5, 2, 2.99):
+            with self.subTest(acquired=acquired):
+                self.setUp()
+                self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)
+                self.mapper.wasp_pwm = lambda rates, throttle: {"rates": rates, "throttle": throttle}
+                self.launch()
+                now = 100+acquired
+                self.ctx.update(ai_cmd=observe(WaspGuidance(), x=80, t=now), det_t=now, det_conf=.9)
+                out = self.m.cycle(now, self.ctx)
+                self.assertEqual(out["rates"], (0, 0, 0))
+                self.assertEqual(self.m.wasp.acquired_t, now)
+                blend_start = 100+max(1, acquired)
+                for i in range(1, 61):
+                    now = blend_start+i*.01
+                    self.ctx.update(ai_cmd=observe(WaspGuidance(), x=80, t=now), det_t=now)
+                    out = self.m.cycle(now, self.ctx)
+                    full = WaspGuidance.rates(self.ctx["ai_cmd"], ATT, now, max_rate_dps=60)
+                    blend = self.m.wasp.progress(now)["steering_blend"]
+                    self.assertAlmostEqual(out["rates"][0], full[0]*blend)
+                    self.assertEqual(out["throttle"], 1)
+                self.assertEqual(self.m.wasp.progress(now)["stage"], "GUIDE")
+                # Acquisition timeout no longer applies; total launch time still does.
+                self.ctx.update(ai_cmd=observe(WaspGuidance(), t=109.99), det_t=109.99)
+                self.assertTrue(self.m.cycle(109.99, self.ctx))
+                self.ctx.update(ai_cmd=observe(WaspGuidance(), t=110), det_t=110)
+                self.assertEqual(self.m.cycle(110, self.ctx), {})
+
+    def test_invalid_initial_detections_do_not_acquire_or_steer(self):
+        cmd = observe(WaspGuidance(), x=80)
+        cases = [dict(det_conf=.01), dict(det_conf=float("nan")), dict(det_t=99.74),
+                 dict(det_t=100.1), dict(ai_cmd={}), dict(ai_cmd=dict(cmd, camera_roll=90)),
+                 dict(ai_cmd=dict(cmd, capture_t=99.74)),
+                 dict(ai_cmd=dict(cmd, bearing=(0, 0, 1))),
+                 dict(ai_cmd=dict(cmd, bearing=(float("nan"), 0, -1)))]
+        for values in cases:
+            with self.subTest(values=values):
+                self.setUp()
+                self.ctx.update(values)
+                self.assertTrue(self.launch())
+                self.assertIsNone(self.m.wasp.acquired_t)
+                self.assertEqual(self.m.wasp.progress(100)["stage"], "SEARCH")
+                now = 100.1
+                self.ctx.update(ai_cmd=observe(WaspGuidance(), t=now), det_t=now, det_conf=.9)
+                self.assertTrue(self.m.cycle(now, self.ctx))
+                self.assertEqual(self.m.wasp.acquired_t, now)
+
+    def test_acquisition_abort_gate_attitude_and_ceiling_release(self):
+        for failure in ("abort", "gate", "attitude", "ceiling"):
+            self.setUp()
+            self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)
+            self.assertTrue(self.launch())
+            if failure == "abort":
+                self.m.request_abort()
+            elif failure == "gate":
+                self.ctx["gate_ok"] = False
+            elif failure == "attitude":
+                self.ctx["att"] = None
+            else:
+                self.ctx["height"] = self.m.ceiling_m
+            self.assertEqual(self.m.cycle(100.01, self.ctx), {})
+            self.assertEqual(self.m.phase, "WASP_DONE")
+
+    def test_no_detection_deadline_wins_over_new_detection(self):
+        self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)
+        self.launch()
+        self.ctx.update(ai_cmd=observe(WaspGuidance(), t=103), det_t=103, det_conf=.9)
+        self.assertEqual(self.m.cycle(103, self.ctx), {})
+        self.assertIsNone(self.m.wasp.acquired_t)
+        self.assertIn("no detection time limit", self.m.event)
+
+    def test_total_flight_limit_bounds_acquisition_and_new_parameter_validation(self):
+        self.mapper.armed = False
+        self.assertEqual(self.m.set_wasp_param("straight", 0), "")
+        self.assertEqual(self.m.set_wasp_param("duration", 1), "")
+        self.assertEqual(self.m.set_wasp_param("no_det", 10), "")
+        for value in (0, 4, float("nan"), float("inf")):
+            self.assertTrue(self.m.set_wasp_param("no_det", value))
+        self.mapper.armed = True
+        self.assertTrue(self.m.set_wasp_param("no_det", 3))
+        self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)
+        self.launch()
+        self.assertEqual(self.m.wasp.progress(100)["no_det_remaining_s"], 1)
+        self.assertTrue(self.m.cycle(100.99, self.ctx))
+        self.assertEqual(self.m.cycle(101, self.ctx), {})
+        self.assertIn("launch time limit", self.m.event)
 
 
 class BackendTests(unittest.TestCase):

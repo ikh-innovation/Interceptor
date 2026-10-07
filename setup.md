@@ -277,12 +277,19 @@ Phone → same Wi-Fi → `http://JETSON_IP:8080/`.
 | Detection → Camera | 60 FPS |
 | Launch throttle | 100% |
 | Flight time | 10 s |
+| Flight time no det | 3 s; choices 3 / 5 / 7 / 10 s |
 | Straight launch | 1 s |
 | Steering blend | 0.5 s |
 | Steering rate | 60°/s; 45°/s also available |
 | Steering gain | 2 |
 | Target lead | 80 ms |
 | Camera alignment | 0° only when image bottom points toward the nose |
+
+Launch → hold attitude at launch throttle until the first valid detection.
+First detection → complete any remaining Straight launch → Steering blend → AI.
+Flight time counts from launch, including the initial no-detection wait.
+No detection timeout / Flight time / target loss after acquisition / ABORT →
+release all Jetson overrides to the pilot; disarm before another launch.
 
 Camera alignment check, disarmed and propellers removed: move an object above the
 camera toward the aircraft nose.

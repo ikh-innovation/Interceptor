@@ -30,15 +30,20 @@ mapper = Mapper()
 m = Mission(mapper, log=lambda *_: None)
 commands, reports = [], []
 detector_settings = dict(sky_gate=True, follower=True, follower_default=True, cam_fps=30, cam_default=30, cam_busy=False)
+simulation = dict(target=True, attitude=True, gate_why="")
 done = threading.Event()
 lock = threading.Lock()
 
 
 def state():
     s = m.snapshot(time.perf_counter())
-    s.update(gate_why="" if mapper.armed else "disarmed", height_m=0,
-             climb_mps=0, heading_deg=25, det_conf=.9, det_age_s=.01,
-             target_fresh=True, target_az_deg=0, target_el_deg=0)
+    gate = simulation["gate_why"] or ("" if simulation["attitude"] else "no fresh attitude")
+    s.update(gate_why=gate if mapper.armed else "disarmed", height_m=0,
+             climb_mps=0, heading_deg=25,
+             det_conf=.9 if simulation["target"] else None,
+             det_age_s=.01 if simulation["target"] else None,
+             target_fresh=simulation["target"], target_az_deg=0, target_el_deg=0,
+             wasp_attitude_fresh=simulation["attitude"])
     return dict(mission=s, armed=mapper.armed, linked=True,
                 fc_mode="ACRO" if m.wasp.enabled else "ALT_HOLD", control="you",
                 detector="TensorRT", fps=30, **detector_settings)
@@ -67,6 +72,10 @@ async function layout(mode){
   const buttons=[...d.querySelectorAll('#sh_speed .seg button')].filter(x=>x.getClientRects().length);
   await check(mode+' choice text fits '+size,buttons.every(x=>x.scrollWidth<=x.clientWidth+1));
   await check(mode+' equal choices '+size,[...d.querySelectorAll('#sh_speed .seg')].filter(x=>x.getClientRects().length).every(x=>{const a=[...x.children].map(b=>b.getBoundingClientRect().width);return Math.max(...a)-Math.min(...a)<1}));
+  if(mode==='wasp'){
+   const duration=q('[data-wp="duration"]').parentElement.getBoundingClientRect(), noDet=q('[data-wp="no_det"]').parentElement.getBoundingClientRect();
+   await check('no-detection control stays below Flight time '+size,Math.abs(duration.left-noDet.left)<1&&noDet.top>=duration.bottom);
+  }
  }
  f.width=390;f.height=844;await sleep(150);
 }
@@ -100,7 +109,14 @@ async function main(){
  await check('Wasp switch disables Auto and confirms 90 degrees',(await req('/state')).mission.wasp_camera_confirmed&&!(await req('/state')).mission.auto_enabled&&q('#mountstatus').textContent==='90° ✓');
  await check('mode and mount sent in the correct order',JSON.stringify((await req('/commands')).slice(-2))===JSON.stringify([['flightmode','wasp'],['mount','90']]));
  await check('Wasp flight parameters replace Normal',visible('#pp_wasp')&&!visible('#normal_params')&&q('#flight_mode_tag').textContent==='WASP');
- await check('Wasp has all eight parameter groups',q('#pp_wasp').querySelectorAll('[data-wp]').length===8);
+ await check('Wasp has all nine parameter groups',q('#pp_wasp').querySelectorAll('[data-wp]').length===9);
+ await check('no-detection parameter follows Flight time',q('[data-wp="duration"]').parentElement.nextElementSibling.querySelector('[data-wp="no_det"]')&&q('[data-wp="no_det"] [data-wv="3"]').classList.contains('on'));
+ for(const value of [3,5,7,10]){
+  q('[data-wp="no_det"] [data-wv="'+value+'"]').click();
+  await until(()=>q('[data-wp="no_det"] [data-wv="'+value+'"]').classList.contains('on'));
+  await check('no-detection choice '+value+' applies',(await req('/state')).mission.wasp_params.no_det===value);
+ }
+ q('[data-wp="no_det"] [data-wv="7"]').click();await until(()=>q('[data-wp="no_det"] [data-wv="7"]').classList.contains('on'));
  await check('Wasp defaults are 10 seconds and gain 2',q('[data-wp="duration"] [data-wv="10"]').classList.contains('on')&&q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
  q('[data-wp="duration"] [data-wv="5"]').click();await until(()=>q('[data-wp="duration"] [data-wv="5"]').classList.contains('on'));
  q('[data-wp="duration"] [data-wv="10"]').click();await until(()=>q('[data-wp="duration"] [data-wv="10"]').classList.contains('on'));
@@ -123,13 +139,26 @@ async function main(){
  await check('refresh preserves throttle',q('[data-wp="throttle"] [data-wv="0.25"]').classList.contains('on'));
  await check('refresh preserves duration, rate and gain',q('[data-wp="duration"] [data-wv="10"]').classList.contains('on')&&q('[data-wp="rate"] [data-wv="45"]').classList.contains('on')&&q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
  await check('refresh preserves camera confirmation',q('#mountstatus').textContent==='90° ✓');
+ await check('refresh preserves no-detection time',q('[data-wp="no_det"] [data-wv="7"]').classList.contains('on'));
  await req('/set?armed=1&phase=WASP_READY');await until(()=>q('[data-flightmode="normal"]').disabled);
  await check('mode and Wasp parameters locked while armed',[...f.contentDocument.querySelectorAll('[data-flightmode], [data-wp] button')].every(x=>x.disabled)&&q('#mountstatus').disabled);
  q('[data-flightmode="normal"]').click();await sleep(100);
  await check('armed mode click sends nothing',(await req('/commands')).length===count&&!visible('#modechange'));
  q('#sh_speed [data-close]').click();
  await check('Wasp aim and launch controls remain correct',q('#aim').style.top==='50%'&&!visible('#arc')&&q('#b_up').disabled&&!q('#b_eng').disabled);
+ await req('/set?armed=1&target=0');await until(()=>q('#c_det').textContent==='NO');
+ await check('launch is available without an initial detection',!q('#b_eng').disabled);
+ await req('/set?armed=1&attitude=0');await until(()=>q('#b_eng').disabled);
+ await check('launch still requires fresh attitude',q('#b_eng').disabled);
+ await req('/set?armed=1&attitude=1&gate=wrong-mode');await until(()=>q('#badge').textContent==='wrong-mode');
+ await check('launch still requires the controller gate',q('#b_eng').disabled);
+ await req('/set?armed=1&gate=');await until(()=>!q('#b_eng').disabled);
  tap('#b_eng');await until(()=>q('#engtxt').textContent==='WASP FLYING');
+ await check('initial acquisition shows the countdown',q('#badge').textContent.includes('NO DET'));
+ await req('/set?armed=1&phase=WASP_FLIGHT&elapsed=2');await until(()=>q('#badge').textContent.includes('NO DET 4.'));
+ await check('no-detection wait remains active after Straight launch',q('#b_eng').disabled);
+ await req('/set?armed=1&target=1&acquired=1');await until(()=>q('#badge').textContent.includes('BLENDING'));
+ await check('late acquisition shows the steering transition',q('#badge').textContent.includes('BLENDING'));
  await req('/set?armed=1&phase=WASP_FLIGHT&elapsed=1.25');await until(()=>q('#badge').textContent.includes('GUIDING'));
  await check('launch sent once',(await req('/commands')).filter(x=>x[0]==='engage').length===1);
  await load();
@@ -137,6 +166,7 @@ async function main(){
  parameters();await check('camera switching blocked during Wasp flight',q('[data-cam="30"]').disabled&&q('[data-cam="60"]').disabled);
  q('#sh_speed [data-close]').click();tap('#b_wasp_abort');await until(()=>q('#engtxt').textContent==='DONE · DISARM');
  await check('abort remains available and sends once',(await req('/commands')).filter(x=>x[0]==='abort').length===1&&q('#b_eng').disabled);
+ await check('ended flight identifies pilot control',q('#badge').textContent==='PILOT · DISARM TO RESET');
  await req('/set?armed=0&phase=PILOT');await sleep(350);parameters();
  await switchMode('normal');
  await check('return to Normal confirms 30 degrees and changes flight parameters',q('#mountstatus').textContent==='30° ✓'&&visible('#normal_params')&&!visible('#pp_wasp'));
@@ -167,7 +197,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         u = urlparse(self.path)
-        q = parse_qs(u.query)
+        q = parse_qs(u.query, keep_blank_values=True)
         with lock:
             if u.path == "/h":
                 return self.send(HARNESS.encode(), "text/html")
@@ -201,7 +231,7 @@ class Handler(BaseHTTPRequestHandler):
                         why = phone_command(m, k, v[0], time.perf_counter())
                     if k == "engage" and not why:
                         m.phase = "WASP_FLIGHT"
-                        m.wasp.begin(time.perf_counter())
+                        m.wasp.begin(time.perf_counter(), target_acquired=simulation["target"])
                     elif k == "abort":
                         m.phase = "WASP_DONE"
                         m.wasp.started = None
@@ -213,6 +243,15 @@ class Handler(BaseHTTPRequestHandler):
                     m.set_wasp_enabled(q["mode"][0] == "wasp", selection=True)
                 if "elapsed" in q:
                     m.wasp.started = time.perf_counter()-float(q["elapsed"][0])
+                    if m.wasp.acquired_t is not None:
+                        m.wasp.acquired_t = m.wasp.started
+                for key in ("target", "attitude"):
+                    if key in q:
+                        simulation[key] = q[key][0] == "1"
+                if "gate" in q:
+                    simulation["gate_why"] = q["gate"][0]
+                if "acquired" in q:
+                    m.wasp.acquired_t = time.perf_counter() if q["acquired"][0] == "1" else None
                 return self.send({})
             if u.path == "/commands":
                 return self.send(commands)
@@ -247,6 +286,14 @@ if __name__ == "__main__":
             finally:
                 proc.terminate()
                 proc.wait(timeout=10)
+                # Snap's browser children can finish writing after the launcher
+                # exits. Retry profile removal before TemporaryDirectory cleanup.
+                for _ in range(20):
+                    try:
+                        shutil.rmtree(profile)
+                        break
+                    except OSError:
+                        time.sleep(.05)
     srv.shutdown()
     assert finished, "Browser timed out; see /tmp/wasp-firefox.log"
     assert reports and all(r["ok"] for r in reports), reports
