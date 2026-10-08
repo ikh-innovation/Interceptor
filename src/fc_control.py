@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from time import perf_counter, sleep
 from wasp import WaspGuidance, interpolate_rotation
+from flight_logging import FlightLogs
 
 try:
     from pymavlink import mavutil
@@ -2247,6 +2248,9 @@ class AcroCommander:
         self._tx = None
         self._log_fh = None
         self.log_path = None
+        self._flight_logs = None
+        self.log_context = {}
+        self._log_error = None
         self._last_stt = 0.0
         self._t0 = perf_counter()
         self._warned_disarmed = False
@@ -2893,6 +2897,8 @@ class AcroCommander:
             except Exception:
                 pass
             self.backend.close()
+        if self._flight_logs is not None:
+            self._flight_logs.close(perf_counter())
         if self._log_fh is not None:
             self._log_fh.close()
             self._log_fh = None
@@ -2910,7 +2916,7 @@ class AcroCommander:
                 "yaw_rate_dps,pitch_rate_dps")
         if self.is_intercept:
             cols += (",roll_stick,throttle_stick,el_cam_deg,bank_deg,lean_deg,"
-                     "climb_mps,los_az_dps,los_el_dps,range_m,closing_mps,"
+                     "cmd_climb_mps,los_az_dps,los_el_dps,range_m,closing_mps,"
                      "latency_s,commit,have_att,terminal,"
                      "sens,pn_gain_eff,bank_cap_deg,fill_frac,lean_el_gate")
         if self.mission_enabled:
@@ -2919,6 +2925,8 @@ class AcroCommander:
                      "rollspeed_dps,pitchspeed_dps,yawspeed_dps,"
                      "height_m,climb_mps,vibe_x,vibe_y,vibe_z,clip,"
                      "det_age_s,det_conf,bbox_w,bbox_h,cap_age_s")
+            self._flight_logs = FlightLogs(self.log_dir, stamp, cols)
+            cols = self._flight_logs.header
         self._log_fh.write(cols + "\n")
         print(f"[FC] control log -> {self.log_path}", flush=True)
 
@@ -2959,9 +2967,58 @@ class AcroCommander:
                         f",{cmd.get('lean_el_gate', 1.0):.3f}")
             if self.mission_enabled:
                 row += self._mission_csv(now)
+                if self._flight_logs is not None and self.mission is not None:
+                    row = self._flight_logs.record(now, row, self._flight_log_state(now),
+                                                   lambda: self._flight_metadata(now))
             self._log_fh.write(row + "\n")
-        except Exception:
-            pass
+            self._log_error = None
+        except Exception as exc:
+            if str(exc) != self._log_error:
+                self._log_error = str(exc)
+                print(f"[LOG][WARN] control logging failed: {exc}", flush=True)
+
+    def _flight_log_state(self, now):
+        m = self.mission
+        w = m.wasp.progress(now)
+        idle = m.idle.snapshot()
+        with self._lock:
+            det_t, confidence = self._det_t, self._det_conf
+            context = dict(self.log_context)
+        timeout = .25 if m.wasp.enabled else m.TARGET_FRESH_S
+        fresh = (det_t is not None and 0 <= now-det_t <= timeout
+                 and confidence is not None and confidence >= m.min_conf)
+        rates = m.wasp._rates if m.phase == "WASP_FLIGHT" else (None, None, None)
+        return dict(t_s=round(now-self._t0, 3), phase=m.phase,
+                    armed=self.armed, linked=self.linked,
+                    wasp_enabled=m.wasp.enabled, auto_run=m.auto_run,
+                    idle_limit_s=m.idle_s, idle_stage=idle["stage"],
+                    idle_height_target_m=idle["height_m"],
+                    idle_heading_target_deg=idle["heading_deg"],
+                    detection_fresh=int(fresh), wasp_stage=w["stage"] if m.wasp.enabled else "",
+                    wasp_steering_blend=w["steering_blend"] if m.wasp.enabled else "",
+                    wasp_target_acquired=int(w["target_acquired"]) if m.wasp.enabled else "",
+                    **{f"cmd_{axis}_rate_dps": None if rate is None else round(math.degrees(rate), 3)
+                       for axis, rate in zip(("roll", "pitch", "yaw"), rates)},
+                    cam_fps=context.get("cam_fps"), processing_fps=context.get("processing_fps"),
+                    mission_event=m.event, mission_event_t=m.event_t,
+                    gate_reason=self._mission_why)
+
+    def _flight_metadata(self, now):
+        with self._lock:
+            runtime = dict(self.log_context)
+        return dict(runtime=runtime, mission=self.mission.snapshot(now),
+                    fc_mode=self.mode_name,
+                    fc_params=dict(getattr(self.backend, "params", {})),
+                    rc_calibration=dict(getattr(self.backend, "rc", {})),
+                    control_law=type(self.law).__name__, send_hz=self.send_hz)
+
+    def update_log_context(self, **values):
+        with self._lock:
+            self.log_context.update(values)
+
+    def logging_state(self):
+        return dict(control_csv=self.log_path, control_error=self._log_error,
+                    flight=None if self._flight_logs is None else self._flight_logs.snapshot())
 
     def _mission_csv(self, now):
         b = self.backend

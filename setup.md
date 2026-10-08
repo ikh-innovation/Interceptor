@@ -395,6 +395,33 @@ recovery. Timeout/ABORT requests Idle; it does not land or disarm. Recovery from
 high speed or extreme attitude is not flight verified. Test recovery at low
 height/speed with transmitter takeover available before full-throttle use.
 
+## 11. Flight logs
+
+Video recording is disabled. The live phone stream remains available.
+All run and flight logs stay in `src/data/`, which is ignored by Git.
+
+| File | Contents |
+| --- | --- |
+| `YYYYMMDD_HHMMSS.log` | Console, settings, warnings and mission messages |
+| `control_YYYYMMDD_HHMMSS.csv` | Continuous control and telemetry, including flight ID and mode |
+| `flight_YYYYMMDD_HHMMSS_NNN_auto.csv` | One Seeker AUTO attempt, including its Idle phase |
+| `flight_YYYYMMDD_HHMMSS_NNN_semi_auto.csv` | One Seeker ENGAGE attempt, including its Idle phase |
+| `flight_YYYYMMDD_HHMMSS_NNN_wasp.csv` | One Wasp launch, including its Idle phase |
+| Matching `.json` | Starting settings, camera, model, FC parameters and completion status |
+| Matching `.events.jsonl` | Phase changes, detection freshness, guidance, Idle and return to pilot |
+
+An attempt starts when the accepted AUTO / ENGAGE / LAUNCH command starts its
+mission, and closes on pilot takeover, disarm, link loss or service shutdown.
+After an unexpected power loss, `.json` can still say `recording`; the CSV and
+events already written can be read independently.
+
+```bash
+ls -lt src/data/flight_*
+git check-ignore src/data/control_example.csv src/data/flight_example_wasp.json
+"$WASP_PY" src/tests/test_flight_logging.py
+"$WASP_PY" src/tests/test_logs_only.py
+```
+
 [Jetson PyTorch packages](https://forums.developer.nvidia.com/t/install-pytorch-for-cuda-12-6-jetpack-6-2/348456)
 · [TensorRT export](https://docs.ultralytics.com/guides/nvidia-jetson/)
 · [ArduPilot RC input](https://ardupilot.org/dev/docs/mavlink-rcinput.html)

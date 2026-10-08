@@ -131,6 +131,7 @@ __marimo__/
 
 logs/
 
+# Local console, control telemetry and per-flight logs.
 src/data/
 src/captures/
 

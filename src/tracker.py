@@ -357,6 +357,19 @@ class DroneTracker:
         self._cam_req  = None
         self._cam_busy = False
         self._apply_cam_mode(start)
+        self._update_log_context()
+
+    def _update_log_context(self):
+        update = getattr(self.ap, "update_log_context", None)
+        if callable(update):
+            law = getattr(self.ap, "law", None)
+            update(model=str(self.model_path), detector="TensorRT" if self.using_engine else "PyTorch",
+                   cam_fps=self.cam_mode, frame_width=self.fw, frame_height=self.fh,
+                   camera_pipeline=self.camera_pipeline, sky_gate=self.use_sky_mask,
+                   follower=self.use_follower, sensitivity=self.mode_name,
+                   cam_hfov_deg=None if law is None else math.degrees(law.h_fov),
+                   cam_vfov_deg=None if law is None else math.degrees(law.v_fov),
+                   processing_fps=round(self._ui_fps, 1), video_recording=self.record_dir is not None)
 
 
     def _enhance(self, crop):
@@ -530,6 +543,9 @@ class DroneTracker:
                 out["mission"] = ap.mission_state()
             except Exception as exc:
                 out["mission"] = dict(error=str(exc))
+        out["video_recording"] = getattr(self, "record_dir", None) is not None
+        if hasattr(ap, "logging_state"):
+            out["logs"] = ap.logging_state()
         with _CONSOLE_LOCK:
             out["console_seq"] = _CONSOLE_SEQ[0]
         for k, dp in (("range_m", 1), ("bank_deg", 1), ("lean_deg", 1),
@@ -1584,6 +1600,7 @@ class DroneTracker:
 
             actually_sent = self.ap.steering
             self._last_sent = bool(actually_sent)
+            self._update_log_context()
 
             _tp = self._lap("control", _tp)
             self._draw(frame_disp, frame_full, fused, roi, cmd, actually_sent)
@@ -1858,6 +1875,7 @@ if __name__ == "__main__":
 
     os.environ.setdefault("TARGET_KIND", "DRONE")
     print(f"[TARGET] {os.environ['TARGET_KIND']} (fixed for this run)")
+    print("[REC] disabled — logs only")
 
     DroneTracker(
         model_path   = model_pth,
@@ -1869,8 +1887,7 @@ if __name__ == "__main__":
         skip_frames  = 0,
         show_sky     = False,
         use_sky_mask = True,
-        record_dir      = str(_DATA_DIR),
-        record_pad_sec  = 1.5,
+        record_dir      = None,
         log_dir         = str(_DATA_DIR),
         run_stamp       = RUN_STAMP,
         headless     = os.environ.get("TRACKER_HEADLESS") == "1",
