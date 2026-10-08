@@ -1,151 +1,119 @@
-"""Wasp commands over real MAVLink to FakeArduPilot (no hardware)."""
-import contextlib
-import io
+"""Idle/launch checks through real MAVLink to a simulated FC; no hardware."""
 import math
-from pathlib import Path
-import socket
-import sys
-import threading
 from time import perf_counter, sleep
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from fc_control import AcroCommander, InterceptLaw
-from fake_fc import FakeArduPilot
-
-
-def until(predicate, timeout=3):
-    deadline = perf_counter() + timeout
-    while perf_counter() < deadline:
-        if predicate():
-            return
-        sleep(.02)
-    raise AssertionError("condition timed out")
+import unittest
+from pymavlink import mavutil
+from test_wifi_autonomy import WifiFixture, until
 
 
-with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-fc = FakeArduPilot(port, armed=False, mode=1)
-fc.params.update(ACRO_RP_EXPO=.3, ACRO_Y_EXPO=.2, RC_OVERRIDE_TIME=1,
-                 PILOT_SPEED_DN=250, PILOT_ACCEL_Z=500, PSC_JERK_Z=5,
-                 ATC_INPUT_TC=.2, ATC_ACCEL_R_MAX=100000, ATC_ACCEL_P_MAX=100000,
-                 LOG_BACKEND_TYPE=0, LOG_BITMASK=0, INS_LOG_BAT_MASK=0, FS_GCS_ENABLE=0)
-for ch in range(1, 5):
-    fc.params[f"RC{ch}_DZ"] = 20
-fc.vfr["alt"] = 0
-fc.start()
-c = AcroCommander(conn=f"udpin:127.0.0.1:{port}", transport="mavlink",
-                  axes=("roll", "pitch", "yaw", "throttle"), law=InterceptLaw(),
-                  send_hz=50, mission=True, verbose=False, steer_modes={"ACRO", "ALT_HOLD"})
-stop = threading.Event()
-target = {"on": True}
-worker = None
-try:
-    with contextlib.redirect_stdout(io.StringIO()):
-        c.connect()
-    m = c.mission
-    m.log = lambda line: print(line, flush=True)
-    assert not m.set_wasp_enabled(True)
-    assert not m.confirm_mount(90)
-    assert not m.set_wasp_param("duration", 3)
+class RecoveryMavlinkTests(WifiFixture):
+    def test_wasp_platform_angles_launch_loss_reacquisition_and_idle(self):
+        for tilt in (0, 45, 90):
+            with self.subTest(tilt=tilt):
+                self.fc.att.update(pitch=-math.radians(tilt), roll=0, yaw=.7)
+                self.wasp_ready(idle_s=5)
+                self.command("engage", "1")
+                until(lambda: self.fc.overrides.get(3) == 1900)
+                launch = self.m.wasp.started
+                self.assertEqual(self.m._run_t, launch)
+                self.assertEqual(self.fc.overrides[1], 1500)
+                self.assertEqual(self.fc.overrides[2], 1500)
+                self.target.update(on=True, x=80, y=-20)
+                until(lambda: self.m.wasp.progress(perf_counter())["stage"] == "GUIDE")
+                until(lambda: self.fc.overrides.get(1, 0) > 1500)
+                self.target["on"] = False
+                until(lambda: self.m.wasp.acquired_t is None and self.fc.overrides.get(1) == 1500)
+                self.assertEqual(self.m.phase, "WASP_FLIGHT")
+                self.assertEqual(self.m._run_t, launch)
+                self.target["on"] = True
+                until(lambda: self.m.wasp.acquired_t is not None)
+                self.assertEqual(self.m._run_t, launch)
+                until(lambda: self.m.phase == "IDLE" and self.m.idle.confirmed, timeout=5)
+                self.assertAlmostEqual(self.m.idle.started-launch, 5, delta=.1)
+                self.assertEqual(self.fc.mode, 2)
+                self.assertEqual(len(self.fc.mode_requests), tilt//45+1)
+                self.assertEqual(self.m.idle.height, 1.5)
+                self.assertAlmostEqual(self.m.idle.heading, .7, places=5)
+                self.assertEqual(self.fc.overrides[1], 1500)
+                self.assertEqual(self.fc.overrides[2], 1500)
+                self.assertNotEqual(self.fc.overrides[3], 1900)
+                if tilt:
+                    self.assertEqual(self.m.idle.stage, "LEVEL")
+                    self.assertEqual(self.fc.overrides[3], 1500)
+                self.fc.att.update(pitch=0, roll=0)
+                until(lambda: self.fc.overrides.get(3, 0) > 1500)
+                self.fc.vfr["alt"] = 9.5
+                until(lambda: self.m.idle.stage == "HOLD")
+                until(lambda: self.fc.overrides.get(3) == 1500)
+                self.fc.mode = 0
+                until(lambda: self.m.phase == "PILOT" and not self.fc.overrides)
+                count = len(self.fc.mode_requests)
+                sleep(.3)
+                self.assertEqual(len(self.fc.mode_requests), count, "never fight RC mode takeover")
+                self.fc.armed = False; self.target["on"] = False
+                until(lambda: not self.c.armed and not self.m.wasp.used)
+                self.fc.vfr["alt"] = 8
+                sleep(.3)
 
-    def detections():
-        while not stop.is_set():
-            if target["on"]:
-                cmd = c.compute(35, -20, "LOCK", 640, 480, capture_t=perf_counter()-.03)
-                c.update(cmd, (35, -20), True, detected=True, conf=.9)
-            sleep(.03)
+    def test_abort_enters_idle_in_both_modes_without_restarting_height(self):
+        for wasp in (False, True):
+            if wasp:
+                self.wasp_ready()
+            else:
+                self.seeker_ready()
+            self.command("engage", "1")
+            until(lambda: len(self.fc.overrides) == 4)
+            self.command("abort", "1")
+            until(lambda: self.m.phase == "IDLE" and self.m.idle.confirmed)
+            height, start = self.m.idle.height, self.m.idle.started
+            self.command("abort", "1"); sleep(.2)
+            self.assertEqual(self.m.idle.height, height)
+            self.assertEqual(self.m.idle.started, start)
+            self.assertEqual(self.fc.mode, 2)
+            self.fc.mode = 0
+            until(lambda: not self.fc.overrides and self.m.phase == "PILOT")
+            self.fc.armed = False
+            until(lambda: not self.c.armed)
 
-    worker = threading.Thread(target=detections, daemon=True)
-    worker.start()
-    for tilt in (0, 20, 40, 60, 90):
-        throttle = .25 if tilt == 0 else .5 if tilt == 20 else 1
-        assert not m.set_wasp_param("throttle", throttle)
-        fc.att.update(pitch=-math.radians(tilt), roll=.1, yaw=.7)
-        sleep(.5)  # Let synthetic target motion from moving the fixture settle.
-        assert not fc.overrides, "nothing moves while disarmed"
-        fc.armed = True
-        until(lambda: m.phase == "WASP_READY")
-        until(lambda: c._cmd.get("wasp"))
-        assert not fc.overrides, "arming does not launch"
-        assert not m.request_engage()
-        until(lambda: fc.overrides.get(3) == 1000+int(throttle*1000))
-        assert m.phase == "WASP_FLIGHT", m.phase
-        overrides = dict(fc.overrides)
-        assert set(overrides) == {1, 2, 3, 4}
-        assert overrides[1] == 1500 and overrides[2] == 1500, overrides
-        if tilt != 0:  # First pass checks target-loss release during straight launch.
-            sleep(.45)
-            assert fc.overrides[1] == 1500 and fc.overrides[2] == 1500, fc.overrides
-            until(lambda: fc.overrides.get(1, 0) > 1500 and fc.overrides.get(2, 0) > 1500)
-            assert perf_counter() - m.wasp.started >= 1, "no AI steering in first second"
-        assert m.set_wasp_enabled(False), "cannot change mode while armed"
-        if tilt == 0:
-            target["on"] = False
-            until(lambda: m.phase == "WASP_DONE" and not fc.overrides, timeout=1)
-            target["on"] = True
-            sleep(.15)
-            assert not fc.overrides, "new detection must not relaunch"
-        elif tilt == 20:
-            m.request_abort()
-            until(lambda: not fc.overrides)
-        elif tilt == 40:
-            fc.mode = 0
-            until(lambda: not fc.overrides)
-            fc.mode = 1
-            sleep(.3)
-            assert not fc.overrides, "mode cycling must not relaunch"
-        elif tilt == 60:
-            fc.attitude = False
-            until(lambda: not fc.overrides, timeout=1)
-            fc.attitude = True
-        else:
-            until(lambda: m.phase == "WASP_DONE" and not fc.overrides, timeout=2)
-        fc.armed = False
-        until(lambda: not c.armed and not m.wasp.used)
-        print(f"PASS: platform {tilt} degrees, {throttle:.0%} throttle, launch timing and channel release", flush=True)
+    def test_seeker_target_loss_enters_idle_and_disarm_releases(self):
+        self.seeker_ready(); self.target["on"] = True
+        self.command("engage", "1")
+        until(lambda: self.m.phase == "AI")
+        self.target["on"] = False
+        until(lambda: self.m.phase == "IDLE", timeout=1)
+        self.assertIn("target lost", self.m.event)
+        self.assertFalse(self.fc.mode_requests, "ALT_HOLD needs no mode command")
+        self.fc.armed = False
+        until(lambda: not self.fc.overrides and not self.m.idle.active)
 
-    # Exercise initial acquisition through the real sender and RC release path.
-    target["on"] = False
-    sleep(.35)  # Expire the preceding flight's detection.
-    assert not m.set_wasp_param("duration", 5)
-    assert not m.set_wasp_param("no_det", 3)
-    fc.armed = True
-    until(lambda: m.phase == "WASP_READY")
-    assert not fc.overrides, "no automatic launch without a target"
-    assert not m.request_engage()
-    until(lambda: fc.overrides.get(3) == 2000)
-    launch_t = m.wasp.started
-    until(lambda: perf_counter()-launch_t >= 1.6)
-    assert m.wasp.acquired_t is None
-    assert all(fc.overrides.get(ch) == 1500 for ch in (1, 2, 4)), fc.overrides
-    target["on"] = True
-    until(lambda: m.wasp.acquired_t is not None)
-    acquired_t = m.wasp.acquired_t
-    until(lambda: fc.overrides.get(1, 0) > 1500 and fc.overrides.get(2, 0) > 1500)
-    assert perf_counter()-acquired_t < 1.5, "late target must transition without another full straight delay"
-    target["on"] = False
-    until(lambda: m.phase == "WASP_DONE" and not fc.overrides, timeout=1)
-    print("PASS: no-target launch, late acquisition, steering and target-loss release", flush=True)
-    fc.armed = False
-    until(lambda: not c.armed and not m.wasp.used)
+    def test_rejected_mode_command_releases_and_latches(self):
+        self.fc.mode_ack = mavutil.mavlink.MAV_RESULT_DENIED
+        self.wasp_ready(idle_s=1)
+        self.command("engage", "1")
+        until(lambda: self.m.phase == "IDLE_FAILED" and not self.fc.overrides)
+        self.assertIn("rejected", self.m.event)
+        self.assertEqual(len(self.fc.mode_requests), 1)
+        self.target["on"] = True; sleep(.3)
+        self.assertFalse(self.fc.overrides)
+        self.assertTrue(self.m.request_engage())
 
-    fc.armed = True
-    until(lambda: m.phase == "WASP_READY")
-    assert not m.request_engage()
-    until(lambda: fc.overrides.get(3) == 2000)
-    until(lambda: m.phase == "WASP_DONE" and not fc.overrides, timeout=4)
-    assert "no detection time limit" in m.event, m.event
-    target["on"] = True
-    sleep(.3)
-    assert not fc.overrides, "new detection after acquisition timeout must not relaunch"
-    assert m.request_engage(), "pilot must disarm before another launch"
-    print("PASS: acquisition timeout releases all channels and latches pilot control", flush=True)
-    print("All Wasp MAVLink integration checks passed")
-finally:
-    stop.set()
-    if worker is not None:
-        worker.join(timeout=2)
-    c.close()
-    fc.stop.set()
-    fc.join(timeout=2)
+    def test_accepted_ack_without_mode_confirmation_releases(self):
+        self.fc.apply_mode = False
+        self.wasp_ready(idle_s=1)
+        self.command("engage", "1")
+        until(lambda: self.m.phase == "IDLE_FAILED" and not self.fc.overrides, timeout=4)
+        self.assertIn("not confirmed", self.m.event)
+        self.assertEqual(len(self.fc.mode_requests), 1)
+
+    def test_idle_stale_attitude_releases_without_mode_retry(self):
+        self.wasp_ready(idle_s=1); self.command("engage", "1")
+        until(lambda: self.m.phase == "IDLE" and self.m.idle.confirmed)
+        self.fc.attitude = False
+        until(lambda: not self.fc.overrides and not self.m.idle.active, timeout=1)
+        self.fc.attitude = True; sleep(.4)
+        self.assertFalse(self.fc.overrides)
+        self.assertEqual(len(self.fc.mode_requests), 1)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

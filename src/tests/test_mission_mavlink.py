@@ -45,7 +45,7 @@ fc = FakeArduPilot(PORT, sysid_mygcs=255, armed=True, mode=0)
 fc.params.update({"RCMAP_THROTTLE": 1.0, "RCMAP_ROLL": 2.0, "RCMAP_PITCH": 3.0,
                   "RCMAP_YAW": 4.0, "ANGLE_MAX": 4000.0, "PILOT_SPEED_UP": 2500.0,
                   "PILOT_SPEED_DN": 250.0, "PILOT_ACCEL_Z": 500.0, "PSC_JERK_Z": 5.0,
-                  "PILOT_Y_RATE": 202.5, "THR_DZ": 100.0, "RC_OVERRIDE_TIME": 3.0,
+                  "PILOT_Y_RATE": 202.5, "THR_DZ": 100.0, "RC_OVERRIDE_TIME": 1.0,
                   "ATC_INPUT_TC": 0.15})
 for ch in (1, 2, 3, 4):
     fc.params.update({f"RC{ch}_MIN": 1100.0, f"RC{ch}_MAX": 1900.0,
@@ -173,8 +173,10 @@ try:
     print("=== 7. ABORT, and the mode switch ===")
     M.request_abort()
     sleep(0.1)
-    check("ABORT: every channel released within 0.1 s, HOVER",
-          not fc.overrides and M.phase == "HOVER", f"{M.phase} {fc.overrides}")
+    check("ABORT: Idle recovery holds all four axes in ALT_HOLD",
+          set(fc.overrides) == {1, 2, 3, 4} and M.phase == "IDLE", f"{M.phase} {fc.overrides}")
+    fc.mode = 0; sleep(.3)
+    fc.mode = 2; sleep(.3)
     hold("up", 0.5, session="m")
     check("climbing again after ABORT (a new press)", set(fc.overrides) == {1})
     fc.mode = 0
@@ -264,6 +266,8 @@ try:
               f"{M.phase}, ch4 {before} -> {s4[-1]}, max step {max(jumps) if jumps else 0}")
         M.request_abort()
         sleep(0.2)
+        fc.mode = 0; sleep(.3)
+        fc.mode = 2; sleep(.3)
         M.request_lock(True); sleep(0.3)
         M.request_lock(False); sleep(0.8)
         check("LOCK off: the yaw channel is handed back to the pilot", 4 not in fc.overrides,
@@ -286,12 +290,12 @@ try:
     fc.vfr.update(alt=10.0)
     sleep(0.8)
     lean0 = law.speed_state()["max_lean_deg"] if hasattr(law, "speed_state") else None
-    r = [_tr.DroneTracker._command(ph, "lvl", v) for v in ("push:FAST", "search:MEDIUM", "ai:FAST")]
+    r = [_tr.DroneTracker._command(ph, "lvl", v) for v in ("push:FAST", "ai:FAST")]
     st = c.mission_state()
-    check("lvl=push:FAST / search:MEDIUM / ai:FAST all accepted", r == ["", "", ""], str(r))
+    check("lvl=push:FAST / ai:FAST all accepted", r == ["", ""], str(r))
     check("...and what the phone reads back is what the Jetson holds",
-          st["levels"]["push"] == "FAST" and st["levels"]["search"] == "MEDIUM" and st["levels"]["ai"] == "FAST"
-          and st["speeds"]["push"] == 40.0 and st["speeds"]["search"] == 6.0, str(st["levels"]))
+          st["levels"]["push"] == "FAST" and st["levels"]["ai"] == "FAST"
+          and st["speeds"]["push"] == 40.0 and st["idle_s"] == 10.0, str(st["levels"]))
     lean1 = law.speed_state()["max_lean_deg"] if hasattr(law, "speed_state") else None
     check("AI FAST really changed the intercept law's profile (max lean)",
           lean0 is not None and lean1 is not None and lean1 != lean0 and ph.mode_name == "FAST",
@@ -312,22 +316,22 @@ try:
     o = dict(fc.overrides)
     check("the FC receives the NEW push: ch3 = 40 deg nose down (PUSH FAST)",
           3 in o and abs(ap_norm(o[3]) * 40.0 + 40.0) < 0.3, f"ch3={o.get(3)} -> {ap_norm(o.get(3, 1500)) * 40:.1f} deg")
-    while perf_counter() - t_eng < 5.7:
+    while perf_counter() - t_eng < 9.7:
         sleep(0.05)
     at57 = M.phase
-    while perf_counter() - t_eng < 6.4:
+    while perf_counter() - t_eng < 10.4:
         sleep(0.05)
-    check("the NEW search time: still searching at 5.7 s, soft stop by 6.4 s (was 4 s)",
-          at57 == "PUSH" and M.phase in ("STOP", "HOVER"), f"{at57} -> {M.phase}")
+    check("total Idle time: still pushing at 9.7 s, Idle by 10.4 s",
+          at57 == "PUSH" and M.phase == "IDLE", f"{at57} -> {M.phase}")
     sleep(1.3)
-    for v in ("push:SLOW", "search:SLOW", "ai:MEDIUM"):
+    for v in ("push:SLOW", "ai:MEDIUM"):
         _tr.DroneTracker._command(ph, "lvl", v)
     fc.vfr.update(alt=2.0)
 
     print("=== 8. the checklist and the log ===")
     rows = c.mission_checklist()
-    check("checklist flags RC_OVERRIDE_TIME 3 and ATC_INPUT_TC 0.15 for change",
-          any(r.startswith("!! RC_OVERRIDE_TIME") for r in rows)
+    check("checklist accepts RC_OVERRIDE_TIME 1 and flags ATC_INPUT_TC 0.15",
+          any(r.startswith("ok RC_OVERRIDE_TIME") for r in rows)
           and any(r.startswith("!! ATC_INPUT_TC") for r in rows)
           and any(r.startswith("ok PILOT_SPEED_UP") for r in rows), "\n     " + "\n     ".join(rows))
 finally:

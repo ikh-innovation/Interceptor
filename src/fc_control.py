@@ -935,6 +935,7 @@ class ArduPilotAcro(FcBackend):
         self._was_armed = None
         self._pilot_pwm = {}
         self._override_t = {}
+        self._idle_mode_ack = None
 
     def connect(self):
         if mavutil is None:
@@ -1223,6 +1224,9 @@ class ArduPilotAcro(FcBackend):
             elif t == "EXTENDED_SYS_STATE":
                 with self._lock:
                     self._landed = (perf_counter(), int(msg.landed_state))
+            elif t == "COMMAND_ACK" and msg.command == mavutil.mavlink.MAV_CMD_DO_SET_MODE:
+                with self._lock:
+                    self._idle_mode_ack = (perf_counter(), int(msg.result))
             elif t == "VIBRATION":
                 with self._lock:
                     self._vibe = (perf_counter(), float(msg.vibration_x),
@@ -1437,6 +1441,70 @@ class ArduPilotAcro(FcBackend):
     def steer_wasp_pwm(self, pwm_by_axis):
         if self.wasp_ready():
             return self.release()
+        return self._steer_calibrated_pwm(pwm_by_axis)
+
+    def idle_ready(self, allow_acro=False):
+        if not self.linked or not self.armed:
+            return "Idle needs FC link + armed"
+        if self.mode_name not in (("ACRO", "ALT_HOLD") if allow_acro else ("ALT_HOLD",)):
+            return "pilot changed mode"
+        if perf_counter()-getattr(self, "_heartbeat_t", -1e9) > 1.5:
+            return "no fresh FC heartbeat"
+        if self.wasp_attitude() is None or self.height(max_age=.5) is None:
+            return "Idle needs fresh attitude and height"
+        if self.blockers:
+            return self.blockers[0]
+        if not 0 < self.params.get("RC_OVERRIDE_TIME", 0) <= 1:
+            return "Idle needs RC_OVERRIDE_TIME <= 1 s"
+        channels = []
+        for axis in ("roll", "pitch", "yaw", "throttle"):
+            cfg = self.rc.get(axis, {})
+            if axis not in self.axes or not cfg.get("wasp_calibrated"):
+                return f"Idle needs calibrated {axis}"
+            values = [cfg.get(k, float("nan")) for k in ("min", "max", "trim", "dz", "chan")]
+            if not all(math.isfinite(v) for v in values):
+                return f"invalid {axis} RC calibration"
+            dz_limit = (cfg["max"]-cfg["min"] if axis == "throttle" else
+                        min(cfg["trim"]-cfg["min"], cfg["max"]-cfg["trim"]))
+            if not (1 <= cfg["chan"] <= 8 and cfg["min"] <= cfg["trim"] <= cfg["max"]
+                    and 0 <= cfg["dz"] < dz_limit):
+                return f"invalid {axis} RC calibration"
+            channels.append(cfg["chan"])
+        if len(set(channels)) != 4:
+            return "Idle needs distinct RC channels"
+        return ""
+
+    def idle_request_alt_hold(self):
+        if self.idle_ready(allow_acro=True):
+            return False
+        with self._lock:
+            self._idle_mode_ack = None
+        if self.mode_name == "ALT_HOLD":
+            return True
+        try:
+            self.master.mav.command_long_send(
+                self.master.target_system, self.master.target_component,
+                mavutil.mavlink.MAV_CMD_DO_SET_MODE, 0,
+                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, 2, 0, 0, 0, 0, 0)
+            return True
+        except Exception:
+            return False
+
+    def idle_pwm(self, yaw_dps, climb_mps):
+        if not all(math.isfinite(v) for v in (yaw_dps, climb_mps)):
+            raise ValueError("invalid Idle control")
+        yaw = math.radians(yaw_dps)/(self.pilot_yaw_rate or math.radians(202.5))
+        limit = self.max_climb_mps if climb_mps >= 0 else self.max_descent_mps
+        throttle = climb_mps/max(.1, limit or 2.5)
+        return {axis: self._exact_pwm(axis, value) for axis, value in
+                (("roll", 0.0), ("pitch", 0.0), ("yaw", yaw), ("throttle", throttle))}
+
+    def steer_idle_pwm(self, pwm_by_axis, allow_acro=False):
+        if self.idle_ready(allow_acro):
+            return self.release()
+        return self._steer_calibrated_pwm(pwm_by_axis)
+
+    def _steer_calibrated_pwm(self, pwm_by_axis):
         chans = [0] * 8
         sent = {}
         for axis in ("roll", "pitch", "yaw", "throttle"):
@@ -2516,9 +2584,10 @@ class AcroCommander:
             ceiling_m=self._mission_cfg["ceiling_m"],
             accel_z=getattr(b, "accel_z", 2.5) or 2.5,
             jerk_z=getattr(b, "jerk_z", 5.0) or 5.0,
-            log=lambda m: print(m, flush=True))
+            log=lambda m: print(m, flush=True), idle_path=_mission_mod.IDLE_FILE)
         _saved = _mission_mod.load_auto_params(self.mission)
         _lv = _mission_mod.load_levels(self.mission)
+        _mission_mod.load_idle_settings(self.mission)
         print("-" * 74)
         print("MISSION APP  : Hover -> Scout -> Engage, driven from the phone.")
         print(f"               AUTO settings: {self.mission.auto_params()}"
@@ -2578,6 +2647,14 @@ class AcroCommander:
                       for a, v in zip(("roll", "pitch", "yaw"), rates))
         return self.backend.wasp_pwm(rates, throttle)
 
+    def idle_pwm(self, yaw_dps, climb_mps):
+        if not isinstance(self.backend, ArduPilotAcro):
+            raise ValueError("Idle requires ArduPilot MAVLink")
+        return self.backend.idle_pwm(yaw_dps, climb_mps)
+
+    def idle_request_alt_hold(self):
+        return isinstance(self.backend, ArduPilotAcro) and self.backend.idle_request_alt_hold()
+
     def _mission_gate(self):
         b = self.backend
         if not self.linked:
@@ -2585,7 +2662,14 @@ class AcroCommander:
         if self.require_armed and not b.armed:
             return False, "disarmed"
         wasp = self.mission is not None and self.mission.wasp.enabled
-        if wasp:
+        idle = self.mission is not None and self.mission.idle.active
+        if idle:
+            if not isinstance(b, ArduPilotAcro):
+                return False, "Idle requires ArduPilot MAVLink"
+            why = b.idle_ready(allow_acro=not self.mission.idle.confirmed)
+            if why:
+                return False, why
+        elif wasp:
             if not isinstance(b, ArduPilotAcro):
                 return False, "WASP requires ArduPilot MAVLink"
             if not self.mission.wasp.camera_confirmed or self.mission.camera_mount_deg != 90:
@@ -2598,7 +2682,7 @@ class AcroCommander:
             return False, "restore and confirm the 30 degree camera for AUTO / SEMI-AUTO"
         elif b.mode_name != "ALT_HOLD":
             return False, f"FC in {b.mode_name}, not ALT_HOLD"
-        if not wasp and self.mission_require_airborne and hasattr(b, "airborne"):
+        if not wasp and not idle and self.mission_require_airborne and hasattr(b, "airborne"):
             air, how = b.airborne()
             if not air:
                 return False, f"on the ground ({how})"
@@ -2614,23 +2698,34 @@ class AcroCommander:
         ok, why = self._mission_gate()
         self._mission_why = why
         b = self.backend
-        h = b.height() if hasattr(b, "height") else None
+        h = b.height(max_age=.5) if isinstance(b, ArduPilotAcro) else b.height() if hasattr(b, "height") else None
         with self._lock:
             cmd = dict(self._cmd)
             off = self._target_off
             det_t, det_conf = self._det_t, self._det_conf
         ai_t = det_t if det_t is not None else -1e9
         fresh = (now - ai_t) <= self.target_timeout and off is not None
+        idle_why = b.idle_ready(allow_acro=True) if isinstance(b, ArduPilotAcro) else "Idle requires MAVLink"
+        idle_ack = b._idle_mode_ack if isinstance(b, ArduPilotAcro) else None
         ctx = dict(gate_ok=ok, gate_why=why,
-                   att=((b.wasp_attitude() if self.mission.wasp.enabled else b.attitude()) if ok else None),
+                   att=((b.wasp_attitude() if isinstance(b, ArduPilotAcro) else b.attitude()) if ok else None),
                    height=None if h is None else h[0],
                    climb=None if h is None else h[1],
                    ai_cmd=cmd if fresh else None,
                    ai_t=ai_t if fresh else None,
-                   det_t=det_t, det_conf=det_conf)
+                   det_t=det_t, det_conf=det_conf,
+                   fc_mode=b.mode_name,
+                   airborne=b.airborne()[0] if isinstance(b, ArduPilotAcro) else False,
+                   idle_ok=not idle_why, idle_why=idle_why,
+                   idle_mode_denied=bool(self.mission.idle.active and not self.mission.idle.confirmed
+                       and idle_ack and idle_ack[0] >= self.mission.idle.started
+                       and idle_ack[1] not in (mavutil.mavlink.MAV_RESULT_ACCEPTED, mavutil.mavlink.MAV_RESULT_IN_PROGRESS)))
         out = self.mission.cycle(now, ctx)
         if out:
-            written = b.steer_wasp_pwm(out) if self.mission.wasp.enabled else b.steer_pwm(out)
+            if self.mission.idle.active:
+                written = b.steer_idle_pwm(out, allow_acro=not self.mission.idle.confirmed)
+            else:
+                written = b.steer_wasp_pwm(out) if self.mission.wasp.enabled else b.steer_pwm(out)
         else:
             written = b.release() if self.linked else False
         self._mission_out = dict(out)

@@ -186,6 +186,10 @@
   #sh_speed .detection-label .lbl{margin:0}
   #sh_speed .parameter-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
   #sh_speed .parameter-grid > .grp{margin:0}
+  #sh_speed .idle-input{display:flex;align-items:center;gap:10px;min-width:0}
+  #sh_speed .idle-input input{width:100%;min-width:0;min-height:44px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg3);color:var(--ink);font:700 16px var(--mono);user-select:text;-webkit-user-select:text}
+  #sh_speed .idle-input input:focus{outline:2px solid var(--acc);outline-offset:2px}
+  #sh_speed .idle-input span{color:var(--dim);font:13px var(--mono)}
   #sh_speed .flight-tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:16px;padding:4px;background:var(--bg3);border-radius:12px}
   #sh_speed .flight-tabs button{min-height:40px;border:0;border-radius:9px;background:none;color:var(--dim);font:700 13px/1 var(--sans)}
   #sh_speed .flight-tabs button[aria-expanded="true"]{background:var(--acc);color:#fff}
@@ -387,7 +391,7 @@
     </div>
     <div class="acts">
       <button class="rbtn auto" id="b_auto" aria-label="AUTO"><span id="autotxt">AUTO</span></button>
-      <button class="rbtn auto" id="b_wasp_abort" style="display:none;background:#ad3030;border-color:#ad3030" aria-label="Abort Wasp">ABORT</button>
+      <button class="rbtn auto" id="b_wasp_abort" style="background:#ad3030;border-color:#ad3030" aria-label="Abort to Idle">ABORT</button>
       <button class="rbtn lock" id="b_lock" aria-label="LOCK"><span id="locktxt">LOCK</span></button>
       <button class="rbtn eng" id="b_eng" aria-label="ENGAGE"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE</span></button>
     </div>
@@ -424,6 +428,7 @@
       <div class="detection-row"><div class="detection-label"><div class="lbl">Camera</div><button class="unsaved" data-save="det:cam" aria-label="Save camera default" title="Save default">↧</button></div><div class="seg" id="camseg">
         <button data-cam="30">30 FPS</button><button data-cam="60">60 FPS</button>
       </div></div>
+      <div class="detection-row"><div class="detection-label"><label class="lbl" for="idle_seconds">Idle</label></div><div class="idle-input"><input id="idle_seconds" type="number" min="1" max="600" step="any" inputmode="decimal" aria-label="Idle seconds"><span>s</span></div></div>
     </section>
     <section class="param-block" id="flight_params" aria-labelledby="flight_params_title">
       <h4 class="param-title" id="flight_params_title"><span class="num">3</span>Flight parameters<span class="tag" id="flight_mode_tag">SEEKER</span></h4>
@@ -438,7 +443,6 @@
             <div class="grp"><div class="gh"><div class="lbl">Turn speed</div><button class="unsaved" data-save="lvl:yaw" aria-label="Save turn speed default" title="Save default">↧</button></div><div class="seg" data-g="yaw"></div></div>
             <div class="grp"><div class="gh"><div class="lbl">Forward lean</div><button class="unsaved" data-save="lvl:push" aria-label="Save forward lean default" title="Save default">↧</button></div><div class="seg" data-g="push"></div></div>
             <div class="grp"><div class="gh"><div class="lbl">AI speed</div><button class="unsaved" data-save="lvl:ai" aria-label="Save AI speed default" title="Save default">↧</button></div><div class="seg" data-g="ai"></div></div>
-            <div class="grp"><div class="gh"><div class="lbl">Search time</div><button class="unsaved" data-save="lvl:search" aria-label="Save search time default" title="Save default">↧</button></div><div class="seg" data-g="search"></div></div>
           </div>
         </div>
         <div class="ppane" id="pp_auto" role="region" aria-labelledby="ptab_auto">
@@ -451,8 +455,6 @@
         <div id="waspfcstatus" role="status" hidden></div>
         <div class="parameter-grid">
           <div class="grp"><div class="lbl">Launch throttle</div><div class="seg" data-wp="throttle" data-values="0.25,0.5,1" data-labels="25%,50%,100%"></div></div>
-          <div class="grp"><div class="lbl">Flight time</div><div class="seg" data-wp="duration" data-values="1,2,3,5,10" data-labels="1 s,2 s,3 s,5 s,10 s"></div></div>
-          <div class="grp no-det"><div class="lbl">Flight time no det</div><div class="seg" data-wp="no_det" data-values="3,5,7,10" data-labels="3 s,5 s,7 s,10 s"></div></div>
           <div class="grp"><div class="lbl">Straight launch</div><div class="seg" data-wp="straight" data-values="0,0.5,1,2" data-labels="OFF,0.5 s,1 s,2 s"></div></div>
           <div class="grp"><div class="lbl">Steering blend</div><div class="seg" data-wp="blend" data-values="0.25,0.5,1" data-labels="0.25 s,0.5 s,1 s"></div></div>
           <div class="grp"><div class="lbl">Steering rate</div><div class="seg" data-wp="rate" data-values="30,45,60,90" data-labels="30°/s,45°/s,60°/s,90°/s"></div></div>
@@ -833,6 +835,16 @@
       setThen("cam=" + fps, "det:cam", fps);
     };
   });
+  $("idle_seconds").addEventListener("change", function () {
+    var field = this, value = Number(field.value);
+    if (!field.value || !isFinite(value) || value < 1 || value > 600) {
+      note("Idle: 1–600 s", true); field.value = LAST && LAST.mission ? LAST.mission.idle_s : 10; return;
+    }
+    cmd("idles=" + encodeURIComponent(value));
+  });
+  $("idle_seconds").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); this.blur(); }
+  });
 
   function fmt(x, d) { return (x === null || x === undefined) ? "--" : Number(x).toFixed(d); }
   function paint(j) {
@@ -862,7 +874,6 @@
     T("flight_mode_tag", wasp ? "WASP" : "SEEKER");
     document.querySelectorAll("[data-only]").forEach(function (el) { el.hidden = el.getAttribute("data-only") !== currentMode; });
     $("b_auto").style.display = wasp ? "none" : "";
-    $("b_wasp_abort").style.display = wasp ? "" : "none";
     $("b_wasp_abort").disabled = VIEW;
     var locked = !!m.locked;
     LOCKHDG = locked && m.lock_hdg !== null && m.lock_hdg !== undefined ? Number(m.lock_hdg) : null;
@@ -873,7 +884,7 @@
 
     var arm = !!j.armed;
     S("c_arm", arm ? "ARMED" : "DISARMED", arm ? "on" : "");
-    S("c_mode", j.linked ? (j.fc_mode || "?") : "NO FC", !j.linked ? "bad" : j.fc_mode === (wasp ? "ACRO" : "ALT_HOLD") ? "ok" : "warn");
+    S("c_mode", j.linked ? (j.fc_mode || "?") : "NO FC", !j.linked ? "bad" : j.fc_mode === (wasp && ph !== "IDLE" ? "ACRO" : "ALT_HOLD") ? "ok" : "warn");
     S("c_hdg", m.heading_deg === null || m.heading_deg === undefined ? "--°" : fmt(m.heading_deg, 0) + "°", "");
     var hadHdg = HDG !== null;
     HDG = (m.heading_deg === null || m.heading_deg === undefined) ? null : Number(m.heading_deg);
@@ -890,13 +901,15 @@
     S("c_ai", j.cam_busy ? "camera…" : fmt(fps_, 0) + " fps" + (Number(j.cam_fps) === 60 ? " · cam 60" : ""),
       !trt ? "bad" : fps_ >= 20 ? "ok" : "warn");
     var ctl = j.control || "free";
+    $("idle_seconds").disabled = arm || VIEW || ctl === "other";
+    if (document.activeElement !== $("idle_seconds") && m.idle_s !== undefined) $("idle_seconds").value = m.idle_s;
 
     var manual = ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other";
     ["b_up", "b_dn", "b_yl", "b_yr"].forEach(function (id) { $(id).disabled = !manual; });
     if ((ph === "AUTO_CLIMB" || ph === "AUTO_HOLD") && !VIEW && ctl !== "other") {
       $("b_yl").disabled = false; $("b_yr").disabled = false;
     }
-    var eng = $("b_eng"), done = !!m.engaged || !!m.ai_steering || ph === "WASP_FLIGHT" || ph === "WASP_DONE";
+    var eng = $("b_eng"), done = !!m.engaged || !!m.ai_steering || ph === "WASP_FLIGHT" || ph === "WASP_DONE" || ph === "IDLE" || ph === "IDLE_FAILED";
     eng.className = "rbtn eng" + (done ? " go" : ph === "PUSH" ? " push" : "");
     var AUTOPH = ["AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN"], inAuto = AUTOPH.indexOf(ph) >= 0;
     eng.disabled = done || !((ph === "HOVER" || ph === "SCOUT" || inAuto) && !VIEW && ctl !== "other");
@@ -907,6 +920,7 @@
         || !!m.wasp_setup_why || !!m.gate_why || VIEW || ctl === "other";
       $("engtxt").textContent = ph === "WASP_FLIGHT" ? "WASP FLYING" : ph === "WASP_DONE" ? "DONE · DISARM" : "LAUNCH WASP";
     }
+    if (ph === "IDLE" || ph === "IDLE_FAILED") { eng.disabled = true; $("engtxt").textContent = ph === "IDLE" ? "IDLE" : "PILOT"; }
 
     CANLOCK = ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other";
     dial.classList.toggle("off", !CANLOCK);
@@ -951,8 +965,13 @@
     if (wasp) {
       bd.style.display = "block";
       var wp = m.wasp_progress || {};
-      var flightLabel = wp.stage === "SEARCH" ? "WASP · NO DET " + Number(wp.no_det_remaining_s || 0).toFixed(1) + " s" : wp.stage === "STRAIGHT" ? "WASP · STRAIGHT " + Number(wp.straight_remaining_s || 0).toFixed(1) + " s" : wp.stage === "BLEND" ? "WASP · BLENDING STEERING" : "WASP · GUIDING";
+      var flightLabel = "WASP · " + (wp.stage === "SEARCH" ? "STRAIGHT" : wp.stage === "STRAIGHT" ? "LAUNCH" : wp.stage === "BLEND" ? "BLENDING" : "GUIDING") + " · " + Number(m.idle_remaining_s || 0).toFixed(1) + " s";
       bd.textContent = m.gate_why || (ph === "WASP_DONE" ? "PILOT · DISARM TO RESET" : ph === "WASP_FLIGHT" ? flightLabel : "WASP · READY");
+    }
+    if (ph === "IDLE" || ph === "IDLE_FAILED") {
+      bd.style.display = "block"; bd.className = "badge";
+      var idle = m.idle || {};
+      bd.textContent = ph === "IDLE_FAILED" ? "IDLE FAILED · PILOT" : "IDLE · " + (idle.stage || "LEVEL") + " · XY DRIFT";
     }
 
     var lv = m.levels || {}, sp = m.speeds || {};
@@ -961,9 +980,6 @@
     var val = {vert: function (L) { return {SLOW: "1 / 0.5", MEDIUM: "3 / 1.5", FAST: "8 / 2.5"}[L] + " m/s"; },
                yaw: function (L) { return {SLOW: "10°/s · 2°", MEDIUM: "20°/s · 5°", FAST: "45°/s · 10°"}[L]; },
                push: function (L) { return {SLOW: "20°", MEDIUM: "30°", FAST: "40°"}[L]; },
-               search: function (L) {
-                 var D = {20: [19, 42, 69], 30: [28, 61, 97], 40: [39, 80, 125]}[sp.push] || [19, 42, 69];
-                 return "~" + D[LEVELS.indexOf(L)] + " m"; },
                ai: function (L) { return {SLOW: "≈11 m/s", MEDIUM: "≈15 m/s", FAST: "≈16 m/s", MAX: "≈21 m/s"}[L]; }};
     VAL = val;
     var ap = m.auto_params || {}, flying = inAuto || autoRun;
@@ -1034,7 +1050,6 @@
         b.classList.toggle("on", lv[g] === L);
         b.classList.toggle("isdef", ld[g] === L);
         b.querySelector("i").textContent = val[g](L);
-        if (g === "search") b.firstChild.textContent = {SLOW: "4 s", MEDIUM: "6 s", FAST: "8 s"}[L];
       });
     });
     if (j.console_seq !== undefined && j.console_seq > consoleSeq) pullConsole();

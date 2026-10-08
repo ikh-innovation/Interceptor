@@ -115,9 +115,11 @@ class WaspGuidance:
 
 
 class Wasp:
-    """Bounded launch acquisition, then guidance; ending releases pilot control."""
-    SETTINGS = {"throttle": (0.25, 0.5, 1.0), "duration": (1.0, 2.0, 3.0, 5.0, 10.0),
-                "no_det": (3.0, 5.0, 7.0, 10.0),
+    """Guidance when a target is fresh; otherwise zero body rotation.
+
+    Mission owns the single total Idle deadline, starting at launch.
+    """
+    SETTINGS = {"throttle": (0.25, 0.5, 1.0),
                 "straight": (0.0, 0.5, 1.0, 2.0), "blend": (0.25, 0.5, 1.0),
                 "rate": (30.0, 45.0, 60.0, 90.0), "gain": (2.0, 4.0, 6.0),
                 "lead": (0.0, 0.08, 0.15), "camera_roll": (0.0, 90.0, 180.0, 270.0)}
@@ -125,19 +127,13 @@ class Wasp:
     def __init__(self):
         self.enabled = False
         self.camera_confirmed = False
-        self.params = dict(throttle=1.0, duration=10.0, no_det=3.0, straight=1.0, blend=0.5,
+        self.params = dict(throttle=1.0, straight=1.0, blend=0.5,
                            rate=60.0, gain=2.0, lead=0.08, camera_roll=0.0)
         self.started = None
         self.acquired_t = None
         self.used = False
         self._output_t = None
         self._rates = (0.0, 0.0, 0.0)
-
-    @staticmethod
-    def timing_error(params):
-        if params["straight"] + params["blend"] >= params["duration"]:
-            return "maximum flight time must exceed straight launch + steering blend"
-        return ""
 
     def begin(self, now, target_acquired=True):
         self.started = now
@@ -149,13 +145,12 @@ class Wasp:
     def progress(self, now):
         if self.started is None:
             return dict(stage="IDLE", straight_remaining_s=0.0, steering_blend=0.0,
-                        no_det_remaining_s=0.0, target_acquired=False)
+                        target_acquired=False)
         elapsed = max(0.0, now - self.started)
         remaining = max(0.0, self.params["straight"] - elapsed)
         if self.acquired_t is None:
-            deadline = min(self.params["duration"], self.params["no_det"])
             return dict(stage="SEARCH", straight_remaining_s=round(remaining, 2),
-                        steering_blend=0.0, no_det_remaining_s=round(max(0.0, deadline-elapsed), 2),
+                        steering_blend=0.0,
                         target_acquired=False)
         # A late first detection starts a new blend, rather than jumping to full
         # steering because the straight-launch timer has already elapsed.
@@ -164,7 +159,13 @@ class Wasp:
         blend = fraction*fraction*(3.0-2.0*fraction)
         return dict(stage="STRAIGHT" if remaining > 0 else "BLEND" if fraction < 1 else "GUIDE",
                     straight_remaining_s=round(remaining, 2), steering_blend=blend,
-                    no_det_remaining_s=0.0, target_acquired=True)
+                    target_acquired=True)
+
+    def lose_target(self):
+        # Do not keep turning toward a stale bearing. A new observation starts
+        # a fresh blend, without restarting the mission's total timer.
+        self.acquired_t = None
+        self._rates = (0.0, 0.0, 0.0)
 
     def acquire(self, now, ctx):
         """Latch only a usable bearing; callers first check freshness/confidence."""

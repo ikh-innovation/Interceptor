@@ -235,8 +235,9 @@ class LifecycleTests(unittest.TestCase):
                     self.m.request_abort()
                 else:
                     self.ctx["det_t"] = now-.26
-                self.assertEqual(self.m.cycle(now+.01, self.ctx), {})
-                self.assertEqual(self.m.phase, "WASP_DONE")
+                out = self.m.cycle(now+.01, self.ctx)
+                self.assertEqual(self.m.phase, "WASP_DONE" if abort else "WASP_FLIGHT")
+                self.assertEqual(out, {} if abort else self.mapper.wasp_pwm((0, 0, 0), 1))
 
     def test_launch_throttle_choices_and_timing_validation(self):
         for throttle in (.25, .5, 1):
@@ -250,11 +251,10 @@ class LifecycleTests(unittest.TestCase):
         self.mapper.armed = False
         self.assertTrue(self.m.set_wasp_param("throttle", .75))
         self.assertTrue(self.m.set_wasp_param("duration", 1))
-        self.assertEqual(self.m.wasp.params["duration"], 10)
+        self.assertNotIn("duration", self.m.wasp.params)
+        self.assertTrue(self.m.set_wasp_param("no_det", 10))
         self.assertEqual(self.m.set_wasp_param("straight", 0), "")
-        self.assertEqual(self.m.set_wasp_param("duration", 1), "")
-        self.assertTrue(self.m.set_wasp_param("blend", 1))
-        self.assertEqual(self.m.set_wasp_param("duration", 5), "")
+        self.assertEqual(self.m.set_wasp_param("blend", 1), "")
         self.assertEqual(self.m.set_wasp_param("straight", 2), "")
         self.assertEqual(self.m.set_wasp_param("blend", 1), "")
 
@@ -276,7 +276,7 @@ class LifecycleTests(unittest.TestCase):
         for straight in Wasp.SETTINGS["straight"]:
             for blend in Wasp.SETTINGS["blend"]:
                 w = Wasp()
-                w.params.update(straight=straight, blend=blend, duration=5)
+                w.params.update(straight=straight, blend=blend)
                 w.begin(100)
                 for i in range(round((straight+blend+.1)*100)+1):
                     now = 100+i*.01
@@ -324,13 +324,15 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.m.cycle(100, self.ctx), {})
         self.assertIsNone(self.m.wasp.started)
 
-    def test_loss_latches_done_and_cannot_resume_from_new_detection(self):
+    def test_detection_gap_continues_straight_and_reacquires(self):
         self.launch()
-        self.assertEqual(self.m.cycle(100.26, self.ctx), {})
-        self.assertEqual(self.m.phase, "WASP_DONE")
+        self.assertEqual(self.m.cycle(100.26, self.ctx), self.mapper.wasp_pwm((0, 0, 0), 1))
+        self.assertEqual(self.m.phase, "WASP_FLIGHT")
         self.assertTrue(self.m.request_engage())
         self.ctx.update(ai_cmd=observe(WaspGuidance(), t=100.3), det_t=100.3)
-        self.assertEqual(self.m.cycle(100.3, self.ctx), {})
+        self.assertTrue(self.m.cycle(100.3, self.ctx))
+        self.assertEqual(self.m.wasp.acquired_t, 100.3)
+        self.assertEqual(self.m._run_t, 100)
 
     def test_gate_loss_and_abort_release_all_channels(self):
         self.launch()
@@ -366,7 +368,7 @@ class LifecycleTests(unittest.TestCase):
                 with self.subTest(limit=limit, tilt=tilt):
                     self.setUp()
                     self.mapper.armed = False
-                    self.assertEqual(self.m.set_wasp_param("no_det", limit), "")
+                    self.assertEqual(self.m.set_idle_seconds(limit), "")
                     self.mapper.armed = True
                     self.ctx.update(ai_cmd=None, det_t=None, det_conf=None,
                                     att=dict(roll=.2, pitch=math.radians(tilt), yaw=1))
@@ -378,7 +380,7 @@ class LifecycleTests(unittest.TestCase):
                         self.assertEqual(sent[-1], ((0, 0, 0), 1))
                         progress = self.m.wasp.progress(100+offset)
                         self.assertEqual(progress["stage"], "SEARCH")
-                        self.assertAlmostEqual(progress["no_det_remaining_s"], limit-offset)
+                        self.assertAlmostEqual(self.m.snapshot(100+offset)["idle_remaining_s"], limit-offset)
                     self.assertEqual(self.m.cycle(100+limit, self.ctx), {})
                     self.assertEqual(self.m.phase, "WASP_DONE")
                     self.assertTrue(self.m.request_engage())
@@ -452,26 +454,25 @@ class LifecycleTests(unittest.TestCase):
     def test_no_detection_deadline_wins_over_new_detection(self):
         self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)
         self.launch()
-        self.ctx.update(ai_cmd=observe(WaspGuidance(), t=103), det_t=103, det_conf=.9)
-        self.assertEqual(self.m.cycle(103, self.ctx), {})
+        self.ctx.update(ai_cmd=observe(WaspGuidance(), t=110), det_t=110, det_conf=.9)
+        self.assertEqual(self.m.cycle(110, self.ctx), {})
         self.assertIsNone(self.m.wasp.acquired_t)
-        self.assertIn("no detection time limit", self.m.event)
+        self.assertIn("Idle time limit", self.m.event)
 
     def test_total_flight_limit_bounds_acquisition_and_new_parameter_validation(self):
         self.mapper.armed = False
         self.assertEqual(self.m.set_wasp_param("straight", 0), "")
-        self.assertEqual(self.m.set_wasp_param("duration", 1), "")
-        self.assertEqual(self.m.set_wasp_param("no_det", 10), "")
-        for value in (0, 4, float("nan"), float("inf")):
-            self.assertTrue(self.m.set_wasp_param("no_det", value))
+        self.assertEqual(self.m.set_idle_seconds(1), "")
+        for value in (0, 601, float("nan"), float("inf")):
+            self.assertTrue(self.m.set_idle_seconds(value))
         self.mapper.armed = True
-        self.assertTrue(self.m.set_wasp_param("no_det", 3))
+        self.assertTrue(self.m.set_idle_seconds(3))
         self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)
         self.launch()
-        self.assertEqual(self.m.wasp.progress(100)["no_det_remaining_s"], 1)
+        self.assertEqual(self.m.snapshot(100)["idle_remaining_s"], 1)
         self.assertTrue(self.m.cycle(100.99, self.ctx))
         self.assertEqual(self.m.cycle(101, self.ctx), {})
-        self.assertIn("launch time limit", self.m.event)
+        self.assertIn("Idle time limit", self.m.event)
 
 
 class BackendTests(unittest.TestCase):

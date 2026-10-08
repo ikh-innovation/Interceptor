@@ -489,7 +489,7 @@ class DroneTracker:
         if self._cam_busy:
             return "the camera is switching"
         m = getattr(self.ap, "mission", None)
-        if m is not None and m.phase in ("PUSH", "AI", "STOP", "WASP_READY", "WASP_FLIGHT") + mission_mod.AUTO_PHASES:
+        if m is not None and m.phase in ("PUSH", "AI", "STOP", "WASP_READY", "WASP_FLIGHT", "IDLE") + mission_mod.AUTO_PHASES:
             return f"not during {m.phase}: the picture is dark a moment while it switches"
         if m is None and self._last_sent:
             return "not while the AI steers: the picture is dark a moment while it switches"
@@ -1216,7 +1216,7 @@ class DroneTracker:
         elif key == "def" and str(value).startswith("det:"):
             return self._save_detection_default(str(value)[4:].strip().lower())
         elif key in ("hold", "release", "step", "engage", "abort", "lvl", "lock", "auto", "autoen", "waspen", "waspp", "mount", "flightmode",
-                     "autop", "autoreset", "def"):
+                     "autop", "autoreset", "def", "idles"):
             return self._mission_command(key, str(value))
         else:
             raise ValueError("unknown command")

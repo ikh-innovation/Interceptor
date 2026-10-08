@@ -4,7 +4,8 @@ import json
 import math
 import os
 import threading
-from wasp import Wasp
+from wasp import Wasp, WaspGuidance
+from idle import Idle
 
 SPEEDS = {
     "climb":   {"SLOW": 1.0, "MEDIUM": 3.0, "FAST": 8.0},
@@ -12,9 +13,8 @@ SPEEDS = {
     "yaw":     {"SLOW": 10.0, "MEDIUM": 20.0, "FAST": 45.0},
     "step":    {"SLOW": 2.0, "MEDIUM": 5.0, "FAST": 10.0},
     "push":    {"SLOW": 20.0, "MEDIUM": 30.0, "FAST": 40.0},
-    "search":  {"SLOW": 4.0, "MEDIUM": 6.0, "FAST": 8.0},
 }
-GROUPS = ("vert", "yaw", "push", "ai", "search")
+GROUPS = ("vert", "yaw", "push", "ai")
 LEVELS = ("SLOW", "MEDIUM", "FAST")
 AI_LEVELS = LEVELS + ("MAX",)
 
@@ -23,7 +23,7 @@ HOLD_KINDS = {"up": ("throttle", +1), "down": ("throttle", -1),
 
 PHASES = ("PILOT", "HOVER", "CLIMB", "DESCEND", "SCOUT",
           "AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN", "PUSH", "AI", "STOP",
-          "WASP_READY", "WASP_FLIGHT", "WASP_DONE")
+          "WASP_READY", "WASP_FLIGHT", "WASP_DONE", "IDLE", "IDLE_FAILED")
 AUTO_PHASES = ("AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN")
 
 
@@ -87,6 +87,7 @@ CONF_DIR = os.path.expanduser("~/.config/wasp")
 AUTO_FILE = os.path.join(CONF_DIR, "auto.json")
 LEVELS_FILE = os.path.join(CONF_DIR, "levels.json")
 DETECT_FILE = os.path.join(CONF_DIR, "detection.json")
+IDLE_FILE = os.path.join(CONF_DIR, "idle.json")
 DETECT_SAVED = {"follow": bool, "cam": int}
 
 
@@ -148,6 +149,19 @@ def load_detection_defaults(path=DETECT_FILE):
             except (TypeError, ValueError):
                 pass
     return out
+
+
+def load_idle_settings(m):
+    value = _read_json(m.idle_path).get("seconds", 10.0) if m.idle_path else 10.0
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return "invalid saved Idle seconds"
+    if not math.isfinite(value) or not 1 <= value <= 600:
+        return "invalid saved Idle seconds"
+    # Startup reads configuration without commanding or engaging the aircraft.
+    m.idle_s = value
+    return ""
 
 
 def save_detection_default(key, on, path=DETECT_FILE):
@@ -231,6 +245,8 @@ def phone_command(m, key, value, now):
     if key == "waspp":
         k, _, v = value.partition(":")
         return m.set_wasp_param(k.strip(), v.strip())
+    if key == "idles":
+        return m.set_idle_seconds(value)
     if key == "abort":
         return m.request_abort()
     if key == "lvl":
@@ -303,7 +319,7 @@ class Mission:
     )
 
     def __init__(self, mapper, min_conf=0.20, ceiling_m=30.0,
-                 accel_z=5.0, jerk_z=5.0, log=print):
+                 accel_z=5.0, jerk_z=5.0, log=print, idle_path=None):
         self.mapper = mapper
         self.min_conf = float(min_conf)
         self.ceiling_m = float(ceiling_m)
@@ -329,6 +345,11 @@ class Mission:
         self._req_auto = None
         self.auto_enabled = False
         self.wasp = Wasp()
+        self.idle_s = 10.0
+        self.idle_path = idle_path
+        self.idle = Idle()
+        self.idle_supported = callable(getattr(mapper, "idle_pwm", None))
+        self._run_t = None
         self.camera_mount_deg = float(getattr(mapper, "camera_mount_deg", 30.0))
         for _k, attrs, _c in self.AUTO_SETTINGS:
             for a in attrs:
@@ -381,7 +402,7 @@ class Mission:
                 return "hold already released"
             if self.phase in ("AUTO_CLIMB", "AUTO_HOLD") and HOLD_KINDS[kind][0] == "yaw":
                 pass
-            elif self.phase in ("PUSH", "AI", "STOP") + AUTO_PHASES:
+            elif self.phase in ("PUSH", "AI", "STOP", "IDLE", "IDLE_FAILED") + AUTO_PHASES:
                 return f"no manual moves during {self.phase}"
             if self.phase == "PILOT":
                 return "the pilot has it (not armed / not ALT_HOLD)"
@@ -442,9 +463,9 @@ class Mission:
 
     def _configuration_error(self):
         if getattr(self.mapper, "armed", False):
-            return "disarm before changing WASP or the camera mount"
+            return "disarm before changing flight parameters or the camera mount"
         if self.phase not in ("PILOT", "HOVER", "WASP_READY", "WASP_DONE"):
-            return "finish the run before changing WASP or the camera mount"
+            return "finish the run before changing flight parameters or the camera mount"
         return ""
 
     def set_wasp_enabled(self, on, selection=False):
@@ -500,13 +521,25 @@ class Mission:
             error = self._configuration_error()
             if error:
                 return error
-            params = dict(self.wasp.params, **{key: v})
-            error = self.wasp.timing_error(params)
-            if error:
-                return error
             self.wasp.params[key] = v
             if key == "camera_roll":
                 self.wasp.camera_confirmed = False
+        return ""
+
+    def set_idle_seconds(self, value, save=True):
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return "Idle: enter 1 to 600 seconds"
+        if not math.isfinite(value) or not 1 <= value <= 600:
+            return "Idle: enter 1 to 600 seconds"
+        with self._lock:
+            error = self._configuration_error()
+            if error:
+                return error
+            if save and self.idle_path and not _write_json(self.idle_path, {"seconds": value}):
+                return "could not save Idle on the Jetson"
+            self.idle_s = value
         return ""
 
     def auto_params(self):
@@ -601,9 +634,6 @@ class Mission:
     def push_deg(self):
         return SPEEDS["push"][self.level["push"]]
 
-    def search_s(self):
-        return SPEEDS["search"][self.level["search"]]
-
     def _set_phase(self, phase, now, why=""):
         if phase == self.phase:
             return
@@ -616,6 +646,7 @@ class Mission:
         self.log(f"[MISSION] {text}")
 
     def _reset_motion(self):
+        self._run_t = None
         self._unlock()
         self._thr.reset(0.0)
         self._yaw.reset(0.0)
@@ -666,6 +697,21 @@ class Mission:
             lock_req, self._req_lock = self._req_lock, None
             auto_req, self._req_auto = self._req_auto, None
 
+        if self.idle.active:
+            return self._idle_cycle(now, ctx)
+        if self.phase == "IDLE_FAILED":
+            if ctx.get("gate_ok") and getattr(self.mapper, "armed", False):
+                return {}
+            self._set_phase("PILOT", now)
+        # ABORT can recover an active flight or an airborne aircraft; it must
+        # not turn an armed, unlaunched Wasp into an automatic takeoff.
+        if (abort and ctx.get("gate_ok") and self.idle_supported
+                and (self._run_t is not None or ctx.get("airborne"))):
+            return self._start_idle(now, ctx, "ABORT")
+        if (self.idle_supported and self._run_t is not None
+                and now-self._run_t >= self.idle_s and ctx.get("gate_ok")):
+            return self._start_idle(now, ctx, "Idle time limit")
+
         if self.wasp.enabled:
             return self._wasp_cycle(now, ctx, engage, abort)
 
@@ -698,6 +744,8 @@ class Mission:
                 return self._start_push(now, ctx)
         if self.phase in AUTO_PHASES:
             if auto_req == "off":
+                if self.idle_supported:
+                    return self._start_idle(now, ctx, "AUTO off")
                 self._unlock()
                 self._note("AUTO off: soft stop, then the pilot's sticks", now)
                 return self._start_stop(now)
@@ -737,7 +785,7 @@ class Mission:
             self._set_phase("WASP_READY", now)
             if not engage:
                 return {}
-            why = w.timing_error(w.params)
+            why = ""
             if ctx.get("att") is None:
                 why = "no fresh attitude"
             if not w.camera_confirmed or self.camera_mount_deg != 90.0:
@@ -746,34 +794,79 @@ class Mission:
                 self._refuse(why, now)
                 return {}
             w.begin(now, target_acquired=False)
-            self._note(f"WASP launched: acquire within {w.params['no_det']:g}s; pilot after timeout", now)
+            self._run_t = now
+            self._note(f"WASP launched: Idle in {self.idle_s:g}s from throttle start", now)
             self._set_phase("WASP_FLIGHT", now)
         why = "no fresh attitude" if ctx.get("att") is None else ""
-        if now - w.started >= w.params["duration"]:
-            why = "launch time limit"
+        if now - w.started >= self.idle_s:
+            why = "Idle time limit"
         height = ctx.get("height")
         if height is not None and height >= self.ceiling_m:
             why = "ceiling reached"
-        if not why and w.acquired_t is None:
-            if now - w.started >= w.params["no_det"]:
-                why = "no detection time limit"
-            elif not w.fault(now, ctx, self.min_conf):
+        if not why:
+            tracking = not w.fault(now, ctx, self.min_conf)
+            if tracking:
                 try:
-                    w.acquire(now, ctx)
-                    self._note("WASP target acquired: blended steering after straight launch", now)
+                    # Validate every bearing, including after a detector gap.
+                    if w.acquired_t is None:
+                        w.acquire(now, ctx)
+                        self._note("WASP target acquired: blended steering", now)
+                    else:
+                        WaspGuidance.rates(ctx["ai_cmd"], ctx["att"], now,
+                            gain=w.params["gain"], lead_s=w.params["lead"], max_rate_dps=w.params["rate"])
                 except (ValueError, KeyError, TypeError, OverflowError):
-                    pass  # An unusable bearing cannot end the acquisition wait.
-        if not why and w.acquired_t is not None:
-            why = w.fault(now, ctx, self.min_conf)
+                    tracking = False
+            if not tracking:
+                w.lose_target()
         if not why:
             try:
                 return w.output(self.mapper, now, ctx)
             except (ValueError, KeyError, TypeError, OverflowError) as exc:
                 why = str(exc)
         w.started = None
+        if self.idle_supported:
+            return self._start_idle(now, ctx, why)
         self._note(f"WASP ended: {why}; every channel returned to the pilot", now)
         self._set_phase("WASP_DONE", now)
         return {}
+
+    def _start_idle(self, now, ctx, reason):
+        self.wasp.started = None
+        if self.wasp.enabled:
+            self.wasp.used = True
+        self._reset_motion()
+        self._unlock()
+        self.engaged = True
+        with self._lock:
+            self._hold = None
+        try:
+            self.idle.begin(now, ctx, self.ceiling_m)
+            if not self.mapper.idle_request_alt_hold():
+                raise ValueError("could not request ALT_HOLD")
+            self._note(f"IDLE: {reason}; level, yaw hold, height {self.idle.height:.1f} m; XY drift possible", now)
+            self._set_phase("IDLE", now)
+            return self._idle_cycle(now, ctx)
+        except (ValueError, KeyError, TypeError, OverflowError) as exc:
+            return self._idle_failed(now, str(exc))
+
+    def _idle_failed(self, now, why):
+        self.idle.stop()
+        self._note(f"IDLE unavailable: {why}; every channel returned to the pilot", now)
+        self._set_phase("IDLE_FAILED", now)
+        return {}
+
+    def _idle_cycle(self, now, ctx):
+        if not ctx.get("gate_ok"):
+            self.idle.stop()
+            self._reset_motion()
+            self.engaged = False
+            self._note(f"IDLE released to pilot: {ctx.get('gate_why') or 'gate'}", now)
+            self._set_phase("PILOT", now)
+            return {}
+        try:
+            return self.idle.output(self.mapper, now, ctx)
+        except (ValueError, KeyError, TypeError, OverflowError) as exc:
+            return self._idle_failed(now, str(exc))
 
     def _manual(self, now, ctx, hold, step):
         kind = hold[0] if hold else None
@@ -941,6 +1034,8 @@ class Mission:
         if height is None:
             self._refuse("height unknown (no VFR_HUD): no AUTO", now)
             return None
+        if self._run_t is None:
+            self._run_t = now
         hdg = (self.lock_hdg if self.lock_hdg is not None
                else math.degrees(att.get("yaw", 0.0)) % 360.0)
         self._unlock()
@@ -985,6 +1080,8 @@ class Mission:
                        f"stopping, putting it on the aim mark", now)
             self._set_phase("AUTO_ALIGN", now, "first detection")
         elif self.phase == "AUTO_ALIGN" and not fresh:
+            if self.idle_supported:
+                return self._start_idle(now, ctx, "target lost while aligning")
             self._auto_watch(now, ctx, "target lost while aligning")
 
         thr_v, yaw_v = self._thr.value(now), self._yaw.value(now)
@@ -1089,6 +1186,8 @@ class Mission:
         return out
 
     def _start_push(self, now, ctx):
+        if self._run_t is None:
+            self._run_t = now
         start = {
             "roll": self._pilot_value("roll"),
             "pitch": self._pilot_value("pitch"),
@@ -1109,7 +1208,7 @@ class Mission:
             self._push[axis] = r
         self._push_t = now
         self._steer_after = now
-        self._push_deadline = now + self.search_s()
+        self._push_deadline = self._run_t + self.idle_s
         self._src = {a: "push" for a in ("roll", "pitch", "yaw", "throttle")}
         self._mix = {}
         self._push_steer = False
@@ -1180,6 +1279,8 @@ class Mission:
                        f"PUSH: AI steers yaw / roll / throttle, lean stays "
                        f"{self._line_deg:.0f} deg", now)
         elif self._push_steer and not fresh_ai:
+            if self.idle_supported:
+                return self._start_idle(now, ctx, "target lost during PUSH")
             self._push_steer = False
             for a in self.STEER_AXES:
                 self._switch(a, "push", now)
@@ -1194,6 +1295,8 @@ class Mission:
             self._set_phase("AI", now, "handover")
             return self._ai_cycle(now, ctx)
         if now >= self._push_deadline:
+            if self.idle_supported:
+                return self._start_idle(now, ctx, "no confirmed target in time")
             self._note("no confirmed target in time: soft stop", now)
             return self._start_stop(now)
         return self._mixed_output(now, ai)
@@ -1201,6 +1304,8 @@ class Mission:
     def _ai_cycle(self, now, ctx):
         cmd, ai_t = ctx.get("ai_cmd"), ctx.get("ai_t")
         stale = not cmd or ai_t is None or (now - ai_t) > self.TARGET_FRESH_S
+        if stale and self.idle_supported:
+            return self._start_idle(now, ctx, "target lost")
         if cmd and cmd.get("terminal") and not stale:
             self._terminal = (dict(cmd), now)
         if stale and self._terminal is not None \
@@ -1266,8 +1371,7 @@ class Mission:
                         descent=SPEEDS["descent"][lv["vert"]],
                         yaw=SPEEDS["yaw"][lv["yaw"]],
                         step=SPEEDS["step"][lv["yaw"]],
-                        push=SPEEDS["push"][lv["push"]],
-                        search=SPEEDS["search"][lv["search"]]),
+                        push=SPEEDS["push"][lv["push"]]),
             ceiling_m=self.ceiling_m,
             min_conf=self.min_conf,
             push_s=(round(now - self._push_t, 1) if self._push_t is not None
@@ -1281,6 +1385,9 @@ class Mission:
             wasp_enabled=self.wasp.enabled,
             wasp_camera_confirmed=self.wasp.camera_confirmed,
             wasp_params=dict(self.wasp.params),
+            idle_s=self.idle_s,
+            idle=self.idle.snapshot(),
+            idle_remaining_s=None if self._run_t is None else round(max(0.0, self.idle_s-(now-self._run_t)), 2),
             wasp_progress=self.wasp.progress(now),
             camera_mount_deg=self.camera_mount_deg,
             auto_run=bool(self.auto_run),

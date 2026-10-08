@@ -65,17 +65,14 @@ async function layout(mode){
  for(const size of [[320,640],[390,844],[820,1180],[1180,820],[1366,657]]){
   f.width=size[0];f.height=size[1];await sleep(150);
   const d=f.contentDocument, blocks=[...d.querySelectorAll('.param-block')].map(x=>x.getBoundingClientRect());
-  const segs=[...d.querySelectorAll('#detection_params .seg')].map(x=>x.getBoundingClientRect());
+  const segs=[...d.querySelectorAll('#detection_params .seg, #detection_params .idle-input')].map(x=>x.getBoundingClientRect());
   await check(mode+' section edges '+size,blocks.every(x=>Math.abs(x.left-blocks[0].left)<1&&Math.abs(x.width-blocks[0].width)<1));
   await check(mode+' detection alignment '+size,segs.every(x=>Math.abs(x.left-segs[0].left)<1&&Math.abs(x.width-segs[0].width)<1));
   await check(mode+' no horizontal overflow '+size,d.documentElement.scrollWidth<=size[0]&&q('#sh_speed .body').scrollWidth<=q('#sh_speed .body').clientWidth);
   const buttons=[...d.querySelectorAll('#sh_speed .seg button')].filter(x=>x.getClientRects().length);
   await check(mode+' choice text fits '+size,buttons.every(x=>x.scrollWidth<=x.clientWidth+1));
   await check(mode+' equal choices '+size,[...d.querySelectorAll('#sh_speed .seg')].filter(x=>x.getClientRects().length).every(x=>{const a=[...x.children].map(b=>b.getBoundingClientRect().width);return Math.max(...a)-Math.min(...a)<1}));
-  if(mode==='wasp'){
-   const duration=q('[data-wp="duration"]').parentElement.getBoundingClientRect(), noDet=q('[data-wp="no_det"]').parentElement.getBoundingClientRect();
-   await check('no-detection control stays below Flight time '+size,Math.abs(duration.left-noDet.left)<1&&noDet.top>=duration.bottom);
-  }
+  await check('Idle stays below Camera '+size,q('#idle_seconds').getBoundingClientRect().top>=q('#camseg').getBoundingClientRect().bottom);
  }
  f.width=390;f.height=844;await sleep(150);
 }
@@ -88,6 +85,15 @@ async function main(){
  await check('three parameter sections in order',[...f.contentDocument.querySelectorAll('.param-title')].map(x=>x.textContent).join('|')==='1Flight mode|2Detection|3Flight parametersSEEKER');
  await check('Seeker ON and Wasp OFF',q('[data-flightmode="normal"]').textContent.startsWith('Seeker drone')&&q('[data-flightmode="normal"]').getAttribute('aria-pressed')==='true'&&q('[data-flightmode="wasp"]').getAttribute('aria-pressed')==='false');
  await check('detection always visible',visible('#skyseg')&&visible('#folseg')&&visible('#camseg'));
+ await check('Idle default is 10 seconds and Search removed',q('#idle_seconds').value==='10'&&!q('[data-g="search"]'));
+ const field=q('#idle_seconds');field.focus();field.value='12.5';await sleep(400);
+ await check('polling preserves typed Idle value',field.value==='12.5');
+ field.dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));field.blur();
+ await until(()=>q('#idle_seconds').value==='12.5');
+ await check('custom Idle applies',(await req('/state')).mission.idle_s===12.5);
+ const idleCommands=(await req('/commands')).length;
+ field.value='0';field.dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));
+ await check('invalid Idle sends nothing and restores saved value',field.value==='12.5'&&(await req('/commands')).length===idleCommands);
  const start=(await req('/commands')).length;
  q('[data-flightmode="wasp"]').click();await until(()=>visible('#modechange'));
  await check('switch waits for physical-camera confirmation',(await req('/commands')).length===start&&q('#mode_degrees').textContent==='90°');
@@ -109,19 +115,15 @@ async function main(){
  await check('Wasp switch disables Auto and confirms 90 degrees',(await req('/state')).mission.wasp_camera_confirmed&&!(await req('/state')).mission.auto_enabled&&q('#mountstatus').textContent==='90° ✓');
  await check('mode and mount sent in the correct order',JSON.stringify((await req('/commands')).slice(-2))===JSON.stringify([['flightmode','wasp'],['mount','90']]));
  await check('Wasp flight parameters replace Normal',visible('#pp_wasp')&&!visible('#normal_params')&&q('#flight_mode_tag').textContent==='WASP');
- await check('Wasp has all nine parameter groups',q('#pp_wasp').querySelectorAll('[data-wp]').length===9);
- await check('no-detection parameter follows Flight time',q('[data-wp="duration"]').parentElement.nextElementSibling.querySelector('[data-wp="no_det"]')&&q('[data-wp="no_det"] [data-wv="3"]').classList.contains('on'));
- for(const value of [3,5,7,10]){
-  q('[data-wp="no_det"] [data-wv="'+value+'"]').click();
-  await until(()=>q('[data-wp="no_det"] [data-wv="'+value+'"]').classList.contains('on'));
-  await check('no-detection choice '+value+' applies',(await req('/state')).mission.wasp_params.no_det===value);
- }
- q('[data-wp="no_det"] [data-wv="7"]').click();await until(()=>q('[data-wp="no_det"] [data-wv="7"]').classList.contains('on'));
- await check('Wasp defaults are 10 seconds and gain 2',q('[data-wp="duration"] [data-wv="10"]').classList.contains('on')&&q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
- q('[data-wp="duration"] [data-wv="5"]').click();await until(()=>q('[data-wp="duration"] [data-wv="5"]').classList.contains('on'));
- q('[data-wp="duration"] [data-wv="10"]').click();await until(()=>q('[data-wp="duration"] [data-wv="10"]').classList.contains('on'));
+ await check('Wasp has seven parameter groups and no old timers',q('#pp_wasp').querySelectorAll('[data-wp]').length===7&&!q('[data-wp="duration"]')&&!q('[data-wp="no_det"]'));
+ await check('Idle is shared across modes',q('#idle_seconds').value==='12.5');
+ q('#idle_seconds').focus();q('#idle_seconds').value='7';q('#idle_seconds').dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));
+ q('#idle_seconds').dispatchEvent(new f.contentWindow.KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+ await until(()=>q('#idle_seconds').value==='7'&&q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
+ await check('Wasp has gain 2 by default',q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
  q('[data-wp="rate"] [data-wv="45"]').click();await until(()=>q('[data-wp="rate"] [data-wv="45"]').classList.contains('on'));
- await check('10-second and 45-degree choices apply to backend',(await req('/state')).mission.wasp_params.duration===10&&(await req('/state')).mission.wasp_params.rate===45);
+ await check('Idle and 45-degree choices apply to backend',(await req('/state')).mission.idle_s===7&&(await req('/state')).mission.wasp_params.rate===45);
+ await check('Enter ends Idle editing',f.contentDocument.activeElement!==q('#idle_seconds'));
  await layout('wasp');
  q('[data-sky="off"]').click();await until(()=>q('[data-sky="off"]').classList.contains('on'));
  q('[data-fol="off"]').click();await until(()=>q('[data-fol="off"]').classList.contains('on'));
@@ -137,10 +139,10 @@ async function main(){
  parameters();
  await check('refresh preserves Wasp mode',q('[data-flightmode="wasp"]').classList.contains('on'));
  await check('refresh preserves throttle',q('[data-wp="throttle"] [data-wv="0.25"]').classList.contains('on'));
- await check('refresh preserves duration, rate and gain',q('[data-wp="duration"] [data-wv="10"]').classList.contains('on')&&q('[data-wp="rate"] [data-wv="45"]').classList.contains('on')&&q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
+ await check('refresh preserves Idle, rate and gain',q('#idle_seconds').value==='7'&&q('[data-wp="rate"] [data-wv="45"]').classList.contains('on')&&q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
  await check('refresh preserves camera confirmation',q('#mountstatus').textContent==='90° ✓');
- await check('refresh preserves no-detection time',q('[data-wp="no_det"] [data-wv="7"]').classList.contains('on'));
  await req('/set?armed=1&phase=WASP_READY');await until(()=>q('[data-flightmode="normal"]').disabled);
+ await check('Idle locked while armed',q('#idle_seconds').disabled);
  await check('mode and Wasp parameters locked while armed',[...f.contentDocument.querySelectorAll('[data-flightmode], [data-wp] button')].every(x=>x.disabled)&&q('#mountstatus').disabled);
  q('[data-flightmode="normal"]').click();await sleep(100);
  await check('armed mode click sends nothing',(await req('/commands')).length===count&&!visible('#modechange'));
@@ -154,8 +156,8 @@ async function main(){
  await check('launch still requires the controller gate',q('#b_eng').disabled);
  await req('/set?armed=1&gate=');await until(()=>!q('#b_eng').disabled);
  tap('#b_eng');await until(()=>q('#engtxt').textContent==='WASP FLYING');
- await check('initial acquisition shows the countdown',q('#badge').textContent.includes('NO DET'));
- await req('/set?armed=1&phase=WASP_FLIGHT&elapsed=2');await until(()=>q('#badge').textContent.includes('NO DET 4.'));
+ await check('initial acquisition shows the total countdown',q('#badge').textContent.includes('STRAIGHT')&&q('#badge').textContent.includes(' s'));
+ await req('/set?armed=1&phase=WASP_FLIGHT&elapsed=2');await until(()=>q('#badge').textContent.includes('STRAIGHT · 4.'));
  await check('no-detection wait remains active after Straight launch',q('#b_eng').disabled);
  await req('/set?armed=1&target=1&acquired=1');await until(()=>q('#badge').textContent.includes('BLENDING'));
  await check('late acquisition shows the steering transition',q('#badge').textContent.includes('BLENDING'));
@@ -164,11 +166,12 @@ async function main(){
  await load();
  await check('armed refresh preserves the active flight',!visible('#modechange')&&!q('.app').inert&&(await req('/state')).mission.phase==='WASP_FLIGHT'&&(await req('/commands')).filter(x=>x[0]==='engage').length===1);
  parameters();await check('camera switching blocked during Wasp flight',q('[data-cam="30"]').disabled&&q('[data-cam="60"]').disabled);
- q('#sh_speed [data-close]').click();tap('#b_wasp_abort');await until(()=>q('#engtxt').textContent==='DONE · DISARM');
+ q('#sh_speed [data-close]').click();tap('#b_wasp_abort');await until(()=>q('#engtxt').textContent==='IDLE');
  await check('abort remains available and sends once',(await req('/commands')).filter(x=>x[0]==='abort').length===1&&q('#b_eng').disabled);
- await check('ended flight identifies pilot control',q('#badge').textContent==='PILOT · DISARM TO RESET');
+ await check('Idle identifies height hold and drift',q('#badge').textContent==='IDLE · HOLD · XY DRIFT');
  await req('/set?armed=0&phase=PILOT');await sleep(350);parameters();
  await switchMode('normal');
+ await check('Abort is available in Seeker too',visible('#b_wasp_abort'));
  await check('return to Normal confirms 30 degrees and changes flight parameters',q('#mountstatus').textContent==='30° ✓'&&visible('#normal_params')&&!visible('#pp_wasp'));
  q('[data-sky="on"]').click();q('[data-fol="on"]').click();q('[data-cam="30"]').click();await until(()=>q('[data-cam="30"]').classList.contains('on'));
  await check('detection controls work in Normal',(await req('/state')).sky_gate&&(await req('/state')).follower&&(await req('/state')).cam_fps===30);
@@ -232,8 +235,10 @@ class Handler(BaseHTTPRequestHandler):
                     if k == "engage" and not why:
                         m.phase = "WASP_FLIGHT"
                         m.wasp.begin(time.perf_counter(), target_acquired=simulation["target"])
+                        m._run_t = m.wasp.started
                     elif k == "abort":
-                        m.phase = "WASP_DONE"
+                        m.phase = "IDLE"
+                        m.idle.stage = "HOLD"
                         m.wasp.started = None
                 return self.send(dict(state(), refused=why))
             if u.path == "/set":
@@ -243,6 +248,7 @@ class Handler(BaseHTTPRequestHandler):
                     m.set_wasp_enabled(q["mode"][0] == "wasp", selection=True)
                 if "elapsed" in q:
                     m.wasp.started = time.perf_counter()-float(q["elapsed"][0])
+                    m._run_t = m.wasp.started
                     if m.wasp.acquired_t is not None:
                         m.wasp.acquired_t = m.wasp.started
                 for key in ("target", "attitude"):

@@ -216,7 +216,10 @@ cat > "$HOME/.config/wasp/auto.json" <<'JSON'
 {"height":15,"climb":3,"turn":30,"adjust":5,"window":5,"ready":0.25,"giveup":2,"closing":3,"floor":3,"line":30,"ai":"MAX","steer":0.3}
 JSON
 cat > "$HOME/.config/wasp/levels.json" <<'JSON'
-{"vert":"MEDIUM","yaw":"MEDIUM","push":"MEDIUM","ai":"MEDIUM","search":"MEDIUM"}
+{"vert":"MEDIUM","yaw":"MEDIUM","push":"MEDIUM","ai":"MEDIUM"}
+JSON
+cat > "$HOME/.config/wasp/idle.json" <<'JSON'
+{"seconds":10}
 JSON
 ```
 
@@ -275,9 +278,8 @@ Phone → same Wi-Fi → `http://JETSON_IP:8080/`.
 | Detection → Sky gate | OFF for the current reference setting; ON at startup |
 | Detection → Follower | ON |
 | Detection → Camera | 60 FPS |
+| Detection → Idle | 10 s; manual input 1–600 s; saved automatically |
 | Launch throttle | 100% |
-| Flight time | 10 s |
-| Flight time no det | 3 s; choices 3 / 5 / 7 / 10 s |
 | Straight launch | 1 s |
 | Steering blend | 0.5 s |
 | Steering rate | 60°/s; 45°/s also available |
@@ -287,9 +289,24 @@ Phone → same Wi-Fi → `http://JETSON_IP:8080/`.
 
 Launch → hold attitude at launch throttle until the first valid detection.
 First detection → complete any remaining Straight launch → Steering blend → AI.
-Flight time counts from launch, including the initial no-detection wait.
-No detection timeout / Flight time / target loss after acquisition / ABORT →
-release all Jetson overrides to the pilot; disarm before another launch.
+Detection gaps → zero commanded body rotation at launch throttle → reacquisition
+with a new steering blend. ACRO holds attitude; gravity/wind can change the path.
+Idle counts total time from the first launch throttle command, with or without
+detection. At the deadline / ABORT / 30 m ceiling → Idle recovery.
+
+Seeker Manual ENGAGE → start total Idle timer; AUTO → start timer at AUTO entry,
+including climb/watch/alignment. AUTO → PUSH → AI does not restart the timer.
+Seeker target loss after acquisition / total deadline / ABORT → Idle recovery.
+Flight time, Flight time no det and Search time have been removed.
+
+Idle → request and confirm FC ALT_HOLD → level roll/pitch → climb toward height
+at entry +1.5 m, capped at the existing 30 m ceiling → hold altitude/entry yaw.
+No Idle hold timeout. Barometer/IMU only: horizontal drift; no position lock or
+horizontal braking. Battery and FC failsafes still apply. Repeat ABORT does not
+restart Idle or add height. Wasp requires disarm before another launch.
+ABORT before a ground launch releases control; it never starts takeoff.
+Transmitter mode switch → release every Jetson override to the pilot. ALT_HOLD
+rejection / no confirmation within 2 s / stale telemetry → release to pilot.
 
 Accepted Seeker ENGAGE / AUTO or Wasp LAUNCH → continues with Wi-Fi disconnected.
 Jetson → FC remains wired USB. Transmitter mode switch → pilot control.
@@ -313,6 +330,7 @@ after a service restart, select the mode and confirm the camera again.
 ```bash
 "$WASP_PY" src/flight_config.py
 "$WASP_PY" src/tests/test_wasp.py
+"$WASP_PY" src/tests/test_idle.py
 "$WASP_PY" src/tests/test_camera_modes.py
 "$WASP_PY" src/tests/test_detection_performance.py
 "$WASP_PY" src/tests/test_wasp_mavlink.py
@@ -332,7 +350,8 @@ tail -n 80 "$HOME/wasp-logs/wasp-tracker.log"
 | mission.wasp_camera_confirmed | true |
 | mission.wasp_setup_why | empty string |
 | mission.wasp_attitude_fresh | true |
-| mission.wasp_params.duration / gain | 10 / 2 |
+| mission.idle_s / mission.wasp_params.gain | 10 / 2 |
+| mission.idle.active / horizontal_hold | false / false |
 
 Browser tests require Chromium, Google Chrome or Firefox.
 
@@ -372,8 +391,11 @@ TensorRT. Verify no automatic arming or launch.
 
 Before flight: verify detection on the actual intended target, command direction
 with propellers removed, ABORT, transmitter takeover and telemetry/target-loss
-release. Timeout/ABORT releases Jetson overrides; it does not land or disarm.
+recovery. Timeout/ABORT requests Idle; it does not land or disarm. Recovery from
+high speed or extreme attitude is not flight verified. Test recovery at low
+height/speed with transmitter takeover available before full-throttle use.
 
 [Jetson PyTorch packages](https://forums.developer.nvidia.com/t/install-pytorch-for-cuda-12-6-jetpack-6-2/348456)
 · [TensorRT export](https://docs.ultralytics.com/guides/nvidia-jetson/)
 · [ArduPilot RC input](https://ardupilot.org/dev/docs/mavlink-rcinput.html)
+· [ArduPilot ALT_HOLD](https://ardupilot.org/copter/docs/altholdmode.html)

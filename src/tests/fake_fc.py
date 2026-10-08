@@ -16,6 +16,9 @@ class FakeArduPilot(threading.Thread):
         self.mode = mode
         self.sysid = sysid
         self.attitude = attitude
+        self.mode_requests = []
+        self.mode_ack = mavutil.mavlink.MAV_RESULT_ACCEPTED
+        self.apply_mode = True
         self.att = dict(roll=0.0, pitch=0.0, rollspeed=0.0, pitchspeed=0.0,
                         yawspeed=0.0, yaw=0.0)
         self.stop = threading.Event()
@@ -96,6 +99,11 @@ class FakeArduPilot(threading.Thread):
                         pid.encode(), self.params[pid],
                         mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
                         len(self.params), 0)
+            elif t == "COMMAND_LONG" and msg.command == mavutil.mavlink.MAV_CMD_DO_SET_MODE:
+                self.mode_requests.append((perf_counter(), int(msg.param2)))
+                self.m.mav.command_ack_send(msg.command, self.mode_ack)
+                if self.apply_mode and self.mode_ack == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+                    self.mode = int(msg.param2)
             elif t == "RC_CHANNELS_OVERRIDE":
                 if msg.get_srcSystem() != self.sysid_mygcs:
                     self.rejected_from.add(msg.get_srcSystem())
@@ -112,5 +120,4 @@ class FakeArduPilot(threading.Thread):
     def shutdown(self):
         self.stop.set()
         self.join(timeout=2)
-
 

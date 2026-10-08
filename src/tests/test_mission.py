@@ -206,8 +206,8 @@ check("ENGAGE refused while climbing", r.m.request_engage() != "")
 r.run_until(1.0)
 r.mp.pilot.update(pitch=r.mp.phys_to_pwm("pitch", -2.0),
                   roll=r.mp.phys_to_pwm("roll", 3.0))
-check("the shipped defaults are all MEDIUM: PUSH 30 deg, search 6 s, height 3 m/s, turn 20 deg/s",
-      all(v == "MEDIUM" for v in r.m.level.values()) and r.m.push_deg() == 30.0 and r.m.search_s() == 6.0
+check("the shipped defaults are all MEDIUM: PUSH 30 deg, Idle 10 s, height 3 m/s, turn 20 deg/s",
+      all(v == "MEDIUM" for v in r.m.level.values()) and r.m.push_deg() == 30.0 and r.m.idle_s == 10.0
       and r.m.climb_rate() == 3.0 and r.m.yaw_rate() == 20.0, str(r.m.level))
 r.m.set_level("push", "MEDIUM")
 check("ENGAGE accepted from HOVER", r.m.request_engage() == "")
@@ -243,7 +243,7 @@ def push_rig():
     q.ctx["height"] = 10.0
     q.step()
     q.m.set_level("push", "MEDIUM")
-    q.m.set_level("search", "SLOW")
+    q.m.set_idle_seconds(4)  # Short deadline for the legacy simulator fixtures.
     q.m.request_engage()
     q.step()
     return q
@@ -312,20 +312,20 @@ check(f"roll glides monotonically to the AI's value, max step <= {_lim} us per 2
 print("=== A8. soft stops ===")
 q = Rig(min_conf=0.20); q.ctx["height"] = 10.0; q.step()
 q.m.request_engage(); q.step()
-q.run_until(5.8)
-check("PUSH with no target: still pushing at 5.8 s (the default search is 6 s)", q.m.phase == "PUSH")
+q.run_until(9.8)
+check("simulator without Idle recovery: still pushing at 9.8 s", q.m.phase == "PUSH")
 q.run_until(0.3)
-check("...soft stop at 6 s", q.m.phase == "STOP")
-for lv, secs in (("SLOW", 4.0), ("FAST", 8.0)):
+check("...soft stop fallback at Idle 10 s", q.m.phase == "STOP")
+for secs in (4.5, 8.0):
     qs = Rig(min_conf=0.20); qs.ctx["height"] = 10.0; qs.step()
-    check(f"search {lv} accepted", qs.m.set_level("search", lv) == "")
+    check(f"Idle {secs} accepted", qs.m.set_idle_seconds(secs) == "")
     qs.m.request_engage(); qs.step()
     qs.run_until(secs - 0.2)
     still = qs.m.phase
     qs.run_until(0.3)
-    check(f"search {lv}: still pushing at {secs - 0.2:.1f} s, soft stop at {secs:.0f} s",
+    check(f"Idle {secs}: still pushing at {secs - 0.2:.1f} s, soft stop fallback at deadline",
           still == "PUSH" and qs.m.phase == "STOP", f"{still} -> {qs.m.phase}")
-check("the shipped default search is 6 s", Rig().m.search_s() == 6.0)
+check("the shipped default Idle is 10 s", Rig().m.idle_s == 10.0)
 p0 = phys(q.mp, q.out, "pitch")
 q.run_until(0.5)
 p1 = phys(q.mp, q.out, "pitch")
@@ -486,7 +486,7 @@ q.step()
 check("pilot STAB -> ALT_HOLD: reset (red), ENGAGE accepted again",
       not q.m.snapshot(q.t)["engaged"] and q.m.request_engage() == "")
 q = push_rig()
-q.run_until(4.2)
+q.run_until(10.2)
 q.run_until(1.2)
 check("a push that never found a target does NOT latch: ENGAGE again at once",
       q.m.phase == "HOVER" and not q.m.snapshot(q.t)["engaged"] and q.m.request_engage() == "")
@@ -624,6 +624,7 @@ print("=== A12. AUTO: up, find, line up, go ===")
 
 def auto_rig(h=2.0):
     q = Rig(min_conf=0.20)
+    q.m.set_idle_seconds(60)  # Exercise long AUTO phases before their deadline.
     q.ctx["height"] = h
     q.step()
     q.m.set_level("push", "MEDIUM")
