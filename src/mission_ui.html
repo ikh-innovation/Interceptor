@@ -53,6 +53,8 @@
   .tile .v.bad:before{background:var(--bad)}
   .tile .v.bad{color:var(--bad)}
   .tile .v.on:before{background:var(--acc)}
+  .wasp-summary{flex:0 0 auto;width:100%;min-height:34px;padding:7px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg2);color:var(--ink);font:500 12px/1.3 var(--sans);text-align:left}
+  .wasp-summary.custom{color:#8a5900;background:#fff6dc}
 
   .vidwrap{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:6px}
   .belt{flex:0 0 46px;width:100%;display:flex;gap:6px}
@@ -205,6 +207,12 @@
   #sh_speed .mount-chip{display:block;margin:10px 0 0 auto;padding:5px 8px;border:0;border-radius:7px;background:var(--bg3);color:var(--dim);font:500 11px/1 var(--sans)}
   #sh_speed .mount-chip.warn{color:#8a5900;background:#fff6dc}
   #waspfcstatus{margin:0 0 14px;color:var(--bad);font:500 12px/1.3 var(--sans)}
+  #pp_wasp .steering-help{margin:8px 0 0;font:12px/1.4 var(--sans);color:var(--dim)}
+  #pp_wasp .steering-help.custom{color:#8a5900}
+  #wasp_advanced{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
+  #wasp_advanced summary{min-height:36px;color:var(--dim);font:500 13px/1.4 var(--sans);cursor:pointer}
+  #wasp_advanced .parameter-grid{margin-top:12px}
+  #wasp_advanced:not([open]) > .parameter-grid{display:none}
   #modechange{z-index:110}
   #modechange .q{letter-spacing:.04em}
   #modechange button{font-size:14px;letter-spacing:0}
@@ -363,6 +371,8 @@
     <div class="tile"><span class="k" id="c_ai_k">Detector</span><span class="v" id="c_ai">--</span></div>
   </div>
 
+  <button class="wasp-summary" id="wasp_summary" data-only="wasp" hidden aria-label="Review WASP flight settings"></button>
+
   <div class="vidwrap"><div class="vbox" id="vbox">
     <img id="v" src="/stream.mjpg" alt="">
     <svg class="arc" id="arc" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
@@ -455,13 +465,17 @@
         <div id="waspfcstatus" role="status" hidden></div>
         <div class="parameter-grid">
           <div class="grp"><div class="lbl">Launch throttle</div><div class="seg" data-wp="throttle" data-values="0.25,0.5,1" data-labels="25%,50%,100%"></div></div>
+          <div class="grp"><div class="lbl">Steering response</div><div class="seg" id="wasp_profiles" role="group" aria-label="Steering response"><button data-wasp-profile="smooth" aria-pressed="false">Smooth</button><button data-wasp-profile="standard" aria-pressed="false">Standard</button><button data-wasp-profile="responsive" aria-pressed="false">Responsive</button></div><p class="steering-help" id="wasp_profile_help"></p></div>
+        </div>
+        <p class="steering-help" id="wasp_timing"></p>
+        <details id="wasp_advanced"><summary>Advanced settings</summary><div class="parameter-grid">
           <div class="grp"><div class="lbl">Straight launch</div><div class="seg" data-wp="straight" data-values="0,0.5,1,2" data-labels="OFF,0.5 s,1 s,2 s"></div></div>
           <div class="grp"><div class="lbl">Steering blend</div><div class="seg" data-wp="blend" data-values="0.25,0.5,1" data-labels="0.25 s,0.5 s,1 s"></div></div>
           <div class="grp"><div class="lbl">Steering rate</div><div class="seg" data-wp="rate" data-values="30,45,60,90" data-labels="30°/s,45°/s,60°/s,90°/s"></div></div>
           <div class="grp"><div class="lbl">Steering gain</div><div class="seg" data-wp="gain" data-values="2,4,6" data-labels="2,4,6"></div></div>
           <div class="grp"><div class="lbl">Target lead</div><div class="seg" data-wp="lead" data-values="0,0.08,0.15" data-labels="0 ms,80 ms,150 ms"></div></div>
           <div class="grp"><div class="lbl">Camera alignment</div><div class="seg" data-wp="camera_roll" data-values="0,90,180,270" data-labels="0°,90°,180°,270°"></div></div>
-        </div>
+        </div></details>
       </div>
     </section>
   </div>
@@ -792,6 +806,7 @@
   });
 
   $("t_log").onclick = function () { openSheet("sh_log"); };
+  $("wasp_summary").onclick = function () { openSheet("sh_speed"); };
   document.querySelectorAll("[data-close]").forEach(function (b) {
     b.onclick = function () { b.closest(".sheet").classList.remove("open"); };
   });
@@ -819,6 +834,9 @@
       b.onclick = function () { cmd("waspp=" + seg.getAttribute("data-wp") + ":" + value); };
       seg.appendChild(b);
     });
+  });
+  document.querySelectorAll("[data-wasp-profile]").forEach(function (b) {
+    b.onclick = function () { cmd("waspp=profile:" + b.getAttribute("data-wasp-profile")); };
   });
   document.querySelectorAll("[data-sky]").forEach(function (b) {
     b.onclick = function () { cmd("sky=" + b.getAttribute("data-sky")); };
@@ -1030,6 +1048,24 @@
         b.classList.toggle("on", (m.wasp_params || {})[seg.getAttribute("data-wp")] === Number(b.getAttribute("data-wv")));
       });
     });
+    var steeringProfile = m.wasp_steering_profile || "custom";
+    var steeringNames = {smooth:"Smooth", standard:"Standard", responsive:"Responsive", custom:"Custom"};
+    var steeringHelp = {smooth:"Gentler corrections and a slower steering handover.",
+      standard:"Recommended starting point. Balanced steering response.",
+      responsive:"Stronger corrections. More sensitive to detection movement.",
+      custom:"Custom steering values. Review Advanced settings or choose a profile."};
+    document.querySelectorAll("[data-wasp-profile]").forEach(function (b) {
+      var on = b.getAttribute("data-wasp-profile") === steeringProfile;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", String(on));
+      b.disabled = arm || VIEW || ctl === "other";
+    });
+    T("wasp_profile_help", steeringHelp[steeringProfile] || steeringHelp.custom);
+    $("wasp_profile_help").classList.toggle("custom", steeringProfile === "custom");
+    var steeringParams = m.wasp_params || {};
+    T("wasp_timing", "With a fresh target: " + Number(steeringParams.straight || 0) + " s launch delay, then a " + Number(steeringParams.blend || 0) + " s steering ramp. Idle after " + Number(m.idle_s || 0) + " s from launch.");
+    T("wasp_summary", "Steering: " + (steeringNames[steeringProfile] || "Custom") + " · Throttle " + Math.round(Number(steeringParams.throttle || 0)*100) + "% · Idle " + Number(m.idle_s || 0) + " s");
+    $("wasp_summary").classList.toggle("custom", steeringProfile === "custom");
     document.querySelectorAll("[data-sky]").forEach(function (x) {
       x.classList.toggle("on", j.sky_gate !== undefined && (x.getAttribute("data-sky") === "on") === !!j.sky_gate);
       x.disabled = VIEW || ctl === "other";

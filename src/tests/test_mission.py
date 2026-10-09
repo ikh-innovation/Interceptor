@@ -11,7 +11,7 @@ FAILED = []
 
 
 def check(label, ok, detail=""):
-    print(f"  [{'PASS' if ok else 'FAIL'}] {label}" + (f"  {detail}" if detail else ""))
+
     if not ok:
         FAILED.append(label)
 
@@ -66,7 +66,7 @@ class Rig:
         return self.step(int(round(secs / 0.02)), **kw)
 
 
-print("=== A1. the pilot's gate ===")
+
 r = Rig()
 r.ctx["gate_ok"] = False
 check("not armed / not ALT_HOLD: PILOT, nothing driven",
@@ -77,7 +77,7 @@ check("armed in ALT_HOLD: HOVER, still nothing driven",
 check("a hold is refused while the pilot has it",
       Rig().m.request_hold("up", "x", 0.0) != "")
 
-print("=== A2. CLIMB: throttle only, ramped, dead-man ===")
+
 r = Rig()
 r.step()
 r.m.set_level("vert", "SLOW")
@@ -134,7 +134,7 @@ for lv, up, dn in (("SLOW", 1.0, 0.5), ("MEDIUM", 3.0, 1.5), ("FAST", 8.0, 2.5))
     check(f"vertical {lv}: up {up} / down {dn} m/s", abs(u - up) < 1e-6 and abs(d + dn) < 1e-6,
           f"{u:.1f} / {d:.1f}")
 
-print("=== A3. bumpless: the Jetson starts from the pilot's thumb ===")
+
 r = Rig()
 r.step()
 r.mp.pilot["throttle"] = r.mp.phys_to_pwm("throttle", 0.4)
@@ -142,7 +142,7 @@ o = r.step(hold="up")
 check("pilot at +0.4 m/s: first climb command is 0.4, not 0",
       abs(phys(r.mp, o, "throttle") - 0.4) < 0.02, f"{phys(r.mp, o, 'throttle'):.2f}")
 
-print("=== A4. ceiling, NO ground check, unknown height ===")
+
 r = Rig(ceiling_m=30.0)
 r.ctx["height"] = 29.5
 r.step()
@@ -176,7 +176,7 @@ r.step()
 r.run_until(0.3, hold="up")
 check("height unknown (no VFR_HUD): no climb at all", r.out == {} and "height" in r.m.event)
 
-print("=== A5. SCOUT: yaw only; hold and tap ===")
+
 r = Rig()
 r.step()
 r.m.set_level("yaw", "MEDIUM")
@@ -197,7 +197,7 @@ for lv, deg in (("SLOW", 2.0), ("MEDIUM", 5.0), ("FAST", 10.0)):
     check(f"tap ⟲ {lv}: turns {deg:.0f} deg left and stops (closed on ATTITUDE yaw)",
           abs(got + deg) < 0.6 and r.out == {}, f"{got:+.2f} deg")
 
-print("=== A6. ENGAGE -> PUSH ===")
+
 r = Rig()
 r.ctx["height"] = 10.0
 r.step()
@@ -234,7 +234,7 @@ for lv, deg in (("SLOW", 20.0), ("FAST", 40.0)):
     q.run_until(1.4)
     check(f"PUSH {lv}: {deg:.0f} deg", abs(phys(q.mp, q.out, "pitch") + deg) < 1e-6)
 
-print("=== A7. PUSH -> AI: not early, not on junk, smooth ===")
+
 AI = {"pwm": {"roll": 1700, "pitch": 1350, "yaw": 1560, "throttle": 1520}}
 
 
@@ -243,7 +243,7 @@ def push_rig():
     q.ctx["height"] = 10.0
     q.step()
     q.m.set_level("push", "MEDIUM")
-    q.m.set_idle_seconds(4)  # Short deadline for the legacy simulator fixtures.
+    q.m.set_idle_seconds(4)
     q.m.request_engage()
     q.step()
     return q
@@ -309,7 +309,7 @@ check(f"roll glides monotonically to the AI's value, max step <= {_lim} us per 2
       all(x >= -1 for x in d) and max(d) <= _lim and rolls[-1] == 1700,
       f"max {max(d)} us, final {rolls[-1]}")
 
-print("=== A8. soft stops ===")
+
 q = Rig(min_conf=0.20); q.ctx["height"] = 10.0; q.step()
 q.m.request_engage(); q.step()
 q.run_until(9.8)
@@ -378,7 +378,7 @@ check("TERMINAL commit: detection lost in the last metre -> keeps flying the "
 q.run_until(0.4)
 check("...for 1.2 s at most, then the soft stop", q.m.phase in ("STOP", "HOVER"))
 
-print("=== A9. ABORT and the mode switch, from EVERY phase ===")
+
 
 
 def in_phase(name):
@@ -428,7 +428,7 @@ q.step()
 check("after ABORT a NEW press works again",
       set(q.run_until(0.3, hold="up", session="s2")) == {"throttle"})
 
-print("=== A8b. a gap in REAL detections: stop turning, then soft stop ===")
+
 q = push_rig()
 q.run_until(1.52)
 for _ in range(90):
@@ -451,7 +451,7 @@ q.run_until(0.1)
 check("0.5 s with no real detection: back to the straight push (not a spin, not a stop)",
       q.m.phase == "PUSH", q.m.phase)
 
-print("=== A8c. no AI floor: the AI may descend toward a low target at any height ===")
+
 DOWN = {"pwm": {"roll": 1500, "pitch": 1350, "yaw": 1500, "throttle": 1450}}
 for h, vz, want, label in ((12.0, 0.0, "free", "12 m: the AI's descent passes"),
                            (3.8, -2.5, "free", "3.8 m descending at 2.5 m/s: still passes"),
@@ -467,7 +467,7 @@ for h, vz, want, label in ((12.0, 0.0, "free", "12 m: the AI's descent passes"),
     ok = (c < -4.0) if want == "free" else (c >= 0.0 and c < 0.5) if want == "hold" else (c >= 0.9)
     check(label, q.m.phase == "AI" and ok, f"climb command {c:+.1f} m/s")
 
-print("=== A9b. one attempt per pilot mode cycle (ENGAGE red -> green -> reset) ===")
+
 q = push_rig()
 check("before the AI steers: not engaged (ENGAGE stays red)", not q.m.snapshot(q.t)["engaged"])
 q.run_until(0.3)
@@ -491,7 +491,7 @@ q.run_until(1.2)
 check("a push that never found a target does NOT latch: ENGAGE again at once",
       q.m.phase == "HOVER" and not q.m.snapshot(q.t)["engaged"] and q.m.request_engage() == "")
 
-print("=== A10. refused during PUSH / AI ===")
+
 q, _ = in_phase("PUSH")
 check("holds refused in PUSH", q.m.request_hold("up", "z", q.t) != "")
 check("yaw step refused in PUSH", q.m.request_step(1) != "")
@@ -499,7 +499,7 @@ check("ENGAGE refused in PUSH", q.m.request_engage() != "")
 q, _ = in_phase("AI")
 check("holds refused in AI", q.m.request_hold("yawl", "z", q.t) != "")
 
-print("=== A11. LOCK: hold the heading where it was pressed ===")
+
 
 
 def hdg(r):
@@ -562,7 +562,7 @@ r.m.request_release("s3"); r.run_until(1.5)
 r.m.request_lock(True); r.step()
 check("LOCK on again while locked: nothing moves (idempotent)", abs(herr(r.m.lock_hdg, held_lock)) < 1e-6)
 
-print("=== A11b. LOCK at a picked heading (the degree scroll) ===")
+
 q = Rig(); q.step()
 q.ctx["att"]["yaw"] = math.radians(300.0)
 check("lock at 313 accepted", q.m.request_lock(True, 313) == "")
@@ -619,12 +619,12 @@ check("...and it does not come back on its own", r.m.lock_hdg is None)
 r = Rig(); r.step(); r.ctx["att"] = None; r.m.request_lock(True); r.step()
 check("no attitude: LOCK refused, nothing driven", r.m.lock_hdg is None and r.out == {})
 
-print("=== A12. AUTO: up, find, line up, go ===")
+
 
 
 def auto_rig(h=2.0):
     q = Rig(min_conf=0.20)
-    q.m.set_idle_seconds(60)  # Exercise long AUTO phases before their deadline.
+    q.m.set_idle_seconds(60)
     q.ctx["height"] = h
     q.step()
     q.m.set_level("push", "MEDIUM")
@@ -773,7 +773,7 @@ q = auto_rig()
 check("phone: auto=on / auto=off", M.phone_command(q.m, "auto", "on", q.t) == ""
       and (q.step() or True) and q.m.phase == "AUTO_CLIMB"
       and M.phone_command(q.m, "auto", "off", q.t) == "")
-print("=== A13. AUTO settings: from the phone, checked, saved ===")
+
 q = auto_rig()
 check("the operator's defaults: 15 m, a 30 deg line, AI MAX, the AI steering after 0.6 s",
       M.Mission(FakeMapper(), log=lambda *_: None).auto_params()
@@ -819,7 +819,7 @@ q3 = auto_rig()
 check("a bad saved value is skipped, the rest applied, nothing breaks",
       M.load_auto_params(q3.m, tf) == {"ai": "MAX"} and q3.m.AUTO_HEIGHT_M == 10.0)
 check("no saved file: defaults, no error", M.load_auto_params(auto_rig().m, tf + ".none") == {})
-print("=== A14. 'make it the default?': a change lasts until a reboot, YES saves it ===")
+
 import json
 d = tempfile.mkdtemp()
 af, lf, df = (os.path.join(d, "wasp", n) for n in ("auto.json", "levels.json", "detection.json"))
@@ -861,7 +861,7 @@ check("FOLLOWER default saved and read back; the SKY GATE is refused (always ON 
       M.save_detection_default("follow", False, df) == "" and M.load_detection_defaults(df) == {"follow": False}
       and M.save_detection_default("sky", False, df) != "" and "sky" not in json.load(open(df)))
 check("a broken file: ignored, never fatal", (open(lf, "w").write("{oops") or True) and M.load_levels(auto_rig().m, lf) == {})
-print("=== B. exact PWM vs ArduPilot 4.6's own decode, this FC ===")
+
 from fc_control import ArduPilotAcro
 
 
@@ -922,10 +922,9 @@ bk.rc["pitch"]["reversed"] = True
 check("RCn_REVERSED honoured both ways",
       bk._exact_pwm("pitch", -0.5) > 1500 and abs(bk._exact_norm("pitch", bk._exact_pwm("pitch", -0.5)) + 0.5) < 0.01)
 
-print()
+
 if FAILED:
-    print(f"{len(FAILED)} FAILED:")
+
     for f in FAILED:
-        print("  - " + f)
+        pass
     sys.exit(1)
-print("all passed")

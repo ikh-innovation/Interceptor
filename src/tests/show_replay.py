@@ -67,7 +67,7 @@ def detect_all(path):
             break
         frame_count += 1
         if frame_count % 30 == 0:
-            print(f"  Inferring frame {frame_count}...", flush=True)
+            pass
         r = m(fr, imgsz=640, max_det=3, conf=0.05, verbose=False)
         ds = []
         if r and len(r[0].boxes):
@@ -113,7 +113,7 @@ def show(path, model):
     stats = {False: [0, 0], True: [0, 0]}
     started = False
     i = 0
-    print(f"Playing {os.path.basename(path)}  (space = pause, n = next video, q = quit)", flush=True)
+
     while True:
         ok, fr = c.read()
         if not ok:
@@ -154,8 +154,8 @@ def main():
     model = YOLO(MODEL, task="detect")
     for v in a.videos:
         st, quit_ = show(v, model)
-        print(f"{os.path.basename(v):40s}  TODAY {100 * st[False][0] / max(1, st[False][1]):5.0f}%  ->  "
-              f"NEW {100 * st[True][0] / max(1, st[True][1]):5.0f}%", flush=True)
+
+
         if quit_:
             break
     cv2.destroyAllWindows()

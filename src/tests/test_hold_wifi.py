@@ -12,7 +12,7 @@ FAILED = []
 
 
 def check(label, ok, detail=""):
-    print(f"  [{'PASS' if ok else 'FAIL'}] {label}" + (f"  {detail}" if detail else ""))
+
     if not ok:
         FAILED.append(label)
 
@@ -96,13 +96,13 @@ def hold_run(kind, link, seed, hold_s=5.0, inflight_max=3):
     return sags, low_time / max(1e-9, hold_s - 0.8), abs(v) < 0.05 * abs(want)
 
 
-print("=== BEFORE: one keepalive in flight (the page until 2026-09-26) ===")
+
 for name, link in LINKS.items():
     rows = [hold_run(k, link, s, inflight_max=1) for k in ("up", "down", "yawl", "yawr") for s in range(50)]
-    print(f"  {name:<34s} holds with a stutter: {sum(1 for r in rows if r[0] > 0):3d}/200   "
-          f"time below 90%: {100 * sum(r[1] for r in rows) / len(rows):4.1f}%")
 
-print("\n=== NOW: up to three in flight, late keepalives refused after release ===")
+
+
+
 results = {}
 for name, link in LINKS.items():
     rows = [hold_run(k, link, s) for k in ("up", "down", "yawl", "yawr") for s in range(50)]
@@ -110,10 +110,10 @@ for name, link in LINKS.items():
     low = sum(r[1] for r in rows) / len(rows)
     stopped = all(r[2] for r in rows)
     results[name] = (stutter, low, stopped)
-    print(f"  {name:<34s} holds with a stutter: {stutter:3d}/200   time below 90%: {100 * low:4.1f}%"
-          f"   stopped after release: {'yes' if stopped else 'NO'}")
 
-print()
+
+
+
 g = results["good (phone next to the Jetson)"]
 f = results["field hotspot, 30-80 m"]
 check("good link: a held button never stutters", g[0] == 0, f"{g[0]}/200")
@@ -122,10 +122,9 @@ check("field hotspot: under 2% of holds stutter, under 0.5% of the time sagging"
 check("every link: letting go stops the axis (the dead-man still works)",
       all(r[2] for r in results.values()))
 
-print()
+
 if FAILED:
-    print(f"{len(FAILED)} FAILED:")
+
     for x in FAILED:
-        print("  - " + x)
+        pass
     sys.exit(1)
-print("all passed")

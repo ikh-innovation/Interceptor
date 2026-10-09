@@ -280,19 +280,29 @@ Phone → same Wi-Fi → `http://JETSON_IP:8080/`.
 | Detection → Camera | 60 FPS |
 | Detection → Idle | 10 s; manual input 1–600 s; saved automatically |
 | Launch throttle | 100% |
-| Straight launch | 1 s |
-| Steering blend | 0.5 s |
-| Steering rate | 60°/s; 45°/s also available |
-| Steering gain | 2 |
-| Target lead | 80 ms |
-| Camera alignment | 0° only when image bottom points toward the nose |
+| Steering response | Standard; starting point for the reference installation |
+| Advanced → Straight launch | 1 s |
+| Advanced → Steering blend | 0.5 s |
+| Advanced → Steering rate | 60°/s |
+| Advanced → Steering gain | 2 |
+| Advanced → Target lead | 80 ms |
+| Advanced → Camera alignment | 0° only when image bottom points toward the nose |
+
+Steering response sets blend, rate and gain together. Smooth uses 1 s / 45°/s / 2;
+Standard uses 0.5 s / 60°/s / 2; Responsive uses 0.5 s / 90°/s / 4.
+The main screen shows the active steering profile, launch throttle and Idle time;
+tap it to review Parameters. Manual steering values that do not match a profile
+show Custom. Profiles are locked while armed. These are response presets, not an
+airframe calibration or a guarantee of detection/capture. See
+`reports/wasp_scenarios/README.md` for synthetic comparisons and assumptions.
 
 Launch → hold attitude at launch throttle until the first valid detection.
 First detection → complete any remaining Straight launch → Steering blend → AI.
 Detection gaps → zero commanded body rotation at launch throttle → reacquisition
 with a new steering blend. ACRO holds attitude; gravity/wind can change the path.
 Idle counts total time from the first launch throttle command, with or without
-detection. At the deadline / ABORT / 30 m ceiling → Idle recovery.
+detection. At the configured Idle deadline → Idle recovery. Wasp has no
+height-triggered transition to Idle. ABORT also requests Idle recovery.
 
 Seeker Manual ENGAGE → start total Idle timer; AUTO → start timer at AUTO entry,
 including climb/watch/alignment. AUTO → PUSH → AI does not restart the timer.

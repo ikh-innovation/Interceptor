@@ -18,7 +18,7 @@ FAILED = []
 
 
 def check(label, ok, detail=""):
-    print(f"  [{'PASS' if ok else 'FAIL'}] {label}" + (f"  {detail}" if detail else ""))
+
     if not ok:
         FAILED.append(label)
 
@@ -73,7 +73,7 @@ def hold(kind, secs, session="s"):
 
 
 try:
-    print("=== 1. the pilot has it ===")
+
     sleep(0.6)
     check("STABILIZE: PILOT, nothing overridden", M.phase == "PILOT" and not fc.overrides,
           f"{M.phase} {fc.overrides}")
@@ -93,7 +93,7 @@ try:
     check("instruments: height 2.0 m and vibration read off the FC",
           st["height_m"] == 2.0 and st["vibe"] and st["vibe"]["z"] == 12.0, str(st.get("vibe")))
 
-    print("=== 2. ▲ SLOW: throttle ONLY, exact 1 m/s ===")
+
     M.set_level("vert", "SLOW")
     hold("up", 0.9)
     o = dict(fc.overrides)
@@ -106,7 +106,7 @@ try:
     check("let go: dead-man + ramp-out, then ch1 handed back",
           not fc.overrides and M.phase == "HOVER", str(fc.overrides))
 
-    print("=== 3. ⟳ MEDIUM: yaw ONLY, exact 20 deg/s ===")
+
     M.set_level("yaw", "MEDIUM")
     hold("yawr", 0.8)
     o = dict(fc.overrides)
@@ -116,7 +116,7 @@ try:
     sleep(0.9)
     check("let go: yaw handed back", not fc.overrides, str(fc.overrides))
 
-    print("=== 4. bumpless: the pilot's own stick is the starting point ===")
+
     fc.radio[1] = 1690
     sleep(0.5)
     M.set_level("vert", "SLOW")
@@ -129,7 +129,7 @@ try:
     fc.radio[1] = 1500
     sleep(1.2)
 
-    print("=== 5. ENGAGE: PUSH on all four, exact 30 deg ===")
+
     M.set_level("push", "MEDIUM")
     fc.vfr.update(alt=10.0)
     sleep(0.3)
@@ -151,7 +151,7 @@ try:
     fc.vfr.update(alt=10.0)
     sleep(0.3)
 
-    print("=== 6. the detector confirms: AI, blended in ===")
+
     HALF_H = math.tan(math.radians(62.2 / 2))
     ex = 320.0 * math.tan(math.radians(8.0)) / HALF_H
     ch4 = []
@@ -170,7 +170,7 @@ try:
           s4 and s4[-1] > 1520 and max(jumps) <= 15,
           f"final ch4={s4[-1] if s4 else None}, max step {max(jumps) if jumps else 0} us")
 
-    print("=== 7. ABORT, and the mode switch ===")
+
     M.request_abort()
     sleep(0.1)
     check("ABORT: Idle recovery holds all four axes in ALT_HOLD",
@@ -184,7 +184,7 @@ try:
     check("pilot flips to STABILIZE mid-climb: all released, PILOT",
           not fc.overrides and M.phase == "PILOT", f"{M.phase} {fc.overrides}")
 
-    print("=== 7b. LOCK over real MAVLink: the heading held against knocks ===")
+
     import threading
     fc.mode = 2
     fc.vfr.update(alt=6.0)
@@ -276,7 +276,7 @@ try:
         YAW["run"] = False
         th.join(timeout=1)
 
-    print("=== 7c. the phone's SETTINGS reach the flying code (tracker command path) ===")
+
     with contextlib.redirect_stdout(io.StringIO()):
         import tracker as _tr
     ph = type("Phone", (), {})()
@@ -328,7 +328,7 @@ try:
         _tr.DroneTracker._command(ph, "lvl", v)
     fc.vfr.update(alt=2.0)
 
-    print("=== 8. the checklist and the log ===")
+
     rows = c.mission_checklist()
     check("checklist accepts RC_OVERRIDE_TIME 1 and flags ATC_INPUT_TC 0.15",
           any(r.startswith("ok RC_OVERRIDE_TIME") for r in rows)
@@ -350,10 +350,9 @@ check("CSV: CLIMB rows show ch1 only, plus height and vibration",
       cl and all(r["pwm_roll"] == "0" and r["pwm_pitch"] == "0" for r in cl)
       and cl[-1]["height_m"] in ("2.00", "10.00") and cl[-1]["vibe_z"] == "12.00")
 
-print()
+
 if FAILED:
-    print(f"{len(FAILED)} FAILED:")
+
     for f in FAILED:
-        print("  - " + f)
+        pass
     sys.exit(1)
-print("all passed")

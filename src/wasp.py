@@ -1,8 +1,8 @@
-"""Fixed upward camera / thrust-axis guidance. Body axes are forward, right, down.
 
-At camera roll 0, image right is body right and image bottom is body forward.
-World bearings use NED. No range is inferred from the detector's box size.
-"""
+
+
+
+
 import math
 
 
@@ -30,7 +30,7 @@ def rotation(att):
 
 
 def interpolate_rotation(a, b, fraction):
-    """Quaternion SLERP avoids Euler wrap and the vertical-pitch singularity."""
+
     def quaternion(angles):
         r, p, y = (v/2 for v in angles)
         cr, sr, cp, sp, cy, sy = math.cos(r), math.sin(r), math.cos(p), math.sin(p), math.cos(y), math.sin(y)
@@ -74,7 +74,7 @@ class WaspGuidance:
         self.velocity = (0.0, 0.0, 0.0)
 
     def observe(self, ex, ey, fw, fh, tan_h, tan_v, att, capture_t, camera_roll=0):
-        """Remove ego rotation before estimating target angular motion."""
+
         ray = camera_ray(ex, ey, fw, fh, tan_h, tan_v, camera_roll)
         world = rotate(rotation(att), ray)
         if self.previous is not None:
@@ -104,7 +104,7 @@ class WaspGuidance:
         body = rotate(mat, predicted, inverse=True)
         if body[2] >= -0.15:
             raise ValueError("target outside thrust-axis guidance cone")
-        # Shortest rotation from body up to target, plus inertial LOS feedforward.
+
         error = cross((0.0, 0.0, -1.0), body)
         ff = rotate(mat, cross(world, velocity), inverse=True)
         rates = (gain*error[0]+ff[0], gain*error[1]+ff[1], 0.0)
@@ -115,14 +115,19 @@ class WaspGuidance:
 
 
 class Wasp:
-    """Guidance when a target is fresh; otherwise zero body rotation.
 
-    Mission owns the single total Idle deadline, starting at launch.
-    """
+
+
+
     SETTINGS = {"throttle": (0.25, 0.5, 1.0),
                 "straight": (0.0, 0.5, 1.0, 2.0), "blend": (0.25, 0.5, 1.0),
                 "rate": (30.0, 45.0, 60.0, 90.0), "gain": (2.0, 4.0, 6.0),
                 "lead": (0.0, 0.08, 0.15), "camera_roll": (0.0, 90.0, 180.0, 270.0)}
+    STEERING_PROFILES = {
+        "smooth": dict(blend=1.0, rate=45.0, gain=2.0),
+        "standard": dict(blend=0.5, rate=60.0, gain=2.0),
+        "responsive": dict(blend=0.5, rate=90.0, gain=4.0),
+    }
 
     def __init__(self):
         self.enabled = False
@@ -134,6 +139,12 @@ class Wasp:
         self.used = False
         self._output_t = None
         self._rates = (0.0, 0.0, 0.0)
+
+    def steering_profile(self):
+        for name, settings in self.STEERING_PROFILES.items():
+            if all(self.params[key] == value for key, value in settings.items()):
+                return name
+        return "custom"
 
     def begin(self, now, target_acquired=True):
         self.started = now
@@ -152,8 +163,8 @@ class Wasp:
             return dict(stage="SEARCH", straight_remaining_s=round(remaining, 2),
                         steering_blend=0.0,
                         target_acquired=False)
-        # A late first detection starts a new blend, rather than jumping to full
-        # steering because the straight-launch timer has already elapsed.
+
+
         blend_t = max(self.started + self.params["straight"], self.acquired_t)
         fraction = max(0.0, min(1.0, (now-blend_t)/self.params["blend"]))
         blend = fraction*fraction*(3.0-2.0*fraction)
@@ -162,13 +173,13 @@ class Wasp:
                     target_acquired=True)
 
     def lose_target(self):
-        # Do not keep turning toward a stale bearing. A new observation starts
-        # a fresh blend, without restarting the mission's total timer.
+
+
         self.acquired_t = None
         self._rates = (0.0, 0.0, 0.0)
 
     def acquire(self, now, ctx):
-        """Latch only a usable bearing; callers first check freshness/confidence."""
+
         p = self.params
         WaspGuidance.rates(ctx["ai_cmd"], ctx["att"], now,
                            gain=p["gain"], lead_s=p["lead"], max_rate_dps=p["rate"])
@@ -191,16 +202,16 @@ class Wasp:
         p = self.params
         if self.started is None:
             raise ValueError("WASP launch has not started")
-        # Before acquisition request zero rotation at the selected throttle.
-        # ACRO does not enforce a straight ground path or compensate gravity.
-        # Once acquired, validate the live bearing even during straight launch.
+
+
+
         rates = ((0.0, 0.0, 0.0) if self.acquired_t is None else
                  WaspGuidance.rates(ctx["ai_cmd"], ctx["att"], now,
                                     gain=p["gain"], lead_s=p["lead"], max_rate_dps=p["rate"]))
         blend = self.progress(now)["steering_blend"]
         desired = tuple(v*blend for v in rates)
-        # Bound changes even if a detection jumps during/after the handover.
-        # Cap dt so a stalled sender cannot resume with a large steering step.
+
+
         dt = max(0.0, min(0.1, now-self._output_t))
         delta = tuple(a-b for a, b in zip(desired, self._rates))
         norm = math.hypot(*delta[:2])

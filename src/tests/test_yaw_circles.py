@@ -18,7 +18,7 @@ FAILED = []
 
 
 def check(label, ok, detail=""):
-    print(f"  [{'PASS' if ok else 'FAIL'}] {label}" + (f"  {detail}" if detail else ""))
+
     if not ok:
         FAILED.append(label)
 
@@ -142,11 +142,11 @@ def sweep(kp, cap):
             max(r for _, _, r in rows))
 
 
-print("=== the seeker yaw, target first seen at the frame edge, attitude 80 ms late ===")
+
 h0, n, w0, r0 = sweep(4.5, 182.0)
 h1, _, w1, r1 = sweep(2.0, 40.0)
-print(f"  old seeker (kp 4.5, 182 deg/s): touches {h0}/{n}, worst {w0:.1f} m, peak yaw rate {r0:.0f} deg/s")
-print(f"  new seeker (kp 2.0,  40 deg/s): touches {h1}/{n}, worst {w1:.1f} m, peak yaw rate {r1:.0f} deg/s")
+
+
 check("OLD seeker spins at > 100 deg/s from a frame-edge first detection (the field)", r0 > 100,
       f"{r0:.0f} deg/s")
 check("NEW seeker never exceeds its 40 deg/s cap", r1 <= 41.0, f"{r1:.1f} deg/s")
@@ -159,10 +159,9 @@ check("the shipped profiles carry the new seeker (kp 2.0, 40 deg/s) on every spe
       all(p.get("kp_yaw") == 2.0 and p.get("yaw_cap_dps") == 40.0
           for p in tracker.DroneTracker.MODES.values()))
 
-print()
+
 if FAILED:
-    print(f"{len(FAILED)} FAILED:")
+
     for f in FAILED:
-        print("  - " + f)
+        pass
     sys.exit(1)
-print("all passed")

@@ -8,7 +8,7 @@ from fake_fc import FakeArduPilot
 PORT = 14801
 bad = []
 def ck(n, c, d=""):
-    print(f"  [{'PASS' if c else 'FAIL'}] {n}" + (f"  {d}" if d else ""))
+
     if not c: bad.append(n)
 
 fc = FakeArduPilot(PORT, sysid_mygcs=255, armed=False, mode=0)
@@ -43,21 +43,21 @@ def drive(sec, az=8.0, el_world=None, el=0.0):
         c.update(cmd, (int(ex),int(ey)), have_target=True); sleep(0.02)
     return cmd
 
-print("\n== STEP 3-4: Jetson up, drone disarmed in STABILIZE ==")
+
 last = drive(1.0)
 ck("nothing driven while disarmed + STABILIZE", not fc.overrides, str(fc.overrides or "{}"))
 
-print("\n== STEP 5-6: pilot arms and takes off in STABILIZE ==")
+
 fc.armed = True; sleep(1.3); drive(1.0)
 ck("armed but STABILIZE -> pilot keeps every stick", not fc.overrides, str(fc.overrides or "{}"))
 
-print("\n== STEP 7: throttle centred, switch to ALT_HOLD ==")
+
 fc.mode = 2; sleep(1.4)
 last = drive(2.0)
 ck("all FOUR sticks now driven", set(fc.overrides)=={1,2,3,4}, f"ch {sorted(fc.overrides)}")
 ck("the drone confirms it applied them", c.override_confirmed is True)
 
-print("\n== 1) IT GOES AT THE TARGET ==")
+
 ck("nose leans DOWN = flies forward (never backwards)", last["lean_deg"] < -5,
    f"{last['lean_deg']:.1f} deg")
 ck("yaw turns toward a target on the RIGHT", last["yaw_stick"] > 0,
@@ -65,7 +65,7 @@ ck("yaw turns toward a target on the RIGHT", last["yaw_stick"] > 0,
 ck("forward lean reaches the drone as real stick travel",
    abs(fc.overrides[2]-1500) > 40, f"ch2={fc.overrides[2]}")
 
-print("\n== 2) IT FOLLOWS A MOVING TARGET (runs across) ==")
+
 yaw = 0.0; peak = 0.0
 for k in range(70):
     yaw += math.radians(14.0)*0.06
@@ -90,7 +90,7 @@ for k in range(70):
 ck("its OWN turning does NOT fake a bank (no spin-out)", worst < 1.0,
    f"worst {worst:.3f} deg  (27.0 before the fix)")
 
-print("\n== 3) IT WORKS THE THROTTLE ITSELF ==")
+
 c.update(c.neutral_command(), None, have_target=False); sleep(0.15)
 up = drive(1.2, az=2.0, el_world=+12.0)
 ch3_up = fc.overrides.get(3, 0)
@@ -107,7 +107,7 @@ ck("target LEVEL -> holds altitude (throttle at mid)",
    abs(lv["climb_mps"]) < 0.35 and abs(fc.overrides.get(3,0)-1500) < 130,
    f"{lv['climb_mps']:+.2f} m/s, ch3={fc.overrides.get(3)}")
 
-print("\n== THE ABORTS ==")
+
 fc.radio[6] = 1000; sleep(0.5); drive(0.7)
 ck("commit switch DOWN -> every stick released (fast abort)", not fc.overrides,
    str(fc.overrides or "{}"))
@@ -126,7 +126,6 @@ c.close(); sleep(0.4)
 ck("Ctrl-C / shutdown -> every stick released", not fc.overrides, str(fc.overrides or "{}"))
 fc.shutdown()
 
-print("\n" + "="*60)
+
 if bad:
-    print(f"{len(bad)} STAGE(S) FAILED:"); [print("  -", b) for b in bad]; sys.exit(1)
-print("TODAY'S SEQUENCE PASSES END TO END")
+    pass; [None for b in bad]; sys.exit(1)

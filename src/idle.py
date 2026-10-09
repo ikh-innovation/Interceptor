@@ -1,4 +1,4 @@
-"""Barometer/IMU recovery: level, hold yaw and altitude; no XY braking/hold."""
+
 import math
 
 
@@ -63,8 +63,8 @@ class Idle:
                 raise ValueError("pilot changed mode")
             if now-self.started >= self.MODE_TIMEOUT_S:
                 raise ValueError("ALT_HOLD was not confirmed")
-            # Use neutral throttle, never the previous full-throttle launch.
-            # While mode confirmation is pending, request no body rotation.
+
+
             self.stage = "SWITCHING"
             self._t = now
             return mapper.idle_pwm(0.0, 0.0)

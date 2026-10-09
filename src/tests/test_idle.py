@@ -1,4 +1,4 @@
-"""Idle recovery and total deadlines, using synthetic telemetry only."""
+
 import math
 from pathlib import Path
 import sys
@@ -49,7 +49,7 @@ class IdleTests(unittest.TestCase):
         out = idle.output(mp, 101.02, ctx)
         self.assertLess(out["yaw"], 0, "take short direction across north")
         self.assertLessEqual(abs(out["yaw"]), 15)
-        # Synthetic altitude plant follows requested native ALT_HOLD climb.
+
         for i in range(2, 1201):
             out = idle.output(mp, 101+i*.02, ctx)
             self.assertLessEqual(abs(out["throttle"]), 1)
@@ -149,6 +149,37 @@ class IdleTests(unittest.TestCase):
         self.assertEqual(m.cycle(1001, ctx), {})
         self.assertFalse(m.idle.active)
 
+    def test_wasp_above_ceiling_enters_idle_only_at_configured_deadline(self):
+        for detected in (False, True):
+            with self.subTest(detected=detected):
+                m, mp, ctx = self.mission(True)
+                mp.armed = False
+                self.assertEqual(m.set_idle_seconds(5, save=False), "")
+                mp.armed = True
+                self.assertEqual(m.request_engage(), "")
+                m.cycle(101, ctx)
+                for offset in (.5, 1, 1.25, 1.5, 3, 4.99):
+                    now = 101 + offset
+                    ctx.update(height=m.ceiling_m + 20*offset,
+                               ai_cmd=observe(WaspGuidance(), x=50, t=now) if detected else None,
+                               det_t=now if detected else None,
+                               det_conf=.9 if detected else None)
+                    out = m.cycle(now, ctx)
+                    self.assertEqual(m.phase, "WASP_FLIGHT")
+                    self.assertFalse(m.idle.active)
+                    self.assertEqual(out["throttle"], 2000)
+                    self.assertEqual(m._run_t, 101)
+                    self.assertAlmostEqual(m.snapshot(now)["idle_remaining_s"], 5-offset)
+                    if detected and offset >= 1.5:
+                        self.assertEqual(m.wasp.progress(now)["stage"], "GUIDE")
+                ctx.update(ai_cmd=observe(WaspGuidance(), t=106) if detected else None,
+                           det_t=106 if detected else None)
+                m.cycle(106, ctx)
+                self.assertEqual(m.phase, "IDLE")
+                self.assertEqual(m.idle.started, 106)
+                self.assertIn("Idle time limit", m.event)
+                self.assertEqual(m.idle.height, ctx["height"])
+
     def test_seeker_engage_and_auto_use_total_command_start(self):
         for auto in (False, True):
             m, mp, ctx = self.mission()
@@ -159,7 +190,7 @@ class IdleTests(unittest.TestCase):
             m.cycle(101, ctx)
             self.assertEqual(m._run_t, 101)
             if auto:
-                # ENGAGE during AUTO must preserve the original start time.
+
                 self.assertFalse(m.request_engage()); m.cycle(105, ctx)
                 self.assertEqual(m._run_t, 101)
             m.cycle(110.99, ctx); self.assertFalse(m.idle.active)
@@ -191,7 +222,7 @@ class IdleTests(unittest.TestCase):
             self.assertEqual(m.idle_s, 10)
             self.assertFalse(m.set_idle_seconds("6.5"))
             other = Mission(IdleMapper(), idle_path=path, log=lambda *_: None)
-            other.mapper.armed = True  # Reading saved settings never engages.
+            other.mapper.armed = True
             self.assertFalse(load_idle_settings(other)); self.assertEqual(other.idle_s, 6.5)
             self.assertFalse(other.idle.active)
             for value in (0, 601, "", "nan", "inf", "invalid"):

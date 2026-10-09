@@ -12,7 +12,7 @@ FAILED = []
 
 
 def check(label, ok, detail=""):
-    print(f"  [{'PASS' if ok else 'FAIL'}] {label}" + (f"  {detail}" if detail else ""))
+
     if not ok:
         FAILED.append(label)
 
@@ -36,16 +36,15 @@ names = [p.name for p in files]
 counts = {}
 for p in files[:-1]:
     c = cv2.VideoCapture(str(p)); counts[p.name] = int(c.get(cv2.CAP_PROP_FRAME_COUNT)); c.release()
-print("  segments:", names)
+
 check("100 frames at 1 s segments -> 4 files: the base name, then _p02, _p03, _p04",
       names == ["20260926_120000.mp4", "20260926_120000_p02.mp4", "20260926_120000_p03.mp4",
                 "20260926_120000_p04.mp4"], str(names))
 check("every CLOSED segment is playable after the 'power cut', 30 frames each",
       counts and all(v == 30 for v in counts.values()), str(counts))
-print()
+
 if FAILED:
-    print(f"{len(FAILED)} FAILED:")
+
     for f in FAILED:
-        print("  - " + f)
+        pass
     sys.exit(1)
-print("all passed")

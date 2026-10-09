@@ -21,7 +21,7 @@ W = H = 640
 
 
 def check(label, ok, detail=""):
-    print(f"  [{'PASS' if ok else 'FAIL'}] {label}" + (f"  {detail}" if detail else ""))
+
     if not ok:
         FAILED.append(label)
 
@@ -155,7 +155,7 @@ def run(size, follow, seed, p_det=0.15, p_false=0.0, frames=900, leave_at=None, 
     return out, first, t
 
 
-print("=== 1. once found, a small target is followed on (nearly) every frame ===")
+
 for size in (3, 5, 8, 14):
     res = {}
     for follow in (False, True):
@@ -174,7 +174,7 @@ for size in (3, 5, 8, 14):
           f"(detector alone {100 * c0:.0f}%), p95 error {e1:.1f} px",
           c1 >= 0.93 and e1 <= max(3.0, 0.6 * size), f"follower off {100 * c0:.0f}%")
 
-print("=== 2. an even sparser detector (6%): still held ===")
+
 for size in (4, 10):
     covs = []
     for seed in (4, 5):
@@ -184,7 +184,7 @@ for size in (4, 10):
     check(f"{size:2d} px, detector 6%: tracked {100 * min(covs):.0f}% of frames at worst", min(covs) >= 0.85,
           str([round(100 * c) for c in covs]))
 
-print("=== 3. the target leaves the picture / vanishes: no invented target on the clouds ===")
+
 for size in (5, 12):
     out, first, t = run(size, True, 7, leave_at=500)
     gone = [o for o in out[500:] if not o[2]]
@@ -198,7 +198,7 @@ for size in (5, 12):
           f"({fake} of {len(gone)}), then let go", fake <= 3 and t.state == "SEARCH",
           f"final {t.state}, layer {t.layer}")
 
-print("=== 4. false detections on clouds (2% of frames) do not steal the track ===")
+
 for size in (5, 10):
     out, first, t = run(size, True, 9, p_false=0.02)
     seg = out[first:]
@@ -207,7 +207,7 @@ for size in (5, 10):
     check(f"{size:2d} px with cloud false alarms: tracked {100 * good:.0f}%, measurements far off "
           f"the target {off} of {len(seg)}", good >= 0.90 and off <= 0.01 * len(seg))
 
-print("=== 5. a detection in the top corner while the target is in the middle: never taken ===")
+
 CORNER = (70.0, 60.0)
 for size in (5, 10):
     for label, twin, blind in (("a cloud speck at 0.9 on every frame", False, False),
@@ -231,7 +231,7 @@ for size in (5, 10):
               stolen == 0 and held >= 0.90 and after >= 0.90,
               f"today's tracker: {res_off} of 150 frames on the corner")
 
-print("=== 6. fps: while the follower holds, ONE detector call per frame ===")
+
 for size in (5, 10):
     out, first, t = run(size, True, 13, frames=600)
     per = t.calls / 600.0
@@ -239,7 +239,7 @@ for size in (5, 10):
     check(f"{size:2d} px: {per:.2f} detector calls per frame (follower off: {t0.calls / 600.0:.2f})",
           per <= 1.02)
 
-print("=== 7. cost ===")
+
 import time
 rng = np.random.default_rng(11)
 field = cloud_field(rng)
@@ -256,10 +256,9 @@ for radius in (60, 120):
     check(f"one follower search ({radius} px radius, three scales) takes {ms:.2f} ms on this CPU",
           hit is not None and ms < 8.0)
 
-print()
+
 if FAILED:
-    print(f"{len(FAILED)} FAILED:")
+
     for x in FAILED:
-        print("  - " + x)
+        pass
     sys.exit(1)
-print("all passed")

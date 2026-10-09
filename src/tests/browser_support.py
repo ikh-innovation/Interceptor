@@ -1,4 +1,4 @@
-"""Use an installed headless browser; prefer Chrome over confined Snap Firefox."""
+
 import shutil
 import subprocess
 

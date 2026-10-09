@@ -1,4 +1,4 @@
-"""Check optimized search bounds and library initialization without hardware."""
+
 import contextlib
 import io
 import os
@@ -28,7 +28,7 @@ class SearchBoundsTests(unittest.TestCase):
                 masks.append(mask)
             masks += [(rng.random((fh, fw)) < fraction).astype(np.uint8)*255
                       for fraction in (.001, .1, .9)]
-            masks.append(masks[-1][:, ::-1])  # non-contiguous view
+            masks.append(masks[-1][:, ::-1])
             for mask in masks:
                 tracker.sky_mask = mask
                 ys, xs = np.where(mask > 0)
@@ -47,7 +47,7 @@ class SearchBoundsTests(unittest.TestCase):
         class Model:
             @property
             def names(self):
-                cv2.setNumThreads(0)  # library initialization resets this global
+                cv2.setNumThreads(0)
                 return {0: 'target'}
 
         class AP:

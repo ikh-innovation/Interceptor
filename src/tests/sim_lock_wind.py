@@ -140,11 +140,11 @@ def main():
             for bf in (0, 1, 2, 3) for s in SENS for lk in (False, True) for i in range(seeds)]
     with Pool() as p:
         res = p.map(run, rows, chunksize=2)
-    print(f"=== LOCK vs gusts: {len(res)} hovers of {dur:.0f} s, heading error from where it was locked ===")
-    print("    airframe yaw sensitivity = how hard a 5 m/s broadside gust tries to turn it")
+
+
     for sens in SENS:
-        print(f"\n  sensitivity {sens.upper()} ({SENS[sens]:.0f} deg/s^2 at 5 m/s broadside)")
-        print(f"    {'':10s}{'':9s}{'typical':>9s}{'p95':>8s}{'worst':>8s}{'at end':>9s}{'< 3 deg':>9s}{'ends >10°':>11s}")
+
+
         for bf in (0, 1, 2, 3):
             for lk in (False, True):
                 rs = [r for r in res if r["bf"] == bf and r["sens"] == sens and r["lock"] == lk]
@@ -154,16 +154,16 @@ def main():
                 fin = sorted(r["final"] for r in rs)[int(0.95 * (len(rs) - 1))]
                 in3 = 100 * sum(r["in3"] for r in rs) / len(rs)
                 lost = sum(1 for r in rs if r["final"] > 10.0)
-                print(f"    Bf{bf} {'LOCK' if lk else 'FC only':<9s}{med:7.1f}°{p95:7.1f}°{mx:7.1f}°{fin:8.1f}°"
-                      f"{in3:8.0f}%{lost:5d}/{len(rs)}")
+
+
     lk = [r for r in res if r["lock"]]
-    print(f"\n  LOCK's own yaw command, worst of all runs: {max(r['peak_cmd'] for r in lk):.0f} deg/s "
-          f"(cap {M.Mission.LOCK_MAX_DPS:.0f})")
+
+
     fc = [r for r in res if not r["lock"]]
-    print(f"  FC only: runs where a gust dragged the FC's own heading target: "
-          f"{sum(1 for r in fc if r['drags'])}/{len(fc)} (it then HOLDS the wrong heading)")
-    print("  typical = RMS heading error; at end = 95th percentile of where it ended up;")
-    print("  ends >10° = runs that finished more than 10 deg from the locked heading")
+
+
+
+
 
 
 if __name__ == "__main__":

@@ -1,8 +1,6 @@
 [Unit]
 Description=WASP drone tracker (auto-start at Jetson power-up, intercept law)
 
-# A lingering user manager starts this at boot without a desktop login.
-# nvargus-daemon is a system service; the launcher waits for the camera.
 
 StartLimitIntervalSec=0
 

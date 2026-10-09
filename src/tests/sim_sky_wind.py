@@ -542,8 +542,8 @@ def pct(xs):
 
 
 def report(res, title):
-    print(f"\n=== {title} ===")
-    print(f"{'':22s}" + "".join(f"{'Bf' + str(b):>10s}" for b in (0, 1, 2, 3)))
+
+
     keys = []
     for r in res:
         k = (r["kind"], r["speed"])
@@ -554,22 +554,22 @@ def report(res, title):
         for b in (0, 1, 2, 3):
             rs = [r for r in res if (r["kind"], r["speed"]) == k and r["bf"] == b]
             cells.append(f"{pct([r['touch'] for r in rs]):8.0f}% ")
-        print(f"  {k[0]:<12s}{k[1]:4.0f} m/s " + "".join(cells))
-    print("  " + "-" * 60)
+
+
     for label, f in (("TOUCH  (< 0.5 m)", lambda r: r["touch"]),
                      ("NEAR   (< 1.5 m)", lambda r: r["best"] < 1.5),
                      ("AI took over", lambda r: r["ai"]),
                      ("ground / crash", lambda r: r["crashed"])):
         cells = "".join(f"{pct([f(r) for r in res if r['bf'] == b]):8.0f}% " for b in (0, 1, 2, 3))
-        print(f"  {label:<22s}" + cells)
+
     for b in (0, 1, 2, 3):
         rs = sorted(r["best"] for r in res if r["bf"] == b)
         ts = sorted(r["t"] for r in res if r["bf"] == b and r["touch"])
         med_t = ts[len(ts) // 2] if ts else float("nan")
         bank = sorted(r["max_bank"] for r in res if r["bf"] == b)
-        print(f"  Bf{b}: median miss {rs[len(rs) // 2]:.2f} m, 90% of runs within "
-              f"{rs[int(0.9 * (len(rs) - 1))]:.1f} m, median time to touch "
-              f"{med_t:.1f} s, peak bank p95 {bank[int(0.95 * (len(bank) - 1))]:.0f} deg")
+
+
+
 
 
 def q(xs, f):
@@ -578,10 +578,10 @@ def q(xs, f):
 
 
 def report_turns(res):
-    print("\n=== THE TURN AT TAKEOVER: does it swing PAST the target? ===")
-    print("  (only runs where the AI steered; the last 3 m are excluded -- that is the pass)")
+
+
     st = [r for r in res if r["steered"]]
-    print(f"{'':34s}" + "".join(f"{'Bf' + str(b):>9s}" for b in (0, 1, 2, 3)))
+
     rows = (
         ("overshoot past target, median", lambda rs: f"{q([r['overshoot'] for r in rs], .5):6.1f} deg"),
         ("overshoot past target, p95", lambda rs: f"{q([r['overshoot'] for r in rs], .95):6.1f} deg"),
@@ -595,36 +595,36 @@ def report_turns(res):
         ("target out of frame, p90", lambda rs: f"{100 * q([r['lost_frac'] for r in rs], .9):6.1f} %  "),
     )
     for label, f in rows:
-        print(f"  {label:<32s}" + "".join(f"{f([r for r in st if r['bf'] == b]):>9s}" for b in (0, 1, 2, 3)))
-    print("\n  by where the target was in the frame at ENGAGE (all winds):")
+        pass
+
     for lo, hi in ((0, 10), (10, 20), (20, 29)):
         rs = [r for r in st if lo <= abs(r["az0"]) < hi]
         if rs:
-            print(f"    {lo:2d}-{hi:2d} deg off-centre: overshoot p95 {q([r['overshoot'] for r in rs], .95):5.1f} deg, "
-                  f"worst {max(r['overshoot'] for r in rs):5.1f}, peak yaw {max(r['peak_yr'] for r in rs):4.0f} deg/s, "
-                  f"touch {pct([r['touch'] for r in rs]):3.0f}%  (n={len(rs)})")
-    print("\n  by target motion (all winds):")
+            pass
+
+
+
     kinds = []
     for r in st:
         if (r["kind"], r["speed"]) not in kinds:
             kinds.append((r["kind"], r["speed"]))
     for k in kinds:
         rs = [r for r in st if (r["kind"], r["speed"]) == k]
-        print(f"    {k[0]:<12s}{k[1]:4.0f} m/s: past target median {q([r['overshoot'] for r in rs], .5):4.1f}, "
-              f"p95 {q([r['overshoot'] for r in rs], .95):5.1f}, worst {max(r['overshoot'] for r in rs):5.1f} deg; "
-              f"> 15 deg in {pct([r['overshoot'] > 15 for r in rs]):3.0f}% of runs")
+
+
+
     worst = sorted(st, key=lambda r: -r["overshoot"])[:5]
-    print("\n  the 5 worst swings:")
+
     for r in worst:
-        print(f"    Bf{r['bf']} {r['kind']:<11s}{r['speed']:4.0f} m/s  target {r['az0']:+5.1f} deg at ENGAGE -> "
-              f"{r['overshoot']:5.1f} deg past, peak yaw {r['peak_yr']:4.0f} d/s, miss {r['best']:.2f} m")
+        pass
+
 
 
 def compare_speeds(allres):
     speeds = [sp for sp in ("SLOW", "MEDIUM", "FAST", "MAX") if sp in allres]
-    print("\n=== AI SPEED COMPARISON: touch rate (< 0.5 m), PUSH at %s ===" % (os.environ.get("SIM_PUSH") or "SLOW (the default, 20 deg)"))
-    print(f"  {'target':<22s}" + "".join(f"{'Bf' + str(b):>16s}" for b in (0, 1, 2, 3)))
-    print(f"  {'':<22s}" + "".join(f"{' / '.join(s[0] for s in speeds):>16s}" for _ in range(4)))
+
+
+
     keys = []
     for r in allres[speeds[0]]:
         if (r["kind"], r["speed"]) not in keys:
@@ -635,25 +635,25 @@ def compare_speeds(allres):
             vals = [pct([r["touch"] for r in allres[sp] if (r["kind"], r["speed"]) == k and r["bf"] == b])
                     for sp in speeds]
             cells.append(" / ".join(f"{v:3.0f}" for v in vals))
-        print(f"  {k[0]:<12s}{k[1]:4.0f} m/s   " + "".join(f"{c:>16s}" for c in cells))
-    print("  " + "-" * 86)
+
+
     for label, f in (("TOUCH (< 0.5 m)", lambda r: r["touch"]), ("NEAR (< 1.5 m)", lambda r: r["best"] < 1.5),
                      ("ground / crash", lambda r: r["crashed"])):
         cells = []
         for b in (0, 1, 2, 3):
             vals = [pct([f(r) for r in allres[sp] if r["bf"] == b]) for sp in speeds]
             cells.append(" / ".join(f"{v:3.0f}" for v in vals))
-        print(f"  {label:<22s}" + "".join(f"{c:>16s}" for c in cells))
-    print()
+
+
     for sp in speeds:
         rs = allres[sp]
         ts = sorted(r["t"] for r in rs if r["touch"])
         st = [r for r in rs if r["steered"]]
-        print(f"  {sp:<6s}: touch {pct([r['touch'] for r in rs]):4.0f}%  near {pct([r['best'] < 1.5 for r in rs]):4.0f}%  "
-              f"median time to touch {ts[len(ts) // 2] if ts else float('nan'):4.1f} s  "
-              f"peak bank p95 {q([r['max_bank'] for r in rs], .95):3.0f} deg  "
-              f"bank jump/0.2 s p95 {q([r['bank_jump'] for r in st], .95):3.0f} deg  "
-              f"swing past target p95 {q([r['overshoot'] for r in st if r['kind'] != 'zigzag'], .95):4.1f} deg")
+
+
+
+
+
 
 
 def main():
@@ -691,14 +691,14 @@ def main():
     if a.speed:
         os.environ["SIM_SPEED"] = a.speed
     law = build_law_cached()
-    print("law as flown: tilt %.0f, lean %.0f, PN %.0f, bank %.0f..%.0f, kp_yaw %.1f, "
-          "yaw cap %.0f deg/s, climb_gain %.0f, climb_los %s, slew %.1f" % (
-              math.degrees(law.cam_tilt),
-              math.degrees(law.max_lean), law.roll_pn_gain,
-              math.degrees(law.bank_far) if law.bank_far else float("nan"),
-              math.degrees(law.max_bank), law.kp_yaw,
-              math.degrees(law.stick_limit_yaw * YAW_FULL), law.climb_gain,
-              law.climb_los, law.slew_per_s))
+
+
+
+
+
+
+
+
     rows = scenarios(n, a.vfov or VFOV_LAW, a.hfov or HFOV)
     with Pool() as p:
         res = p.map(engage, rows, chunksize=4)

@@ -50,7 +50,7 @@ class FlightLogs:
                               settings=metadata())
         self._save_metadata()
         self._event(now, "start", phase=state["phase"])
-        print(f"[LOG] {kind} flight -> {path}", flush=True)
+
 
     @staticmethod
     def _utc():
@@ -118,7 +118,7 @@ class FlightLogs:
 
     def _fail(self, exc):
         self.error = str(exc)
-        print(f"[LOG][WARN] per-flight logging failed: {exc}", flush=True)
+
         self._close_handles()
 
     def _close_handles(self):
@@ -145,7 +145,7 @@ class FlightLogs:
             self._save_metadata()
         except Exception as exc:
             self.error = str(exc)
-            print(f"[LOG][WARN] could not finalize flight log: {exc}", flush=True)
+
         finally:
             self._close_handles()
             self.last, self.active = self.active, None

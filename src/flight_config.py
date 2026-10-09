@@ -5,8 +5,8 @@ MODE = "sky"
 
 
 
-# Physical mount at boot. AUTO / SEMI-AUTO still use the 30 degree law;
-# the mission gate prevents using it with this 90 degree Wasp installation.
+
+
 MOUNT_TILT_DEG = 90
 
 
@@ -142,40 +142,34 @@ if __name__ == "__main__":
     try:
         cfg = resolve()
     except ConfigError as exc:
-        print(f"\n[flight_config] REFUSING TO START\n\n  {exc}\n",
-              file=sys.stderr)
+
+
         sys.exit(1)
 
     if shell:
         print(as_shell(cfg))
     else:
-        print(f"  mode          : {cfg['mode']}  —  {cfg['label']}")
-        print(f"  camera tilt   : {cfg['cam_tilt_deg']} deg "
-              f"(mount declared at {MOUNT_TILT_DEG})")
-        print(f"  visible band  : {cfg['band']}")
-        print(f"  target width  : {cfg['target_width_m']} m")
-        print(f"  lean / gain   : {cfg['max_lean_deg']} deg / "
-              f"{cfg['roll_pn_gain']}")
-        print(f"  climb         : gain {cfg.get('climb_gain', 8)} m/s/rad, "
-              f"stick <= {cfg.get('stick_limit_throttle', 0.9) * 100:.0f}%"
-              + (f"   lean eases above {cfg['lean_el_guard'] * 100:.0f}% "
-                 f"of the half-frame" if cfg.get('lean_el_guard') else "")
-              + ("   CLIMB_LOS (v_forward * tan(elevation))"
-                 if cfg.get('climb_los') else ""))
+
+
+
+
+
+
+
+
+
+
+
+
+
         if cfg.get('edge_guard'):
-            print(f"  edge guard    : speed eases back above "
-                  f"{cfg['edge_guard'] * 100:.0f}% toward ANY frame edge")
-        print(f"  commit chan   : {cfg['commit_chan']}")
-        print(f"  FC mode gate  : {cfg.get('steer_modes', 'ALT_HOLD')}"
-              + ("  — pilot's transmitter switch decides which control law runs"
-                 if ',' in cfg.get('steer_modes', '') else ""))
+            pass
+
+
+
+
+
         if cfg.get("bank_far_deg") is None:
-            print(f"  turn schedule : OFF — bank fixed at MAX_BANK_DEG")
+            pass
         else:
-            print(f"  turn schedule : bank {cfg['bank_far_deg']} deg far -> "
-                  f"MAX_BANK_DEG near, gain x1 -> x{cfg['pn_near_mult']}")
-            print(f"  sensitivity   : {cfg['sens_default']} at start "
-                  f"(live on the HUD slider)  lock ramp "
-                  f"{cfg['lock_ramp_s']}s")
-        print(f"  weights       : {cfg['model']}")
-        print(f"  note          : {cfg['note']}")
+            pass

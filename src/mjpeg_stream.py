@@ -240,9 +240,9 @@ class MJPEGServer:
         self._encoder.start()
 
         for url in self.urls():
-            print("[STREAM] seeker view -> " + url)
-        print("[STREAM] MJPEG q=%d cap=%.0f fps - encodes only while a viewer "
-              "is connected" % (self.quality, 1.0 / self.min_dt))
+            pass
+
+
         return self
 
     def _take_lease(self, client):
@@ -279,7 +279,7 @@ class MJPEGServer:
             self._httpd.shutdown()
             self._httpd.server_close()
             self._httpd = None
-        print("[STREAM] stopped - %d frame(s) served" % self._n_encoded)
+
 
     def publish(self, frame_bgr):
         if not self._running or self._clients == 0 or frame_bgr is None:
@@ -305,13 +305,13 @@ class MJPEGServer:
         with self._lock:
             self._clients += 1
             n = self._clients
-        print("[STREAM] viewer connected (%d watching)" % n)
+
 
     def _client_out(self):
         with self._lock:
             self._clients = max(0, self._clients - 1)
             n = self._clients
-        print("[STREAM] viewer left (%d watching)" % n)
+
 
     def _encode_loop(self):
         params = [int(cv2.IMWRITE_JPEG_QUALITY), self.quality]
@@ -397,7 +397,7 @@ if __name__ == "__main__":
     import numpy as np
 
     srv = MJPEGServer(port=8080).start()
-    print("[STREAM] test pattern - Ctrl-C to stop")
+
     try:
         i = 0
         while True:

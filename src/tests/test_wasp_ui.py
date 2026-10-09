@@ -1,4 +1,4 @@
-"""Browser checks of persistent mode, compact parameters and Wasp controls."""
+
 import json
 import os
 from pathlib import Path
@@ -115,6 +115,18 @@ async function main(){
  await check('Wasp switch disables Auto and confirms 90 degrees',(await req('/state')).mission.wasp_camera_confirmed&&!(await req('/state')).mission.auto_enabled&&q('#mountstatus').textContent==='90° ✓');
  await check('mode and mount sent in the correct order',JSON.stringify((await req('/commands')).slice(-2))===JSON.stringify([['flightmode','wasp'],['mount','90']]));
  await check('Wasp flight parameters replace Normal',visible('#pp_wasp')&&!visible('#normal_params')&&q('#flight_mode_tag').textContent==='WASP');
+ await check('simple steering is visible and advanced controls start collapsed',visible('#wasp_profiles')&&!q('#wasp_advanced').open&&!visible('[data-wp="blend"]')&&!visible('[data-wp="gain"]')&&visible('[data-wp="throttle"]'));
+ await check('Standard is selected from actual backend settings',q('[data-wasp-profile="standard"]').getAttribute('aria-pressed')==='true'&&q('#wasp_profile_help').textContent.includes('starting point'));
+ const profileStart=(await req('/commands')).length;
+ q('[data-wasp-profile="smooth"]').click();await until(()=>q('[data-wasp-profile="smooth"]').classList.contains('on'));
+ const smooth=(await req('/state')).mission.wasp_params;
+ await check('one profile command applies all three steering values',smooth.blend===1&&smooth.rate===45&&smooth.gain===2&&(await req('/commands')).length===profileStart+1);
+ q('[data-wasp-profile="responsive"]').click();await until(()=>q('[data-wasp-profile="responsive"]').classList.contains('on'));
+ const responsive=(await req('/state')).mission.wasp_params;
+ await check('Responsive applies together without changing launch throttle',responsive.blend===0.5&&responsive.rate===90&&responsive.gain===4&&responsive.throttle===smooth.throttle);
+ q('[data-wasp-profile="standard"]').click();await until(()=>q('[data-wasp-profile="standard"]').classList.contains('on'));
+ await check('main screen shows active steering and Idle before launch',visible('#wasp_summary')&&q('#wasp_summary').textContent.includes('Steering: Standard')&&q('#wasp_summary').textContent.includes('Idle 12.5 s'));
+ q('#wasp_advanced').open=true;
  await check('Wasp has seven parameter groups and no old timers',q('#pp_wasp').querySelectorAll('[data-wp]').length===7&&!q('[data-wp="duration"]')&&!q('[data-wp="no_det"]'));
  await check('Idle is shared across modes',q('#idle_seconds').value==='12.5');
  q('#idle_seconds').focus();q('#idle_seconds').value='7';q('#idle_seconds').dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));
@@ -123,6 +135,7 @@ async function main(){
  await check('Wasp has gain 2 by default',q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
  q('[data-wp="rate"] [data-wv="45"]').click();await until(()=>q('[data-wp="rate"] [data-wv="45"]').classList.contains('on'));
  await check('Idle and 45-degree choices apply to backend',(await req('/state')).mission.idle_s===7&&(await req('/state')).mission.wasp_params.rate===45);
+ await check('manual steering change is shown as Custom',q('#wasp_profile_help').textContent.includes('Custom')&&q('#wasp_summary').textContent.includes('Steering: Custom')&&![...f.contentDocument.querySelectorAll('[data-wasp-profile]')].some(x=>x.classList.contains('on')));
  await check('Enter ends Idle editing',f.contentDocument.activeElement!==q('#idle_seconds'));
  await layout('wasp');
  q('[data-sky="off"]').click();await until(()=>q('[data-sky="off"]').classList.contains('on'));
@@ -140,11 +153,13 @@ async function main(){
  await check('refresh preserves Wasp mode',q('[data-flightmode="wasp"]').classList.contains('on'));
  await check('refresh preserves throttle',q('[data-wp="throttle"] [data-wv="0.25"]').classList.contains('on'));
  await check('refresh preserves Idle, rate and gain',q('#idle_seconds').value==='7'&&q('[data-wp="rate"] [data-wv="45"]').classList.contains('on')&&q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
+ await check('refresh preserves Custom steering and collapsed advanced view',q('#wasp_summary').textContent.includes('Steering: Custom')&&!q('#wasp_advanced').open);
  await check('refresh preserves camera confirmation',q('#mountstatus').textContent==='90° ✓');
  await req('/set?armed=1&phase=WASP_READY');await until(()=>q('[data-flightmode="normal"]').disabled);
  await check('Idle locked while armed',q('#idle_seconds').disabled);
- await check('mode and Wasp parameters locked while armed',[...f.contentDocument.querySelectorAll('[data-flightmode], [data-wp] button')].every(x=>x.disabled)&&q('#mountstatus').disabled);
+ await check('mode, profiles and Wasp parameters locked while armed',[...f.contentDocument.querySelectorAll('[data-flightmode], [data-wp] button, [data-wasp-profile]')].every(x=>x.disabled)&&q('#mountstatus').disabled);
  q('[data-flightmode="normal"]').click();await sleep(100);
+ q('[data-wasp-profile="standard"]').click();await sleep(100);
  await check('armed mode click sends nothing',(await req('/commands')).length===count&&!visible('#modechange'));
  q('#sh_speed [data-close]').click();
  await check('Wasp aim and launch controls remain correct',q('#aim').style.top==='50%'&&!visible('#arc')&&q('#b_up').disabled&&!q('#b_eng').disabled);
@@ -264,7 +279,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/report":
                 r = json.loads(q["data"][0])
                 reports.append(r)
-                print(r, flush=True)
+
                 return self.send({})
             if u.path == "/done":
                 done.set()
@@ -283,7 +298,7 @@ if __name__ == "__main__":
         sys.exit("A headless browser is required for this test")
     srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    # Snap Firefox has a private /tmp; use a profile it can actually see.
+
     with tempfile.TemporaryDirectory(prefix=".wasp-browser-", dir=ROOT) as profile:
         with open("/tmp/wasp-firefox.log", "w") as log:
             proc = launch(profile, f"http://127.0.0.1:{srv.server_port}/h", output=log)
@@ -292,8 +307,8 @@ if __name__ == "__main__":
             finally:
                 proc.terminate()
                 proc.wait(timeout=10)
-                # Snap's browser children can finish writing after the launcher
-                # exits. Retry profile removal before TemporaryDirectory cleanup.
+
+
                 for _ in range(20):
                     try:
                         shutil.rmtree(profile)
@@ -303,4 +318,3 @@ if __name__ == "__main__":
     srv.shutdown()
     assert finished, "Browser timed out; see /tmp/wasp-firefox.log"
     assert reports and all(r["ok"] for r in reports), reports
-    print(f"All {len(reports)} browser checks passed")

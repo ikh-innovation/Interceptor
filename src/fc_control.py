@@ -944,9 +944,9 @@ class ArduPilotAcro(FcBackend):
         if mavutil is None:
             raise RuntimeError("pymavlink not installed:  pip install pymavlink")
 
-        self._say(f"[FC] opening {self.conn}"
-                  + (f" @ {self.baud}" if not str(self.conn).startswith(("udp", "tcp"))
-                     else ""))
+
+
+
         self.master = mavutil.mavlink_connection(
             self.conn, baud=self.baud,
             source_system=self.DEFAULT_GCS_SYSID,
@@ -967,9 +967,9 @@ class ArduPilotAcro(FcBackend):
 
         self.linked = True
         self._apply_heartbeat(hb)
-        self._say(f"[FC] ArduPilot  sys={self.master.target_system} "
-                  f"comp={self.master.target_component}  mode={self.mode_name}  "
-                  f"{'ARMED' if self.armed else 'DISARMED'}")
+
+
+
 
         self._read_config()
         self._adopt_gcs_sysid()
@@ -988,7 +988,7 @@ class ArduPilotAcro(FcBackend):
 
     def _say(self, msg):
         if self.verbose:
-            print(msg, flush=True)
+            pass
 
     def _wait_vehicle_heartbeat(self, timeout):
         deadline = perf_counter() + timeout
@@ -1107,10 +1107,10 @@ class ArduPilotAcro(FcBackend):
                                      max=int(mx) if mx else 2000,
                                      trim=1500, reversed=False,
                                      from_fc=None not in (mn, mx))
-            self._say(f"[FC][RC] commit   ch{ch}  "
-                      f"min={self.rc['commit']['min']} "
-                      f"max={self.rc['commit']['max']}  (input only, never "
-                      f"overridden)")
+
+
+
+
             if ch in {cfg["chan"] for a, cfg in self.rc.items()
                       if a in self.axes}:
                 self.blockers.append(
@@ -1140,9 +1140,9 @@ class ArduPilotAcro(FcBackend):
         src = "from FC" if from_fc else "DEFAULTS (param read failed!)"
         warn = "" if 1 <= cfg["chan"] <= 8 else "  [chan>8 cannot be overridden!]"
         if announce:
-            self._say(f"[FC][RC] {axis:8s} ch{cfg['chan']}  "
-                      f"min={cfg['min']} trim={cfg['trim']} max={cfg['max']} "
-                      f"rev={int(cfg['reversed'])}  ({src}){warn}")
+            pass
+
+
         if not announce:
             return cfg
         if not 1 <= cfg["chan"] <= 8:
@@ -1155,9 +1155,9 @@ class ArduPilotAcro(FcBackend):
         want = self.force_sysid if self.force_sysid is not None else self.sysid_mygcs
         if want is None:
             want = self.DEFAULT_GCS_SYSID
-            self._say(f"[FC] could not read SYSID_MYGCS — assuming the ArduPilot "
-                      f"default ({want}).  If overrides are refused, set "
-                      f"MAV_SOURCE_SYSTEM to the FC's real SYSID_MYGCS.")
+
+
+
         want = int(want)
         self.master.mav.srcSystem = want
         try:
@@ -1165,8 +1165,8 @@ class ArduPilotAcro(FcBackend):
         except Exception:
             pass
         note = "" if self.sysid_mygcs is None else f" (FC SYSID_MYGCS={self.sysid_mygcs})"
-        self._say(f"[FC] sending overrides as system id {want}{note} — ArduPilot "
-                  f"only accepts RC_CHANNELS_OVERRIDE from SYSID_MYGCS")
+
+
 
     def _request_rc_channels_stream(self, hz=10.0):
         try:
@@ -1344,8 +1344,8 @@ class ArduPilotAcro(FcBackend):
                     yawspeed=ys, age=perf_counter() - t)
 
     def wasp_attitude(self, at_t=None):
-        # Refuse old frames outside history and gaps rather than silently using
-        # an unrelated attitude. Interpolate rotations across Euler wrap safely.
+
+
         now = perf_counter()
         with self._lock:
             hist = list(self._att_hist)
@@ -1391,7 +1391,7 @@ class ArduPilotAcro(FcBackend):
         return ""
 
     def wasp_setup_error(self):
-        """Configuration checks also available while disarmed for preflight."""
+
         if self.params.get("ACRO_TRAINER") != 0:
             return "WASP needs ACRO_TRAINER=0 (no auto-level)"
         for k in ("ACRO_RP_RATE", "ACRO_Y_RATE"):
@@ -1442,7 +1442,7 @@ class ArduPilotAcro(FcBackend):
         sticks[:2] = [v/scale for v in sticks[:2]]
         out = {a: self._exact_pwm(a, v) for a, v in zip(("roll", "pitch", "yaw"), sticks)}
         cfg = self.rc["throttle"]
-        # ACRO throttle is unipolar. ALT_HOLD's midpoint/deadzone mapping is wrong here.
+
         fraction = 1-throttle if cfg["reversed"] else throttle
         out["throttle"] = round(cfg["min"] + fraction*(cfg["max"]-cfg["min"]))
         return out
@@ -1577,8 +1577,8 @@ class ArduPilotAcro(FcBackend):
 
         if matched:
             if self.override_confirmed is not True:
-                self._say("[FC] override CONFIRMED — the FC is echoing our "
-                          "stick values back in RC_CHANNELS")
+                pass
+
             self.override_confirmed = True
         elif held > 2.0:
             self.override_confirmed = False
@@ -1588,21 +1588,21 @@ class ArduPilotAcro(FcBackend):
                     f"ch{c}: sent {p}, FC reports "
                     f"{getattr(rc_msg, f'chan{c}_raw', '?')}"
                     for c, p in sorted(sent.items()))
-                print("\n[FC][REFUSED] The FC is NOT applying our RC override.\n"
-                      f"              {detail}\n"
-                      "              Most likely causes, in order:\n"
-                      f"                1. SYSID_MYGCS on the FC != {self.master.mav.srcSystem} "
-                      "(we send from that id; ArduPilot drops any other).\n"
-                      "                2. RC_OPTIONS bit 1 (value 2) set = ignore overrides.\n"
-                      "                3. The override is not reaching the FC "
-                      "(router not forwarding).\n"
-                      "              Run fc_check.py --verify for a full report.",
-                      flush=True)
+
+
+
+
+
+
+
+
+
+
 
     def height(self, max_age=1.0):
-        # Without GPS ArduCopter never sets home, so VFR_HUD.alt stays frozen
-        # while VFR_HUD.climb still moves.  Height comes from the barometer,
-        # relative to the pressure at arming; VFR_HUD.alt is the fallback.
+
+
+
         with self._lock:
             v, ref = self._vfr, self._alt_ref
             p, p_ref = self._baro, self._baro_ref
@@ -1919,14 +1919,14 @@ class BetaflightAcro(FcBackend):
 
     def _say(self, msg):
         if self.verbose:
-            print(msg, flush=True)
+            pass
 
     def connect(self):
         try:
             import serial
         except ImportError:
             raise RuntimeError("pyserial not installed:  pip install pyserial")
-        self._say(f"[FC] opening {self.conn} @ {self.baud} for MSP")
+
         self.ser = serial.Serial(self.conn, self.baud, timeout=0.3)
 
         variant = self._request(MSP_FC_VARIANT, timeout=2.0)
@@ -1937,10 +1937,10 @@ class BetaflightAcro(FcBackend):
         self.fw_string = (f"{self.variant} "
                           f"{ver[0]}.{ver[1]}.{ver[2]}" if len(ver) >= 3 else self.variant)
         self.linked = True
-        self._say(f"[FC] MSP firmware: {self.fw_string}")
+
 
         if self.variant not in ("BTFL", "INAV", "EMUF", "CLFL"):
-            self._say(f"[FC] warning: unrecognised MSP variant '{self.variant}'")
+            pass
 
         self._read_rx_map()
         self._poll_status()
@@ -2027,9 +2027,9 @@ class BetaflightAcro(FcBackend):
         for axis in ("roll", "pitch", "yaw", "throttle"):
             letter = axis_letter[axis]
             self.chan_index[axis] = order.find(letter) if letter in order else None
-        self._say(f"[FC] MSP rx map = {order}  -> "
-                  + ", ".join(f"{a}:ch{(self.chan_index[a] or 0) + 1}"
-                              for a in self.axes))
+
+
+
 
     def _poll_status(self):
         raw = self._request(MSP_STATUS)
@@ -2060,20 +2060,20 @@ class BetaflightAcro(FcBackend):
         ok = all(abs(self._live[i] - v) <= 25 for i, v in distinctive.items())
         if ok:
             if self.override_confirmed is not True:
-                self._say("[FC] MSP override CONFIRMED — the FC is reporting our "
-                          "stick values back in MSP_RC")
+                pass
+
             self.override_confirmed = True
         elif perf_counter() - self._steer_since > 2.0:
             self.override_confirmed = False
             if not self._echo_warned:
                 self._echo_warned = True
-                print("\n[FC][REFUSED] Betaflight is NOT applying our MSP sticks.\n"
-                      "              Enable MSP override on the FC:\n"
-                      "                feature MSP_OVERRIDE\n"
-                      f"                set msp_override_channels_mask = {self._mask_hint()}\n"
-                      "                save\n"
-                      "              then assign 'MSP RC OVERRIDE' to an aux "
-                      "switch and turn it ON.", flush=True)
+
+
+
+
+
+
+
 
     _AXIS_FIELD = ArduPilotAcro._AXIS_FIELD
 
@@ -2133,7 +2133,7 @@ class OfflineBackend(FcBackend):
     def connect(self):
         self.fw_string = "none (offline)"
         self.mode_name = "SIM"
-        print("[FC] no flight controller configured — commands are print-only")
+
 
     def steer(self, cmd):
         return False
@@ -2180,7 +2180,7 @@ def build_backend(conn, baud=115200, axes=("yaw", "pitch"), transport="auto",
         except WrongFirmware as e:
             errors.append(f"{kind}: {e}")
             if verbose:
-                print(f"[FC] {kind} transport rejected: {e}", flush=True)
+                pass
             be.close()
         except Exception as e:
             errors.append(f"{kind}: {e}")
@@ -2339,42 +2339,42 @@ class AcroCommander:
                 self.law.max_yaw_rate = self.backend.acro_yaw_rate
                 self.law.max_pitch_rate = self.backend.acro_rp_rate
 
-        print("\n" + "=" * 74)
-        print("FLIGHT CONTROL")
-        print("=" * 74)
-        print(self.backend.describe())
-        print(f"control law   : {self.law.describe()}")
+
+
+
+
+
         untouched = [a for a in ("roll", "pitch", "yaw", "throttle")
                      if a not in self.axes]
-        print(f"driving axes  : {', '.join(self.axes)}"
-              + (f"  ({', '.join(untouched)} + arming stay with the pilot)"
-                 if untouched else "  (ALL FOUR STICKS — only arming stays with "
-                                   "the pilot)"))
-        print(f"send rate     : {self.send_hz:.0f} Hz   "
-              f"no-target: {self.no_target}")
+
+
+
+
+
+
         want = "/".join(sorted(self.steer_modes))
-        print("mode gate     : "
-              + (f"{want} only — the pilot's mode switch decides who steers; any "
-                 "other mode returns every channel to the pilot"
-                 if self.require_rate_mode else
-                 f"OFF (REQUIRE_RATE_MODE=0) — steering is NOT gated on {want}"))
+
+
+
+
+
         if self.commit_chan:
-            print(f"commit        : ch{self.commit_chan} scales the forward lean "
-                  f"0..1"
-                  + (f"; below {self.commit_abort_below:.2f} releases EVERY channel"
-                     if self.commit_abort_below > 0 else ""))
+            pass
+
+
+
         elif self.is_intercept:
-            print(f"commit        : NO commit channel (COMMIT_CHAN=0) — lean is "
-                  f"fixed at {self.law.commit_default * 100:.0f}% whenever a "
-                  f"target is locked.\n"
-                  "                The pilot's mode switch is then the ONLY "
-                  "abort, and it is noticed at\n"
-                  "                HEARTBEAT rate (~1 s).  Wiring any spare "
-                  "channel to COMMIT_CHAN gives a\n"
-                  "                live speed dial AND a ~100 ms abort.")
+            pass
+
+
+
+
+
+
+
         if self.engage_max_s > 0:
-            print(f"engage limit  : {self.engage_max_s:.1f} s per continuous "
-                  f"engagement, then release until the target is re-acquired")
+            pass
+
 
         blockers = list(self.backend.blockers)
         if self.is_intercept:
@@ -2431,33 +2431,33 @@ class AcroCommander:
                 "gains are wrong for it — switch to ACRO, or use the intercept law "
                 "(CONTROL_LAW=intercept), which is built for an angle mode.")
         if blockers:
-            print("-" * 74)
-            print("BLOCKERS — the drone will not move until these are fixed:")
+
+
             for i, b in enumerate(blockers, 1):
-                print(f"  {i}. {b}")
-        print("-" * 74)
+                pass
+
         if self.is_intercept:
-            print("REMINDER: ALT_HOLD holds altitude on the BAROMETER — there is no")
-            print("GPS on this airframe, so it will drift with the wind and it has no")
-            print("idea where it is.  Roll and throttle command ZERO without a fresh")
-            print("ATTITUDE.  The terminal phase freezes the sticks and flies the")
-            print("trajectory it already had, so whatever is in front of it gets hit.")
-            print("PROPS OFF on the bench.")
+
+
+
+
+
+
             if "ACRO" in self.steer_modes:
-                print("-" * 74)
-                print("DUAL MODE: this same guidance also flies in ACRO — the pilot's")
-                print("transmitter switch decides which, cycle to cycle.  In ACRO the")
-                print("SAME bank/lean target is reached by an outer rate loop instead of")
-                print("the FC's onboard angle hold, so expect LOWER bandwidth against a")
-                print("gust than ALT_HOLD, not higher.  Throttle stays with the pilot in")
-                print("ACRO regardless of CONTROL_AXES: there is no altitude hold there")
-                print("for a stick-normalised override to mean anything.")
+                pass
+
+
+
+
+
+
+
         else:
-            print("REMINDER: in ACRO the attitude controller's authority scales with")
-            print("throttle.  At idle throttle the mixer has no headroom and yaw/pitch")
-            print("commands produce almost no torque — the pilot must hold mid throttle")
-            print("for the airframe to actually rotate.  PROPS OFF on the bench.")
-        print("=" * 74 + "\n", flush=True)
+            pass
+
+
+
+
 
         if self.mission_enabled:
             self._build_mission()
@@ -2575,9 +2575,9 @@ class AcroCommander:
             if (self.linked and have_target and not armed
                     and self.require_armed and not self._warned_disarmed):
                 self._warned_disarmed = True
-                print("[FC][WARN] target locked and the control loop is running, "
-                      "but the FC is DISARMED — nothing will move until the pilot "
-                      f"arms in {'/'.join(sorted(self.steer_modes))}.", flush=True)
+
+
+
 
             if self.linked and (now - self._last_stt) >= (1.0 / self.statustext_hz):
                 self._last_stt = now
@@ -2603,24 +2603,24 @@ class AcroCommander:
             ceiling_m=self._mission_cfg["ceiling_m"],
             accel_z=getattr(b, "accel_z", 2.5) or 2.5,
             jerk_z=getattr(b, "jerk_z", 5.0) or 5.0,
-            log=lambda m: print(m, flush=True), idle_path=_mission_mod.IDLE_FILE)
+            log=lambda m: None, idle_path=_mission_mod.IDLE_FILE)
         _saved = _mission_mod.load_auto_params(self.mission)
         _lv = _mission_mod.load_levels(self.mission)
         _mission_mod.load_idle_settings(self.mission)
-        print("-" * 74)
-        print("MISSION APP  : Hover -> Scout -> Engage, driven from the phone.")
-        print(f"               AUTO settings: {self.mission.auto_params()}"
-              + (" (saved)" if _saved else " (defaults)"))
-        print(f"               speed levels: {self.mission.level}"
-              + (" (saved)" if _lv else " (defaults)"))
-        print("               Nothing moves unless ARMED + ALT_HOLD + a button"
-              " on the phone.")
-        print(f"               handover conf >= {self.mission.min_conf:.2f}, "
-              f"ceiling {self.mission.ceiling_m:.0f} m above the arming point, "
-              f"no ground check")
+
+
+
+
+
+
+
+
+
+
+
         for line in self.mission_checklist():
-            print("  FC " + line)
-        print("-" * 74, flush=True)
+            pass
+
 
     _INVERT = {"roll": "invert_roll", "pitch": "invert_pitch",
                "yaw": "invert_yaw", "throttle": "invert_throttle"}
@@ -2834,14 +2834,14 @@ class AcroCommander:
         if c >= self.commit_abort_below:
             if self._commit_aborted:
                 self._commit_aborted = False
-                print(f"[FC][COMMIT] commit stick back up ({c:.2f}) — AI may steer "
-                      f"again", flush=True)
+
+
             return steer
         if not self._commit_aborted:
             self._commit_aborted = True
-            print(f"[FC][COMMIT] ABORT — commit stick at {c:.2f}, below "
-                  f"{self.commit_abort_below:.2f}.  Every channel released to the "
-                  f"pilot.", flush=True)
+
+
+
         return False
 
     def _engage_gate(self, steer, now):
@@ -2858,9 +2858,9 @@ class AcroCommander:
         if (now - self._engaged_since) <= self.engage_max_s:
             return True
         self._engage_timed_out = True
-        print(f"[FC][LIMIT] engagement hit ENGAGE_MAX_S "
-              f"({self.engage_max_s:.1f}s) — releasing every channel.  Break the "
-              f"target lock to re-arm the AI.", flush=True)
+
+
+
         return False
 
     def _announce_mode_gate(self, rate_ok):
@@ -2873,19 +2873,19 @@ class AcroCommander:
         mode = self.mode_name
         want = "/".join(sorted(self.steer_modes))
         if rate_ok and not self.require_rate_mode:
-            print(f"[FC][MODE] {mode} — mode gate is OFF "
-                  f"(REQUIRE_RATE_MODE=0), so a target lock drives yaw/pitch "
-                  f"regardless of the pilot's mode switch.", flush=True)
+            pass
+
+
         elif rate_ok:
-            print(f"[FC][MODE] {mode} — AI STEERING ENGAGED (a target lock will "
-                  f"now drive {', '.join(self.axes)})", flush=True)
+            pass
+
         elif first:
-            print(f"[FC][MODE] {mode} — the pilot has full control.  Switch to "
-                  f"{want} to hand {', '.join(self.axes)} to the tracker.",
-                  flush=True)
+            pass
+
+
         else:
-            print(f"[FC][MODE] {mode} — pilot left {want}: FULL CONTROL RETURNED "
-                  f"TO THE PILOT, all channels released.", flush=True)
+            pass
+
 
     def _status_text(self, cmd, off, steer):
         if off is None:
@@ -2943,7 +2943,7 @@ class AcroCommander:
             self._flight_logs = FlightLogs(self.log_dir, stamp, cols)
             cols = self._flight_logs.header
         self._log_fh.write(cols + "\n")
-        print(f"[FC] control log -> {self.log_path}", flush=True)
+
 
     def _log_row(self, now, cmd, off, steer, written):
         if self._log_fh is None:
@@ -2990,7 +2990,7 @@ class AcroCommander:
         except Exception as exc:
             if str(exc) != self._log_error:
                 self._log_error = str(exc)
-                print(f"[LOG][WARN] control logging failed: {exc}", flush=True)
+
 
     def _flight_log_state(self, now):
         m = self.mission

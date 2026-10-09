@@ -10,7 +10,7 @@ FAILED = []
 
 
 def check(label, ok, detail=""):
-    print(f"  [{'PASS' if ok else 'FAIL'}] {label}" + (f"  {detail}" if detail else ""))
+
     if not ok:
         FAILED.append(label)
 
@@ -46,7 +46,7 @@ for v in sorted(glob.glob(os.path.join(here, "data", "*.mp4")), reverse=True):
             if (full.mask(f)[:160] > 0).mean() >= 0.8:
                 frames.append(f)
                 real += 1
-print(f"  {real} real sky frames from src/data/, plus 12 synthetic")
+
 t = time.perf_counter(); A = [full.mask(f) for f in frames]; ta = (time.perf_counter() - t) / len(frames) * 1000
 t = time.perf_counter(); B = [half.mask(f) for f in frames]; tb = (time.perf_counter() - t) / len(frames) * 1000
 agree = [np.mean((a > 0) == (b > 0)) for a, b in zip(A, B)]
@@ -55,17 +55,16 @@ for a, b in zip(A, B):
     for _ in range(60):
         w = int(rng.integers(8, 100)); x = int(rng.integers(0, 640 - w)); y = int(rng.integers(0, 640 - w))
         tot += 1; dis += full.background_is_sky(a, (x, y, w, w)) != full.background_is_sky(b, (x, y, w, w))
-print(f"  {len(frames)} frames: full {ta:.1f} ms, half {tb:.1f} ms")
+
 check("half resolution is at least 2x faster", tb * 2 <= ta, f"{ta:.1f} -> {tb:.1f} ms")
 check("pixel agreement: mean >= 99%, worst frame >= 97%", np.mean(agree) >= 0.99 and min(agree) >= 0.97,
       f"mean {np.mean(agree):.4f}, worst {min(agree):.4f}")
 check("sky-gate verdict differs on <= 1% of boxes", dis <= 0.01 * tot, f"{dis}/{tot}")
 check("the shipped tracker builds the gate at 0.5 by default",
       'os.environ.get("SKY_MASK_SCALE", "0.5")' in open(os.path.join(here, "tracker.py")).read())
-print()
+
 if FAILED:
-    print(f"{len(FAILED)} FAILED:")
+
     for f in FAILED:
-        print("  - " + f)
+        pass
     sys.exit(1)
-print("all passed")

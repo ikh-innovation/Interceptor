@@ -14,7 +14,7 @@ FAILED = []
 
 
 def check(label, ok, detail=""):
-    print(f"  [{'PASS' if ok else 'FAIL'}] {label}" + (f"  {detail}" if detail else ""))
+
     if not ok:
         FAILED.append(label)
 
@@ -28,7 +28,7 @@ def law(**kw):
     return InterceptLaw(**base)
 
 
-print("=== 1. _angle_to_stick: the outer P loop that stands in for ACRO ===")
+
 L = law(att_kp=6.0)
 check("ANGLE mode is a pure angle/angle_max pass-through, measured angle ignored",
       L._angle_to_stick(math.radians(15.0), math.radians(99.0), False)
@@ -53,7 +53,7 @@ check("no known ACRO_RP_RATE (never connected) -> 0, not a ZeroDivisionError",
       L2._angle_to_stick(math.radians(15.0), 0.0, True) == 0.0)
 
 
-print("\n=== 2. yaw scale switches with the mode, roll/pitch/climb follow suit ===")
+
 att = dict(roll=0.0, pitch=0.0, yaw=0.0, yawspeed=0.0, pitchspeed=0.0)
 L = law(kp_yaw=4.5, acro_yaw_rate=math.radians(400.0), max_yaw_rate=math.radians(200.0))
 c_angle = L.compute(30.0, 0.0, 640, 640, dt=0.05, att=att, rate_mode=False)
@@ -64,7 +64,7 @@ check("...and it differs from the RATE-mode stick for the SAME pixel error",
       c_angle["yaw_stick"] != c_rate["yaw_stick"],
       f"angle {c_angle['yaw_stick']:.4f}  rate {c_rate['yaw_stick']:.4f}")
 
-print("\n=== 3. throttle is NEVER driven in ACRO ===")
+
 L = law()
 for _ in range(30):
     cmd = L.compute(0.0, -60.0, 640, 640, dt=0.05,
@@ -82,8 +82,8 @@ check("...but ALT_HOLD still climbs on the same input (throttle is mode-gated, "
       "not broken)", cmd_angle["climb_mps"] > 0.1, f"{cmd_angle['climb_mps']:.2f} m/s")
 
 
-print("\n=== 4. the backend-level guard: throttle channel untouched outside an "
-      "angle mode ===")
+
+
 
 
 def make_backend(mode_name):
@@ -118,7 +118,7 @@ check("...the other three axes still drive normally in ACRO",
       set(b_acro._sent_pwm) == {1, 2, 3})
 
 
-print("\n=== 5. the reversal-flag invariant holds in BOTH modes ===")
+
 for rate_mode in (False, True):
     L1 = law(invert_roll=False)
     L2 = law(invert_roll=True)
@@ -138,7 +138,7 @@ for rate_mode in (False, True):
           f"{c1['bank_deg']:.3f} vs {c2['bank_deg']:.3f}")
 
 
-print("\n=== 6. WIND: the actual field fix, measured ===")
+
 buf = io.StringIO()
 try:
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
@@ -224,10 +224,9 @@ finally:
     T.InterceptLaw = InterceptLaw
 
 
-print("\n" + "=" * 62)
+
 if FAILED:
-    print(f"{len(FAILED)} ACRO/WIND CHECK(S) FAILED:")
+
     for f in FAILED:
-        print(f"  - {f}")
+        pass
     sys.exit(1)
-print("ALL ACRO/WIND CHECKS PASSED")

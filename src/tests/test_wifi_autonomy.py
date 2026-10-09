@@ -1,8 +1,8 @@
-"""HTTP disappears after launch; real MAVLink continues to a simulated FC.
 
-Run with .env/yolo/bin/python src/tests/test_wifi_autonomy.py. No hardware,
-camera, model, or changes to the Jetson's network interfaces are used.
-"""
+
+
+
+
 import contextlib
 import io
 import json
@@ -111,8 +111,8 @@ class WifiFixture(unittest.TestCase):
         return state
 
     def disconnect_phone(self):
-        # Make every HTTP endpoint unavailable, without touching the FC link or
-        # mission sender. This also removes all browser requests/keepalives.
+
+
         ui = self.ui
         disconnected = perf_counter()
         ui.stop()
@@ -136,7 +136,7 @@ class WifiFixture(unittest.TestCase):
         self.fc.mode = 2
         self.fc.armed = True
         until(lambda: self.c.armed)
-        self.fc.vfr["alt"] = 16  # Eight metres above the captured arming height.
+        self.fc.vfr["alt"] = 16
         until(lambda: self.m.phase == "HOVER")
 
     def wasp_ready(self, idle_s=10):

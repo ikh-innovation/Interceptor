@@ -40,23 +40,23 @@ def main() -> int:
 
     headless = args.headless or not os.environ.get("DISPLAY")
     if args.headless is False and headless:
-        print("[WARN] no DISPLAY set — falling back to headless.", file=sys.stderr)
+        pass
 
     pipeline = build_pipeline()
-    print(f"[CAP] {pipeline}", flush=True)
+
 
     cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
     if not cap.isOpened():
-        print(
-            "\n[FAIL] could not open the camera.\n"
-            "  * is the CSI ribbon seated (blue side toward the fan)?\n"
-            "  * does /dev/video0 exist, and does\n"
-            "      cat /sys/class/video4linux/video0/name\n"
-            "    name your sensor?\n"
-            "  * is the Argus daemon up:  systemctl status nvargus-daemon\n"
-            f"  * does this mode exist:    CAM_SENSOR_MODE={SENSOR_MODE} "
-            f"at {WIDTH}x{HEIGHT}@{FPS}\n",
-            file=sys.stderr)
+
+
+
+
+
+
+
+
+
+
         return 1
 
     writer = None
@@ -69,13 +69,13 @@ def main() -> int:
                                  cv2.VideoWriter_fourcc(*"mp4v"),
                                  float(FPS), (WIDTH, HEIGHT))
         if not writer.isOpened():
-            print(f"[WARN] could not open {out_path} for writing — "
-                  "continuing without recording.", file=sys.stderr)
+
+
             writer = None
         else:
-            print(f"[REC] writing {out_path}", flush=True)
+            pass
 
-    print("Press 'q' in the window to stop (Ctrl-C works too).", flush=True)
+
 
     frames = 0
     failures = 0
@@ -89,8 +89,8 @@ def main() -> int:
             if not ok:
                 failures += 1
                 if failures >= 30:
-                    print("\n[FAIL] 30 consecutive read failures — camera lost.",
-                          file=sys.stderr)
+
+
                     break
                 continue
             failures = 0
@@ -106,8 +106,8 @@ def main() -> int:
 
             if headless:
                 if now - last_report >= 1.0:
-                    print(f"  {frames:6d} frames  {fps_live:5.1f} fps  "
-                          f"mean px {frame.mean():5.1f}", flush=True)
+
+
                     last_report = now
             else:
                 hud = frame.copy()
@@ -129,7 +129,7 @@ def main() -> int:
             if args.seconds and elapsed >= args.seconds:
                 break
     except KeyboardInterrupt:
-        print("\n[stop] Ctrl-C", flush=True)
+        pass
     finally:
         cap.release()
         if writer is not None:
@@ -138,14 +138,14 @@ def main() -> int:
 
     elapsed = time.time() - t0
     if frames == 0:
-        print("\n[FAIL] the pipeline opened but delivered no frames.\n"
-              "  Argus sometimes fails to map the first buffers; just retry.\n"
-              "  If it never works:  sudo systemctl restart nvargus-daemon\n",
-              file=sys.stderr)
+
+
+
+
         return 1
 
-    print(f"\n[OK] {frames} frames in {elapsed:.1f}s "
-          f"({frames / elapsed:.1f} fps average)")
+
+
     return 0
 
 

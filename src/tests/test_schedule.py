@@ -11,7 +11,7 @@ FAILED = []
 
 
 def check(label, ok, detail=""):
-    print(f"  [{'PASS' if ok else 'FAIL'}] {label}" + (f"  {detail}" if detail else ""))
+
     if not ok:
         FAILED.append(label)
 
@@ -32,7 +32,7 @@ def drive(L, fill, n=60, dt=0.05):
     return L.sens_state()
 
 
-print("=== 1. the defaults are a no-op ===")
+
 L = law()
 check("bank_far defaults to max_bank",
       abs(L.bank_far - L.max_bank) < 1e-9,
@@ -44,7 +44,7 @@ check("bank ceiling is untouched at any range with the schedule off",
       abs(s["bank_cap_deg"] - 30.0) < 1e-6, f"cap {s['bank_cap_deg']:.3f} deg")
 check("sensitivity defaults to neutral", abs(L.sens - 0.5) < 1e-9, f"{L.sens}")
 
-print("\n=== 2. the gain floor is never crossed ===")
+
 worst = None
 for sv in [i / 20.0 for i in range(11)]:
     st = drive(law(**dict(bank_far_deg=12.0, sens=sv, pn_near_mult=1.4)), 0.001)
@@ -56,7 +56,7 @@ check("...it takes away BANK instead",
       st["bank_cap_deg"] < 12.0,
       f"cap {st['bank_cap_deg']:.1f} deg at sens 0.0 (far ceiling 12)")
 
-print("\n=== 3. above neutral it adds gain, and only up to SENS_MAX_MULT ===")
+
 hi = drive(law(bank_far_deg=12.0, sens=1.0, sens_max_mult=2.0), 0.001)
 check("sens 1.0 doubles the gain", abs(hi["gain_eff"] - 70.0) < 1e-6,
       f"{hi['gain_eff']:.1f} m/s from a 35 floor")
@@ -64,7 +64,7 @@ mid = drive(law(bank_far_deg=12.0, sens=0.75, sens_max_mult=2.0), 0.001)
 check("sens 0.75 is halfway there", abs(mid["gain_eff"] - 52.5) < 1e-6,
       f"{mid['gain_eff']:.1f} m/s")
 
-print("\n=== 4. authority opens up as the target fills the frame ===")
+
 L = law(bank_far_deg=12.0, sens=0.5, pn_near_mult=1.4,
         sched_lo_frac=0.02, sched_hi_frac=0.35)
 far = drive(law(bank_far_deg=12.0, sens=0.5, pn_near_mult=1.4), 0.02)
@@ -80,7 +80,7 @@ check("the schedule is monotonic in fill", all(
       <= drive(law(bank_far_deg=12.0), f + 0.02)["bank_cap_deg"] + 1e-9
       for f in [0.02 * k for k in range(1, 17)]))
 
-print("\n=== 5. the acquisition transient is ramped, not trusted ===")
+
 L = law(bank_far_deg=12.0, sens=0.5, lock_ramp_s=0.5)
 L._fill = 0.02
 L._lock_t = None
@@ -98,7 +98,7 @@ check("...and the full ceiling once the ramp has run",
 check("neutral() gives the ramp back, so the next lock re-earns it",
       (L.neutral() is not None) and L._lock_t is None and L._ramp <= 0.25 + 1e-9)
 
-print("\n=== 6. the slider clamps, and rejects rubbish without dying ===")
+
 L = law(bank_far_deg=12.0)
 check("above 1 clamps to 1", L.set_sens(4.2) == 1.0)
 check("below 0 clamps to 0", L.set_sens(-3.0) == 0.0)
@@ -110,7 +110,7 @@ check("sens_state reports what the loop will use",
       set(L.sens_state()) >= {"sens", "gain_eff", "gain_floor",
                               "bank_cap_deg", "fill_frac", "lock_ramp"})
 
-print("\n=== 7. compute() reports the schedule it actually flew ===")
+
 L = law(bank_far_deg=12.0, sens=0.2, pn_near_mult=1.4, lock_ramp_s=0.5)
 att = dict(roll=0.0, pitch=0.0, yaw=0.0, yawspeed=0.0, pitchspeed=0.0)
 cmd = None
@@ -126,10 +126,9 @@ check("the reported bank never exceeds the reported ceiling",
 check("neutral() reports the schedule too, so the HUD sees no hole",
       all(k in L.neutral() for k in ("sens", "pn_gain_eff", "bank_cap_deg")))
 
-print("\n" + "=" * 62)
+
 if FAILED:
-    print(f"{len(FAILED)} SCHEDULE CHECK(S) FAILED:")
+
     for f in FAILED:
-        print(f"  - {f}")
+        pass
     sys.exit(1)
-print("ALL SCHEDULE CHECKS PASSED")

@@ -1,4 +1,4 @@
-"""Idle/launch checks through real MAVLink to a simulated FC; no hardware."""
+
 import math
 from time import perf_counter, sleep
 import unittest
@@ -7,6 +7,22 @@ from test_wifi_autonomy import WifiFixture, until
 
 
 class RecoveryMavlinkTests(WifiFixture):
+    def test_wasp_crosses_ceiling_and_guides_until_idle_deadline(self):
+        self.wasp_ready(idle_s=3)
+        self.target["on"] = True
+        self.command("engage", "1")
+        until(lambda: self.m.wasp.started is not None)
+        launch = self.m.wasp.started
+        self.fc.vfr["alt"] = 8 + self.m.ceiling_m + 20
+        until(lambda: self.c.backend.height()[0] > self.m.ceiling_m)
+        until(lambda: self.m.wasp.progress(perf_counter())["stage"] == "GUIDE")
+        self.assertEqual(self.m.phase, "WASP_FLIGHT")
+        self.assertEqual(self.fc.overrides[3], 1900)
+        until(lambda: self.m.phase == "IDLE" and self.m.idle.confirmed)
+        self.assertAlmostEqual(self.m.idle.started-launch, 3, delta=.1)
+        self.assertGreater(self.m.idle.height, self.m.ceiling_m)
+        self.assertIn("Idle time limit", self.m.event)
+
     def test_wasp_platform_angles_launch_loss_reacquisition_and_idle(self):
         for tilt in (0, 45, 90):
             with self.subTest(tilt=tilt):

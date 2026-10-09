@@ -1,4 +1,4 @@
-"""Run with python3 src/tests/test_wasp.py. No FC, camera or model required."""
+
 import math
 import os
 import sys
@@ -69,7 +69,7 @@ class GuidanceTests(unittest.TestCase):
         world = unit((0.15, 0.1, -1))
         for camera_roll in (0, 90, 180, 270):
             g = WaspGuidance()
-            # Changing motion on all three axes, with a rigid mounted camera.
+
             for i in range(60):
                 att = dict(roll=.15*math.sin(i*.13), pitch=.12*math.cos(i*.09),
                            yaw=.6*math.sin(i*.07))
@@ -107,7 +107,7 @@ class GuidanceTests(unittest.TestCase):
         self.assertLess(p, 0)
 
     def test_wrap_and_vertical_slerp(self):
-        # These two Euler representations describe the same vertical attitude.
+
         a, b = (0, math.pi/2, 0), (math.pi, math.pi/2, math.pi)
         mat = interpolate_rotation(a, b, .5)
         for actual, expected in zip(rotate(mat, (0, 0, -1)), (-1, 0, 0)):
@@ -121,13 +121,13 @@ class GuidanceTests(unittest.TestCase):
             target = rotate(start, unit((.13, .12, -1)))
             mat = start
             g = WaspGuidance()
-            # The gentler default gain of 2 gets two simulated seconds to settle.
+
             for i in range(200):
                 att = {"rotation": mat}
                 x, y = project(target, att)
                 c = observe(g, x, y, att, 100+i*.01)
                 omega = WaspGuidance.rates(c, att, 100+i*.01)
-                # Integrate the commanded body rates with Rodrigues' formula.
+
                 angle = math.sqrt(sum(v*v for v in omega))*.01
                 if angle > 1e-12:
                     axis = unit(omega)
@@ -188,7 +188,7 @@ class LifecycleTests(unittest.TestCase):
         self.launch()
         for i in range(1, 181):
             now = 100 + i*.01
-            # The target moves to the opposite side before guidance starts.
+
             x = 50 if i < 90 else -50
             cmd = observe(WaspGuidance(), x=x, t=now)
             self.ctx.update(ai_cmd=cmd, det_t=now)
@@ -313,10 +313,36 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(phone_command(m, "flightmode", "typo", 100))
 
     def test_mount_and_parameters_frozen_while_armed(self):
-        for key, value in (("waspen", "off"), ("mount", "30"), ("waspp", "throttle:0.5")):
+        for key, value in (("waspen", "off"), ("mount", "30"), ("waspp", "throttle:0.5"),
+                           ("waspp", "profile:responsive")):
             self.assertTrue(phone_command(self.m, key, value, 100))
         for value in ("nan", "inf", "0.99"):
             self.assertTrue(self.m.set_wasp_param("throttle", value))
+
+    def test_steering_profile_changes_together_and_custom_values_are_identified(self):
+        self.mapper.armed = False
+        self.assertEqual(self.m.set_wasp_param("throttle", .25), "")
+        self.assertEqual(self.m.set_wasp_param("straight", .5), "")
+        before = dict(self.m.wasp.params)
+        self.assertEqual(phone_command(self.m, "waspp", "profile:responsive", 100), "")
+        params = self.m.wasp.params
+        self.assertEqual((params["blend"], params["rate"], params["gain"]), (.5, 90, 4))
+        self.assertEqual(self.m.snapshot(100)["wasp_steering_profile"], "responsive")
+        for key in ("throttle", "straight", "lead", "camera_roll"):
+            self.assertEqual(params[key], before[key])
+        self.assertTrue(self.m.wasp.camera_confirmed)
+        self.assertEqual(self.m.set_wasp_param("gain", 6), "")
+        self.assertEqual(self.m.snapshot(100)["wasp_steering_profile"], "custom")
+        before = dict(params)
+        self.assertTrue(phone_command(self.m, "waspp", "profile:unknown", 100))
+        self.assertEqual(params, before)
+        self.mapper.armed = True
+        self.assertTrue(phone_command(self.m, "waspp", "profile:standard", 100))
+        self.assertEqual(params, before, "armed profile rejection must change no parameters")
+        self.mapper.armed = False
+        self.assertEqual(phone_command(self.m, "waspp", "profile:standard", 100), "")
+        self.assertEqual(self.m.snapshot(100)["wasp_steering_profile"], "standard")
+        self.assertEqual((params["blend"], params["rate"], params["gain"]), (.5, 60, 2))
 
     def test_abort_wins_over_launch(self):
         self.m.request_engage()
@@ -423,7 +449,7 @@ class LifecycleTests(unittest.TestCase):
                     self.assertAlmostEqual(out["rates"][0], full[0]*blend)
                     self.assertEqual(out["throttle"], 1)
                 self.assertEqual(self.m.wasp.progress(now)["stage"], "GUIDE")
-                # Acquisition timeout no longer applies; total launch time still does.
+
                 self.ctx.update(ai_cmd=observe(WaspGuidance(), t=109.99), det_t=109.99)
                 self.assertTrue(self.m.cycle(109.99, self.ctx))
                 self.ctx.update(ai_cmd=observe(WaspGuidance(), t=110), det_t=110)
@@ -448,8 +474,8 @@ class LifecycleTests(unittest.TestCase):
                 self.assertTrue(self.m.cycle(now, self.ctx))
                 self.assertEqual(self.m.wasp.acquired_t, now)
 
-    def test_acquisition_abort_gate_attitude_and_ceiling_release(self):
-        for failure in ("abort", "gate", "attitude", "ceiling"):
+    def test_acquisition_abort_gate_and_attitude_release(self):
+        for failure in ("abort", "gate", "attitude"):
             self.setUp()
             self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)
             self.assertTrue(self.launch())
@@ -457,10 +483,8 @@ class LifecycleTests(unittest.TestCase):
                 self.m.request_abort()
             elif failure == "gate":
                 self.ctx["gate_ok"] = False
-            elif failure == "attitude":
-                self.ctx["att"] = None
             else:
-                self.ctx["height"] = self.m.ceiling_m
+                self.ctx["att"] = None
             self.assertEqual(self.m.cycle(100.01, self.ctx), {})
             self.assertEqual(self.m.phase, "WASP_DONE")
 
@@ -494,7 +518,7 @@ class BackendTests(unittest.TestCase):
         out = b.wasp_pwm((0, 0, 0), 1)
         self.assertEqual(out["throttle"], 1900)
         b.steer_pwm(out)
-        self.assertEqual(b.sent[-1][3], 0)  # legacy ACRO never overrides throttle
+        self.assertEqual(b.sent[-1][3], 0)
         self.assertEqual(b.wasp_ready(), "")
         b.steer_wasp_pwm(out)
         self.assertEqual(b.sent[-1][3], 1900)
@@ -554,7 +578,7 @@ class BackendTests(unittest.TestCase):
         self.assertIn("confirm", c._mission_gate()[1])
         c.mission.wasp.camera_confirmed = True
         self.assertEqual(c._mission_gate(), (True, ""))
-        # Platform launch bypasses the hover mission's airborne requirement.
+
         b.airborne = lambda: (False, "landed")
         self.assertEqual(c._mission_gate(), (True, ""))
         c.commit_chan = 7

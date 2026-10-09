@@ -39,8 +39,8 @@ def main():
     srv = mjpeg_stream.MJPEGServer(port=a.port, state_get=lambda: dict(IDLE),
                                    command=lambda k, v: "desk: no FC -- use ☰ → TEST",
                                    console_get=lambda since: []).start()
-    print(f"\n  phone app on the desk:\n    http://{lan_ip()}:{a.port}/\n"
-          f"    http://127.0.0.1:{a.port}/\n  then ☰ → TEST.  Ctrl-C stops.\n")
+
+
     try:
         while True:
             time.sleep(1)

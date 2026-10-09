@@ -18,7 +18,7 @@ CX, CY = 2560 / 3280, 1440 / 2464
 
 
 def check(label, ok, detail=""):
-    print(f"  [{'PASS' if ok else 'FAIL'}] {label}" + (f"  {detail}" if detail else ""))
+
     if not ok:
         FAILED.append(label)
 
@@ -75,7 +75,7 @@ def worst(a, b):
     return d
 
 
-print("=== 1. the intercept law: the same target, the same command, at 30 and 60 fps ===")
+
 a = sky_law()
 ref = fly(a, 640, 640)
 b = sky_law(); b.set_crop(CX, CY)
@@ -96,14 +96,14 @@ check("terminal commit on the same frame",
       [x["terminal"] for x in got] == [y["terminal"] for y in ref]
       and any(y["terminal"] for y in ref), str(next((i for i, y in enumerate(ref) if y["terminal"]), None)))
 
-print("=== 2. 30 fps is untouched ===")
+
 c = sky_law(); c.set_crop(CX, CY); c.set_crop(1.0, 1.0)
 check("back to 30: the field of view is restored EXACTLY",
       c.h_fov == math.radians(62.2) and c.v_fov == math.radians(48.8)
       and c._tan_h == c.ref_tan_h and c._tan_v == c.ref_tan_v)
 check("...and every command is bit-for-bit a fresh law's", worst(ref, fly(c, 640, 640)) == 0.0)
 
-print("=== 3. the frame-edge guard watches the picture the camera really has ===")
+
 for crop, want in (((1.0, 1.0), "free"), ((CX, CY), "eased")):
     g = sky_law(edge_guard=0.55); g.set_crop(*crop)
     fw, fh = 640 * crop[0], 640 * crop[1]
@@ -114,7 +114,7 @@ for crop, want in (((1.0, 1.0), "free"), ((CX, CY), "eased")):
     check(f"{'60' if crop[0] < 1 else '30'} fps, target at +10 deg: speed {want} (gate {gate:.2f})",
           gate == 1.0 if want == "free" else gate < 0.9)
 
-print("=== 4. the gimbal law (ControlLaw) too ===")
+
 for shape in ("linear", "adaptive"):
     res = []
     for crop in ((1.0, 1.0), (CX, CY)):
@@ -131,7 +131,7 @@ for shape in ("linear", "adaptive"):
     d = max(abs(x[k] - y[k]) for x, y in zip(*res) for k in ("yaw_stick", "pitch_stick", "az_deg", "el_deg"))
     check(f"{shape}: the same sticks for the same angles at 30 and 60 fps (worst {d:.1e})", d < 1e-9)
 
-print("=== 5. AUTO's aim mark ===")
+
 
 
 class Mapper:
@@ -154,7 +154,7 @@ m.AUTO_LINE_DEG = 30.0
 check("no V_FOV on the mapper (the tests' fakes): as before", M.Mission(object(), log=lambda *_: None)
       .auto_aim_el() == -20.0)
 
-print("=== 6. the saved default ===")
+
 df = os.path.join(tempfile.mkdtemp(), "wasp", "detection.json")
 check("CAMERA 60 saved and read back as an int, next to the follower",
       M.save_detection_default("cam", 60, df) == "" and M.save_detection_default("follow", False, df) == ""
@@ -164,7 +164,7 @@ check("a broken entry is skipped, the rest kept", M.load_detection_defaults(df) 
 check("the SKY GATE is still refused", M.save_detection_default("sky", False, df) != ""
       and "sky" not in json.load(open(df)))
 
-print("=== 7. the tracker: the pipeline, the working frame, the law, the frame counts ===")
+
 with contextlib.redirect_stdout(io.StringIO()):
     import tracker as T
 
@@ -217,7 +217,7 @@ t._cam_req = None
 t.ap.mission = Phase()
 check("refused while the AI flies (the picture goes dark a moment)", t.set_camera("60") != "" and t._cam_req is None)
 
-print("=== 8. TEST mode follows the switch ===")
+
 import desk_sim
 s = desk_sim.DeskSim(seed=1)
 s.touch = lambda: None
@@ -227,10 +227,9 @@ check("TEST: cam=60 narrows the pretend camera; the state says so",
 check("TEST: back to 30", s.command("cam", "30") == "" and s.state()["cam_vfov"] == 48.8
       and s.m.auto_aim_el() == -20.0)
 
-print()
+
 if FAILED:
-    print(f"{len(FAILED)} FAILED:")
+
     for f in FAILED:
-        print("  - " + f)
+        pass
     sys.exit(1)
-print("all passed")

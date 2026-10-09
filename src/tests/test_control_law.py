@@ -17,12 +17,12 @@ fails = []
 
 
 def check(name, cond, detail=""):
-    print(f"  [{'PASS' if cond else 'FAIL'}] {name}" + (f"  {detail}" if detail else ""))
+
     if not cond:
         fails.append(name)
 
 
-print("\n=== 1. sign conventions ===")
+
 law = ControlLaw(h_fov_deg=62.2, v_fov_deg=48.8, deadband_frac=0.03, slew_per_s=1e9)
 
 c = law.compute(+160, 0, FW, FH)
@@ -41,7 +41,7 @@ c = law.compute(0, -160, FW, FH)
 check("target above -> pitch stick positive (nose UP)", c["pitch_stick"] > 0,
       f"pitch_stick={c['pitch_stick']:+.3f}")
 
-print("\n=== 2. deadband / saturation / limits ===")
+
 law.neutral()
 c = law.compute(4, 4, FW, FH)
 check("inside deadband -> exactly zero", c["yaw_stick"] == 0.0 and c["pitch_stick"] == 0.0,
@@ -57,7 +57,7 @@ check("reported rate matches the clamped stick",
       abs(c["yaw_rate"] - 0.55 * law2.max_yaw_rate) < 1e-6,
       f"{math.degrees(c['yaw_rate']):.1f} deg/s")
 
-print("\n=== 3. slew limiting ===")
+
 law3 = ControlLaw(kp_yaw=50.0, stick_limit=1.0, slew_per_s=2.0, deadband_frac=0.0)
 import time
 law3.compute(0, 0, FW, FH, dt=0.05)
@@ -65,14 +65,14 @@ c = law3.compute(319, 0, FW, FH, dt=0.1)
 check("slew caps the step (<=0.25 after 0.1s at 2/s)", 0.0 < c["yaw_stick"] <= 0.30,
       f"yaw_stick={c['yaw_stick']:+.3f}")
 
-print("\n=== 4. inversion flags ===")
+
 lawi = ControlLaw(invert_yaw=True, invert_pitch=True, slew_per_s=1e9)
 ci = lawi.compute(+160, +160, FW, FH)
 check("YAW_REVERSED flips the yaw stick", ci["yaw_stick"] < 0, f"{ci['yaw_stick']:+.3f}")
 check("PITCH_REVERSED flips the pitch stick", ci["pitch_stick"] > 0,
       f"{ci['pitch_stick']:+.3f}")
 
-print("\n=== 5. closed-loop convergence (kinematic sim) ===")
+
 
 
 def simulate(kp, seconds=6.0, dt=0.05, tgt_az_deg=25.0, tgt_el_deg=-15.0,
@@ -120,7 +120,7 @@ for kp in (1.0, 2.0, 3.0):
     check(f"kp={kp}: elevation error {el0:+.1f} -> {elf:+.1f} deg (converges)",
           abs(elf) < abs(el0) * 0.25)
 
-print("\n=== 6. a genuinely reversed axis: diverges, and the flag fixes it ===")
+
 
 
 def simulate_reversed(invert):
@@ -147,7 +147,7 @@ check("reversed axis without the flag DIVERGES (so a polarity error is caught)",
 check("YAW_REVERSED=1 recovers convergence on that same axis",
       abs(good) < 6.0, f"final error {good:+.1f} deg")
 
-print("\n=== 7. RC PWM mapping ===")
+
 be = ArduPilotAcro.__new__(ArduPilotAcro)
 be.rc = {"yaw": dict(chan=4, min=1100, max=1900, trim=1500, reversed=False),
          "pitch": dict(chan=2, min=1000, max=2000, trim=1450, reversed=True)}
@@ -159,14 +159,14 @@ check("half right honours asymmetric trim",
       f"reversed axis -> {be._axis_pwm('pitch', 0.5)}")
 check("clamped inside [min,max]", 1100 <= be._axis_pwm("yaw", 5.0) <= 1900)
 
-print("\n=== 8. MSP framing ===")
+
 f = _msp_frame(105)
 check("MSP request header", f[:3] == b"$M<", repr(f))
 check("MSP zero-payload crc = len^cmd", f[-1] == (0 ^ 105), f"crc={f[-1]}")
 f2 = _msp_frame(200, bytes([0x01, 0x02]))
 check("MSP crc over payload", f2[-1] == (2 ^ 200 ^ 1 ^ 2), f"crc={f2[-1]}")
 
-print("\n=== 9. offline commander end-to-end ===")
+
 tmp = tempfile.mkdtemp()
 os.environ["MAV_CONN"] = "none"
 cmdr = commander_from_env(log_dir=tmp, verbose=False)
@@ -193,7 +193,7 @@ if csv:
 cmdr.close()
 check("close() is idempotent", True)
 
-print("\n=== 10. adaptive law: snap on far, ease in near ===")
+
 
 AD = dict(shape="adaptive", shape_gamma=1.6, shape_sat=0.42,
           kd_yaw=0.18, kd_pitch=0.18, stick_limit=0.60,
@@ -364,7 +364,7 @@ check("adaptive: converges from every starting geometry", not diverged,
 check("adaptive: does NOT limit-cycle on any geometry", worst_cross_ad <= 3,
       f"max {worst_cross_ad} zero crossings")
 
-print("\n=== 11. the shipped TUNED preset: the only thing that flies ===")
+
 
 TUNED_KW = dict(kp_yaw=4.5, kp_pitch=6.0, kd_yaw=0.10, kd_pitch=0.10,
                 stick_limit=0.65, stick_limit_yaw=0.65, stick_limit_pitch=0.22,
@@ -461,7 +461,7 @@ for seed in (1, 7, 13, 29, 101):
 check("the pitch ceiling earns its keep: loosening it costs jitter robustness",
       loose_ok < 5, f"0.40 ceiling -> {loose_ok}/5 seeds vs 0.22 -> 5/5")
 
-print("\n=== 12. approach mode: forward whatever the target's elevation ===")
+
 
 
 APPROACH_KW = dict(TUNED_KW, pitch_mode="approach", approach_deg=12.0,
@@ -557,8 +557,7 @@ else:
     check("approach: no elevation error anywhere yields nose-up", True,
           "checked -40..+40 deg")
 
-print("\n" + "=" * 60)
+
 if fails:
-    print(f"{len(fails)} FAILURE(S): " + ", ".join(fails))
+
     sys.exit(1)
-print("ALL CHECKS PASSED")

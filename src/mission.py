@@ -159,7 +159,7 @@ def load_idle_settings(m):
         return "invalid saved Idle seconds"
     if not math.isfinite(value) or not 1 <= value <= 600:
         return "invalid saved Idle seconds"
-    # Startup reads configuration without commanding or engaging the aircraft.
+
     m.idle_s = value
     return ""
 
@@ -319,7 +319,7 @@ class Mission:
     )
 
     def __init__(self, mapper, min_conf=0.20, ceiling_m=30.0,
-                 accel_z=5.0, jerk_z=5.0, log=print, idle_path=None):
+                 accel_z=5.0, jerk_z=5.0, log=(lambda *_args, **_kwargs: None), idle_path=None):
         self.mapper = mapper
         self.min_conf = float(min_conf)
         self.ceiling_m = float(ceiling_m)
@@ -470,7 +470,7 @@ class Mission:
 
     def set_wasp_enabled(self, on, selection=False):
         with self._lock:
-            # Reopening the UI in its current mode must never reset a flight.
+
             if selection and bool(on) == self.wasp.enabled:
                 return ""
             error = self._configuration_error()
@@ -511,17 +511,23 @@ class Mission:
         return ""
 
     def set_wasp_param(self, key, value):
-        try:
-            v = float(value)
-        except (ValueError, TypeError):
-            return "bad WASP value"
-        if key not in Wasp.SETTINGS or v not in Wasp.SETTINGS[key]:
-            return "unknown WASP setting or value"
+        if key == "profile":
+            settings = Wasp.STEERING_PROFILES.get(str(value).strip().lower())
+            if settings is None:
+                return "steering response: smooth, standard or responsive"
+        else:
+            try:
+                v = float(value)
+            except (ValueError, TypeError):
+                return "bad WASP value"
+            if key not in Wasp.SETTINGS or v not in Wasp.SETTINGS[key]:
+                return "unknown WASP setting or value"
+            settings = {key: v}
         with self._lock:
             error = self._configuration_error()
             if error:
                 return error
-            self.wasp.params[key] = v
+            self.wasp.params.update(settings)
             if key == "camera_roll":
                 self.wasp.camera_confirmed = False
         return ""
@@ -703,8 +709,8 @@ class Mission:
             if ctx.get("gate_ok") and getattr(self.mapper, "armed", False):
                 return {}
             self._set_phase("PILOT", now)
-        # ABORT can recover an active flight or an airborne aircraft; it must
-        # not turn an armed, unlaunched Wasp into an automatic takeoff.
+
+
         if (abort and ctx.get("gate_ok") and self.idle_supported
                 and (self._run_t is not None or ctx.get("airborne"))):
             return self._start_idle(now, ctx, "ABORT")
@@ -774,7 +780,7 @@ class Mission:
             if w.started is not None:
                 w.used = True
             w.started = None
-            # The pilot took it back: the Idle clock starts again from zero.
+
             self._run_t = None
             self._set_phase("WASP_DONE" if w.used else "PILOT", now)
             if abort:
@@ -802,14 +808,11 @@ class Mission:
         why = "no fresh attitude" if ctx.get("att") is None else ""
         if now - w.started >= self.idle_s:
             why = "Idle time limit"
-        height = ctx.get("height")
-        if height is not None and height >= self.ceiling_m:
-            why = "ceiling reached"
         if not why:
             tracking = not w.fault(now, ctx, self.min_conf)
             if tracking:
                 try:
-                    # Validate every bearing, including after a detector gap.
+
                     if w.acquired_t is None:
                         w.acquire(now, ctx)
                         self._note("WASP target acquired: blended steering", now)
@@ -1364,6 +1367,8 @@ class Mission:
         with self._lock:
             hold = self._hold[0] if self._hold else None
             lv = dict(self.level)
+            wasp_params = dict(self.wasp.params)
+            wasp_profile = self.wasp.steering_profile()
         return dict(
             phase=self.phase, phase_s=round(now - self.phase_t, 1),
             hold=hold, event=self.event,
@@ -1386,7 +1391,8 @@ class Mission:
             auto_enabled=bool(self.auto_enabled),
             wasp_enabled=self.wasp.enabled,
             wasp_camera_confirmed=self.wasp.camera_confirmed,
-            wasp_params=dict(self.wasp.params),
+            wasp_params=wasp_params,
+            wasp_steering_profile=wasp_profile,
             idle_s=self.idle_s,
             idle=self.idle.snapshot(),
             idle_remaining_s=None if self._run_t is None else round(max(0.0, self.idle_s-(now-self._run_t)), 2),

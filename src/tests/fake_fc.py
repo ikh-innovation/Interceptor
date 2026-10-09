@@ -120,4 +120,3 @@ class FakeArduPilot(threading.Thread):
     def shutdown(self):
         self.stop.set()
         self.join(timeout=2)
-

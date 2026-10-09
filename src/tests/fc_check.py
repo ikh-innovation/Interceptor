@@ -31,14 +31,14 @@ def resolve_device(explicit=None):
     if explicit:
         return explicit
     if router_running():
-        print(f"[i] a MAVProxy router is running — probing through it "
-              f"({DEFAULT_ROUTER})")
+
+
         return DEFAULT_ROUTER
     for pat in ("usb-ArduPilot_*-if00", "*-if00", "*"):
         matches = sorted(Path("/dev/serial/by-id").glob(pat)) \
             if Path("/dev/serial/by-id").is_dir() else []
         if matches:
-            print(f"[i] no router running — probing the FC serial port directly")
+
             return str(matches[0])
     for dev in ("/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyUSB0"):
         if Path(dev).exists():
@@ -61,14 +61,14 @@ def is_network(conn):
 
 def probe_mavlink(conn, baud, timeout=12.0):
     if mavutil is None:
-        print("[x] pymavlink is not installed:  pip install pymavlink")
+
         return None, None
-    print(f"\n[1] MAVLink probe on {conn} ...")
+
     try:
         master = mavutil.mavlink_connection(conn, baud=baud, source_system=255,
                                             source_component=190)
     except Exception as e:
-        print(f"    [x] cannot open the link: {e}")
+
         return None, None
 
     deadline = perf_counter() + timeout
@@ -84,35 +84,35 @@ def probe_mavlink(conn, baud, timeout=12.0):
         master.target_system = msg.get_srcSystem()
         master.target_component = msg.get_srcComponent()
         name = AUTOPILOT_NAMES.get(msg.autopilot, f"id {msg.autopilot}")
-        print(f"    [ok] autopilot heartbeat: {name}   "
-              f"sys={master.target_system} comp={master.target_component}")
+
+
         return master, msg
 
     if saw_gcs:
-        print("    [x] only GCS/router heartbeats on this link — the FC itself is "
-              "NOT reaching it.\n"
-              "        The router is up but not talking to the board: check its "
-              "--master serial path and that the FC is powered.")
+        pass
+
+
+
     else:
-        print("    [x] no MAVLink heartbeat at all")
+        pass
     master.close()
     return None, None
 
 
 def probe_msp(dev, baud=115200):
     if is_network(dev):
-        print("\n[1b] MSP probe skipped — MSP needs a serial port, not a UDP link")
+
         return None
-    print(f"\n[1b] MSP probe on {dev} (is this Betaflight/INAV?) ...")
+
     try:
         import serial
     except ImportError:
-        print("    [x] pyserial not installed:  pip install pyserial")
+
         return None
     try:
         ser = serial.Serial(dev, baud, timeout=0.3)
     except Exception as e:
-        print(f"    [x] cannot open {dev}: {e}")
+
         return None
 
     def request(cmd, timeout=1.5):
@@ -151,26 +151,26 @@ def probe_msp(dev, baud=115200):
 
     variant = request(MSP_FC_VARIANT)
     if not variant:
-        print("    [x] no MSP response either")
+
         ser.close()
         return None
     name = variant[:4].decode(errors="ignore")
     ver = request(MSP_FC_VERSION) or b"\0\0\0"
     vstr = f"{ver[0]}.{ver[1]}.{ver[2]}" if len(ver) >= 3 else "?"
-    print(f"    [ok] MSP firmware: {name} {vstr}")
+
     status = request(MSP_STATUS)
     armed = None
     if status and len(status) >= 11:
         import struct
         armed = bool(struct.unpack_from("<I", status, 6)[0] & 1)
-        print(f"    armed: {'YES' if armed else 'NO'}")
+
     rc = request(MSP_RC)
     if rc:
         import struct
         n = len(rc) // 2
         vals = struct.unpack_from("<" + "H" * n, rc, 0)
-        print(f"    live sticks ({n} ch): "
-              + " ".join(f"{v}" for v in vals[:8]))
+
+
     ser.close()
     return dict(variant=name, version=vstr, armed=armed)
 
@@ -213,12 +213,12 @@ def request_rc_stream(master, hz=5):
 
 
 def report_ardupilot(master, hb):
-    print("\n[2] ArduPilot configuration")
+
     mode = COPTER_MODES.get(hb.custom_mode, f"MODE{hb.custom_mode}")
     armed = bool(hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-    print(f"    mode                 : {mode}"
-          + ("" if mode == "ACRO" else "        <-- expected ACRO"))
-    print(f"    armed                : {'YES' if armed else 'NO'}")
+
+
+
 
     sysid = read_param(master, "SYSID_MYGCS")
     pname = "SYSID_MYGCS"
@@ -226,17 +226,17 @@ def report_ardupilot(master, hb):
         sysid = read_param(master, "MAV_GCS_SYSID")
         pname = "MAV_GCS_SYSID"
     if sysid is None:
-        print("    SYSID_MYGCS          : ?  (param read failed)")
+        pass
     else:
-        print(f"    {pname:21s}: {int(sysid)}"
-              + ("        <-- overrides must be SENT FROM this system id"
-                 if int(sysid) != 255 else ""))
+        pass
+
+
 
     rc_options = read_param(master, "RC_OPTIONS")
     if rc_options is not None:
         bad = int(rc_options) & 2
-        print(f"    RC_OPTIONS           : {int(rc_options)}"
-              + ("   <-- bit 1 set = FC IGNORES ALL OVERRIDES" if bad else "  (ok)"))
+
+
 
     for name, note in (("ACRO_TRAINER", "0 = pure rate mode (what we want)"),
                        ("ACRO_Y_RATE", "deg/s at full yaw stick"),
@@ -248,9 +248,9 @@ def report_ardupilot(master, hb):
                        ("MOT_SPIN_ARM", "idle motor output when armed")):
         v = read_param(master, name)
         if v is not None:
-            print(f"    {name:21s}: {v:g}   ({note})")
+            pass
 
-    print("\n    transmitter map / calibration (read from the FC):")
+
     axes = {}
     for axis in ("roll", "pitch", "throttle", "yaw"):
         ch = read_param(master, f"RCMAP_{axis.upper()}")
@@ -265,34 +265,34 @@ def report_ardupilot(master, hb):
                           trim=int(tr) if tr else 1500,
                           reversed=bool(int(rv)) if rv is not None else False)
         flag = "" if 1 <= ch <= 8 else "   <-- >8 CANNOT be overridden"
-        print(f"      {axis:9s} ch{ch}  "
-              f"[{axes[axis]['min']}..{axes[axis]['trim']}..{axes[axis]['max']}]  "
-              f"rev={int(axes[axis]['reversed'])}{flag}")
+
+
+
 
     request_rc_stream(master)
     rc = master.recv_match(type="RC_CHANNELS", blocking=True, timeout=4)
     if rc is None:
-        print("\n    [!] no RC_CHANNELS stream — cannot verify overrides "
-              "(raise SR*_RC_CHAN or check the link)")
+        pass
+
     else:
         vals = [getattr(rc, f"chan{i}_raw", 0) for i in range(1, 9)]
-        print(f"\n    live RC in (ch1-8)   : " + " ".join(f"{v:4d}" for v in vals))
+
         if all(v == 0 for v in vals):
-            print("    [!] every channel reads 0 — NO RECEIVER SIGNAL.  The pilot "
-                  "cannot arm, and\n        releasing a channel leaves it with no "
-                  "source.  Bind/power the receiver.")
+            pass
+
+
     return dict(mode=mode, armed=armed, sysid_mygcs=sysid, axes=axes,
                 rc_options=rc_options)
 
 
 
 def verify_override(master, cfg, hold=2.5):
-    print("\n[3] override verification")
+
     yaw = cfg["axes"]["yaw"]
     chan = yaw["chan"]
     if not 1 <= chan <= 8:
-        print(f"    [x] yaw is on channel {chan}; RC_CHANNELS_OVERRIDE only "
-              "reaches 1-8.  Remap RCMAP_YAW.")
+
+
         return False
 
     test_pwm = int(min(yaw["max"], yaw["trim"] + 200))
@@ -305,8 +305,8 @@ def verify_override(master, cfg, hold=2.5):
 
     for sysid in candidates:
         master.mav.srcSystem = sysid
-        print(f"    trying source_system={sysid}: sending ch{chan}={test_pwm} "
-              f"for {hold:.1f}s ...", end="", flush=True)
+
+
         chans = [0] * 8
         chans[chan - 1] = test_pwm
 
@@ -322,7 +322,7 @@ def verify_override(master, cfg, hold=2.5):
                     master.mav.rc_channels_override_send(
                         master.target_system, master.target_component, *chans)
                 except Exception as e:
-                    print(f" [x] send failed: {e}")
+
                     break
             msg = master.recv_match(type="RC_CHANNELS", blocking=True, timeout=0.2)
             if msg is None:
@@ -342,36 +342,36 @@ def verify_override(master, cfg, hold=2.5):
             pass
 
         if matched:
-            print(f" PASS  (FC echoed {best})")
-            print(f"\n    ==> The FC ACCEPTS overrides sent from system id {sysid}.")
-            if cfg["sysid_mygcs"] is not None and sysid != int(cfg["sysid_mygcs"]):
-                print(f"        Note this differs from the SYSID_MYGCS read "
-                      f"({int(cfg['sysid_mygcs'])}) — set MAV_SOURCE_SYSTEM={sysid}.")
-            else:
-                print("        The tracker reads SYSID_MYGCS at startup and adopts "
-                      "it automatically, so no extra configuration is needed.")
-            return True
-        print(f" fail  (FC reports {best})")
 
-    print("\n    [x] NO system id worked — the FC is not applying our overrides.")
-    print("        Work through these in order:")
-    print("          1. RC_OPTIONS bit 1 (value 2) = ignore overrides.  Clear it.")
-    print("          2. If this went through the MAVProxy router, the router may not")
-    print("             be forwarding.  Stop it (pkill -f mavproxy.py) and re-run")
-    print("             with --connect /dev/ttyACM0 to test the FC directly.")
-    print("          3. Confirm the board really is running ArduPilot Copter, and not")
-    print("             a build with RC overrides compiled out.")
+
+            if cfg["sysid_mygcs"] is not None and sysid != int(cfg["sysid_mygcs"]):
+                pass
+
+            else:
+                pass
+
+            return True
+
+
+
+
+
+
+
+
+
+
     return False
 
 
 
 def wiggle(master, cfg, seconds=8.0, amplitude=0.35, period=3.0):
-    print(f"\n[4] wiggle for {seconds:.0f}s  "
-          f"(amplitude {amplitude * 100:.0f}% stick, {period:.0f}s period)")
-    print("    The FC must be ARMED in ACRO with the pilot holding mid throttle,")
-    print("    or the mixer has no headroom and the motor spread stays at 0.")
-    print("    PROPS OFF: expect the motors to change pitch audibly and the spread")
-    print("    below to swing — but NOT the airframe to turn.  Rotation needs props.")
+
+
+
+
+
+
 
     yaw, pitch = cfg["axes"]["yaw"], cfg["axes"]["pitch"]
 
@@ -413,17 +413,17 @@ def wiggle(master, cfg, seconds=8.0, amplitude=0.35, period=3.0):
                 if servo is not None:
                     outs = [getattr(servo, f"servo{i}_raw", 0) for i in range(1, 5)]
                     spread = f"  motors {min(outs)}-{max(outs)} (spread {max(outs) - min(outs)})"
-                print(f"\r    t={t:4.1f}s  yaw {ny:+.2f} pitch {np_:+.2f}  "
-                      f"ch{yaw['chan']}={chans[yaw['chan'] - 1]} "
-                      f"ch{pitch['chan']}={chans[pitch['chan'] - 1]}{spread}   ",
-                      end="", flush=True)
+
+
+
+
             m = master.recv_match(type=["SERVO_OUTPUT_RAW", "HEARTBEAT"],
                                   blocking=False)
             if m is not None and m.get_type() == "SERVO_OUTPUT_RAW":
                 servo = m
             sleep(0.005)
     except KeyboardInterrupt:
-        print("\n    interrupted")
+        pass
     finally:
         for _ in range(5):
             try:
@@ -432,7 +432,7 @@ def wiggle(master, cfg, seconds=8.0, amplitude=0.35, period=3.0):
             except Exception:
                 pass
             sleep(0.02)
-        print("\n    sticks released back to the pilot")
+
 
 
 
@@ -455,47 +455,47 @@ def main():
     args = ap.parse_args()
 
     conn = resolve_device(args.connect)
-    print("=" * 74)
-    print("WASP flight-control link check")
-    print(f"  link : {conn}")
-    print("=" * 74)
+
+
+
+
 
     master, hb = probe_mavlink(conn, args.baud)
 
     if master is None:
         msp = probe_msp(conn if not is_network(conn) else resolve_device(None),
                         args.baud)
-        print("\n" + "=" * 74)
+
         if msp:
-            print(f"VERDICT: the board is running {msp['variant']} {msp['version']}, "
-                  "NOT ArduPilot.")
-            print("""
-This is a Betaflight-family firmware.  It does not speak MAVLink, so the
-tracker's MAVLink path can never drive it.  Two ways forward:
+            pass
 
-  A) RECOMMENDED — flash ArduPilot Copter (target TBS_LUCID_H7) and fly in
-     ACRO.  You then get parameter access, telemetry, Mission Planner and the
-     RC_CHANNELS_OVERRIDE path the tracker is built around.
 
-  B) Stay on Betaflight and drive it over MSP.  The tracker supports this
-     (FC_TRANSPORT=msp, pointed at the FC's serial port, not the router), but
-     Betaflight ignores MSP sticks until you configure the override:
-         feature MSP_OVERRIDE
-         set msp_override_channels_mask = 10      # ch2 pitch + ch4 yaw
-         save
-     then assign "MSP RC OVERRIDE" to a spare aux switch in the Modes tab and
-     turn it on.  Note MSP needs the serial port exclusively, so the MAVProxy
-     router and Mission Planner cannot share it.""")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         else:
-            print("VERDICT: nothing answered on this link — neither MAVLink nor MSP.")
-            print("""
-Check, in order:
-  1. Is the FC powered and its USB cable seated?  ls /dev/serial/by-id/
-  2. Is something else holding the port?  A running MAVProxy router owns the
-     FC serial exclusively — either probe through it (--connect
-     udpin:127.0.0.1:14551) or stop it and probe the port directly.
-  3. Does the user have permission?  sudo usermod -aG dialout $USER, re-login.""")
-        print("=" * 74)
+            pass
+
+
+
+
+
+
+
+
         sys.exit(1)
 
     cfg = report_ardupilot(master, hb)
@@ -503,47 +503,47 @@ Check, in order:
     ok = None
     if args.verify or args.wiggle > 0:
         if cfg["armed"] and not args.yes:
-            print("\n[3] override verification SKIPPED — the FC is ARMED, and the "
-                  "test moves a stick\n    for 2.5 s per attempt.  Disarm and "
-                  "re-run, or pass --yes with the props OFF.")
+            pass
+
+
         else:
             ok = verify_override(master, cfg)
 
     if args.wiggle > 0:
         if ok is False:
-            print("\n[4] wiggle skipped — the FC is not accepting overrides, so it "
-                  "would do nothing.\n    Fix the verification failure above first.")
+            pass
+
         elif not cfg["armed"]:
-            print("\n[4] wiggle skipped — the FC is DISARMED, so the motors are off "
-                  "and nothing will\n    move.  Arm from the transmitter in ACRO "
-                  "(PROPS OFF) and run again.")
+            pass
+
+
         else:
             if not args.yes:
-                print("\n!!! The airframe is ARMED and this will command real "
-                      "rotation !!!")
+
+
                 if input("Type YES to confirm the props are OFF: ").strip() != "YES":
-                    print("aborted")
+
                     master.close()
                     sys.exit(1)
             wiggle(master, cfg, seconds=args.wiggle, amplitude=args.amplitude)
 
-    print("\n" + "=" * 74)
-    print("SUMMARY")
-    print("=" * 74)
-    print(f"  firmware   : ArduPilot Copter")
-    print(f"  mode       : {cfg['mode']}"
-          + ("  (correct)" if cfg["mode"] == "ACRO" else "  <-- switch to ACRO"))
-    print(f"  armed      : {'YES' if cfg['armed'] else 'NO   <-- motors are off'}")
+
+
+
+
+
+
+
     if ok is True:
-        print("  overrides  : ACCEPTED — the control transport works")
-        print("\n  The link is good.  If the drone still does not move, it is the")
-        print("  throttle: in ACRO the mixer needs headroom, so the pilot must hold")
-        print("  mid throttle.  Watch the motor spread with:  --wiggle 8")
+        pass
+
+
+
     elif ok is False:
-        print("  overrides  : REFUSED — see [3] above; the tracker cannot steer yet")
+        pass
     else:
-        print("  overrides  : not tested (re-run with --verify)")
-    print("=" * 74)
+        pass
+
 
     master.close()
 

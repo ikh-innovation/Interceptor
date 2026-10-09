@@ -17,7 +17,7 @@ FAILED = []
 
 
 def check(label, ok, detail=""):
-    print(f"  [{'PASS' if ok else 'FAIL'}] {label}" + (f"  {detail}" if detail else ""))
+
     if not ok:
         FAILED.append(label)
 
@@ -61,7 +61,7 @@ def reversals(cmds):
     return sum(1 for a, b in zip(nz, nz[1:]) if (a > 0) != (b > 0))
 
 
-print("=== 1. a bad heading signal: 2 deg of noise, 150 ms late ===")
+
 errs, cmds, fc, m = fly(60.0, lat=0.15, noise=2.0, seed=3)
 sd = math.sqrt(sum(e * e for e in errs) / len(errs))
 within = sum(1 for e in errs if abs(e) < 3.0) / len(errs)
@@ -70,7 +70,7 @@ check("no hunting: heading RMS under 1.5 deg, within 3 deg 99% of the time",
 check("the yaw stick does not chatter (under 1 direction change per second)",
       reversals(cmds) < 60, f"{reversals(cmds)} reversals in 60 s")
 
-print("=== 2. across north: locked at 359.8, noise straddling 0/360 ===")
+
 errs, cmds, fc, m = fly(30.0, psi0=359.8, noise=1.0, seed=5)
 check("never takes the long way round (worst error < 3 deg, peak command small)",
       max(abs(e) for e in errs) < 3.0 and max(abs(c) for c in cmds) < 10.0,
@@ -83,7 +83,7 @@ for start, kick in ((1.0, 40.0), (359.0, -40.0)):
     check(f"locked at {start:.0f}, a gust across north ({'+' if kick > 0 else '-'}): back within 1 deg",
           max(after) < 1.0, f"end error {max(after):.2f} deg")
 
-print("=== 3. the heading lost for 5 s mid-LOCK, while a steady torque turns it ===")
+
 errs, cmds, fc, m = fly(20.0, dist=lambda t: 25.0 if 4.0 <= t < 9.0 else 0.0,
                        blind=lambda t: 4.0 <= t < 9.0, seed=9)
 blind_cmds = cmds[int(4.1 / 0.02):int(8.9 / 0.02)]
@@ -93,14 +93,14 @@ check("heading back: it returns to the lock and settles within 1 deg",
       max(abs(e) for e in errs[-40:]) < 1.0 and m.lock_hdg is not None,
       f"end error {max(abs(e) for e in errs[-40:]):.2f} deg")
 
-print("=== 4. ten minutes locked in gusty Bf 3 (medium sensitivity) ===")
+
 res = [SL.run((3, "medium", True, s, 600.0)) for s in (11, 12, 13)]
 check("10 min: never walks away, ends within 2 deg on every run",
       all(r["final"] < 2.0 for r in res), str([round(r["final"], 2) for r in res]))
 check("10 min: within 3 deg at least 98% of the time",
       all(r["in3"] > 0.98 for r in res), str([round(100 * r["in3"], 1) for r in res]))
 
-print("=== 5. weaker yaw motors (80 deg/s^2 instead of 150), Bf 3 high sensitivity ===")
+
 old = SL.ACC_MAX
 SL.ACC_MAX = 80.0
 fco = [SL.run((3, "high", False, s, 60.0)) for s in range(40, 52)]
@@ -111,7 +111,7 @@ lo = sum(1 for r in lck if r["final"] > 10.0)
 check("LOCK ends >10 deg off in fewer runs than the FC alone",
       lo < fo, f"LOCK {lo}/12 vs FC only {fo}/12")
 
-print("=== 6. locked at 313: wind turns it, hands turn it, it comes back to 313 ===")
+
 
 
 def fly313(secs, script, dist=None, seed=21):
@@ -210,7 +210,7 @@ check(f"gentle: its command never changes faster than {M.Mission.LOCK_ACCEL:.0f}
       worst_cmd_step(cmds) <= M.Mission.LOCK_ACCEL * 0.022 + 2 * SL.RATE_MAX / 400.0,
       f"worst step {worst_cmd_step(cmds):.2f} deg/s per 20 ms")
 
-print("=== 7. the phone's command path ===")
+
 with contextlib.redirect_stdout(io.StringIO()):
     import tracker
     import mjpeg_stream
@@ -248,10 +248,9 @@ check("lock needs the controller lease, like every move command",
       "lock" in mjpeg_stream.MjpegServer.CONTROL_KEYS if hasattr(mjpeg_stream, "MjpegServer")
       else any("lock" in getattr(v, "CONTROL_KEYS", ()) for v in vars(mjpeg_stream).values()))
 
-print()
+
 if FAILED:
-    print(f"{len(FAILED)} FAILED:")
+
     for x in FAILED:
-        print("  - " + x)
+        pass
     sys.exit(1)
-print("all passed")

@@ -14,7 +14,7 @@ fails = []
 
 
 def check(name, cond, detail=""):
-    print(f"  [{'PASS' if cond else 'FAIL'}] {name}" + (f"  {detail}" if detail else ""))
+
     if not cond:
         fails.append(name)
 
@@ -24,7 +24,7 @@ from fake_fc import FakeArduPilot
 
 def run_case(name, port, *, sysid_mygcs=255, rc_options=0, force_sysid=None,
              armed=True, expect_confirmed=True, settle=4.0):
-    print(f"\n=== {name} ===")
+
     fc = FakeArduPilot(port, sysid_mygcs=sysid_mygcs, rc_options=rc_options,
                        armed=armed)
     fc.start()
@@ -68,8 +68,8 @@ def run_case(name, port, *, sysid_mygcs=255, rc_options=0, force_sysid=None,
     released = dict(fc.overrides)
     fc.shutdown()
 
-    print(f"    sent from sysid={sent_from}  FC applied={applied}  "
-          f"FC rejected from={rejected or '{}'}  confirmed={confirmed}")
+
+
     return dict(confirmed=confirmed, applied=applied, rejected=rejected,
                 sent_from=sent_from, released=released)
 
@@ -119,7 +119,7 @@ if r:
     check("no override sent while disarmed", not r["applied"], str(r["applied"]))
 
 def run_mode_gate_case(port):
-    print("\n=== F. mode gate: STABILIZE <-> ACRO handover, repeated ===")
+
     fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=0)
     fc.start()
     sleep(0.3)
@@ -153,8 +153,8 @@ def run_mode_gate_case(port):
         drive(1.5)
         applied = dict(fc.overrides)
         results.append((label, applied, cmdr.rate_mode_ok))
-        print(f"    {i+1}. pilot switch -> {label:9s} "
-              f"FC applied={applied or '{}'}  rate_mode_ok={cmdr.rate_mode_ok}")
+
+
 
     cmdr.close()
     sleep(0.2)
@@ -179,7 +179,7 @@ run_mode_gate_case(14606)
 
 
 def run_gate_off_case(port):
-    print("\n=== G. REQUIRE_RATE_MODE=0 -> steering is NOT gated on mode ===")
+
     fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=0)
     fc.start()
     sleep(0.3)
@@ -202,7 +202,7 @@ def run_gate_off_case(port):
     cmdr.close()
     sleep(0.2)
     fc.shutdown()
-    print(f"    mode=STABILIZE, gate off -> FC applied={applied or '{}'}")
+
     check("with the gate off, STABILIZE still gets driven (old behaviour)",
           bool(applied), str(applied))
 
@@ -211,7 +211,7 @@ run_gate_off_case(14607)
 
 
 def run_intercept_case(port):
-    print("\n=== H. intercept law: ALT_HOLD gate + 4 channels + commit ===")
+
     fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=0)
     fc.start()
     sleep(0.3)
@@ -279,7 +279,7 @@ run_intercept_case(14608)
 
 
 def run_no_attitude_case(port):
-    print("\n=== I. no ATTITUDE -> roll + throttle command nothing ===")
+
     fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=2, attitude=False)
     fc.start()
     sleep(0.3)
@@ -322,7 +322,7 @@ run_no_attitude_case(14609)
 
 
 def run_time_alignment_case(port):
-    print("\n=== J. attitude aligned to the frame -> no phantom bank ===")
+
     fc = FakeArduPilot(port, sysid_mygcs=255, armed=True, mode=2)
     fc.start()
     sleep(0.3)
@@ -362,10 +362,9 @@ def run_time_alignment_case(port):
 run_time_alignment_case(14610)
 
 
-print("\n" + "=" * 62)
+
 if fails:
-    print(f"{len(fails)} FAILURE(S):")
+
     for f in fails:
-        print(f"  - {f}")
+        pass
     sys.exit(1)
-print("ALL SIMULATED-FC CHECKS PASSED")

@@ -131,8 +131,8 @@ def main():
         dets = cache[key] if key else detect_all(v)
         out = os.path.join(out_dir, os.path.basename(v).replace(".mp4", "_replay.mp4"))
         st = render(v, dets, out)
-        print(f"{out}   today {100 * st[False][0] / max(1, st[False][1]):.0f}%  ->  "
-              f"new {100 * st[True][0] / max(1, st[True][1]):.0f}% of frames tracked", flush=True)
+
+
 
 
 if __name__ == "__main__":

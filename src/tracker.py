@@ -239,10 +239,10 @@ class DroneTracker:
                              if str(model_path).endswith(".engine")
                              else YOLO(model_path))
         names = self.model.names
-        # Ultralytics changes OpenCV's global thread count while loading. Apply
-        # the capture/resize setting after that initialization, not before it.
+
+
         cv2.setNumThreads(int(os.environ.get("CV_THREADS", "4")))
-        print(f"[CPU] OpenCV threads: {cv2.getNumThreads()}")
+
         names = names if isinstance(names, dict) else dict(enumerate(names))
         want = os.environ.get("TARGET_CLASS")
         if want is not None and want != "":
@@ -264,16 +264,16 @@ class DroneTracker:
                 raise RuntimeError(
                     f"Cannot tell which class to track in {names}. "
                     "Set TARGET_CLASS to the index or the label.")
-        print(f"[MODEL] single-class detection: class {self.target_class} "
-              f"('{names[self.target_class]}') of {dict(names)}, max 1 object")
-        print(f"[MODEL] weights: {model_path}")
+
+
+
         self.camera_pipeline = camera_pipeline
         self.camera_fps      = float(camera_fps)
         self.camera_config   = camera_config
         self.using_engine = str(model_path).endswith(".engine")
         if self.using_engine:
             self.IMGSZ_SEARCH = self.IMGSZ_TRACK = self.IMGSZ_CLOSE = 640
-            print("[MODEL] engine input is fixed at 640 — IMGSZ_* aligned")
+
 
         self.conf_thresh  = conf_thresh
         self.display_size = display_size
@@ -306,7 +306,7 @@ class DroneTracker:
         self.last_bbox = None
         self.pos       = None
         self.layer     = "STANDBY"
-        self.conf      = None    
+        self.conf      = None
         self._frame_idx = 0
 
         self.sky_mask        = None
@@ -467,7 +467,7 @@ class DroneTracker:
         on = v in ("on", "1", "true")
         if on != self.use_sky_mask:
             self.use_sky_mask = on
-            print(f"[SKY] sky gate {'ON' if on else 'OFF: detecting on the whole frame'}")
+
         return ""
 
     def set_follower(self, value):
@@ -477,7 +477,7 @@ class DroneTracker:
         on = v in ("on", "1", "true")
         if on != self.use_follower:
             self.use_follower = on
-            print(f"[FOLLOW] follower {'ON' if on else 'OFF: detector only'}")
+
         return ""
 
     def set_camera(self, value):
@@ -495,7 +495,7 @@ class DroneTracker:
         if why:
             return why
         self._cam_req = want
-        print(f"[CAM] {want} fps asked for")
+
         return ""
 
     def _camera_locked(self):
@@ -721,8 +721,8 @@ class DroneTracker:
         fy = (self.fh / 2.0) / math.tan(getattr(ap, "V_FOV", math.radians(48.8)) / 2.0)
         m = getattr(ap, "mission", None)
         if m is not None and m.wasp.enabled:
-            # With an upward camera roll/pitch move the target; yaw spins the
-            # image. Bound all three axes, including arbitrary camera roll.
+
+
             rate = sum(abs(att.get(k) or 0.0) for k in ("rollspeed", "pitchspeed", "yawspeed"))
             angle = min(1.0, rate * min(dt, 0.25))
             return int(angle * fx * 2), int(angle * fy * 2)
@@ -754,7 +754,7 @@ class DroneTracker:
         roi      = None
         yolo_det = None
 
-        small = self._target_is_small()  
+        small = self._target_is_small()
 
         _alt = (self.missed >= 1 and os.environ.get("ALT_SEARCH", "1") == "1")
         _sky_turn = _alt and (self._frame_idx % 2 == 1)
@@ -861,7 +861,7 @@ class DroneTracker:
         if self.sky_mask is None:
             return
         tint = frame.copy()
-        tint[self.sky_mask > 0] = (120, 90, 40)            
+        tint[self.sky_mask > 0] = (120, 90, 40)
         cv2.addWeighted(tint, 0.12, frame, 0.88, 0, frame)
         cnts, _ = cv2.findContours(self.sky_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for c in cnts:
@@ -951,7 +951,7 @@ class DroneTracker:
         if len(pts) < 2:
             return
         period = dash + gap
-        carry = 0.0                      
+        carry = 0.0
         for i in range(1, len(pts)):
             a, b = pts[i - 1], pts[i]
             d = b - a
@@ -1188,8 +1188,8 @@ class DroneTracker:
             pass
         self._rec_thread.join(timeout=8.0)
         if self._rec_dropped:
-            print(f"[REC] {self._rec_dropped} frame(s) dropped — the encoder "
-                  f"could not keep up; guidance was not delayed for them.")
+            pass
+
 
     def _lap(self, name, t_prev):
         if not self.PROFILE:
@@ -1211,9 +1211,9 @@ class DroneTracker:
         total = sum(v for k, v in self.prof_ms.items()
                     if not k.startswith("  "))
         self.prof_ms["TOTAL"] = round(total, 2)
-        print("[PROF] " + "  ".join(f"{k} {v:.1f}" for k, v in
-                                    self.prof_ms.items())
-              + f"  -> {1000.0 / total if total else 0:.1f} fps")
+
+
+
         self._prof.clear()
         self._prof_n = 0
 
@@ -1254,7 +1254,7 @@ class DroneTracker:
         if key == "def":
             r = mission_mod.save_default(m, value)
             if r == "":
-                print(f"[PARAMS] default saved: {value}")
+                pass
             return r
         return mission_mod.phone_command(m, key, value, perf_counter())
 
@@ -1264,14 +1264,14 @@ class DroneTracker:
             r = mission_mod.save_detection_default("cam", want)
             if r == "":
                 self.cam_default = want
-                print(f"[PARAMS] default saved: camera {want} fps")
+
             return r
         if key != "follow":
             return mission_mod.save_detection_default(key, True)
         r = mission_mod.save_detection_default("follow", self.use_follower)
         if r == "":
             self.follower_default = self.use_follower
-            print(f"[PARAMS] default saved: follower {'ON' if self.use_follower else 'OFF'}")
+
         return r
 
 
@@ -1324,14 +1324,14 @@ class DroneTracker:
         self._draw_header(frame, accent)
         self._draw_flightcmd(frame, cmd, pos, cx_f, cy_f, sent, accent)
 
-        
-        
+
+
 
     def _open_capture(self):
         if self.camera_pipeline is None:
             raise RuntimeError("camera_pipeline is required (no capture source set).")
 
-        print(f"[CAP] Opening GStreamer pipeline:\n      {self.camera_pipeline}")
+
         cap  = None
         warm = None
         for attempt in range(self.CAM_OPEN_RETRIES):
@@ -1343,12 +1343,12 @@ class DroneTracker:
                         break
             if warm is not None:
                 if attempt:
-                    print(f"[CAP] camera came up on attempt {attempt + 1}")
+                    pass
                 break
             cap.release()
             cap = None
-            print(f"[CAP] no frames on attempt {attempt + 1}/"
-                  f"{self.CAM_OPEN_RETRIES} (NvBufSurfaceFromFd?) — reopening")
+
+
             sleep(self.CAM_RETRY_WAIT_S)
 
         if warm is None:
@@ -1401,13 +1401,13 @@ class DroneTracker:
         why = self._camera_locked()
         if why:
             self._cam_req = None
-            print(f"[CAM] {want} fps not switched: {why}")
+
             return
         old = self.cam_mode
         self._cam_busy = True
         self._cam_req = None
         try:
-            print(f"[CAM] {old} -> {want} fps: reopening the camera")
+
             self._apply_cam_mode(want)
             try:
                 self._cap.release()
@@ -1416,8 +1416,8 @@ class DroneTracker:
             try:
                 self._cap, _fps, _label = self._open_capture()
             except RuntimeError as exc:
-                print(f"[CAM] {want} fps did not come up "
-                      f"({str(exc).splitlines()[0]}) — back to {old} fps")
+
+
                 self._apply_cam_mode(old)
                 self._cap, _fps, _label = self._open_capture()
             self._reset()
@@ -1427,8 +1427,8 @@ class DroneTracker:
             law = getattr(self.ap, "law", None)
             fov = (f"{math.degrees(law.h_fov):.1f} x {math.degrees(law.v_fov):.1f} deg, "
                    if law is not None else "")
-            print(f"[CAM] camera at {self.cam_mode} fps: {fov}working frame "
-                  f"{self.fw}x{self.fh}")
+
+
         finally:
             self._cam_busy = False
 
@@ -1450,28 +1450,28 @@ class DroneTracker:
         except RuntimeError as exc:
             if self.cam_mode == 30 or self.camera_config is None:
                 raise
-            print(f"[CAM] {self.cam_mode} fps did not come up "
-                  f"({str(exc).splitlines()[0]}) — starting at 30 fps")
+
+
             self._apply_cam_mode(30)
             cap, src_fps, source_label = self._open_capture()
         self._cap = cap
-        print(f"[RUN] Source: {source_label}")
+
         src_fps = min(src_fps, self.REF_FPS)
-            
+
         rec_on       = self.record_dir is not None
         pad          = max(1, int(round(self.record_pad_sec * src_fps)))
         pre_buf      = deque(maxlen=pad)
         fourcc       = None
         out_dir      = None
-        out_path     = None            
+        out_path     = None
 
         if rec_on:
             out_dir = Path(self.record_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             out_path = out_dir / f"{self.run_stamp}.mp4"
-            print(f"[REC] reel -> {out_path.resolve()}  | fps={src_fps:.2f}  "
-                  f"pad={pad}f (~{self.record_pad_sec:.1f}s each side)")            
+
+
 
         if self.stream_port:
             try:
@@ -1482,8 +1482,8 @@ class DroneTracker:
                                           command=self._command,
                                           console_get=console_since).start()
             except OSError as exc:
-                print(f"[STREAM] disabled — cannot bind port "
-                      f"{self.stream_port}: {exc}")
+
+
                 self.stream = None
 
         if not self.headless:
@@ -1513,8 +1513,8 @@ class DroneTracker:
             n_windows = getattr(self, "_rec_windows", 0)
             secs = n_written / src_fps if src_fps else 0.0
             where = getattr(self, "_rec_path", None)
-            print(f"[REC] done — {n_windows} detection window(s), {n_written} "
-                  f"frames (~{secs:.1f}s) -> {where}")
+
+
             self._rec_on = False
 
     def _loop(self, cap, src_fps, period, rec_on, pad, pre_buf, out_path,
@@ -1622,18 +1622,18 @@ class DroneTracker:
                                (frame_disp.shape[1], frame_disp.shape[0]))
                            self._rec_size = (frame_disp.shape[1], frame_disp.shape[0])
                            if not self._writer.isOpened():
-                               print(f"[REC][WARN] could not open {out_path} "
-                                     "for writing — this run will NOT be "
-                                     "recorded.")
+
+
+
                                self._rec_on = rec_on = False
                        if rec_on:
                            for i, f in pre_buf:
                                if i > last_written:
                                    self._rec_submit(f); last_written = i
                                    self._rec_frames += 1
-                           print(f"[REC] window {self._rec_windows} @ frame "
-                                 f"{self._frame_idx} "
-                                 f"(~{self._frame_idx / src_fps:.1f}s)")
+
+
+
                    post_left = pad
                if rec_on and post_left > 0:
                    self._rec_submit(frame_disp.copy())
@@ -1643,9 +1643,9 @@ class DroneTracker:
                    pre_buf.append((self._frame_idx, frame_disp.copy()))
 
             _tp = self._lap("record", _tp)
-            print(self.ap.format_command(
-                self.state, cmd, target_off, actually_sent,
-                live=self.ap.linked, is_yolo=is_yolo_frame))
+
+
+
 
             _tp = self._lap("print", _tp)
 
@@ -1842,7 +1842,7 @@ if __name__ == "__main__":
     _log_fh = open(_DATA_DIR / f"{RUN_STAMP}.log", "w", buffering=1)
     sys.stdout = _Tee(sys.stdout, _log_fh)
     sys.stderr = _Tee(sys.stderr, _log_fh)
-    print(f"[LOG] console mirrored to {(_DATA_DIR / f'{RUN_STAMP}.log')}")
+
 
     cam_cfg = CameraConfig()
     CAP_PIPELINE = make_pipeline(cam_cfg)
@@ -1851,7 +1851,7 @@ if __name__ == "__main__":
                     Path(__file__).resolve().parent.parent
                     / "runs/detect/v0/weights/best.pt")
     if not Path(model_pth).is_file():
-        print(f"[MODEL] no weights file at {model_pth}", file=sys.stderr)
+
         sys.exit(1)
 
     if os.environ.get("USE_ENGINE", "1") == "1":
@@ -1862,20 +1862,20 @@ if __name__ == "__main__":
                 _probe = YOLO(str(_eng), task="detect")
                 _probe.predict(np.zeros((640, 640, 3), np.uint8), verbose=False)
                 if len(_probe.names) > 100:
-                    print(f"[MODEL] ignoring {_eng.name}: no class metadata "
-                          f"({len(_probe.names)} placeholder names) — "
-                          f"re-export it with ultralytics.")
+                    pass
+
+
                 else:
                     del _probe
                     model_pth = str(_eng)
-                    print(f"[MODEL] TensorRT engine selected: {_eng.name}")
+
             except Exception as _exc:
-                print(f"[MODEL] engine {_eng.name} unusable ({_exc}); "
-                      f"falling back to {Path(model_pth).name}")
+                pass
+
 
     os.environ.setdefault("TARGET_KIND", "DRONE")
-    print(f"[TARGET] {os.environ['TARGET_KIND']} (fixed for this run)")
-    print("[REC] disabled — logs only")
+
+
 
     DroneTracker(
         model_path   = model_pth,

@@ -17,7 +17,7 @@ FAILED = []
 
 
 def check(label, ok, detail=""):
-    print(f"  [{'PASS' if ok else 'FAIL'}] {label}" + (f"  {detail}" if detail else ""))
+
     if not ok:
         FAILED.append(label)
 
@@ -31,14 +31,14 @@ for mm in re.finditer(r'\{k: "(\w+)".*?c: \[([^\]]*)\], d: ("?\w+(?:\.\d+)?"?)',
     _ui[mm.group(1)] = (ch, mm.group(3).strip('"'))
 _ms = {k: ([str(c) for c in ch], str(getattr(_M.Mission, a[0]))) for k, a, ch in _M.Mission.AUTO_SETTINGS}
 _norm = lambda xs: [x if not x.replace(".", "").isdigit() else str(float(x)) for x in xs]
-print("=== the page's AUTO settings vs mission.Mission.AUTO_SETTINGS ===")
+
 check("same settings on the page as in the mission", sorted(_ui) == sorted(_ms), f"{sorted(_ui)} vs {sorted(_ms)}")
 check("same choices and the same default for every one",
       all(_norm(_ui[k][0]) == _norm(_ms[k][0]) and _norm([_ui[k][1]]) == _norm([_ms[k][1]]) for k in _ms if k in _ui),
       str({k: (_ui.get(k), _ms[k]) for k in _ms if k in _ui and (_norm(_ui[k][0]) != _norm(_ms[k][0]) or _norm([_ui[k][1]]) != _norm([_ms[k][1]]))}))
 
 if not available():
-    print("  [SKIP] headless browser not installed -- browser test not run")
+
     sys.exit(0)
 
 ST = dict(linked=True, armed=True, fc_mode="ALT_HOLD", target="DRONE", tilt_deg=30.0,
@@ -187,7 +187,7 @@ while time.time() - t0 < 120 and not any(r.get("done") or r.get("step") == "erro
     time.sleep(0.3)
 ff.terminate(); ff.wait(timeout=10); shutil.rmtree(prof, ignore_errors=True)
 R = {r["step"]: r for r in REP}
-print("=== the phone app in a headless browser ===")
+
 check("page ran every step", "dead" in R and "error" not in R, str(R.get("error", "")))
 b = R.get("boot", {})
 check("ABORT to Idle available in Seeker", b.get("abort") is True)
@@ -334,7 +334,7 @@ while time.time() - t0 < 90 and len({r.get("step") for r in REP if r.get("step",
     time.sleep(0.3)
 ff.terminate(); ff.wait(timeout=10); shutil.rmtree(prof, ignore_errors=True)
 R = {r["step"]: r for r in REP}
-print("=== the same page on a tablet and a desktop ===")
+
 for i, (name, w, h) in enumerate(SIZES):
     L = R.get(f"layout_f{i}")
     if not L:
@@ -365,10 +365,9 @@ for i, (name, w, h) in enumerate(SIZES):
           " ".join(f"{k['w']:.0f}x{k['h']:.0f}" for k in ks))
     check(f"{name}: a dark plate behind the pad and behind LOCK / ENGAGE",
           all(c.startswith("rgba(14, 17, 21") for c in L["plates"]), str(L["plates"]))
-print()
+
 if FAILED:
-    print(f"{len(FAILED)} FAILED:")
+
     for f in FAILED:
-        print("  - " + f)
+        pass
     sys.exit(1)
-print("all passed")

@@ -14,7 +14,7 @@ fails = []
 
 
 def check(name, cond, detail=""):
-    print(f"  [{'PASS' if cond else 'FAIL'}] {name}" + (f"  {detail}" if detail else ""))
+
     if not cond:
         fails.append(name)
 
@@ -40,7 +40,7 @@ def px_el(deg):
     return -(FH / 2.0) * math.tan(math.radians(deg)) / math.tan(math.radians(VFOV / 2))
 
 
-print("\n=== 1. roll de-rotation: a bank must not leak into the other axis ===")
+
 
 L = law()
 ex, ey = L._de_rotate(-100.0, 0.0, math.radians(90.0))
@@ -73,7 +73,7 @@ check("...and without de-rotation the same geometry WOULD leak (control check)",
       abs(base_climb) < 1e-6, f"level climb={base_climb:+.4f} m/s")
 
 
-print("\n=== 2. the camera-tilt coupling (why aim and approach both lost) ===")
+
 
 L0 = law(cam_tilt_deg=0.0)
 lean = math.radians(-20.0)
@@ -99,7 +99,7 @@ check("...and level airframe with a +20 tilt looks 20 deg UP",
       abs(c["el_deg"] - 20.0) < 1e-6, f"el_world={c['el_deg']:+.2f} deg")
 
 
-print("\n=== 3. proportional navigation on roll ===")
+
 
 def crossing(rate_dps, n=400, hz=20.0, gain=25.0, az_hold_deg=2.0, **kw):
     L = law(roll_pn_gain=gain, **kw)
@@ -183,7 +183,7 @@ check("no ATTITUDE -> pitch still drives forward", c["pitch_stick"] < 0.0,
 check("no ATTITUDE is reported, not hidden", c["have_att"] is False)
 
 
-print("\n=== 4. the vertical channel (the 'higher or lower than it' fix) ===")
+
 
 Lv = law(climb_gain=8.0, climb_lead=0.0, cam_tilt_deg=0.0)
 c = Lv.compute(0.0, -100.0, FW, FH, dt=0.05, att=att(pitch=0.0))
@@ -224,7 +224,7 @@ check("throttle stick saturates at 1.0, not beyond",
       abs(c["throttle_stick"]) <= 1.0 + 1e-9, f"{c['throttle_stick']:+.4f}")
 
 
-print("\n=== 5. pitch can never fly the airframe backwards ===")
+
 
 Lf = law(max_lean_deg=20.0)
 worst = -1.0
@@ -260,7 +260,7 @@ check("lean is reduced while the nose is off the target",
       f"{c_far['lean_deg']:+.1f} deg at 31 deg off vs {c_on['lean_deg']:+.1f} on target")
 
 
-print("\n=== 6. range, closing speed, and the terminal commit ===")
+
 
 Lr = law(target_width_m=0.20)
 f_px = (FW / 2.0) / math.tan(math.radians(HFOV / 2))
@@ -303,7 +303,7 @@ check("range under TERMINAL_RANGE_M also triggers", c["terminal"],
       f"range={c['range_m']:.2f} m")
 
 
-print("\n=== 7. latency measurement and lead ===")
+
 
 Ll = law(latency_s=0.20, latency_max_s=0.35, kp_yaw=4.5, deadband_frac=0.0)
 c = Ll.compute(0.0, 0.0, FW, FH, dt=0.05, att=att())
@@ -335,7 +335,7 @@ check("latency lead aims AHEAD of a sweeping target",
       f"yaw {yaw_for(0.0):+.4f} at 0 ms -> {yaw_for(0.20):+.4f} at 200 ms")
 
 
-print("\n=== 8. limits, slew, polarity, and the throttle PWM map ===")
+
 
 Ls = law(slew_per_s=2.0, max_lean_deg=30.0, stick_limit=1.0)
 Ls.neutral()
@@ -414,7 +414,7 @@ check("the LOS-rate filter converges on a constant slope",
       abs(r2.value - 1.0) < 0.02, f"{r2.value:.4f} vs 1.0")
 
 
-print("\n=== 9. the HUD actually renders (it had never been executed) ===")
+
 try:
     import numpy as np
     import cv2
@@ -493,10 +493,9 @@ else:
     check("the taller intercept panel fits in a 640x640 frame", 170 + 20 < 640)
 
 
-print("\n" + "=" * 62)
+
 if fails:
-    print(f"{len(fails)} CHECK(S) FAILED:")
+
     for f in fails:
-        print(f"  - {f}")
+        pass
     sys.exit(1)
-print("ALL INTERCEPT CHECKS PASSED")

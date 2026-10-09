@@ -67,20 +67,20 @@ def main():
 
     port = a.connect or find_port()
     if not port:
-        print("  [FAIL] no flight controller found.  Power the FC and re-run.")
+
         return 2
 
-    print("=" * 74)
-    print("mode-switch reachability check")
-    print(f"  link       : {port}")
-    print(f"  steer mode : {a.steer_mode}")
-    print("=" * 74)
+
+
+
+
+
 
     m = mavutil.mavlink_connection(port, baud=a.baud)
     if not m.wait_heartbeat(timeout=20):
-        print("  [FAIL] no heartbeat.")
+
         return 2
-    print(f"  [ok] heartbeat: sys={m.target_system} comp={m.target_component}")
+
 
     names = [f"FLTMODE{i}" for i in range(1, 7)] + ["FLTMODE_CH"]
     names += ["RCMAP_ROLL", "RCMAP_PITCH", "RCMAP_THROTTLE", "RCMAP_YAW"]
@@ -88,18 +88,18 @@ def main():
 
     missing = [n for n in names if n not in p]
     if missing:
-        print(f"  [warn] these parameters did not answer: {', '.join(missing)}")
+        pass
 
     fltmode_ch = int(p["FLTMODE_CH"]) if "FLTMODE_CH" in p else None
-    print(f"\n== the pilot's mode switch  (FLTMODE_CH = "
-          f"{fltmode_ch if fltmode_ch else '?'}) ==")
+
+
 
     want = a.steer_mode.strip().upper()
     found_at = []
     for i in range(1, 7):
         key = f"FLTMODE{i}"
         if key not in p:
-            print(f"  pos {i}  {SWITCH_BANDS[i-1]:>10} us   ?")
+
             continue
         num = int(p[key])
         name = COPTER_MODES.get(num, f"mode {num}")
@@ -107,7 +107,7 @@ def main():
         if name == want:
             found_at.append(i)
             mark = "   <== the tracker steers HERE"
-        print(f"  pos {i}  {SWITCH_BANDS[i-1]:>10} us   {name}{mark}")
+
 
     problems = []
 
@@ -117,8 +117,8 @@ def main():
             f"never open and the tracker will never steer — every log line will "
             f"say 'PILOT has control'.  Set one FLTMODEn to {want}.")
     else:
-        print(f"\n  [ok] {want} is reachable at switch position(s): "
-              f"{', '.join(map(str, found_at))}")
+        pass
+
 
     have_stab = [i for i in range(1, 7)
                  if f"FLTMODE{i}" in p and int(p[f"FLTMODE{i}"]) == 0]
@@ -128,33 +128,33 @@ def main():
             "takes off in and the primary abort — the drone must be able to get "
             "back to it.")
     else:
-        print(f"  [ok] STABILIZE (take-off + abort) reachable at: "
-              f"{', '.join(map(str, have_stab))}")
+        pass
+
 
     driven = {}
     for axis in ("roll", "pitch", "throttle", "yaw"):
         k = f"RCMAP_{axis.upper()}"
         if k in p:
             driven[int(p[k])] = axis
-    print(f"\n== channels ==")
-    print("  driven by the AI : " + ", ".join(
-        f"ch{c} ({ax})" for c, ax in sorted(driven.items())) or "  (unknown)")
+
+
+
     if fltmode_ch:
-        print(f"  flight-mode      : ch{fltmode_ch}")
+        pass
 
     cc = a.commit_chan
     if not cc:
-        print("  commit/abort     : NONE configured (COMMIT_CHAN=0)")
-        print("                     -> the mode switch is the only abort, noticed at")
-        print("                        HEARTBEAT rate (~1 s).  A spare channel makes")
-        print("                        it ~100 ms and adds a live speed dial.")
+
+
+
+
         free = [c for c in range(5, 9)
                 if c not in driven and c != fltmode_ch]
         if free:
-            print(f"                     -> free candidates on this FC: "
-                  f"{', '.join('ch%d' % c for c in free)}")
+            pass
+
     else:
-        print(f"  commit/abort     : ch{cc}")
+
         if cc in driven:
             problems.append(
                 f"COMMIT_CHAN={cc} is also the {driven[cc]} stick.  It would read "
@@ -168,12 +168,12 @@ def main():
             problems.append(
                 f"COMMIT_CHAN={cc} is outside channels 1-8.")
         else:
-            print(f"  [ok] ch{cc} is neither a driven stick nor the mode channel")
+            pass
 
     if a.watch > 0:
-        print(f"\n== live RC in, {a.watch:.0f}s — TURN THE TRANSMITTER ON and flick "
-              f"the mode switch ==")
-        print("   (all zeros just means the transmitter is off — not a fault)")
+
+
+
         end, last, seen_modes = time.time() + a.watch, None, set()
         while time.time() < end:
             msg = m.recv_match(type=["RC_CHANNELS", "HEARTBEAT"],
@@ -188,22 +188,22 @@ def main():
             if fltmode_ch and 1 <= fltmode_ch <= 8:
                 line += f"   | mode ch{fltmode_ch} = {vals[fltmode_ch-1]}"
             if line != last:
-                print(line)
+
                 last = line
         if seen_modes:
-            print(f"   modes reported while watching: {', '.join(sorted(seen_modes))}")
+            pass
 
-    print("\n" + "=" * 74)
+
     if problems:
-        print("NOT READY — fix these on the flight controller:")
+
         for i, s in enumerate(problems, 1):
-            print(f"  {i}. {s}")
-        print("=" * 74)
+            pass
+
         return 1
-    print(f"READY — {want} is on the switch, STABILIZE is on the switch, and the")
-    print("commit channel does not collide.  The remaining untested thing is")
-    print("roll/throttle POLARITY: do the props-off bench check before flying.")
-    print("=" * 74)
+
+
+
+
     return 0
 
 
