@@ -81,6 +81,10 @@
   .aim{position:absolute;width:7px;height:7px;transform:translate(-50%,-50%);border-radius:50%;
        background:var(--acc);box-shadow:0 0 0 1.5px rgba(0,0,0,.45);pointer-events:none;opacity:.9}
   .aim.good{background:#22c55e}
+  body[data-flight-mode="wasp"] .aim{width:13px;height:13px;border:1.5px solid #ef4444;background:transparent;
+       opacity:1;box-shadow:0 0 0 1px rgba(0,0,0,.6)}
+  body[data-flight-mode="wasp"] .aim::after{content:"";position:absolute;left:50%;top:50%;width:3px;height:3px;
+       transform:translate(-50%,-50%);border-radius:50%;background:#ef4444}
   .tape{position:absolute;left:0;top:0;width:100%;height:26px;display:block;pointer-events:none;
         background:linear-gradient(180deg,rgba(12,14,17,.85),rgba(12,14,17,.55));border-bottom:1px solid rgba(255,255,255,.12)}
   .tgt{position:absolute;width:7%;aspect-ratio:1/1;transform:translate(-50%,-50%);border:1.5px solid rgba(255,255,255,.75);
