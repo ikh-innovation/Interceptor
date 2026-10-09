@@ -54,8 +54,6 @@
   .tile .v.bad:before{background:var(--bad)}
   .tile .v.bad{color:var(--bad)}
   .tile .v.on:before{background:var(--acc)}
-  .wasp-summary{flex:0 0 auto;width:100%;min-height:34px;padding:7px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg2);color:var(--ink);font:500 12px/1.3 var(--sans);text-align:left}
-  .wasp-summary.custom{color:#8a5900;background:#fff6dc}
 
   .vidwrap{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:6px}
   .belt{flex:0 0 46px;width:100%;display:flex;gap:6px}
@@ -359,8 +357,6 @@
     .vbox .btn:disabled{opacity:1;background:#3b4148;color:rgba(255,255,255,.38)}
     .vbox .btn:disabled small{color:rgba(255,255,255,.3)}
     .vbox .rbtn:disabled{opacity:.6}
-    body[data-flight-mode="wasp"] .app{grid-template-rows:auto auto minmax(0,1fr) auto;grid-template-areas:"bur brand tiles logo" "summary summary summary summary" "vid vid vid vid" "controls controls controls controls"}
-    body[data-flight-mode="wasp"] .wasp-summary{grid-area:summary}
     .wasp-pad{width:calc(var(--K) * 2.7)}
     .wasp-profile-stack{gap:calc(var(--K) * .1)}
     .wasp-profile-stack button{min-height:calc(var(--K) * .55);font-size:clamp(11px,calc(var(--K) * .17),15px)}
@@ -374,9 +370,14 @@
     .toast{left:50%;right:auto;transform:translateX(-50%);max-width:42%;bottom:calc(var(--K) * .4)}
   }
   body[data-flight-mode="wasp"] .ctl{position:static;grid-area:controls;display:grid;grid-template-columns:minmax(0,1fr) minmax(128px,.85fr);gap:18px;align-items:start;width:min(100%,760px);margin:0 auto;padding:16px;background:var(--bg2);border:1px solid var(--line);border-radius:20px;box-shadow:0 5px 18px rgba(16,19,23,.08);pointer-events:auto}
+  body[data-flight-mode="wasp"] .vidwrap .vbox{width:100%;height:100%;max-width:100%;aspect-ratio:auto;flex:1 1 auto}
   body[data-flight-mode="wasp"] .pad,body[data-flight-mode="wasp"] .acts{width:auto;padding:0;border:0;background:none;box-shadow:none;backdrop-filter:none}
   .wasp-panel-title{margin:0 0 10px;font:700 10px/1.2 var(--sans);letter-spacing:.12em;color:var(--faint)}
   body[data-flight-mode="wasp"] .wasp-profile-stack{gap:6px}
+  .wasp-throttle{margin-top:12px}
+  .wasp-throttle .wasp-panel-title{margin-bottom:8px}
+  #wasp_main_throttle{gap:6px}
+  #wasp_main_throttle button{min-width:0;min-height:34px;padding:8px 2px;border-radius:9px;font-size:12px;letter-spacing:0}
   body[data-flight-mode="wasp"] .wasp-profile-stack button{display:flex;align-items:center;justify-content:space-between;min-height:38px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg3);color:var(--ink);font:500 13px/1.2 var(--sans);letter-spacing:0;text-align:left}
   body[data-flight-mode="wasp"] .wasp-profile-stack button::after{content:"";width:12px;height:12px;flex-shrink:0;border:1.5px solid #adb5bf;border-radius:50%}
   body[data-flight-mode="wasp"] .wasp-profile-stack button.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink);box-shadow:none;font-weight:700}
@@ -405,7 +406,7 @@
   .vbox.test-picking{cursor:crosshair}
   @media(max-width:370px){body[data-flight-mode="wasp"] .ctl{padding:12px;gap:12px}.main-countdown{padding:10px 8px;gap:6px}.main-countdown .timer-label{font-size:10px}.main-countdown svg{width:18px}.timer-wheel{flex-basis:40px}}
   @media (min-width:700px), (min-width:560px) and (orientation:landscape){
-    body[data-flight-mode="wasp"] .app{display:grid;grid-template-columns:minmax(0,1fr) 44px clamp(176px,23vw,232px);grid-template-rows:auto minmax(0,1fr);grid-template-areas:"header header header" "vid summary controls";gap:12px;padding-left:12px;padding-right:12px}
+    body[data-flight-mode="wasp"] .app{display:grid;grid-template-columns:minmax(0,1fr) clamp(176px,23vw,232px);grid-template-rows:auto minmax(0,1fr);grid-template-areas:"header header" "vid controls";gap:12px;padding-left:12px;padding-right:12px}
     body[data-flight-mode="wasp"] .top{display:grid;grid-area:header;grid-template-columns:auto auto minmax(0,1fr) auto;grid-template-areas:"bur brand tiles logo";gap:8px;min-width:0}
     body[data-flight-mode="wasp"] .burger{grid-area:bur}
     body[data-flight-mode="wasp"] .brand{grid-area:brand;margin-left:0;font-size:15px;letter-spacing:.14em}
@@ -417,7 +418,6 @@
     body[data-flight-mode="wasp"] .tile .k{font-size:10px;letter-spacing:.03em}
     body[data-flight-mode="wasp"] .tile .v{font-size:clamp(11px,1vw,14px);gap:4px;margin-top:5px}
     body[data-flight-mode="wasp"] .vidwrap{grid-area:vid;align-self:center;min-width:0;height:var(--wasp-panel-height,440px);max-height:100%;justify-content:center}
-    body[data-flight-mode="wasp"] .wasp-summary{grid-area:summary;align-self:center;width:100%;height:var(--wasp-panel-height,440px);max-height:100%;min-height:0;padding:10px 7px;font-size:11px;line-height:1.4;min-width:0;writing-mode:vertical-rl;text-orientation:mixed;text-align:center;overflow:hidden}
     body[data-flight-mode="wasp"] .vidwrap .vbox{width:100%;height:100%;max-width:100%;aspect-ratio:auto;flex:1 1 auto}
     body[data-flight-mode="wasp"] .ctl{grid-area:controls;display:flex;flex-direction:column;align-self:center;gap:18px;width:100%;max-height:100%;min-height:0;padding:14px;overflow-y:auto}
     body[data-flight-mode="wasp"] .wasp-pad,body[data-flight-mode="wasp"] .acts{width:100%;flex:0 0 auto}
@@ -429,7 +429,7 @@
     body[data-flight-mode="wasp"] .brand span{display:block;margin:5px 0 0;font-size:8px;letter-spacing:.06em}
   }
   @media (min-width:560px) and (max-width:699px) and (orientation:landscape){
-    body[data-flight-mode="wasp"] .app{grid-template-columns:minmax(0,1fr) 38px 176px}
+    body[data-flight-mode="wasp"] .app{grid-template-columns:minmax(0,1fr) 176px}
     body[data-flight-mode="wasp"] .brand{width:70px;font-size:12px}
     body[data-flight-mode="wasp"] .logo{width:40px}
     body[data-flight-mode="wasp"] .tiles{height:40px}
@@ -437,7 +437,6 @@
     body[data-flight-mode="wasp"] .tile .k{font-size:9px}
     body[data-flight-mode="wasp"] .tile .v{font-size:9px;gap:2px;margin-top:4px}
     body[data-flight-mode="wasp"] .tile .v::before{flex-basis:4px;height:4px}
-    body[data-flight-mode="wasp"] .wasp-summary{padding:7px 5px;font-size:10px}
   }
   @media (min-width:560px) and (orientation:landscape) and (max-height:500px){
     body[data-flight-mode="wasp"] .app{gap:8px;padding-top:6px;padding-bottom:8px}
@@ -446,18 +445,32 @@
     body[data-flight-mode="wasp"] .ctl{padding:8px;gap:8px;border-radius:14px}
     body[data-flight-mode="wasp"] .wasp-panel-title{font-size:9px;margin-bottom:5px}
     body[data-flight-mode="wasp"] .wasp-profile-stack{gap:3px}
-    body[data-flight-mode="wasp"] .wasp-profile-stack button{min-height:25px;padding:5px 8px;font-size:11px;border-radius:7px}
+    body[data-flight-mode="wasp"] .wasp-profile-stack button{min-height:23px;padding:4px 8px;font-size:11px;border-radius:7px}
+    body[data-flight-mode="wasp"] .wasp-throttle{margin-top:6px}
+    body[data-flight-mode="wasp"] .wasp-throttle .wasp-panel-title{margin-bottom:4px}
+    body[data-flight-mode="wasp"] #wasp_main_throttle button{min-height:26px;padding:5px 2px;font-size:11px}
     body[data-flight-mode="wasp"] .acts{gap:5px 8px}
     body[data-flight-mode="wasp"] .main-countdown{padding:3px 8px}
-    body[data-flight-mode="wasp"] .timer-wheel{--wheel-row:18px}
-    body[data-flight-mode="wasp"] .acts .rbtn{width:48px;height:48px;font-size:9px}
+    body[data-flight-mode="wasp"] .timer-wheel{--wheel-row:16px}
+    body[data-flight-mode="wasp"] .acts .rbtn{width:46px;height:46px;font-size:9px}
+    body[data-flight-mode="wasp"] .eng.countdown strong{font-size:18px;margin-top:1px}
     body[data-flight-mode="wasp"] .wasp-save-note{display:none}
   }
   @media (min-width:560px) and (orientation:landscape) and (max-height:360px){
-    body[data-flight-mode="wasp"] .wasp-profile-stack button{min-height:22px;padding:3px 7px;font-size:10px}
-    body[data-flight-mode="wasp"] .timer-wheel{--wheel-row:16px}
-    body[data-flight-mode="wasp"] .timer-wheel button[aria-selected="true"]{font-size:18px}
-    body[data-flight-mode="wasp"] .acts .rbtn{width:44px;height:44px;font-size:8px}
+    body[data-flight-mode="wasp"] .ctl{padding:6px;gap:6px}
+    body[data-flight-mode="wasp"] .wasp-panel-title{font-size:8px;margin-bottom:4px}
+    body[data-flight-mode="wasp"] .wasp-profile-stack{gap:2px}
+    body[data-flight-mode="wasp"] .wasp-profile-stack button{height:20px;min-height:20px;padding:2px 6px;font-size:9px}
+    body[data-flight-mode="wasp"] .acts{gap:4px 8px}
+    body[data-flight-mode="wasp"] .main-countdown{padding:0 8px}
+    body[data-flight-mode="wasp"] .wasp-throttle .wasp-panel-title{font-size:8px;margin-bottom:3px}
+    body[data-flight-mode="wasp"] #wasp_main_throttle button{min-height:22px;padding:4px 2px;font-size:10px}
+    body[data-flight-mode="wasp"] .timer-wheel{--wheel-row:12px}
+    body[data-flight-mode="wasp"] .timer-wheel button{font-size:11px}
+    body[data-flight-mode="wasp"] .timer-wheel button[aria-selected="true"]{font-size:15px}
+    body[data-flight-mode="wasp"] .acts .rbtn{width:40px;height:40px;font-size:8px}
+    body[data-flight-mode="wasp"] .eng.countdown #engtxt{font-size:7px}
+    body[data-flight-mode="wasp"] .eng.countdown strong{font-size:15px;margin-top:1px}
     body[data-flight-mode="wasp"] .tile .k{font-size:9px}
     body[data-flight-mode="wasp"] .tile .v{font-size:9px;gap:2px}
   }
@@ -478,8 +491,6 @@
     <div class="tile"><span class="k">Vibration</span><span class="v" id="c_vib">--</span></div>
     <div class="tile"><span class="k" id="c_ai_k">Detector</span><span class="v" id="c_ai">--</span></div>
   </div>
-
-  <button class="wasp-summary" id="wasp_summary" data-only="wasp" hidden aria-label="Review WASP flight settings"></button>
 
   <div class="vidwrap"><div class="vbox" id="vbox">
     <img id="v" src="/stream.mjpg" alt="">
@@ -517,6 +528,10 @@
         <button data-wasp-profile="responsive" aria-pressed="false">Responsive</button>
         <button data-wasp-profile="extra" aria-pressed="false">Extra</button>
       </div>
+      <div class="wasp-throttle">
+        <div class="wasp-panel-title">Throttle</div>
+        <div class="seg" id="wasp_main_throttle" data-wp="throttle" data-values="0.75,0.85,1" data-labels="75%,85%,100%" role="group" aria-label="WASP throttle"></div>
+      </div>
     </div>
     <div class="acts">
       <div class="wasp-panel-title" data-only="wasp" hidden>Launch controls</div>
@@ -528,7 +543,7 @@
       <button class="rbtn auto" id="b_wasp_abort" style="background:#ad3030;border-color:#ad3030" aria-label="Abort to Idle">ABORT</button>
       <button class="rbtn lock" id="b_lock" aria-label="LOCK"><span id="locktxt">LOCK</span></button>
       <button class="rbtn eng" id="b_eng" aria-label="ENGAGE"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE</span></button>
-      <p class="wasp-save-note" data-only="wasp" hidden>Changes save automatically for this response.</p>
+      <p class="wasp-save-note" data-only="wasp" hidden>Settings save automatically. Throttle and countdown apply to every response.</p>
     </div>
   </div>
 </div>
@@ -591,7 +606,7 @@
         <div class="parameter-grid">
           <div class="grp"><div class="lbl">Launch throttle</div><div class="seg" data-wp="throttle" data-values="0.75,0.85,1" data-labels="75%,85%,100%"></div></div>
           <div class="grp"><div class="lbl">Steering response</div><div class="seg" id="wasp_profiles" role="group" aria-label="Steering response"><button data-wasp-profile="smooth" aria-pressed="false">Smooth</button><button data-wasp-profile="standard" aria-pressed="false">Standard</button><button data-wasp-profile="responsive" aria-pressed="false">Responsive</button><button data-wasp-profile="extra" aria-pressed="false">Extra</button></div><p class="steering-help" id="wasp_profile_help"></p></div>
-          <div class="grp"><label class="lbl" for="wasp_launch_seconds">Launch countdown</label><div class="idle-input"><input id="wasp_launch_seconds" type="number" min="0" max="60" step="any" value="3" inputmode="decimal"><span>s</span></div><p class="steering-help">Saved automatically for the selected response. Default: 3 s.</p></div>
+          <div class="grp"><label class="lbl" for="wasp_launch_seconds">Launch countdown</label><div class="idle-input"><input id="wasp_launch_seconds" type="number" min="0" max="60" step="any" value="3" inputmode="decimal"><span>s</span></div><p class="steering-help">Saved automatically. Throttle and countdown apply to every response. Default countdown: 3 s.</p></div>
         </div>
         <p class="steering-help" id="wasp_timing"></p>
         <details id="wasp_advanced"><summary>Advanced settings</summary><div class="parameter-grid">
@@ -711,14 +726,13 @@
     var ctl = document.querySelector(".ctl"), wasp = LAST && LAST.mission && LAST.mission.wasp_enabled;
     var into = controlsQuery.matches && !wasp ? $("vbox") : document.querySelector(".app");
     if (ctl.parentNode !== into) into.appendChild(ctl);
-    var summary = $("wasp_summary"), video = document.querySelector(".vidwrap"), app = document.querySelector(".app");
+    var video = document.querySelector(".vidwrap"), app = document.querySelector(".app");
     var tiles = document.querySelector(".tiles"), top = document.querySelector(".top");
-    if (summary.parentNode !== app) app.insertBefore(summary, video);
     if (wasp && waspLayoutQuery.matches) {
       if (tiles.parentNode !== top) top.insertBefore(tiles, top.querySelector(".logo"));
       syncWaspPanelHeight();
     } else if (tiles.parentNode !== app) {
-      app.insertBefore(tiles, summary);
+      app.insertBefore(tiles, video);
     }
   }
   function syncWaspPanelHeight() {
@@ -954,7 +968,6 @@
   });
 
   $("t_log").onclick = function () { openSheet("sh_log"); };
-  $("wasp_summary").onclick = function () { openSheet("sh_speed"); };
   document.querySelectorAll("[data-close]").forEach(function (b) {
     b.onclick = function () { b.closest(".sheet").classList.remove("open"); };
   });
@@ -1354,8 +1367,6 @@
     $("wasp_profile_help").classList.toggle("custom", steeringProfile === "custom");
     var steeringParams = m.wasp_params || {};
     T("wasp_timing", "Countdown " + Number(steeringParams.launch_s || 0) + " s before launch. Straight launch " + Number(steeringParams.straight || 0) + " s, then steering ramps over " + Number(steeringParams.blend || 0) + " s. Idle after " + Number(m.idle_s || 0) + " s from launch.");
-    T("wasp_summary", "Steering: " + (steeringNames[steeringProfile] || "Custom") + " · Launch " + Number(steeringParams.launch_s || 0) + " s · Throttle " + Math.round(Number(steeringParams.throttle || 0)*100) + "% · Idle " + Number(m.idle_s || 0) + " s");
-    $("wasp_summary").classList.toggle("custom", steeringProfile === "custom");
     document.querySelectorAll("[data-sky]").forEach(function (x) {
       x.classList.toggle("on", j.sky_gate !== undefined && (x.getAttribute("data-sky") === "on") === !!j.sky_gate);
       x.disabled = VIEW || ctl === "other";

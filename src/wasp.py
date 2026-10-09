@@ -125,6 +125,7 @@ class Wasp:
                 "lead": (0.0, 0.08, 0.15), "camera_roll": (0.0, 90.0, 180.0, 270.0)}
     LAUNCH_SECONDS_MIN = 0.0
     LAUNCH_SECONDS_MAX = 60.0
+    SHARED_KEYS = ("throttle", "launch_s")
     STEERING_PROFILES = {
         "smooth": dict(blend=1.0, rate=45.0, gain=2.0),
         "standard": dict(blend=0.5, rate=60.0, gain=2.0),
@@ -138,7 +139,8 @@ class Wasp:
         self.params = dict(throttle=1.0, straight=1.0, blend=0.5,
                            rate=60.0, gain=2.0, lead=0.08, camera_roll=0.0, launch_s=3.0,
                            centre_timer=3.0)
-        self.profiles = {name: dict(self.params, **settings)
+        profile_defaults = {key: value for key, value in self.params.items() if key not in self.SHARED_KEYS}
+        self.profiles = {name: dict(profile_defaults, **settings)
                          for name, settings in self.STEERING_PROFILES.items()}
         self.active_profile = "standard"
         self.started = None
@@ -157,24 +159,39 @@ class Wasp:
                 if key in ("launch_s", "centre_timer") else key in cls.SETTINGS and value in cls.SETTINGS[key])
 
     def load_defaults(self, saved):
+        selected = saved.get("selected")
+        if isinstance(selected, str) and selected in self.profiles:
+            self.active_profile = selected
         profiles = saved.get("profiles", {})
         if isinstance(profiles, dict):
             for name, settings in profiles.items():
                 if name not in self.profiles or not isinstance(settings, dict):
                     continue
                 for key, value in settings.items():
+                    if key in self.SHARED_KEYS:
+                        continue
                     try:
                         value = float(value)
                     except (ValueError, TypeError):
                         continue
-                    if key == "throttle":
-                        value = {0.25: 0.75, 0.5: 0.85}.get(value, value)
                     if self.valid_param(key, value):
                         self.profiles[name][key] = value
-        selected = saved.get("selected")
-        if isinstance(selected, str) and selected in self.profiles:
-            self.active_profile = selected
         self.params.update(self.profiles[self.active_profile])
+        # Older files stored launch settings in each profile. Keep the active
+        # profile's values when migrating, then store them separately from now on.
+        legacy = profiles.get(self.active_profile, {}) if isinstance(profiles, dict) else {}
+        legacy = legacy if isinstance(legacy, dict) else {}
+        shared = saved.get("shared", {})
+        shared = shared if isinstance(shared, dict) else {}
+        for key in self.SHARED_KEYS:
+            try:
+                value = float(shared.get(key, legacy.get(key, self.params[key])))
+            except (TypeError, ValueError):
+                continue
+            if key == "throttle":
+                value = {0.25: 0.75, 0.5: 0.85}.get(value, value)
+            if self.valid_param(key, value):
+                self.params[key] = value
 
     def begin(self, now, target_acquired=True):
         self.started = now

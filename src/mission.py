@@ -555,10 +555,15 @@ class Mission:
             if error:
                 return error
             profile = profile if key == "profile" else self.wasp.active_profile
-            settings = (dict(self.wasp.profiles[profile]) if key == "profile"
-                        else dict(self.wasp.params, **{key: v}))
-            profiles = dict(self.wasp.profiles, **{profile: settings})
-            if self.wasp_path and not _write_json(self.wasp_path, dict(selected=profile, profiles=profiles)):
+            settings = dict(self.wasp.params)
+            if key == "profile":
+                settings.update(self.wasp.profiles[profile])
+            else:
+                settings[key] = v
+            profile_settings = {k: value for k, value in settings.items() if k not in Wasp.SHARED_KEYS}
+            profiles = dict(self.wasp.profiles, **{profile: profile_settings})
+            shared = {k: settings[k] for k in Wasp.SHARED_KEYS}
+            if self.wasp_path and not _write_json(self.wasp_path, dict(selected=profile, profiles=profiles, shared=shared)):
                 return "could not save WASP defaults on the Jetson"
             self.wasp.profiles = profiles
             self.wasp.active_profile = profile

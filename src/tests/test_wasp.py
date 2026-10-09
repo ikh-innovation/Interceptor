@@ -264,13 +264,15 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.m.set_wasp_param("blend", 1), "")
 
     def test_saved_throttle_presets_migrate_to_new_choices(self):
-        wasp = Wasp()
-        wasp.load_defaults(dict(selected="smooth", profiles={
-            "smooth": dict(throttle=.25), "standard": dict(throttle=.5),
-            "responsive": dict(throttle=.85), "extra": dict(throttle=1)}))
-        self.assertEqual(wasp.params["throttle"], .75)
-        self.assertEqual([wasp.profiles[name]["throttle"] for name in Wasp.STEERING_PROFILES],
-                         [.75, .85, .85, 1])
+        legacy = {"smooth": dict(throttle=.25, launch_s=7), "standard": dict(throttle=.5, launch_s=4),
+                  "responsive": dict(throttle=.85, launch_s=2), "extra": dict(throttle=1, launch_s=3)}
+        for name, throttle in zip(Wasp.STEERING_PROFILES, (.75, .85, .85, 1)):
+            wasp = Wasp()
+            wasp.load_defaults(dict(selected=name, profiles=legacy))
+            self.assertEqual(wasp.params["throttle"], throttle)
+            self.assertEqual(wasp.params["launch_s"], legacy[name]["launch_s"])
+            self.assertTrue(all(not any(key in settings for key in Wasp.SHARED_KEYS)
+                                for settings in wasp.profiles.values()))
 
     def test_45_degree_choice_limits_combined_steering(self):
         self.mapper.armed = False
@@ -343,7 +345,7 @@ class LifecycleTests(unittest.TestCase):
         params = self.m.wasp.params
         self.assertEqual((params["blend"], params["rate"], params["gain"]), (.5, 90, 4))
         self.assertEqual(self.m.snapshot(100)["wasp_steering_profile"], "responsive")
-        self.assertEqual((params["throttle"], params["straight"]), (1, 1))
+        self.assertEqual((params["throttle"], params["straight"]), (.75, 1))
         self.assertTrue(self.m.wasp.camera_confirmed)
         self.assertEqual(self.m.set_wasp_param("gain", 6), "")
         self.assertEqual(self.m.snapshot(100)["wasp_steering_profile"], "responsive")
@@ -435,6 +437,7 @@ class LifecycleTests(unittest.TestCase):
             for index, profile in enumerate(Wasp.STEERING_PROFILES):
                 self.assertEqual(self.m.set_wasp_param("profile", profile), "")
                 self.assertEqual(self.m.set_wasp_param("launch_s", 2.25+index), "")
+                self.assertEqual(self.m.set_wasp_param("throttle", .85), "")
                 self.assertEqual(self.m.set_wasp_param("centre_timer", 1.5+index), "")
                 self.assertEqual(self.m.set_wasp_param("rate", 45), "")
                 self.assertEqual(self.m.set_wasp_param("gain", 6), "")
@@ -442,7 +445,8 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(restored.wasp.active_profile, "extra")
             for index, profile in enumerate(Wasp.STEERING_PROFILES):
                 self.assertEqual(restored.set_wasp_param("profile", profile), "")
-                self.assertEqual(restored.wasp.params["launch_s"], 2.25+index)
+                self.assertEqual(restored.wasp.params["launch_s"], 5.25)
+                self.assertEqual(restored.wasp.params["throttle"], .85)
                 self.assertEqual(restored.wasp.params["centre_timer"], 1.5+index)
                 self.assertEqual(restored.wasp.params["rate"], 45)
                 self.assertEqual(restored.wasp.params["gain"], 6)
@@ -451,7 +455,24 @@ class LifecycleTests(unittest.TestCase):
                 self.assertTrue(restored.set_wasp_param("rate", 120))
             self.assertEqual(restored.wasp.params, before)
             saved = json.loads(Path(path).read_text())
-            self.assertEqual(saved["profiles"]["extra"]["launch_s"], 5.25)
+            self.assertEqual(saved["shared"], dict(launch_s=5.25, throttle=.85))
+            self.assertTrue(all(not any(key in settings for key in Wasp.SHARED_KEYS)
+                                for settings in saved["profiles"].values()))
+
+    def test_shared_launch_settings_stay_fixed_across_all_profiles(self):
+        self.mapper.armed = False
+        self.assertEqual(self.m.set_wasp_param("launch_s", 7), "")
+        self.assertEqual(self.m.set_wasp_param("throttle", .75), "")
+        for name in Wasp.STEERING_PROFILES:
+            self.assertEqual(self.m.set_wasp_param("profile", name), "")
+            self.assertEqual(self.m.wasp.params["launch_s"], 7)
+            self.assertEqual(self.m.wasp.params["throttle"], .75)
+        self.assertEqual(self.m.set_wasp_param("launch_s", 2.5), "")
+        self.assertEqual(self.m.set_wasp_param("throttle", .85), "")
+        for name in Wasp.STEERING_PROFILES:
+            self.assertEqual(self.m.set_wasp_param("profile", name), "")
+            self.assertEqual(self.m.wasp.params["launch_s"], 2.5)
+            self.assertEqual(self.m.wasp.params["throttle"], .85)
 
     def test_abort_wins_over_launch(self):
         self.m.request_engage()

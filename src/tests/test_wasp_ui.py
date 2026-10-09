@@ -63,7 +63,8 @@ def state():
              wasp_attitude_fresh=simulation["attitude"])
     return dict(mission=s, armed=mapper.armed, linked=True,
                 fc_mode="ACRO" if m.wasp.enabled else "ALT_HOLD", control="you",
-                detector="TensorRT", fps=30, **detector_settings)
+                detector="TensorRT", fps=30,
+                cam_aspect=16/9 if detector_settings["cam_fps"] == 60 else 4/3, **detector_settings)
 
 
 HARNESS = r'''<!doctype html><html><head><meta charset="utf-8"></head><body><iframe id="f" width="390" height="844"></iframe><script>
@@ -96,7 +97,7 @@ async function layout(mode){
 async function flightLayout(){
  for(const size of [[320,640],[390,844],[568,320],[667,375],[844,390],[820,1180],[1180,820],[1366,657]]){
   f.width=size[0];f.height=size[1];await sleep(150);
-  const buttons=[...q('#wasp_pad').querySelectorAll('button')], boxes=buttons.map(x=>x.getBoundingClientRect());
+  const buttons=[...q('#wasp_pad .wasp-profile-stack').querySelectorAll('button')], boxes=buttons.map(x=>x.getBoundingClientRect());
   const abort=q('#b_wasp_abort').getBoundingClientRect(), launch=q('#b_eng').getBoundingClientRect();
   await check('Wasp profiles stack vertically '+size,buttons.every(x=>x.getClientRects().length)&&boxes.every((x,i)=>!i||(x.top>=boxes[i-1].bottom&&Math.abs(x.left-boxes[0].left)<1&&Math.abs(x.width-boxes[0].width)<1)));
   await check('Wasp has aligned circular Abort and Launch only '+size,Math.abs(abort.width-abort.height)<1&&[...q('.acts').querySelectorAll('.rbtn')].filter(x=>x.getClientRects().length).length===2&&Math.abs(abort.top-launch.top)<1&&Math.abs(abort.width-launch.width)<1);
@@ -107,12 +108,15 @@ async function flightLayout(){
   const tiles=q('.tiles').getBoundingClientRect(), camera=q('#vbox').getBoundingClientRect(), controls=q('.ctl').getBoundingClientRect();
   await check('Wasp layout matches orientation '+size,side?tiles.bottom<=camera.top&&camera.right<=controls.left:controls.top>=camera.bottom);
   if(side){
-   const t=[...f.contentDocument.querySelectorAll('.tile')].map(x=>x.getBoundingClientRect()), summary=q('#wasp_summary').getBoundingClientRect(), brand=q('.brand').getBoundingClientRect();
+   const t=[...f.contentDocument.querySelectorAll('.tile')].map(x=>x.getBoundingClientRect()), brand=q('.brand').getBoundingClientRect();
    await check('Wasp telemetry stays in one header row '+size,t.every((x,i)=>Math.abs(x.top-t[0].top)<1&&(!i||x.left>=t[i-1].right-1))&&tiles.left>=brand.right&&tiles.top<=brand.bottom&&tiles.bottom>=brand.top);
-   await check('Wasp vertical summary sits between image and controls '+size,camera.right<=summary.left&&summary.right<=controls.left&&f.contentWindow.getComputedStyle(q('#wasp_summary')).writingMode==='vertical-rl');
-   await check('Wasp image and summary match control panel height '+size,[camera,summary].every(x=>Math.abs(x.top-controls.top)<1&&Math.abs(x.height-controls.height)<1));
+   await check('Wasp image matches control panel height '+size,Math.abs(camera.top-controls.top)<1&&Math.abs(camera.height-controls.height)<1);
   }
   await check('Wasp main timer fits its panel '+size,q('.main-countdown').scrollWidth<=q('.main-countdown').clientWidth+1&&visible('#wasp_launch_main'));
+  await check('Wasp summary bar is removed '+size,!q('#wasp_summary'));
+  await check('Wasp camera uses the full frame '+size,Math.abs(q('#v').getBoundingClientRect().width-camera.width)<3&&Math.abs(q('#v').getBoundingClientRect().height-camera.height)<3);
+  const throttle=q('#wasp_main_throttle').getBoundingClientRect(), extra=q('#wasp_pad [data-wasp-profile="extra"]').getBoundingClientRect();
+  await check('Main throttle row sits below Extra and fits '+size,visible('#wasp_main_throttle')&&throttle.top>=extra.bottom&&throttle.bottom<=size[1]+1&&q('#wasp_main_throttle').scrollWidth<=q('#wasp_main_throttle').clientWidth+1);
  }
  f.width=390;f.height=844;await sleep(150);
 }
@@ -172,17 +176,17 @@ async function main(){
  const timer=q('#wasp_launch_seconds');timer.focus();timer.value='4.25';await sleep(400);
  await check('polling preserves typed launch countdown',timer.value==='4.25');
  timer.dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));timer.blur();
- await until(()=>(q('#wasp_summary').textContent.includes('Launch 4.25 s')));
+ await until(()=>q('#wasp_launch_main').value==='4.25');
  await check('manual timer keeps selected steering profile',(await req('/state')).mission.wasp_steering_profile==='extra');
  const timerCommands=(await req('/commands')).length;
  timer.value='-1';timer.dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));
  await check('invalid launch timer sends nothing',timer.value==='4.25'&&(await req('/commands')).length===timerCommands);
  q('[data-wasp-profile="standard"]').click();await until(()=>q('[data-wasp-profile="standard"]').classList.contains('on'));
- await check('each response has its own launch countdown',(await req('/state')).mission.wasp_params.launch_s===3);
- q('#wasp_profiles [data-wasp-profile="extra"]').click();await until(()=>q('#wasp_launch_seconds').value==='4.25');
- await check('Extra remembers its edited timer',(await req('/state')).mission.wasp_steering_profile==='extra');
- q('#wasp_profiles [data-wasp-profile="standard"]').click();await until(()=>q('#wasp_launch_seconds').value==='3');
- await check('main screen shows active steering and Idle before launch',visible('#wasp_summary')&&q('#wasp_summary').textContent.includes('Steering: Standard')&&q('#wasp_summary').textContent.includes('Idle 12.5 s'));
+ await check('launch countdown stays the same when steering changes',(await req('/state')).mission.wasp_params.launch_s===4.25);
+ q('#wasp_profiles [data-wasp-profile="extra"]').click();await until(()=>q('#wasp_profiles [data-wasp-profile="extra"]').classList.contains('on')&&q('#wasp_launch_seconds').value==='4.25');
+ await check('Extra uses the same shared timer',(await req('/state')).mission.wasp_steering_profile==='extra');
+ q('#wasp_profiles [data-wasp-profile="standard"]').click();await until(()=>q('#wasp_profiles [data-wasp-profile="standard"]').classList.contains('on')&&q('#wasp_launch_seconds').value==='4.25');
+ await check('main screen shows active steering and timer before launch',q('#wasp_pad [data-wasp-profile="standard"]').classList.contains('on')&&q('#wasp_launch_main').value==='4.25');
  q('#wasp_advanced').open=true;
  await check('Wasp has seven parameter groups and no old timers',q('#pp_wasp').querySelectorAll('[data-wp]').length===7&&!q('[data-wp="duration"]')&&!q('[data-wp="no_det"]'));
  await check('Idle is shared across modes',q('#idle_seconds').value==='12.5');
@@ -192,7 +196,7 @@ async function main(){
  await check('Wasp has gain 2 by default',q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
  q('[data-wp="rate"] [data-wv="45"]').click();await until(()=>q('[data-wp="rate"] [data-wv="45"]').classList.contains('on'));
  await check('Idle and 45-degree choices apply to backend',(await req('/state')).mission.idle_s===7&&(await req('/state')).mission.wasp_params.rate===45);
- await check('edited steering becomes selected profile default',q('#wasp_profile_help').textContent.includes('Standard defaults')&&q('#wasp_summary').textContent.includes('Steering: Standard')&&q('#wasp_profiles [data-wasp-profile="standard"]').classList.contains('on'));
+ await check('edited steering becomes selected profile default',q('#wasp_profile_help').textContent.includes('Standard defaults')&&q('#wasp_profiles [data-wasp-profile="standard"]').classList.contains('on'));
  await check('Enter ends Idle editing',f.contentDocument.activeElement!==q('#idle_seconds'));
  await layout('wasp');
  q('[data-sky="off"]').click();await until(()=>q('[data-sky="off"]').classList.contains('on'));
@@ -215,7 +219,7 @@ async function main(){
  await check('refresh preserves Wasp mode',q('[data-flightmode="wasp"]').classList.contains('on'));
  await check('refresh preserves throttle',q('[data-wp="throttle"] [data-wv="0.75"]').classList.contains('on'));
  await check('refresh preserves Idle, rate and gain',q('#idle_seconds').value==='7'&&q('[data-wp="rate"] [data-wv="45"]').classList.contains('on')&&q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
- await check('refresh preserves edited profile and collapsed advanced view',q('#wasp_summary').textContent.includes('Steering: Standard')&&!q('#wasp_advanced').open);
+ await check('refresh preserves edited profile and collapsed advanced view',q('#wasp_pad [data-wasp-profile="standard"]').classList.contains('on')&&!q('#wasp_advanced').open);
  await check('refresh preserves camera confirmation',q('#mountstatus').textContent==='90° ✓');
  await check('refresh preserves manual launch countdown',q('#wasp_launch_seconds').value==='4.25');
  await req('/set?armed=1&phase=WASP_READY');await until(()=>q('[data-flightmode="normal"]').disabled);
@@ -230,6 +234,13 @@ async function main(){
  await check('Extra can be selected while armed and ready',(await req('/state')).mission.wasp_params.rate===120);
  q('#wasp_pad [data-wasp-profile="standard"]').click();await until(()=>q('#wasp_launch_main').value==='4.25'&&q('#wasp_pad [data-wasp-profile="standard"]').classList.contains('on'));
  await check('switching back restores edited advanced defaults',(await req('/state')).mission.wasp_params.rate===45&&(await req('/state')).mission.wasp_params.blend===0.25);
+ await check('Main throttle row offers all three choices',[...q('#wasp_main_throttle').children].map(b=>b.textContent).join(',')==='75%,85%,100%');
+ q('#wasp_main_throttle [data-wv="0.85"]').click();await until(()=>q('#pp_wasp [data-wp="throttle"] [data-wv="0.85"]').classList.contains('on'));
+ for(const profile of ['smooth','responsive','extra','standard']){
+  q('#wasp_pad [data-wasp-profile="'+profile+'"]').click();await until(()=>q('#wasp_pad [data-wasp-profile="'+profile+'"]').classList.contains('on'));
+  await check('Throttle and launch countdown stay independent of '+profile,q('#wasp_main_throttle [data-wv="0.85"]').classList.contains('on')&&q('#wasp_launch_main').value==='4.25'&&(await req('/state')).mission.wasp_params.throttle===.85);
+ }
+ q('#wasp_main_throttle [data-wv="0.75"]').click();await until(()=>q('#pp_wasp [data-wp="throttle"] [data-wv="0.75"]').classList.contains('on'));
  await check('main timer is a scroll picker without text input',q('#wasp_launch_main').getAttribute('role')==='listbox'&&!q('.main-countdown input'));
  const wheel=q('#wasp_launch_main'), rows=[...wheel.children], index=rows.findIndex(x=>x.getAttribute('data-seconds')==='5');
  wheel.dispatchEvent(new f.contentWindow.WheelEvent('wheel',{deltaY:50,bubbles:true}));wheel.scrollTop=index*rows[0].getBoundingClientRect().height;
@@ -275,7 +286,7 @@ async function main(){
  await check('Abort cancels the launch countdown',(await req('/state')).mission.wasp_progress.stage!=='COUNTDOWN');
  await req('/set?armed=0&phase=PILOT');await sleep(350);parameters();
  q('#wasp_launch_seconds').focus();q('#wasp_launch_seconds').value='3';q('#wasp_launch_seconds').dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));q('#wasp_launch_seconds').blur();
- await until(()=>q('#wasp_summary').textContent.includes('Launch 3 s'));
+ await until(()=>q('#wasp_launch_main').value==='3');
  q('#sh_speed [data-close]').click();await req('/set?armed=1&phase=WASP_READY');await until(()=>!q('#b_eng').disabled);
  tap('#b_eng');await until(()=>q('#engtxt strong')&&q('#engtxt strong').textContent==='3');
  await until(()=>q('#engtxt strong')&&q('#engtxt strong').textContent==='2');
@@ -303,6 +314,8 @@ async function main(){
  await check('abort remains available and sends once per tap',(await req('/commands')).filter(x=>x[0]==='abort').length===2&&q('#b_eng').disabled);
  await check('Idle identifies height hold and drift',q('#badge').textContent==='IDLE · HOLD · XY DRIFT');
  await req('/set?armed=0&phase=PILOT');await sleep(350);parameters();
+ q('[data-cam="30"]').click();await until(()=>q('[data-cam="30"]').classList.contains('on'));
+ q('#sh_speed [data-close]').click();await flightLayout();parameters();
  await switchMode('normal');
  await check('leaving WASP disables Test mode',!(await req('/state')).mission.test_mode&&!visible('#test_target'));
  await check('Abort is available in Seeker too',visible('#b_wasp_abort'));
@@ -438,4 +451,4 @@ if __name__ == "__main__":
                         time.sleep(.05)
     srv.shutdown()
     assert finished, "Browser timed out; see /tmp/wasp-firefox.log"
-    assert reports and all(r["ok"] for r in reports), reports
+    assert reports and all(r["ok"] for r in reports), [r for r in reports if not r["ok"]]
