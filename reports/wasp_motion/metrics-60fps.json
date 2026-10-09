@@ -1,0 +1,93 @@
+{
+  "description": "Reproducible side-by-side WASP steering simulation, using production code.\n\nThis is an angular camera-tracking demonstration, not an airframe/trajectory\nprediction. Detector observations and camera vibration are synthetic. Both\nsides use the same target, noise, outliers, dropouts and rotational plant.\n",
+  "seed": 7284,
+  "fps": 60,
+  "detector": "synthetic observations",
+  "follower": true,
+  "parameters": {
+    "throttle": 1,
+    "straight": 0.5,
+    "blend": 0.25,
+    "rate": 120,
+    "gain": 6,
+    "lead": 0.08,
+    "camera_roll": 0.0,
+    "launch_s": 3.0,
+    "centre_timer": 3.0,
+    "motion_assist": 0.0
+  },
+  "baseline": {
+    "motion_assist": false,
+    "rms_line_of_sight_error_px": 4.138258761256404,
+    "rms_command_change_dps": 5.776697028299638,
+    "mean_processing_ms": 2.2711524916606627,
+    "p95_processing_ms": 5.719380799746431,
+    "flow_frames": 0,
+    "outlier_frames": 9,
+    "accepted_outlier_frames": 0,
+    "fps": 60,
+    "scenes": {
+      "01  Small target / detector jitter": {
+        "rms_line_of_sight_error_px": 2.6777515351347794,
+        "accepted_frames": 120
+      },
+      "02  Camera vibration / moving sky": {
+        "rms_line_of_sight_error_px": 3.1548825924166075,
+        "accepted_frames": 300
+      },
+      "03  Single-frame false boxes": {
+        "rms_line_of_sight_error_px": 1.5699822526173133,
+        "accepted_frames": 300
+      },
+      "04  Target changes direction": {
+        "rms_line_of_sight_error_px": 7.632272657817373,
+        "accepted_frames": 300
+      },
+      "05  Short detection gaps": {
+        "rms_line_of_sight_error_px": 3.828800936819733,
+        "accepted_frames": 240
+      },
+      "06  Tiny target / flow fallback": {
+        "rms_line_of_sight_error_px": 1.945594001138641,
+        "accepted_frames": 300
+      }
+    }
+  },
+  "assisted": {
+    "motion_assist": true,
+    "rms_line_of_sight_error_px": 4.525532690103864,
+    "rms_command_change_dps": 1.699422624115523,
+    "mean_processing_ms": 5.571362209470357,
+    "p95_processing_ms": 13.606996849193818,
+    "flow_frames": 20,
+    "outlier_frames": 9,
+    "accepted_outlier_frames": 0,
+    "fps": 60,
+    "scenes": {
+      "01  Small target / detector jitter": {
+        "rms_line_of_sight_error_px": 2.683241832109684,
+        "accepted_frames": 120
+      },
+      "02  Camera vibration / moving sky": {
+        "rms_line_of_sight_error_px": 4.139675203527446,
+        "accepted_frames": 295
+      },
+      "03  Single-frame false boxes": {
+        "rms_line_of_sight_error_px": 2.9597957300124618,
+        "accepted_frames": 293
+      },
+      "04  Target changes direction": {
+        "rms_line_of_sight_error_px": 7.754175182461381,
+        "accepted_frames": 297
+      },
+      "05  Short detection gaps": {
+        "rms_line_of_sight_error_px": 3.7197392949809,
+        "accepted_frames": 234
+      },
+      "06  Tiny target / flow fallback": {
+        "rms_line_of_sight_error_px": 2.554349726936388,
+        "accepted_frames": 298
+      }
+    }
+  }
+}

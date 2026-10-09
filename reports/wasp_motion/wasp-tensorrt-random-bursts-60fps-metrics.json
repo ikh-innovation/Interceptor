@@ -1,0 +1,116 @@
+{
+  "description": "Offline, reproducible motion-assist comparison using genuine TensorRT inference.\n\nThe photographed drone and sky are composited into a synthetic random trajectory.\nBoth production trackers receive identical camera frames. Ground truth is used\nonly for drawing/scoring, never for detector crops, tracking or guidance.\nNo flight-controller connection is opened and no flight commands are sent.\n",
+  "video": "/home/iknowhow/Documents/Interceptor-1/reports/wasp_motion/wasp-tensorrt-random-bursts-60fps.mp4",
+  "fps": 60,
+  "duration_s": 20.0,
+  "seed": 58041,
+  "native_frame": [
+    1280,
+    960
+  ],
+  "display_frame": [
+    640,
+    480
+  ],
+  "engine": "/home/iknowhow/Documents/Interceptor-1/runs/detect/v0/weights/best.engine",
+  "engine_sha256": "1d0533efaeb571e1d4bd50a52248ea4a40879bccf2d0d5b06c96277bd6fd3e1a",
+  "backend": "TensorRTBackend",
+  "device": "cuda:0",
+  "model_confidence_threshold": 0.25,
+  "original_follower_enabled": true,
+  "sky_gate_enabled": true,
+  "hit_rule": "Centre distance <= max(3 px, half placed width), bbox IoU >= 0.10",
+  "coverage_denominator": "All video frames, including deliberately occluded target frames",
+  "ground_truth_usage": "Drawing and scoring only; never passed to detector/tracker/guidance",
+  "source": {
+    "conf": 0.875,
+    "frame": 2430,
+    "box": [
+      455,
+      348,
+      508,
+      378
+    ],
+    "source": "/home/iknowhow/Documents/Interceptor/data/ClipExport.mp4"
+  },
+  "baseline": {
+    "frames": 1200,
+    "detector_calls": 1200,
+    "fresh_detector_hits": 1061,
+    "fresh_detector_coverage_pct": 88.41666666666667,
+    "measured_tracking_hits": 1181,
+    "measured_tracking_coverage_pct": 98.41666666666667,
+    "held_box_hits": 7,
+    "false_model_boxes": 2,
+    "rms_estimate_error_px": 0.8057906303052794,
+    "mean_processing_ms": 23.210208545006026,
+    "flow_frames": 0,
+    "by_target_width": {
+      "5": {
+        "frames": 240,
+        "fresh_detector_hits": 207,
+        "measured_tracking_hits": 232
+      },
+      "8": {
+        "frames": 240,
+        "fresh_detector_hits": 204,
+        "measured_tracking_hits": 229
+      },
+      "12": {
+        "frames": 240,
+        "fresh_detector_hits": 224,
+        "measured_tracking_hits": 240
+      },
+      "16": {
+        "frames": 240,
+        "fresh_detector_hits": 222,
+        "measured_tracking_hits": 240
+      },
+      "20": {
+        "frames": 240,
+        "fresh_detector_hits": 204,
+        "measured_tracking_hits": 240
+      }
+    }
+  },
+  "assisted": {
+    "frames": 1200,
+    "detector_calls": 1200,
+    "fresh_detector_hits": 1047,
+    "fresh_detector_coverage_pct": 87.25,
+    "measured_tracking_hits": 1047,
+    "measured_tracking_coverage_pct": 87.25,
+    "held_box_hits": 68,
+    "false_model_boxes": 0,
+    "rms_estimate_error_px": 1.8662828182179825,
+    "mean_processing_ms": 24.091244219956327,
+    "flow_frames": 36,
+    "by_target_width": {
+      "5": {
+        "frames": 240,
+        "fresh_detector_hits": 203,
+        "measured_tracking_hits": 178
+      },
+      "8": {
+        "frames": 240,
+        "fresh_detector_hits": 196,
+        "measured_tracking_hits": 188
+      },
+      "12": {
+        "frames": 240,
+        "fresh_detector_hits": 224,
+        "measured_tracking_hits": 224
+      },
+      "16": {
+        "frames": 240,
+        "fresh_detector_hits": 224,
+        "measured_tracking_hits": 222
+      },
+      "20": {
+        "frames": 240,
+        "fresh_detector_hits": 200,
+        "measured_tracking_hits": 235
+      }
+    }
+  }
+}

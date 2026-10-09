@@ -607,6 +607,7 @@
           <div class="grp"><div class="lbl">Launch throttle</div><div class="seg" data-wp="throttle" data-values="0.75,0.85,1" data-labels="75%,85%,100%"></div></div>
           <div class="grp"><div class="lbl">Steering response</div><div class="seg" id="wasp_profiles" role="group" aria-label="Steering response"><button data-wasp-profile="smooth" aria-pressed="false">Smooth</button><button data-wasp-profile="standard" aria-pressed="false">Standard</button><button data-wasp-profile="responsive" aria-pressed="false">Responsive</button><button data-wasp-profile="extra" aria-pressed="false">Extra</button></div><p class="steering-help" id="wasp_profile_help"></p></div>
           <div class="grp"><label class="lbl" for="wasp_launch_seconds">Launch countdown</label><div class="idle-input"><input id="wasp_launch_seconds" type="number" min="0" max="60" step="any" value="3" inputmode="decimal"><span>s</span></div><p class="steering-help">Saved automatically. Throttle and countdown apply to every response. Default countdown: 3 s.</p></div>
+          <div class="grp"><div class="lbl">Motion assist</div><div class="seg" data-wp="motion_assist" data-values="0,1" data-labels="OFF,ON" role="group" aria-label="WASP motion assist"></div><p class="steering-help">ON: reduce box noise and validate motion with optical flow when reliable. OFF: existing bbox steering. Saved for every response.</p></div>
         </div>
         <p class="steering-help" id="wasp_timing"></p>
         <details id="wasp_advanced"><summary>Advanced settings</summary><div class="parameter-grid">
@@ -1348,6 +1349,7 @@
       seg.querySelectorAll("button").forEach(function (b) {
         b.disabled = waspSettingsLocked;
         b.classList.toggle("on", (m.wasp_params || {})[seg.getAttribute("data-wp")] === Number(b.getAttribute("data-wv")));
+        b.setAttribute("aria-pressed", String(b.classList.contains("on")));
       });
     });
     var steeringProfile = m.wasp_steering_profile || "custom";

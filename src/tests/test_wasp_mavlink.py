@@ -7,6 +7,28 @@ from test_wifi_autonomy import WifiFixture, until
 
 
 class RecoveryMavlinkTests(WifiFixture):
+    def test_motion_assisted_test_launch_countdown_centre_and_abort(self):
+        self.wasp_ready(idle_s=8, launch_s=.3)
+        self.command("waspp", "motion_assist:1")
+        self.command("waspp", "straight:0")
+        self.command("waspp", "centre_timer:1")
+        self.command("waspp", "throttle:0.85")
+        self.command("testmode", "on")
+        self.command("testtarget", "0.65:0.35")
+        self.command("engage", "1")
+        sleep(.1)
+        self.assertFalse(self.fc.overrides)
+        until(lambda: self.m.phase == "WASP_FLIGHT" and self.fc.overrides.get(3) == 1780)
+        until(lambda: self.c._cmd.get("motion_assist") is True)
+        self.assertTrue(self.m.set_wasp_param("motion_assist", 0))
+        until(lambda: self.m.snapshot(perf_counter())["test_target"] == dict(x=.5,y=.5))
+        until(lambda: abs(self.fc.overrides.get(1,0)-1500)<=21
+              and abs(self.fc.overrides.get(2,0)-1500)<=21)
+        self.assertEqual(self.fc.overrides[3],1780)
+        self.command("abort","1")
+        until(lambda: self.m.phase == "IDLE" and self.m.idle.confirmed)
+        self.assertNotEqual(self.fc.overrides.get(3),1780)
+
     def test_armed_test_launch_centres_target_then_abort_enters_idle(self):
         self.wasp_ready(idle_s=8)
         self.command("waspp", "profile:extra")

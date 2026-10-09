@@ -455,7 +455,7 @@ class LifecycleTests(unittest.TestCase):
                 self.assertTrue(restored.set_wasp_param("rate", 120))
             self.assertEqual(restored.wasp.params, before)
             saved = json.loads(Path(path).read_text())
-            self.assertEqual(saved["shared"], dict(launch_s=5.25, throttle=.85))
+            self.assertEqual(saved["shared"], dict(launch_s=5.25, throttle=.85, motion_assist=0.0))
             self.assertTrue(all(not any(key in settings for key in Wasp.SHARED_KEYS)
                                 for settings in saved["profiles"].values()))
 

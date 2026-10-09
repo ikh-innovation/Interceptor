@@ -13,7 +13,9 @@ class FlightLogs:
                "idle_height_target_m", "idle_heading_target_deg",
                "detection_fresh", "wasp_stage", "wasp_steering_blend",
                "wasp_target_acquired", "cmd_roll_rate_dps",
-               "cmd_pitch_rate_dps", "cmd_yaw_rate_dps", "cam_fps", "processing_fps")
+               "cmd_pitch_rate_dps", "cmd_yaw_rate_dps", "cam_fps", "processing_fps",
+               "wasp_motion_assist", "target_estimate_source", "target_motion_confidence",
+               "target_flow_quality", "target_noise_rad", "target_outliers_rejected")
 
     def __init__(self, directory, stamp, header):
         self.directory = Path(directory)

@@ -99,6 +99,9 @@ class WaspGuidance:
             raise ValueError("camera observation stale")
         world = observation["bearing"]
         velocity = observation["bearing_rate"]
+        assist = bool(observation.get("motion_assist"))
+        # Assisted velocity already carries its confidence weight; applying it
+        # again here would double the attenuation and create unnecessary lag.
         predicted = unit(tuple(v + (age+lead_s)*d for v, d in zip(world, velocity)))
         mat = rotation(att)
         body = rotate(mat, predicted, inverse=True)
@@ -106,6 +109,12 @@ class WaspGuidance:
             raise ValueError("target outside thrust-axis guidance cone")
 
         error = cross((0.0, 0.0, -1.0), body)
+        if assist:
+            # A continuous, noise-sized reduction near centre avoids alternating
+            # corrections for subpixel measurement noise without a large deadzone.
+            norm = math.hypot(*error[:2])
+            weight = max(0.0, 1 - min(0.003, 0.5*observation.get("noise_rad", 0.0)) / max(norm, 1e-9))
+            error = tuple(v * weight for v in error)
         ff = rotate(mat, cross(world, velocity), inverse=True)
         rates = (gain*error[0]+ff[0], gain*error[1]+ff[1], 0.0)
         norm = math.hypot(*rates[:2])
@@ -122,10 +131,11 @@ class Wasp:
     SETTINGS = {"throttle": (0.75, 0.85, 1.0),
                 "straight": (0.0, 0.5, 1.0, 2.0), "blend": (0.25, 0.5, 1.0),
                 "rate": (30.0, 45.0, 60.0, 90.0, 120.0), "gain": (2.0, 4.0, 6.0),
-                "lead": (0.0, 0.08, 0.15), "camera_roll": (0.0, 90.0, 180.0, 270.0)}
+                "lead": (0.0, 0.08, 0.15), "camera_roll": (0.0, 90.0, 180.0, 270.0),
+                "motion_assist": (0.0, 1.0)}
     LAUNCH_SECONDS_MIN = 0.0
     LAUNCH_SECONDS_MAX = 60.0
-    SHARED_KEYS = ("throttle", "launch_s")
+    SHARED_KEYS = ("throttle", "launch_s", "motion_assist")
     STEERING_PROFILES = {
         "smooth": dict(blend=1.0, rate=45.0, gain=2.0),
         "standard": dict(blend=0.5, rate=60.0, gain=2.0),
@@ -138,7 +148,7 @@ class Wasp:
         self.camera_confirmed = False
         self.params = dict(throttle=1.0, straight=1.0, blend=0.5,
                            rate=60.0, gain=2.0, lead=0.08, camera_roll=0.0, launch_s=3.0,
-                           centre_timer=3.0)
+                           centre_timer=3.0, motion_assist=0.0)
         profile_defaults = {key: value for key, value in self.params.items() if key not in self.SHARED_KEYS}
         self.profiles = {name: dict(profile_defaults, **settings)
                          for name, settings in self.STEERING_PROFILES.items()}
@@ -242,6 +252,8 @@ class Wasp:
         cmd = ctx.get("ai_cmd") or {}
         if ctx.get("att") is None:
             return "no fresh attitude"
+        if bool(cmd.get("motion_assist")) != bool(self.params.get("motion_assist")):
+            return "waiting for the selected target estimator"
         if (not cmd.get("wasp") or not cmd.get("have_att")
                 or cmd.get("camera_roll") != self.params["camera_roll"]
                 or not 0 <= now - cmd.get("capture_t", -1e9) <= 0.25
@@ -249,6 +261,8 @@ class Wasp:
                 or not math.isfinite(ctx.get("det_conf") or 0)
                 or (ctx.get("det_conf") or 0) < min_conf):
             return "no fresh confirmed target"
+        if cmd.get("motion_assist") and not 0 <= now - cmd.get("detector_capture_t", -1e9) <= 0.25:
+            return "no recent detector confirmation"
         return ""
 
     def output(self, mapper, now, ctx):

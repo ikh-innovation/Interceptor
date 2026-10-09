@@ -161,6 +161,13 @@ async function main(){
  await check('mode and mount sent in the correct order',JSON.stringify((await req('/commands')).slice(-2))===JSON.stringify([['flightmode','wasp'],['mount','90']]));
  await check('Wasp flight parameters replace Normal',visible('#pp_wasp')&&!visible('#normal_params')&&q('#flight_mode_tag').textContent==='WASP');
  await check('simple steering is visible and advanced controls start collapsed',visible('#wasp_profiles')&&!q('#wasp_advanced').open&&!visible('[data-wp="blend"]')&&!visible('[data-wp="gain"]')&&visible('[data-wp="throttle"]'));
+ await check('Motion assist is visible and defaults OFF',visible('[data-wp="motion_assist"]')&&q('[data-wp="motion_assist"] [data-wv="0"]').getAttribute('aria-pressed')==='true');
+ q('[data-wp="motion_assist"] [data-wv="1"]').click();await until(()=>q('[data-wp="motion_assist"] [data-wv="1"]').getAttribute('aria-pressed')==='true');
+ await check('Motion assist applies to the backend',(await req('/state')).mission.wasp_params.motion_assist===1);
+ q('#wasp_profiles [data-wasp-profile="extra"]').click();await until(()=>q('#wasp_profiles [data-wasp-profile="extra"]').classList.contains('on'));
+ await check('Motion assist survives profile changes',(await req('/state')).mission.wasp_params.motion_assist===1);
+ q('[data-wp="motion_assist"] [data-wv="0"]').click();await until(()=>q('[data-wp="motion_assist"] [data-wv="0"]').getAttribute('aria-pressed')==='true');
+ q('#wasp_profiles [data-wasp-profile="standard"]').click();await until(()=>q('#wasp_profiles [data-wasp-profile="standard"]').classList.contains('on'));
  await check('Standard is selected from actual backend settings',q('[data-wasp-profile="standard"]').getAttribute('aria-pressed')==='true'&&q('#wasp_profile_help').textContent.includes('Standard defaults'));
  const profileStart=(await req('/commands')).length;
  q('[data-wasp-profile="smooth"]').click();await until(()=>q('[data-wasp-profile="smooth"]').classList.contains('on'));
@@ -188,7 +195,7 @@ async function main(){
  q('#wasp_profiles [data-wasp-profile="standard"]').click();await until(()=>q('#wasp_profiles [data-wasp-profile="standard"]').classList.contains('on')&&q('#wasp_launch_seconds').value==='4.25');
  await check('main screen shows active steering and timer before launch',q('#wasp_pad [data-wasp-profile="standard"]').classList.contains('on')&&q('#wasp_launch_main').value==='4.25');
  q('#wasp_advanced').open=true;
- await check('Wasp has seven parameter groups and no old timers',q('#pp_wasp').querySelectorAll('[data-wp]').length===7&&!q('[data-wp="duration"]')&&!q('[data-wp="no_det"]'));
+ await check('Wasp has motion assist plus seven existing parameter groups and no old timers',q('#pp_wasp').querySelectorAll('[data-wp]').length===8&&!q('[data-wp="duration"]')&&!q('[data-wp="no_det"]'));
  await check('Idle is shared across modes',q('#idle_seconds').value==='12.5');
  q('#idle_seconds').focus();q('#idle_seconds').value='7';q('#idle_seconds').dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));
  q('#idle_seconds').dispatchEvent(new f.contentWindow.KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
@@ -278,6 +285,7 @@ async function main(){
  tap('#b_eng');await until(()=>q('#b_eng').classList.contains('countdown'));
  await check('launch countdown runs in the backend and blocks repeated launches',(await req('/state')).mission.wasp_progress.stage==='COUNTDOWN'&&q('#b_eng').disabled);
  await check('settings lock during countdown',q('#wasp_launch_main').disabled&&q('#wasp_launch_seconds').disabled&&q('#test_centre_timer').disabled&&q('#wasp_pad [data-wasp-profile="extra"]').disabled);
+ await check('Motion assist locks during countdown',q('[data-wp="motion_assist"] [data-wv="1"]').disabled);
  const targetBefore=(await req('/state')).mission.test_target;point(.8,.2);await sleep(200);
  await check('Test target stays fixed during countdown',JSON.stringify((await req('/state')).mission.test_target)===JSON.stringify(targetBefore));
  await load();

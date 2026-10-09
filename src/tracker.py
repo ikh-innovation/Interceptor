@@ -22,6 +22,7 @@ from fc_control import AcroCommander, ControlLaw, commander_from_env
 from mjpeg_stream import MJPEGServer
 import mission as mission_mod
 from follower import TargetFollower, search_radius
+from wasp_motion import WaspMotionEstimator
 
 
 
@@ -293,6 +294,10 @@ class DroneTracker:
         self.stream         = None
 
         self.kalman  = KalmanTracker()
+        self.motion = WaspMotionEstimator()
+        self._motion_enabled = False
+        self._motion_observation = None
+        self._motion_hint = None
         self.ap      = commander or commander_from_env(
             log_dir=(str(log_dir) if log_dir else str(_DATA_DIR)))
         self.sky     = SkyDetector(
@@ -407,21 +412,34 @@ class DroneTracker:
         if enhance:
             crop = self._enhance(crop)
 
+        assisted = bool(getattr(self, "_motion_enabled", False))
         res = self.model(crop, imgsz=imgsz, classes=[self.target_class],
-                         max_det=1, verbose=False)
+                         max_det=6 if assisted else 1, verbose=False)
         if not res or not res[0].boxes:
             return None
         boxes = res[0].boxes
         confs = boxes.conf.cpu().numpy()
         order = np.argsort(confs)[::-1]
+        candidates = []
         for idx in order:
             if confs[idx] < self.conf_thresh:
                 break
             x1, y1, x2, y2 = boxes.xyxy[idx].int().cpu().tolist()
             det = self._accept_box(x1 + x1r, y1 + y1r, x2 + x1r, y2 + y1r, confs[idx])
             if det is not None:
-                return det
-        return None
+                if not assisted:
+                    return det
+                candidates.append(det)
+        if not candidates:
+            return None
+        hint = getattr(self, "_motion_hint", None)
+        if hint is None:
+            return candidates[0]
+        size = max(self.last_bbox[2:]) if self.last_bbox else 8
+        scale = max(8.0, size)
+        # Prefer a plausible continuation over a higher-confidence distractor.
+        return max(candidates, key=lambda d: math.log(max(d[6], 1e-9))
+                   - 0.5*((d[0]-hint[0])**2+(d[1]-hint[1])**2)/(scale*scale))
 
 
     _STAB = dict(slew_per_s=3.0, rate_tau=0.22, deadband_frac=0.050,
@@ -737,8 +755,77 @@ class DroneTracker:
                 int(roi[2] * sx), int(roi[3] * sy))
 
 
-    def _process(self, frame_full, frame_disp):
+    def _process_motion(self, frame_full, frame_disp, capture_t, run_detector=True, synthetic=None):
+        mission = self.ap.mission
+        dt = None if self._t_last_frame is None else capture_t - self._t_last_frame
+        self._t_last_frame = capture_t
+        if dt is not None and 0 < dt < 1:
+            self._frame_dt = dt
+        att, tan_h, tan_v = self.ap.wasp_motion_context(capture_t)
+        self._motion_observation = None
+        roi, detection, model_ms = None, None, 0.0
+        if synthetic is not None:
+            cx, cy, x, y, w, h = synthetic
+            detection = (cx, cy, w, h, 1.0)
+        elif run_detector:
+            self.sky_mask = self.sky.mask(frame_disp) if self.use_sky_mask else None
+            if att is not None:
+                centre = self.motion.predicted_center(att, self.fw, self.fh, tan_h, tan_v,
+                    mission.wasp.params["camera_roll"], capture_t)
+            else:
+                centre = None
+            self._motion_hint = centre
+            if centre is not None and self.motion.box is not None:
+                cx, cy = centre
+                half = max(self.MIN_ROI_HALF, max(self.motion.box[2:]) * 1.5)
+                # Expand according to actual elapsed time and camera rotation.
+                half += max(self._rotation_margin())
+                roi = (max(0, int(cx-half)), max(0, int(cy-half)),
+                       min(self.fw, int(cx+half)), min(self.fh, int(cy+half)))
+                if roi[2] <= roi[0] or roi[3] <= roi[1]:
+                    roi = None
+            region = self._roi_disp_to_native(roi) if roi else self._sky_bbox_native()
+            start = perf_counter()
+            det = None if region is None else self._detect_region(frame_full, region,
+                self.IMGSZ_TRACK if roi else self.IMGSZ_SEARCH, enhance=self.USE_CLAHE)
+            if det is not None:
+                cx, cy, x, y, w, h, conf = det
+                detection = (cx, cy, w, h, conf)
+            model_ms = (perf_counter()-start)*1000
+        observation = self.motion.update(frame_disp, detection, att, capture_t, tan_h, tan_v,
+            mission.wasp.params["camera_roll"], min_conf=mission.min_conf,
+            synthetic=synthetic is not None)
+        if observation is None:
+            centre = None if att is None else self.motion.predicted_center(att, self.fw, self.fh,
+                tan_h, tan_v, mission.wasp.params["camera_roll"], capture_t)
+            self.pos = centre
+            if centre is not None and self.motion.box is not None:
+                w, h = self.motion.box[2:]
+                self.last_bbox = (round(centre[0]-w/2), round(centre[1]-h/2), round(w), round(h))
+            self.state = "PREDICT" if centre is not None else "SEARCH"
+            self.layer = "MOTION: HOLD" if centre is not None else "MOTION: SEARCH"
+            self.gate_note = "OUTLIER" if self.motion.source == "REJECTED" else ""
+            if centre is None:
+                self.last_bbox = self.conf = None
+            return centre, 0.0, model_ms, roi, False
+        self._motion_observation = observation
+        cx, cy, w, h = observation["box"]
+        self.pos, self.last_bbox = (cx, cy), (round(cx-w/2), round(cy-h/2), round(w), round(h))
+        self.conf, self.missed, self.state = observation["confidence"], 0, "LOCK"
+        self.layer = "TEST TARGET" if synthetic is not None else "MOTION " + observation["source"]
+        self.gate_note = ""
+        return self.pos, 0.0, model_ms, roi, True
+
+    def _process(self, frame_full, frame_disp, capture_t=None, run_detector=True):
         mission = getattr(self.ap, "mission", None)
+        motion_on = bool(mission is not None and mission.wasp.enabled
+                         and mission.wasp.params.get("motion_assist"))
+        if motion_on != getattr(self, "_motion_enabled", False):
+            self._reset()
+            self._motion_enabled = motion_on
+        if motion_on and not hasattr(self, "motion"):
+            self.motion = WaspMotionEstimator()
+        capture_t = perf_counter() if capture_t is None else capture_t
         if mission is not None and getattr(mission, "test_mode", False):
             if not getattr(self, "_test_mode_active", False):
                 self._reset()
@@ -749,6 +836,8 @@ class DroneTracker:
                 self.pos = self.last_bbox = self.conf = None
                 self.state, self.layer = "SEARCH", "TEST: TAP IMAGE"
                 return None, 0.0, 0.0, None, False
+            if motion_on:
+                return self._process_motion(frame_full, frame_disp, capture_t, synthetic=target)
             cx, cy, x, y, bw, bh = target
             self.kalman.update(cx, cy)
             self.last_bbox = (x, y, bw, bh)
@@ -758,6 +847,12 @@ class DroneTracker:
         if getattr(self, "_test_mode_active", False):
             self._test_mode_active = False
             self._reset()
+        if motion_on:
+            wanted = mission.ai_level_now()
+            if wanted != self.mode_name and wanted in self.MODES:
+                self.set_mode(wanted)
+        if motion_on:
+            return self._process_motion(frame_full, frame_disp, capture_t, run_detector)
         self.sky_mask = self.sky.mask(frame_disp) if self.use_sky_mask else None
         self._ground_rejected = False
         _m = getattr(self.ap, "mission", None)
@@ -866,6 +961,10 @@ class DroneTracker:
         return fused, t_kf, t_yolo, roi, (yolo_det is not None or fol_hit is not None)
 
     def _reset(self):
+        if hasattr(self, "motion"):
+            self.motion.reset()
+        self._motion_observation = None
+        self._motion_hint = None
         self.state     = "SEARCH"
         self.missed    = 0
         self.last_bbox = None
@@ -1579,6 +1678,11 @@ class DroneTracker:
             is_yolo_frame = (self._frame_idx % period == 0
                              or (mission is not None and getattr(mission, "test_mode", False))
                              or getattr(self, "_test_mode_active", False))
+            motion_on = bool(mission is not None and mission.wasp.enabled
+                             and mission.wasp.params.get("motion_assist"))
+            detector_due = is_yolo_frame
+            # Flow runs on every captured frame, including detector-skip frames.
+            is_yolo_frame = is_yolo_frame or motion_on or getattr(self, "_motion_enabled", False)
 
             if self._t_ui_prev is not None:
                 _d = t_cap - self._t_ui_prev
@@ -1588,7 +1692,7 @@ class DroneTracker:
 
             if is_yolo_frame:
                 fused, _t_kf, _t_yolo, roi, detected = self._process(
-                    frame_full, frame_disp)
+                    frame_full, frame_disp, capture_t=t_cap, run_detector=detector_due)
                 _tp = self._lap("detect", _tp)
                 if self.PROFILE:
                     self._prof["  model"] = (self._prof.get("  model", 0.0)
@@ -1614,7 +1718,8 @@ class DroneTracker:
                         target_off = (fused[0] - cx_f, fused[1] - cy_f)
                         cmd = self.ap.compute(target_off[0], target_off[1],
                                               self.state, self.fw, self.fh,
-                                              bbox=self.last_bbox, capture_t=t_cap)
+                                              bbox=self.last_bbox, capture_t=t_cap,
+                                              **({"observation": self._motion_observation} if motion_on else {}))
                     else:
                         cmd = self.ap.neutral_command()
                     self.ap.update(cmd, target_off, have_target=bool(fused),
