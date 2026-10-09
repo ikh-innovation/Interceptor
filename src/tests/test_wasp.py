@@ -345,6 +345,19 @@ class LifecycleTests(unittest.TestCase):
         self.m.cycle(100.03, self.ctx)
         self.assertFalse(self.m.wasp.used)
 
+    def test_pilot_takeover_resets_idle_clock(self):
+        self.mapper.armed = False
+        self.assertEqual(self.m.set_idle_seconds(160, save=False), "")
+        self.mapper.armed = True
+        self.launch()
+        self.assertEqual(self.m.snapshot(150)["idle_remaining_s"], 110)
+        self.ctx["gate_ok"] = False
+        self.m.cycle(150, self.ctx)
+        self.ctx["gate_ok"] = True
+        self.m.cycle(155, self.ctx)
+        self.assertIsNone(self.m._run_t)
+        self.assertIsNone(self.m.snapshot(155)["idle_remaining_s"])
+
     def test_timeout_releases_with_live_detection(self):
         self.launch()
         for now in (100.5, 101.25, 101.75, 102, 105, 109.99):

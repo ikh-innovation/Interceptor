@@ -774,6 +774,8 @@ class Mission:
             if w.started is not None:
                 w.used = True
             w.started = None
+            # The pilot took it back: the Idle clock starts again from zero.
+            self._run_t = None
             self._set_phase("WASP_DONE" if w.used else "PILOT", now)
             if abort:
                 self._note("WASP ABORT: every channel returned to the pilot", now)
