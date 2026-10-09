@@ -962,6 +962,9 @@
       bd.style.display = (ph === "HOVER" || ph === "SCOUT" || ph === "AUTO_CLIMB" || ph === "AUTO_HOLD") ? "block" : "none"; bd.className = "badge";
       bd.textContent = "no target";
     }
+    if (!wasp && ph === "PILOT" && m.gate_why) {
+      bd.style.display = "block"; bd.className = "badge"; bd.textContent = m.gate_why;
+    }
     if (wasp) {
       bd.style.display = "block";
       var wp = m.wasp_progress || {};

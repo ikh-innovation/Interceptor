@@ -930,6 +930,8 @@ class ArduPilotAcro(FcBackend):
         self._throttle_frac = 0.0
         self._throttle_chan = None
         self._vfr = None
+        self._baro = None
+        self._baro_ref = None
         self._vibe = None
         self._landed = None
         self._alt_ref = None
@@ -974,6 +976,7 @@ class ArduPilotAcro(FcBackend):
         self._request_rc_channels_stream()
         self._request_attitude_stream()
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_VFR_HUD, 10.0)
+        self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_SCALED_PRESSURE, 10.0)
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_VIBRATION, 10.0)
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE, 5.0)
 
@@ -1009,6 +1012,8 @@ class ArduPilotAcro(FcBackend):
                           & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
         if self.armed and self._was_armed is False and self._vfr is not None:
             self._alt_ref = self._vfr[1]
+        if self.armed and self._was_armed is False and self._baro is not None:
+            self._baro_ref = self._baro[1]
         self._was_armed = self.armed
 
     def in_rate_mode(self):
@@ -1222,6 +1227,9 @@ class ArduPilotAcro(FcBackend):
                 with self._lock:
                     self._vfr = (perf_counter(), float(msg.alt),
                                  float(msg.climb), float(msg.heading))
+            elif t == "SCALED_PRESSURE":
+                with self._lock:
+                    self._baro = (perf_counter(), float(msg.press_abs))
             elif t == "EXTENDED_SYS_STATE":
                 with self._lock:
                     self._landed = (perf_counter(), int(msg.landed_state))
@@ -1592,10 +1600,17 @@ class ArduPilotAcro(FcBackend):
                       flush=True)
 
     def height(self, max_age=1.0):
+        # Without GPS ArduCopter never sets home, so VFR_HUD.alt stays frozen
+        # while VFR_HUD.climb still moves.  Height comes from the barometer,
+        # relative to the pressure at arming; VFR_HUD.alt is the fallback.
         with self._lock:
             v, ref = self._vfr, self._alt_ref
-        if v is None or (perf_counter() - v[0]) > max_age:
+            p, p_ref = self._baro, self._baro_ref
+        now = perf_counter()
+        if v is None or (now - v[0]) > max_age:
             return None
+        if p is not None and p_ref and p[1] > 0 and (now - p[0]) <= max_age:
+            return (44330.0 * (1.0 - (p[1] / p_ref) ** 0.190284), v[2], v[3])
         return (v[1] - (ref or 0.0), v[2], v[3])
 
     AIRBORNE_MIN_M = 0.7
@@ -3084,6 +3099,8 @@ class AcroCommander:
             dest = "released (COMMIT ABORT)"
         elif self._engage_timed_out:
             dest = "released (ENGAGE_MAX_S)"
+        elif not self._rate_mode_ok and self.mission is not None:
+            dest = f"PILOT has control ({self._mission_why or 'gate'})"
         elif not self._rate_mode_ok:
             dest = (f"PILOT has control ({self.mode_name}, not "
                     f"{'/'.join(sorted(self.steer_modes))})")
