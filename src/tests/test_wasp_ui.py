@@ -25,9 +25,16 @@ class Mapper:
     def wasp_pwm(self, rates, throttle):
         return {}
 
+    def idle_pwm(self, yaw, climb):
+        return {}
+
+    def idle_request_alt_hold(self):
+        return True
+
 
 mapper = Mapper()
-m = Mission(mapper, log=lambda *_: None)
+settings_tmp = tempfile.TemporaryDirectory(prefix="wasp-ui-settings-")
+m = Mission(mapper, log=lambda *_: None, wasp_path=str(Path(settings_tmp.name)/"wasp.json"))
 commands, reports = [], []
 detector_settings = dict(sky_gate=True, follower=True, follower_default=True, cam_fps=30, cam_default=30, cam_busy=False)
 simulation = dict(target=True, attitude=True, gate_why="")
@@ -35,7 +42,17 @@ done = threading.Event()
 lock = threading.Lock()
 
 
+def context():
+    return dict(gate_ok=mapper.armed and not simulation["gate_why"],
+                att=dict(roll=0, pitch=0, yaw=0) if simulation["attitude"] else None,
+                height=0, climb=0, idle_ok=True, airborne=True,
+                fc_mode="ALT_HOLD" if m.idle.active else "ACRO",
+                ai_cmd=None, det_t=None, det_conf=None)
+
+
 def state():
+    if m.wasp.launch_t is not None:
+        m.cycle(time.perf_counter(), context())
     s = m.snapshot(time.perf_counter())
     gate = simulation["gate_why"] or ("" if simulation["attitude"] else "no fresh attitude")
     s.update(gate_why=gate if mapper.armed else "disarmed", height_m=0,
@@ -56,7 +73,7 @@ const req=async(path)=>{const r=await fetch(path);return r.json()};
 const q=s=>f.contentDocument.querySelector(s);
 const visible=s=>q(s)&&q(s).getClientRects().length>0&&f.contentWindow.getComputedStyle(q(s)).display!=='none';
 async function check(name,ok){await req('/report?data='+encodeURIComponent(JSON.stringify({name,ok:!!ok})));if(!ok)throw Error(name)}
-async function until(fn){for(let i=0;i<100;i++){if(fn())return;await sleep(50)}throw Error('timeout: '+fn)}
+async function until(fn){for(let i=0;i<100;i++){if(await fn())return;await sleep(50)}throw Error('timeout: '+fn)}
 async function load(){f.src='/?t='+Date.now();await new Promise(r=>f.onload=r);await until(()=>q('[data-wp="throttle"] button.on')&&q('#c_ai').classList.contains('ok'))}
 function parameters(){q('#t_menu').click();q('#t_par').click()}
 function tap(s){q(s).dispatchEvent(new f.contentWindow.PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:1}))}
@@ -64,7 +81,7 @@ async function switchMode(mode){q('[data-flightmode="'+mode+'"]').click();await 
 async function layout(mode){
  for(const size of [[320,640],[390,844],[820,1180],[1180,820],[1366,657]]){
   f.width=size[0];f.height=size[1];await sleep(150);
-  const d=f.contentDocument, blocks=[...d.querySelectorAll('.param-block')].map(x=>x.getBoundingClientRect());
+  const d=f.contentDocument, blocks=[...d.querySelectorAll('.param-block')].filter(x=>x.getClientRects().length).map(x=>x.getBoundingClientRect());
   const segs=[...d.querySelectorAll('#detection_params .seg, #detection_params .idle-input')].map(x=>x.getBoundingClientRect());
   await check(mode+' section edges '+size,blocks.every(x=>Math.abs(x.left-blocks[0].left)<1&&Math.abs(x.width-blocks[0].width)<1));
   await check(mode+' detection alignment '+size,segs.every(x=>Math.abs(x.left-segs[0].left)<1&&Math.abs(x.width-segs[0].width)<1));
@@ -76,13 +93,37 @@ async function layout(mode){
  }
  f.width=390;f.height=844;await sleep(150);
 }
+async function flightLayout(){
+ for(const size of [[320,640],[390,844],[568,320],[667,375],[844,390],[820,1180],[1180,820],[1366,657]]){
+  f.width=size[0];f.height=size[1];await sleep(150);
+  const buttons=[...q('#wasp_pad').querySelectorAll('button')], boxes=buttons.map(x=>x.getBoundingClientRect());
+  const abort=q('#b_wasp_abort').getBoundingClientRect(), launch=q('#b_eng').getBoundingClientRect();
+  await check('Wasp profiles stack vertically '+size,buttons.every(x=>x.getClientRects().length)&&boxes.every((x,i)=>!i||(x.top>=boxes[i-1].bottom&&Math.abs(x.left-boxes[0].left)<1&&Math.abs(x.width-boxes[0].width)<1)));
+  await check('Wasp has aligned circular Abort and Launch only '+size,Math.abs(abort.width-abort.height)<1&&[...q('.acts').querySelectorAll('.rbtn')].filter(x=>x.getClientRects().length).length===2&&Math.abs(abort.top-launch.top)<1&&Math.abs(abort.width-launch.width)<1);
+  await check('Wasp hides Seeker controls '+size,!visible('#normal_pad')&&!visible('#b_lock')&&!visible('#dial')&&!visible('#hbox')&&!visible('#tape'));
+  await check('Wasp controls stay inside viewport '+size,[q('#wasp_pad'),q('.acts'),q('#vbox')].every(x=>{const b=x.getBoundingClientRect();return b.left>=0&&b.right<=size[0]+1&&b.top>=0&&b.bottom<=size[1]+1}));
+  await check('Wasp control labels fit '+size,[...buttons,q('#b_wasp_abort'),q('#b_eng')].every(x=>x.scrollWidth<=x.clientWidth+1));
+  const side=size[0]>=700||(size[0]>=560&&size[0]>size[1]);
+  const tiles=q('.tiles').getBoundingClientRect(), camera=q('#vbox').getBoundingClientRect(), controls=q('.ctl').getBoundingClientRect();
+  await check('Wasp layout matches orientation '+size,side?tiles.bottom<=camera.top&&camera.right<=controls.left:controls.top>=camera.bottom);
+  if(side){
+   const t=[...f.contentDocument.querySelectorAll('.tile')].map(x=>x.getBoundingClientRect()), summary=q('#wasp_summary').getBoundingClientRect(), brand=q('.brand').getBoundingClientRect();
+   await check('Wasp telemetry stays in one header row '+size,t.every((x,i)=>Math.abs(x.top-t[0].top)<1&&(!i||x.left>=t[i-1].right-1))&&tiles.left>=brand.right&&tiles.top<=brand.bottom&&tiles.bottom>=brand.top);
+   await check('Wasp vertical summary sits between image and controls '+size,camera.right<=summary.left&&summary.right<=controls.left&&f.contentWindow.getComputedStyle(q('#wasp_summary')).writingMode==='vertical-rl');
+   await check('Wasp image and summary match control panel height '+size,[camera,summary].every(x=>Math.abs(x.top-controls.top)<1&&Math.abs(x.height-controls.height)<1));
+  }
+  await check('Wasp main timer fits its panel '+size,q('.main-countdown').scrollWidth<=q('.main-countdown').clientWidth+1&&visible('#wasp_launch_main'));
+ }
+ f.width=390;f.height=844;await sleep(150);
+}
 async function main(){
  await load();
  await check('startup has no chooser or blocking popup',!q('#modechooser')&&!visible('#modechange')&&!q('.app').inert);
  await check('startup is read-only',(await req('/commands')).length===0);
+ await check('Seeker keeps its original flight controls',visible('#normal_pad')&&visible('#b_lock')&&visible('#b_wasp_abort')&&visible('#dial')&&visible('#hbox')&&visible('#tape')&&!visible('#wasp_pad'));
  await check('TensorRT FPS stays green',q('#c_ai_k').textContent==='TensorRT'&&q('#c_ai').classList.contains('ok'));
  parameters();
- await check('three parameter sections in order',[...f.contentDocument.querySelectorAll('.param-title')].map(x=>x.textContent).join('|')==='1Flight mode|2Detection|3Flight parametersSEEKER');
+ await check('three Seeker parameter sections in order',[...f.contentDocument.querySelectorAll('.param-title')].filter(x=>x.getClientRects().length).map(x=>x.textContent).join('|')==='1Flight mode|2Detection|3Flight parametersSEEKER');
  await check('Seeker ON and Wasp OFF',q('[data-flightmode="normal"]').textContent.startsWith('Seeker drone')&&q('[data-flightmode="normal"]').getAttribute('aria-pressed')==='true'&&q('[data-flightmode="wasp"]').getAttribute('aria-pressed')==='false');
  await check('detection always visible',visible('#skyseg')&&visible('#folseg')&&visible('#camseg'));
  await check('Idle default is 10 seconds and Search removed',q('#idle_seconds').value==='10'&&!q('[data-g="search"]'));
@@ -116,7 +157,7 @@ async function main(){
  await check('mode and mount sent in the correct order',JSON.stringify((await req('/commands')).slice(-2))===JSON.stringify([['flightmode','wasp'],['mount','90']]));
  await check('Wasp flight parameters replace Normal',visible('#pp_wasp')&&!visible('#normal_params')&&q('#flight_mode_tag').textContent==='WASP');
  await check('simple steering is visible and advanced controls start collapsed',visible('#wasp_profiles')&&!q('#wasp_advanced').open&&!visible('[data-wp="blend"]')&&!visible('[data-wp="gain"]')&&visible('[data-wp="throttle"]'));
- await check('Standard is selected from actual backend settings',q('[data-wasp-profile="standard"]').getAttribute('aria-pressed')==='true'&&q('#wasp_profile_help').textContent.includes('starting point'));
+ await check('Standard is selected from actual backend settings',q('[data-wasp-profile="standard"]').getAttribute('aria-pressed')==='true'&&q('#wasp_profile_help').textContent.includes('Standard defaults'));
  const profileStart=(await req('/commands')).length;
  q('[data-wasp-profile="smooth"]').click();await until(()=>q('[data-wasp-profile="smooth"]').classList.contains('on'));
  const smooth=(await req('/state')).mission.wasp_params;
@@ -124,7 +165,23 @@ async function main(){
  q('[data-wasp-profile="responsive"]').click();await until(()=>q('[data-wasp-profile="responsive"]').classList.contains('on'));
  const responsive=(await req('/state')).mission.wasp_params;
  await check('Responsive applies together without changing launch throttle',responsive.blend===0.5&&responsive.rate===90&&responsive.gain===4&&responsive.throttle===smooth.throttle);
+ q('#wasp_profiles [data-wasp-profile="extra"]').click();await until(()=>q('#wasp_pad [data-wasp-profile="extra"]').classList.contains('on'));
+ const extra=(await req('/state')).mission.wasp_params;
+ await check('Extra applies exact steering settings from Parameters',extra.blend===0.25&&extra.rate===120&&extra.gain===6&&extra.lead===0.08&&extra.camera_roll===0);
+ await check('Launch countdown defaults to 3 seconds',q('#wasp_launch_seconds').value==='3');
+ const timer=q('#wasp_launch_seconds');timer.focus();timer.value='4.25';await sleep(400);
+ await check('polling preserves typed launch countdown',timer.value==='4.25');
+ timer.dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));timer.blur();
+ await until(()=>(q('#wasp_summary').textContent.includes('Launch 4.25 s')));
+ await check('manual timer keeps selected steering profile',(await req('/state')).mission.wasp_steering_profile==='extra');
+ const timerCommands=(await req('/commands')).length;
+ timer.value='-1';timer.dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));
+ await check('invalid launch timer sends nothing',timer.value==='4.25'&&(await req('/commands')).length===timerCommands);
  q('[data-wasp-profile="standard"]').click();await until(()=>q('[data-wasp-profile="standard"]').classList.contains('on'));
+ await check('each response has its own launch countdown',(await req('/state')).mission.wasp_params.launch_s===3);
+ q('#wasp_profiles [data-wasp-profile="extra"]').click();await until(()=>q('#wasp_launch_seconds').value==='4.25');
+ await check('Extra remembers its edited timer',(await req('/state')).mission.wasp_steering_profile==='extra');
+ q('#wasp_profiles [data-wasp-profile="standard"]').click();await until(()=>q('#wasp_launch_seconds').value==='3');
  await check('main screen shows active steering and Idle before launch',visible('#wasp_summary')&&q('#wasp_summary').textContent.includes('Steering: Standard')&&q('#wasp_summary').textContent.includes('Idle 12.5 s'));
  q('#wasp_advanced').open=true;
  await check('Wasp has seven parameter groups and no old timers',q('#pp_wasp').querySelectorAll('[data-wp]').length===7&&!q('[data-wp="duration"]')&&!q('[data-wp="no_det"]'));
@@ -135,32 +192,50 @@ async function main(){
  await check('Wasp has gain 2 by default',q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
  q('[data-wp="rate"] [data-wv="45"]').click();await until(()=>q('[data-wp="rate"] [data-wv="45"]').classList.contains('on'));
  await check('Idle and 45-degree choices apply to backend',(await req('/state')).mission.idle_s===7&&(await req('/state')).mission.wasp_params.rate===45);
- await check('manual steering change is shown as Custom',q('#wasp_profile_help').textContent.includes('Custom')&&q('#wasp_summary').textContent.includes('Steering: Custom')&&![...f.contentDocument.querySelectorAll('[data-wasp-profile]')].some(x=>x.classList.contains('on')));
+ await check('edited steering becomes selected profile default',q('#wasp_profile_help').textContent.includes('Standard defaults')&&q('#wasp_summary').textContent.includes('Steering: Standard')&&q('#wasp_profiles [data-wasp-profile="standard"]').classList.contains('on'));
  await check('Enter ends Idle editing',f.contentDocument.activeElement!==q('#idle_seconds'));
  await layout('wasp');
  q('[data-sky="off"]').click();await until(()=>q('[data-sky="off"]').classList.contains('on'));
  q('[data-fol="off"]').click();await until(()=>q('[data-fol="off"]').classList.contains('on'));
  q('[data-cam="60"]').click();await until(()=>q('[data-cam="60"]').classList.contains('on'));
  await check('detection controls work in Wasp',!(await req('/state')).sky_gate&&!(await req('/state')).follower&&(await req('/state')).cam_fps===60);
- q('[data-wp="throttle"] [data-wv="0.25"]').click();await until(()=>q('[data-wp="throttle"] [data-wv="0.25"]').classList.contains('on'));
+ await check('Wasp throttle choices are 75, 85 and 100 percent',[...q('[data-wp="throttle"]').children].map(b=>b.textContent).join(',')==='75%,85%,100%');
+ q('[data-wp="throttle"] [data-wv="0.85"]').click();await until(()=>q('[data-wp="throttle"] [data-wv="0.85"]').classList.contains('on'));
+ await check('85 percent throttle applies to backend',(await req('/state')).mission.wasp_params.throttle===.85);
+ q('[data-wp="throttle"] [data-wv="0.75"]').click();await until(()=>q('[data-wp="throttle"] [data-wv="0.75"]').classList.contains('on'));
  q('[data-wp="straight"] [data-wv="0.5"]').click();await until(()=>q('[data-wp="straight"] [data-wv="0.5"]').classList.contains('on'));
  q('[data-wp="blend"] [data-wv="0.25"]').click();
  await until(()=>q('[data-wp="blend"] [data-wv="0.25"]').classList.contains('on'));
+ q('#wasp_launch_seconds').value='4.25';q('#wasp_launch_seconds').dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));
+ await until(()=>q('#wasp_launch_main').value==='4.25');
  const count=(await req('/commands')).length;
  await load();
  await check('refresh has no popup and sends no mode command',!visible('#modechange')&&!q('.app').inert&&(await req('/commands')).length===count);
  parameters();
  await check('refresh preserves Wasp mode',q('[data-flightmode="wasp"]').classList.contains('on'));
- await check('refresh preserves throttle',q('[data-wp="throttle"] [data-wv="0.25"]').classList.contains('on'));
+ await check('refresh preserves throttle',q('[data-wp="throttle"] [data-wv="0.75"]').classList.contains('on'));
  await check('refresh preserves Idle, rate and gain',q('#idle_seconds').value==='7'&&q('[data-wp="rate"] [data-wv="45"]').classList.contains('on')&&q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
- await check('refresh preserves Custom steering and collapsed advanced view',q('#wasp_summary').textContent.includes('Steering: Custom')&&!q('#wasp_advanced').open);
+ await check('refresh preserves edited profile and collapsed advanced view',q('#wasp_summary').textContent.includes('Steering: Standard')&&!q('#wasp_advanced').open);
  await check('refresh preserves camera confirmation',q('#mountstatus').textContent==='90° ✓');
+ await check('refresh preserves manual launch countdown',q('#wasp_launch_seconds').value==='4.25');
  await req('/set?armed=1&phase=WASP_READY');await until(()=>q('[data-flightmode="normal"]').disabled);
  await check('Idle locked while armed',q('#idle_seconds').disabled);
- await check('mode, profiles and Wasp parameters locked while armed',[...f.contentDocument.querySelectorAll('[data-flightmode], [data-wp] button, [data-wasp-profile]')].every(x=>x.disabled)&&q('#mountstatus').disabled);
+ await check('launch countdown editable while armed and ready',!q('#wasp_launch_seconds').disabled&&!q('#wasp_launch_main').disabled);
+ await check('Wasp profiles and parameters editable while ready',[...f.contentDocument.querySelectorAll('[data-wp] button, [data-wasp-profile]')].every(x=>!x.disabled));
  q('[data-flightmode="normal"]').click();await sleep(100);
- q('[data-wasp-profile="standard"]').click();await sleep(100);
  await check('armed mode click sends nothing',(await req('/commands')).length===count&&!visible('#modechange'));
+ q('#sh_speed [data-close]').click();
+ await flightLayout();
+ q('#wasp_pad [data-wasp-profile="extra"]').click();await until(()=>q('#wasp_pad [data-wasp-profile="extra"]').classList.contains('on'));
+ await check('Extra can be selected while armed and ready',(await req('/state')).mission.wasp_params.rate===120);
+ q('#wasp_pad [data-wasp-profile="standard"]').click();await until(()=>q('#wasp_launch_main').value==='4.25'&&q('#wasp_pad [data-wasp-profile="standard"]').classList.contains('on'));
+ await check('switching back restores edited advanced defaults',(await req('/state')).mission.wasp_params.rate===45&&(await req('/state')).mission.wasp_params.blend===0.25);
+ await check('main timer is a scroll picker without text input',q('#wasp_launch_main').getAttribute('role')==='listbox'&&!q('.main-countdown input'));
+ const wheel=q('#wasp_launch_main'), rows=[...wheel.children], index=rows.findIndex(x=>x.getAttribute('data-seconds')==='5');
+ wheel.dispatchEvent(new f.contentWindow.WheelEvent('wheel',{deltaY:50,bubbles:true}));wheel.scrollTop=index*rows[0].getBoundingClientRect().height;
+ await until(()=>q('#wasp_launch_seconds').value==='5');
+ await check('rolling the main timer syncs to Parameters',(await req('/state')).mission.wasp_params.launch_s===5);
+ parameters();q('#wasp_launch_seconds').value='4.25';q('#wasp_launch_seconds').dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));await until(()=>q('#wasp_launch_main').value==='4.25');
  q('#sh_speed [data-close]').click();
  await check('Wasp aim and launch controls remain correct',q('#aim').style.top==='50%'&&!visible('#arc')&&q('#b_up').disabled&&!q('#b_eng').disabled);
  await req('/set?armed=1&target=0');await until(()=>q('#c_det').textContent==='NO');
@@ -170,23 +245,68 @@ async function main(){
  await req('/set?armed=1&attitude=1&gate=wrong-mode');await until(()=>q('#badge').textContent==='wrong-mode');
  await check('launch still requires the controller gate',q('#b_eng').disabled);
  await req('/set?armed=1&gate=');await until(()=>!q('#b_eng').disabled);
- tap('#b_eng');await until(()=>q('#engtxt').textContent==='WASP FLYING');
+ parameters();
+ await check('Test mode follows flight parameters',q('#test_mode_params').getBoundingClientRect().top>=q('#flight_params').getBoundingClientRect().bottom);
+ await check('Centre timer defaults to 3 and is editable while armed',q('#test_centre_timer').value==='3'&&!q('#test_centre_timer').disabled);
+ q('#test_centre_timer').value='1.5';q('#test_centre_timer').dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));
+ await until(async()=>(await req('/state')).mission.wasp_params.centre_timer===1.5);
+ await check('Centre timer is applied to backend',(await req('/state')).mission.wasp_params.centre_timer===1.5);
+ const centreCommands=(await req('/commands')).length;
+ q('#test_centre_timer').value='-1';q('#test_centre_timer').dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));
+ await check('Invalid centre timer sends nothing',q('#test_centre_timer').value==='1.5'&&(await req('/commands')).length===centreCommands);
+ q('[data-testmode="on"]').click();await until(()=>!q('#sh_speed').classList.contains('open')&&visible('#test_prompt'));
+ await check('Test mode returns to image and requires a target',(await req('/state')).mission.test_mode&&q('#b_eng').disabled);
+ function point(x,y){const r=q('#v').getBoundingClientRect();q('#vbox').dispatchEvent(new f.contentWindow.PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:3,clientX:r.left+r.width*x,clientY:r.top+r.height*y}))}
+ point(.7,.3);await until(()=>visible('#test_target'));
+ const box=q('#test_target').getBoundingClientRect(), frame=q('#vbox');
+ await check('Test target has one tenth image dimensions',Math.abs(box.width-frame.clientWidth*.1)<1&&Math.abs(box.height-frame.clientHeight*.1)<1);
+ point(.25,.75);await until(()=>q('#test_target').style.left==='25%'&&q('#test_target').style.top==='75%');
+ await check('touching again moves the fixed target',(await req('/state')).mission.test_target.x===.25&&(await req('/state')).mission.test_target.y===.75);
+ await flightLayout();
+ await check('rotating preserves the test target',q('#test_target').style.left==='25%'&&q('#test_target').style.top==='75%');
+ tap('#b_eng');await until(()=>q('#b_eng').classList.contains('countdown'));
+ await check('launch countdown runs in the backend and blocks repeated launches',(await req('/state')).mission.wasp_progress.stage==='COUNTDOWN'&&q('#b_eng').disabled);
+ await check('settings lock during countdown',q('#wasp_launch_main').disabled&&q('#wasp_launch_seconds').disabled&&q('#test_centre_timer').disabled&&q('#wasp_pad [data-wasp-profile="extra"]').disabled);
+ const targetBefore=(await req('/state')).mission.test_target;point(.8,.2);await sleep(200);
+ await check('Test target stays fixed during countdown',JSON.stringify((await req('/state')).mission.test_target)===JSON.stringify(targetBefore));
+ await load();
+ await check('refresh preserves launch countdown',q('#b_eng').classList.contains('countdown')&&(await req('/commands')).filter(x=>x[0]==='engage').length===1);
+ tap('#b_wasp_abort');await until(()=>q('#engtxt').textContent==='IDLE');
+ await check('Abort cancels the launch countdown',(await req('/state')).mission.wasp_progress.stage!=='COUNTDOWN');
+ await req('/set?armed=0&phase=PILOT');await sleep(350);parameters();
+ q('#wasp_launch_seconds').focus();q('#wasp_launch_seconds').value='3';q('#wasp_launch_seconds').dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));q('#wasp_launch_seconds').blur();
+ await until(()=>q('#wasp_summary').textContent.includes('Launch 3 s'));
+ q('#sh_speed [data-close]').click();await req('/set?armed=1&phase=WASP_READY');await until(()=>!q('#b_eng').disabled);
+ tap('#b_eng');await until(()=>q('#engtxt strong')&&q('#engtxt strong').textContent==='3');
+ await until(()=>q('#engtxt strong')&&q('#engtxt strong').textContent==='2');
+ await until(()=>q('#engtxt strong')&&q('#engtxt strong').textContent==='1');
+ await check('default countdown displays 3, 2, 1',q('#b_eng').disabled);
+ await until(()=>q('#engtxt').textContent==='WASP FLYING');
  await check('initial acquisition shows the total countdown',q('#badge').textContent.includes('STRAIGHT')&&q('#badge').textContent.includes(' s'));
+ await until(()=>parseFloat(q('#test_target').style.left)>25&&parseFloat(q('#test_target').style.left)<50);
+ await check('Test target moves toward the center only after launch',parseFloat(q('#test_target').style.top)<75&&parseFloat(q('#test_target').style.top)>50);
+ await load();
+ await check('Refresh preserves Centre timer and motion',q('#test_centre_timer').value==='1.5'&&(await req('/state')).mission.test_centre_remaining_s<1.5);
+ await until(()=>q('#test_target').style.left==='50%'&&q('#test_target').style.top==='50%');
+ await sleep(250);
+ await check('Test target stays centered',q('#test_target').style.left==='50%'&&q('#test_target').style.top==='50%');
  await req('/set?armed=1&phase=WASP_FLIGHT&elapsed=2');await until(()=>q('#badge').textContent.includes('STRAIGHT · 4.'));
  await check('no-detection wait remains active after Straight launch',q('#b_eng').disabled);
  await req('/set?armed=1&target=1&acquired=1');await until(()=>q('#badge').textContent.includes('BLENDING'));
  await check('late acquisition shows the steering transition',q('#badge').textContent.includes('BLENDING'));
  await req('/set?armed=1&phase=WASP_FLIGHT&elapsed=1.25');await until(()=>q('#badge').textContent.includes('GUIDING'));
- await check('launch sent once',(await req('/commands')).filter(x=>x[0]==='engage').length===1);
+ await check('each launch attempt sent once',(await req('/commands')).filter(x=>x[0]==='engage').length===2);
  await load();
- await check('armed refresh preserves the active flight',!visible('#modechange')&&!q('.app').inert&&(await req('/state')).mission.phase==='WASP_FLIGHT'&&(await req('/commands')).filter(x=>x[0]==='engage').length===1);
+ await check('armed refresh preserves the active flight',!visible('#modechange')&&!q('.app').inert&&(await req('/state')).mission.phase==='WASP_FLIGHT'&&(await req('/commands')).filter(x=>x[0]==='engage').length===2);
  parameters();await check('camera switching blocked during Wasp flight',q('[data-cam="30"]').disabled&&q('[data-cam="60"]').disabled);
  q('#sh_speed [data-close]').click();tap('#b_wasp_abort');await until(()=>q('#engtxt').textContent==='IDLE');
- await check('abort remains available and sends once',(await req('/commands')).filter(x=>x[0]==='abort').length===1&&q('#b_eng').disabled);
+ await check('abort remains available and sends once per tap',(await req('/commands')).filter(x=>x[0]==='abort').length===2&&q('#b_eng').disabled);
  await check('Idle identifies height hold and drift',q('#badge').textContent==='IDLE · HOLD · XY DRIFT');
  await req('/set?armed=0&phase=PILOT');await sleep(350);parameters();
  await switchMode('normal');
+ await check('leaving WASP disables Test mode',!(await req('/state')).mission.test_mode&&!visible('#test_target'));
  await check('Abort is available in Seeker too',visible('#b_wasp_abort'));
+ await check('returning to Seeker restores flight controls',visible('#normal_pad')&&visible('#b_lock')&&visible('#dial')&&visible('#hbox')&&visible('#tape')&&!visible('#wasp_pad'));
  await check('return to Normal confirms 30 degrees and changes flight parameters',q('#mountstatus').textContent==='30° ✓'&&visible('#normal_params')&&!visible('#pp_wasp'));
  q('[data-sky="on"]').click();q('[data-fol="on"]').click();q('[data-cam="30"]').click();await until(()=>q('[data-cam="30"]').classList.contains('on'));
  await check('detection controls work in Normal',(await req('/state')).sky_gate&&(await req('/state')).follower&&(await req('/state')).cam_fps===30);
@@ -248,16 +368,17 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         why = phone_command(m, k, v[0], time.perf_counter())
                     if k == "engage" and not why:
-                        m.phase = "WASP_FLIGHT"
-                        m.wasp.begin(time.perf_counter(), target_acquired=simulation["target"])
-                        m._run_t = m.wasp.started
+                        m.cycle(time.perf_counter(), context())
                     elif k == "abort":
-                        m.phase = "IDLE"
+                        m.cycle(time.perf_counter(), context())
                         m.idle.stage = "HOLD"
-                        m.wasp.started = None
                 return self.send(dict(state(), refused=why))
             if u.path == "/set":
                 mapper.armed = q.get("armed", ["0"])[0] == "1"
+                if not mapper.armed:
+                    m.idle.stop()
+                    m.wasp.used = False
+                    m.engaged = False
                 m.phase = q.get("phase", [m.phase])[0]
                 if "mode" in q:
                     m.set_wasp_enabled(q["mode"][0] == "wasp", selection=True)

@@ -738,6 +738,26 @@ class DroneTracker:
 
 
     def _process(self, frame_full, frame_disp):
+        mission = getattr(self.ap, "mission", None)
+        if mission is not None and getattr(mission, "test_mode", False):
+            if not getattr(self, "_test_mode_active", False):
+                self._reset()
+                self._test_mode_active = True
+            self.sky_mask = None
+            target = mission.test_target_box(self.fw, self.fh)
+            if target is None:
+                self.pos = self.last_bbox = self.conf = None
+                self.state, self.layer = "SEARCH", "TEST: TAP IMAGE"
+                return None, 0.0, 0.0, None, False
+            cx, cy, x, y, bw, bh = target
+            self.kalman.update(cx, cy)
+            self.last_bbox = (x, y, bw, bh)
+            self.pos, self.conf, self.missed = (cx, cy), 1.0, 0
+            self.state, self.layer, self.gate_note = "LOCK", "TEST TARGET", ""
+            return self.pos, 0.0, 0.0, None, True
+        if getattr(self, "_test_mode_active", False):
+            self._test_mode_active = False
+            self._reset()
         self.sky_mask = self.sky.mask(frame_disp) if self.use_sky_mask else None
         self._ground_rejected = False
         _m = getattr(self.ap, "mission", None)
@@ -1232,7 +1252,7 @@ class DroneTracker:
         elif key == "def" and str(value).startswith("det:"):
             return self._save_detection_default(str(value)[4:].strip().lower())
         elif key in ("hold", "release", "step", "engage", "abort", "lvl", "lock", "auto", "autoen", "waspen", "waspp", "mount", "flightmode",
-                     "autop", "autoreset", "def", "idles"):
+                     "autop", "autoreset", "def", "idles", "testmode", "testtarget"):
             return self._mission_command(key, str(value))
         else:
             raise ValueError("unknown command")
@@ -1276,6 +1296,12 @@ class DroneTracker:
 
 
     def _draw(self, frame, frame_full, pos, roi, cmd, sent):
+        mission = getattr(self.ap, "mission", None)
+        if mission is not None and getattr(mission, "test_mode", False):
+            if self.last_bbox is not None:
+                x, y, bw, bh = self.last_bbox
+                cv2.rectangle(frame, (x, y), (x + bw, y + bh), (184, 102, 47), 2)
+            return
         h, w       = frame.shape[:2]
         cx_f, cy_f = w // 2, h // 2
         accent     = self._ACCENT.get(self.state, self.C_HUD)
@@ -1549,7 +1575,10 @@ class DroneTracker:
             cx_f, cy_f = self.fw // 2, self.fh // 2
 
             self._frame_idx += 1
-            is_yolo_frame = (self._frame_idx % period == 0)
+            mission = getattr(self.ap, "mission", None)
+            is_yolo_frame = (self._frame_idx % period == 0
+                             or (mission is not None and getattr(mission, "test_mode", False))
+                             or getattr(self, "_test_mode_active", False))
 
             if self._t_ui_prev is not None:
                 _d = t_cap - self._t_ui_prev

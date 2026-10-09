@@ -59,6 +59,7 @@ class WifiFixture(unittest.TestCase):
             self.c.connect()
         self.m = self.c.mission
         self.m.idle_path = str(Path(self.logs.name)/"idle.json")
+        self.m.wasp_path = str(Path(self.logs.name)/"wasp.json")
         self.m.log = lambda *_: None
         self.sent = []
         send = self.c.backend._send_override
@@ -73,7 +74,14 @@ class WifiFixture(unittest.TestCase):
 
         def detections():
             while not self.stop.is_set():
-                if self.target["on"]:
+                if self.m.test_mode and self.m.test_target is not None:
+                    cx, cy, bx, by, bw, bh = self.m.test_target_box(640, 640)
+                    x, y = cx-320, cy-320
+                    cmd = self.c.compute(x, y, "LOCK", 640, 640, bbox=(bx, by, bw, bh),
+                                         capture_t=perf_counter()-.03)
+                    self.c.update(cmd, (x, y), True, detected=True, conf=1.0,
+                                  bbox=(bx, by, bw, bh))
+                elif self.target["on"] and not self.m.test_mode:
                     x, y = self.target["x"], self.target["y"]
                     cmd = self.c.compute(x, y, "LOCK", 640, 640, bbox=(0, 0, 20, 20),
                                          capture_t=perf_counter()-.03)
@@ -107,7 +115,10 @@ class WifiFixture(unittest.TestCase):
         with urlopen(self.url+"/cmd?"+urlencode({"c": "phone", key: value}), timeout=3) as response:
             state = json.load(response)
         self.assertFalse(state.get("refused"), state.get("refused"))
-        self.assertEqual(state["control"], "you")
+        if key == "abort":
+            self.assertIn(state["control"], ("you", "free"))
+        else:
+            self.assertEqual(state["control"], "you")
         return state
 
     def disconnect_phone(self):
@@ -139,9 +150,10 @@ class WifiFixture(unittest.TestCase):
         self.fc.vfr["alt"] = 16
         until(lambda: self.m.phase == "HOVER")
 
-    def wasp_ready(self, idle_s=10):
+    def wasp_ready(self, idle_s=10, launch_s=.2):
         self.command("flightmode", "wasp")
         self.command("idles", str(idle_s))
+        self.command("waspp", f"launch_s:{launch_s}")
         self.command("mount", "90")
         self.fc.mode = 1
         self.fc.armed = True

@@ -1,7 +1,10 @@
 
 import math
 import os
+import json
+from pathlib import Path
 import sys
+import tempfile
 import unittest
 from time import perf_counter
 from unittest.mock import patch
@@ -167,11 +170,12 @@ class LifecycleTests(unittest.TestCase):
         self.mapper.armed = True
         self.ctx = dict(gate_ok=True, att=ATT, height=0, ai_cmd=observe(WaspGuidance()),
                         det_t=100, det_conf=.9)
-        self.assertEqual(self.m.cycle(100, self.ctx), {})
+        self.assertEqual(self.m.cycle(97, self.ctx), {})
         self.assertEqual(self.m.phase, "WASP_READY")
 
     def launch(self):
         self.assertEqual(self.m.request_engage(), "")
+        self.assertEqual(self.m.cycle(97, self.ctx), {})
         return self.m.cycle(100, self.ctx)
 
     def test_launch_has_no_hover_or_ramp(self):
@@ -240,7 +244,7 @@ class LifecycleTests(unittest.TestCase):
                 self.assertEqual(out, {} if abort else self.mapper.wasp_pwm((0, 0, 0), 1))
 
     def test_launch_throttle_choices_and_timing_validation(self):
-        for throttle in (.25, .5, 1):
+        for throttle in (.75, .85, 1):
             self.setUp()
             self.mapper.armed = False
             self.assertEqual(self.m.set_wasp_param("throttle", throttle), "")
@@ -249,7 +253,8 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(out["throttle"], 1000+int(throttle*1000))
         self.setUp()
         self.mapper.armed = False
-        self.assertTrue(self.m.set_wasp_param("throttle", .75))
+        self.assertTrue(self.m.set_wasp_param("throttle", .25))
+        self.assertTrue(self.m.set_wasp_param("throttle", .5))
         self.assertTrue(self.m.set_wasp_param("duration", 1))
         self.assertNotIn("duration", self.m.wasp.params)
         self.assertTrue(self.m.set_wasp_param("no_det", 10))
@@ -257,6 +262,15 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.m.set_wasp_param("blend", 1), "")
         self.assertEqual(self.m.set_wasp_param("straight", 2), "")
         self.assertEqual(self.m.set_wasp_param("blend", 1), "")
+
+    def test_saved_throttle_presets_migrate_to_new_choices(self):
+        wasp = Wasp()
+        wasp.load_defaults(dict(selected="smooth", profiles={
+            "smooth": dict(throttle=.25), "standard": dict(throttle=.5),
+            "responsive": dict(throttle=.85), "extra": dict(throttle=1)}))
+        self.assertEqual(wasp.params["throttle"], .75)
+        self.assertEqual([wasp.profiles[name]["throttle"] for name in Wasp.STEERING_PROFILES],
+                         [.75, .85, .85, 1])
 
     def test_45_degree_choice_limits_combined_steering(self):
         self.mapper.armed = False
@@ -312,37 +326,132 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(phone_command(m, "flightmode", "normal", 100))
         self.assertTrue(phone_command(m, "flightmode", "typo", 100))
 
-    def test_mount_and_parameters_frozen_while_armed(self):
+    def test_mount_locked_while_armed_and_parameters_locked_in_flight(self):
+        self.launch()
         for key, value in (("waspen", "off"), ("mount", "30"), ("waspp", "throttle:0.5"),
                            ("waspp", "profile:responsive")):
             self.assertTrue(phone_command(self.m, key, value, 100))
         for value in ("nan", "inf", "0.99"):
             self.assertTrue(self.m.set_wasp_param("throttle", value))
 
-    def test_steering_profile_changes_together_and_custom_values_are_identified(self):
+    def test_each_profile_remembers_its_edited_defaults(self):
         self.mapper.armed = False
-        self.assertEqual(self.m.set_wasp_param("throttle", .25), "")
+        self.assertEqual(self.m.set_wasp_param("throttle", .75), "")
         self.assertEqual(self.m.set_wasp_param("straight", .5), "")
         before = dict(self.m.wasp.params)
         self.assertEqual(phone_command(self.m, "waspp", "profile:responsive", 100), "")
         params = self.m.wasp.params
         self.assertEqual((params["blend"], params["rate"], params["gain"]), (.5, 90, 4))
         self.assertEqual(self.m.snapshot(100)["wasp_steering_profile"], "responsive")
-        for key in ("throttle", "straight", "lead", "camera_roll"):
-            self.assertEqual(params[key], before[key])
+        self.assertEqual((params["throttle"], params["straight"]), (1, 1))
         self.assertTrue(self.m.wasp.camera_confirmed)
         self.assertEqual(self.m.set_wasp_param("gain", 6), "")
-        self.assertEqual(self.m.snapshot(100)["wasp_steering_profile"], "custom")
+        self.assertEqual(self.m.snapshot(100)["wasp_steering_profile"], "responsive")
         before = dict(params)
         self.assertTrue(phone_command(self.m, "waspp", "profile:unknown", 100))
         self.assertEqual(params, before)
         self.mapper.armed = True
-        self.assertTrue(phone_command(self.m, "waspp", "profile:standard", 100))
-        self.assertEqual(params, before, "armed profile rejection must change no parameters")
-        self.mapper.armed = False
         self.assertEqual(phone_command(self.m, "waspp", "profile:standard", 100), "")
         self.assertEqual(self.m.snapshot(100)["wasp_steering_profile"], "standard")
         self.assertEqual((params["blend"], params["rate"], params["gain"]), (.5, 60, 2))
+        self.assertEqual((params["throttle"], params["straight"]), (.75, .5))
+        self.assertEqual(self.m.set_wasp_param("profile", "responsive"), "")
+        self.assertEqual(params["gain"], 6)
+
+    def test_extra_profile_and_launch_countdown(self):
+        self.mapper.armed = False
+        self.assertEqual(phone_command(self.m, "waspp", "profile:extra", 100), "")
+        params = self.m.wasp.params
+        self.assertEqual((params["blend"], params["rate"], params["gain"], params["lead"], params["launch_s"], params["camera_roll"]),
+                         (.25, 120.0, 6.0, 0.08, 3.0, 0.0))
+        self.assertEqual(self.m.snapshot(100)["wasp_steering_profile"], "extra")
+        self.mapper.armed = True
+        self.m.phase = "WASP_READY"
+        self.assertEqual(self.m.request_engage(), "")
+        self.assertEqual(self.m.cycle(100, self.ctx), {})
+        self.assertIsNotNone(self.m.wasp.launch_t)
+        self.assertEqual(self.m.wasp.progress(100)["stage"], "COUNTDOWN")
+        self.assertEqual(self.m.wasp.progress(100)["launch_countdown_s"], 3)
+        self.assertEqual(self.m.wasp.progress(101)["launch_countdown_s"], 2)
+        self.assertEqual(self.m.wasp.progress(102)["launch_countdown_s"], 1)
+        self.assertIsNone(self.m._run_t)
+        self.assertTrue(self.m.request_engage())
+        self.assertEqual(self.m.cycle(101.5, self.ctx), {})
+        self.assertAlmostEqual(self.m.wasp.launch_t - 100, 3.0)
+        self.assertEqual(self.m.cycle(103.0, self.ctx), self.mapper.wasp_pwm((0, 0, 0), 1))
+        self.assertEqual(self.m.phase, "WASP_FLIGHT")
+        self.assertEqual(self.m._run_t, 103)
+
+    def test_manual_launch_countdown_applies_to_every_profile(self):
+        self.mapper.armed = False
+        for profile in Wasp.STEERING_PROFILES:
+            with self.subTest(profile=profile):
+                self.assertEqual(self.m.set_wasp_param("profile", profile), "")
+                self.assertEqual(self.m.set_wasp_param("launch_s", "4.25"), "")
+                self.assertEqual(self.m.wasp.params["launch_s"], 4.25)
+                self.assertEqual(self.m.wasp.steering_profile(), profile)
+        for value in ("", "nan", "inf", "bad", -1, 61):
+            self.assertTrue(self.m.set_wasp_param("launch_s", value))
+        self.assertEqual(self.m.wasp.params["launch_s"], 4.25)
+        self.mapper.armed = True
+        self.assertEqual(self.m.request_engage(), "")
+        self.assertTrue(self.m.set_wasp_param("launch_s", 2))
+        self.assertEqual(self.m.cycle(100, self.ctx), {})
+        self.assertEqual(self.m.cycle(104.24, self.ctx), {})
+        self.assertTrue(self.m.cycle(104.25, self.ctx))
+        self.assertEqual(self.m._run_t, 104.25)
+
+    def test_countdown_cancels_on_abort_gate_or_attitude_loss(self):
+        for change in ("abort", "gate", "attitude"):
+            with self.subTest(change=change):
+                self.setUp()
+                self.assertEqual(self.m.request_engage(), "")
+                self.assertEqual(self.m.cycle(100, self.ctx), {})
+                if change == "abort":
+                    self.m.request_abort()
+                elif change == "gate":
+                    self.ctx["gate_ok"] = False
+                else:
+                    self.ctx["att"] = None
+                self.assertEqual(self.m.cycle(101, self.ctx), {})
+                self.assertIsNone(self.m.wasp.launch_t)
+                self.assertIsNone(self.m.wasp.started)
+                self.ctx.update(gate_ok=True, att=ATT)
+                self.assertEqual(self.m.cycle(104, self.ctx), {})
+                self.assertIsNone(self.m._run_t)
+
+    def test_zero_countdown_launches_immediately(self):
+        self.mapper.armed = False
+        self.assertEqual(self.m.set_wasp_param("launch_s", 0), "")
+        self.mapper.armed = True
+        self.assertEqual(self.m.request_engage(), "")
+        self.assertTrue(self.m.cycle(100, self.ctx))
+        self.assertEqual(self.m.wasp.started, 100)
+
+    def test_edited_profile_defaults_survive_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp)/"wasp.json")
+            self.m.wasp_path = path
+            for index, profile in enumerate(Wasp.STEERING_PROFILES):
+                self.assertEqual(self.m.set_wasp_param("profile", profile), "")
+                self.assertEqual(self.m.set_wasp_param("launch_s", 2.25+index), "")
+                self.assertEqual(self.m.set_wasp_param("centre_timer", 1.5+index), "")
+                self.assertEqual(self.m.set_wasp_param("rate", 45), "")
+                self.assertEqual(self.m.set_wasp_param("gain", 6), "")
+            restored = Mission(Mapper(), wasp_path=path)
+            self.assertEqual(restored.wasp.active_profile, "extra")
+            for index, profile in enumerate(Wasp.STEERING_PROFILES):
+                self.assertEqual(restored.set_wasp_param("profile", profile), "")
+                self.assertEqual(restored.wasp.params["launch_s"], 2.25+index)
+                self.assertEqual(restored.wasp.params["centre_timer"], 1.5+index)
+                self.assertEqual(restored.wasp.params["rate"], 45)
+                self.assertEqual(restored.wasp.params["gain"], 6)
+            before = dict(restored.wasp.params)
+            with patch("mission._write_json", return_value=False):
+                self.assertTrue(restored.set_wasp_param("rate", 120))
+            self.assertEqual(restored.wasp.params, before)
+            saved = json.loads(Path(path).read_text())
+            self.assertEqual(saved["profiles"]["extra"]["launch_s"], 5.25)
 
     def test_abort_wins_over_launch(self):
         self.m.request_engage()

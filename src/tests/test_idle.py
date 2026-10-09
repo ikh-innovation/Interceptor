@@ -122,26 +122,31 @@ class IdleTests(unittest.TestCase):
         m.cycle(100, ctx)
         return m, mp, ctx
 
+    def launch_wasp(self, m, ctx):
+        self.assertEqual(m.request_engage(), "")
+        self.assertEqual(m.cycle(101, ctx), {})
+        self.assertTrue(m.cycle(104, ctx))
+
     def test_wasp_gaps_reacquisition_and_hard_deadline(self):
         m, mp, ctx = self.mission(True)
-        self.assertFalse(m.request_engage()); m.cycle(101, ctx)
-        for now, seen in ((103, True), (104, False), (105, True), (109, False), (110.99, True)):
+        self.launch_wasp(m, ctx)
+        for now, seen in ((106, True), (107, False), (108, True), (112, False), (113.99, True)):
             ctx.update(ai_cmd=observe(WaspGuidance(), x=50, t=now) if seen else None,
                        det_t=now if seen else None, det_conf=.9 if seen else None)
             out = m.cycle(now, ctx)
             self.assertEqual(m.phase, "WASP_FLIGHT")
-            self.assertEqual(m._run_t, 101)
+            self.assertEqual(m._run_t, 104)
             self.assertEqual(out["throttle"], 2000)
             if not seen:
                 self.assertEqual(out["roll"], 1500)
                 self.assertIsNone(m.wasp.acquired_t)
-        ctx.update(ai_cmd=observe(WaspGuidance(), t=111), det_t=111, det_conf=.9)
-        m.cycle(111, ctx)
+        ctx.update(ai_cmd=observe(WaspGuidance(), t=114), det_t=114, det_conf=.9)
+        m.cycle(114, ctx)
         self.assertEqual(m.phase, "IDLE", "live detection cannot extend deadline")
-        self.assertEqual(m.idle.started, 111)
-        ctx["fc_mode"] = "ALT_HOLD"; m.cycle(111.1, ctx)
+        self.assertEqual(m.idle.started, 114)
+        ctx["fc_mode"] = "ALT_HOLD"; m.cycle(114.1, ctx)
         original = (m.idle.started, m.idle.height, m.idle.heading)
-        m.request_abort(); m.cycle(111.2, ctx)
+        m.request_abort(); m.cycle(114.2, ctx)
         self.assertEqual((m.idle.started, m.idle.height, m.idle.heading), original)
         m.cycle(1000, ctx); self.assertTrue(m.idle.active)
         self.assertTrue(m.request_engage())
@@ -156,10 +161,9 @@ class IdleTests(unittest.TestCase):
                 mp.armed = False
                 self.assertEqual(m.set_idle_seconds(5, save=False), "")
                 mp.armed = True
-                self.assertEqual(m.request_engage(), "")
-                m.cycle(101, ctx)
+                self.launch_wasp(m, ctx)
                 for offset in (.5, 1, 1.25, 1.5, 3, 4.99):
-                    now = 101 + offset
+                    now = 104 + offset
                     ctx.update(height=m.ceiling_m + 20*offset,
                                ai_cmd=observe(WaspGuidance(), x=50, t=now) if detected else None,
                                det_t=now if detected else None,
@@ -168,15 +172,15 @@ class IdleTests(unittest.TestCase):
                     self.assertEqual(m.phase, "WASP_FLIGHT")
                     self.assertFalse(m.idle.active)
                     self.assertEqual(out["throttle"], 2000)
-                    self.assertEqual(m._run_t, 101)
+                    self.assertEqual(m._run_t, 104)
                     self.assertAlmostEqual(m.snapshot(now)["idle_remaining_s"], 5-offset)
                     if detected and offset >= 1.5:
                         self.assertEqual(m.wasp.progress(now)["stage"], "GUIDE")
-                ctx.update(ai_cmd=observe(WaspGuidance(), t=106) if detected else None,
-                           det_t=106 if detected else None)
-                m.cycle(106, ctx)
+                ctx.update(ai_cmd=observe(WaspGuidance(), t=109) if detected else None,
+                           det_t=109 if detected else None)
+                m.cycle(109, ctx)
                 self.assertEqual(m.phase, "IDLE")
-                self.assertEqual(m.idle.started, 106)
+                self.assertEqual(m.idle.started, 109)
                 self.assertIn("Idle time limit", m.event)
                 self.assertEqual(m.idle.height, ctx["height"])
 
@@ -213,6 +217,22 @@ class IdleTests(unittest.TestCase):
         m.request_engage(); m.request_abort()
         self.assertEqual(m.cycle(101, ctx), {})
         self.assertFalse(m.idle.active)
+        self.assertIsNone(m.wasp.started)
+        self.assertIsNone(m.wasp.launch_t)
+        self.assertEqual(m.phase, "IDLE")
+        self.assertEqual(m.cycle(110, ctx), {})
+
+    def test_abort_during_countdown_enters_idle_and_never_launches(self):
+        m, mp, ctx = self.mission(True)
+        m.request_engage(); self.assertEqual(m.cycle(101, ctx), {})
+        self.assertEqual(m.wasp.progress(101)["launch_countdown_s"], 3)
+        m.request_abort(); m.cycle(102, ctx)
+        self.assertEqual(m.phase, "IDLE")
+        self.assertTrue(m.idle.active)
+        self.assertIsNone(m.wasp.launch_t)
+        ctx["fc_mode"] = "ALT_HOLD"
+        m.cycle(110, ctx)
+        self.assertEqual(m.phase, "IDLE")
         self.assertIsNone(m.wasp.started)
 
     def test_idle_persists_custom_value_and_rejects_bad_or_armed_changes(self):

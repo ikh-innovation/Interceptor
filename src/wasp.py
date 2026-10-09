@@ -119,41 +119,77 @@ class Wasp:
 
 
 
-    SETTINGS = {"throttle": (0.25, 0.5, 1.0),
+    SETTINGS = {"throttle": (0.75, 0.85, 1.0),
                 "straight": (0.0, 0.5, 1.0, 2.0), "blend": (0.25, 0.5, 1.0),
-                "rate": (30.0, 45.0, 60.0, 90.0), "gain": (2.0, 4.0, 6.0),
+                "rate": (30.0, 45.0, 60.0, 90.0, 120.0), "gain": (2.0, 4.0, 6.0),
                 "lead": (0.0, 0.08, 0.15), "camera_roll": (0.0, 90.0, 180.0, 270.0)}
+    LAUNCH_SECONDS_MIN = 0.0
+    LAUNCH_SECONDS_MAX = 60.0
     STEERING_PROFILES = {
         "smooth": dict(blend=1.0, rate=45.0, gain=2.0),
         "standard": dict(blend=0.5, rate=60.0, gain=2.0),
         "responsive": dict(blend=0.5, rate=90.0, gain=4.0),
+        "extra": dict(blend=0.25, rate=120.0, gain=6.0, lead=0.08, camera_roll=0.0),
     }
 
     def __init__(self):
         self.enabled = False
         self.camera_confirmed = False
         self.params = dict(throttle=1.0, straight=1.0, blend=0.5,
-                           rate=60.0, gain=2.0, lead=0.08, camera_roll=0.0)
+                           rate=60.0, gain=2.0, lead=0.08, camera_roll=0.0, launch_s=3.0,
+                           centre_timer=3.0)
+        self.profiles = {name: dict(self.params, **settings)
+                         for name, settings in self.STEERING_PROFILES.items()}
+        self.active_profile = "standard"
         self.started = None
+        self.launch_t = None
         self.acquired_t = None
         self.used = False
         self._output_t = None
         self._rates = (0.0, 0.0, 0.0)
 
     def steering_profile(self):
-        for name, settings in self.STEERING_PROFILES.items():
-            if all(self.params[key] == value for key, value in settings.items()):
-                return name
-        return "custom"
+        return self.active_profile
+
+    @classmethod
+    def valid_param(cls, key, value):
+        return (math.isfinite(value) and cls.LAUNCH_SECONDS_MIN <= value <= cls.LAUNCH_SECONDS_MAX
+                if key in ("launch_s", "centre_timer") else key in cls.SETTINGS and value in cls.SETTINGS[key])
+
+    def load_defaults(self, saved):
+        profiles = saved.get("profiles", {})
+        if isinstance(profiles, dict):
+            for name, settings in profiles.items():
+                if name not in self.profiles or not isinstance(settings, dict):
+                    continue
+                for key, value in settings.items():
+                    try:
+                        value = float(value)
+                    except (ValueError, TypeError):
+                        continue
+                    if key == "throttle":
+                        value = {0.25: 0.75, 0.5: 0.85}.get(value, value)
+                    if self.valid_param(key, value):
+                        self.profiles[name][key] = value
+        selected = saved.get("selected")
+        if isinstance(selected, str) and selected in self.profiles:
+            self.active_profile = selected
+        self.params.update(self.profiles[self.active_profile])
 
     def begin(self, now, target_acquired=True):
         self.started = now
+        self.launch_t = None
         self.acquired_t = now if target_acquired else None
         self.used = True
         self._output_t = now
         self._rates = (0.0, 0.0, 0.0)
 
     def progress(self, now):
+        if self.launch_t is not None:
+            countdown = max(0.0, self.launch_t - now)
+            return dict(stage="COUNTDOWN", straight_remaining_s=round(countdown, 2),
+                        steering_blend=0.0, target_acquired=False,
+                        launch_countdown_s=round(countdown, 2))
         if self.started is None:
             return dict(stage="IDLE", straight_remaining_s=0.0, steering_blend=0.0,
                         target_acquired=False)

@@ -7,6 +7,87 @@ from test_wifi_autonomy import WifiFixture, until
 
 
 class RecoveryMavlinkTests(WifiFixture):
+    def test_armed_test_launch_centres_target_then_abort_enters_idle(self):
+        self.wasp_ready(idle_s=8)
+        self.command("waspp", "profile:extra")
+        # The pilot is already armed in ACRO when the phone timers are edited.
+        self.assertTrue(self.c.armed)
+        self.assertEqual(self.c.mode_name, "ACRO")
+        self.command("waspp", "launch_s:3")
+        self.command("waspp", "centre_timer:2")
+        self.command("waspp", "throttle:0.85")
+        self.command("testmode", "on")
+        self.command("testtarget", "0.75:0.3")
+        self.command("engage", "1")
+        until(lambda: self.m.wasp.launch_t is not None)
+        sleep(.2)
+        self.assertFalse(self.fc.overrides)
+        self.assertIsNone(self.m._test_target_started)
+        self.assertEqual(self.m.snapshot(perf_counter())["test_target"], dict(x=.75, y=.3))
+        until(lambda: self.m.phase == "WASP_FLIGHT", timeout=4)
+        self.assertEqual(self.m._test_target_started, self.m.wasp.started)
+        until(lambda: self.fc.overrides.get(3) == 1780)
+        self.assertEqual(self.fc.overrides[3], 1780)
+        self.assertTrue(self.m.set_wasp_param("centre_timer", 3))
+        until(lambda: .5 < self.m.snapshot(perf_counter())["test_target"]["x"] < .75)
+        until(lambda: self.m.snapshot(perf_counter())["test_target"] == dict(x=.5, y=.5))
+        until(lambda: abs(self.fc.overrides.get(1, 0)-1500) <= 21
+              and abs(self.fc.overrides.get(2, 0)-1500) <= 21)
+        self.assertEqual(self.m.phase, "WASP_FLIGHT")
+        self.assertEqual(self.fc.overrides[3], 1780)
+        self.assertEqual(self.m.wasp.params["rate"], 120)
+        self.command("abort", "1")
+        until(lambda: self.m.phase == "IDLE" and self.m.idle.confirmed)
+        self.assertIsNone(self.m._test_target_started)
+        self.assertEqual(self.m.snapshot(perf_counter())["test_target"], dict(x=.5, y=.5))
+        self.assertNotEqual(self.fc.overrides.get(3), 1780)
+
+    def test_fixed_test_target_launches_with_selected_steering_and_aborts(self):
+        self.wasp_ready(idle_s=5)
+        self.command("waspp", "profile:extra")
+        self.command("waspp", "launch_s:0.2")
+        self.command("testmode", "on")
+        self.assertTrue(self.m.request_engage())
+        self.command("testtarget", "0.65:0.4")
+        self.command("engage", "1")
+        until(lambda: self.m.phase == "WASP_FLIGHT")
+        until(lambda: self.m.wasp.progress(perf_counter())["stage"] == "GUIDE")
+        self.assertEqual(self.m.wasp.params["rate"], 120)
+        self.assertEqual(self.fc.overrides[3], 1900)
+        self.assertGreater(self.fc.overrides[1], 1500)
+        self.assertEqual(self.m.test_target, dict(x=.65, y=.4))
+        self.assertTrue(self.m.set_test_target(".2:.2"))
+        self.command("abort", "1")
+        until(lambda: self.m.phase == "IDLE" and self.m.idle.confirmed)
+        self.assertNotEqual(self.fc.overrides.get(3), 1900)
+
+    def test_default_countdown_waits_before_throttle_and_abort_cancels(self):
+        self.wasp_ready(launch_s=3)
+        self.command("engage", "1")
+        until(lambda: self.m.wasp.launch_t is not None)
+        start = self.m.wasp.launch_t - 3
+        sleep(.15)
+        self.assertIsNone(self.m.wasp.started)
+        self.assertIsNone(self.m._run_t)
+        self.assertFalse(self.fc.overrides)
+        until(lambda: self.m.wasp.started is not None, timeout=4)
+        self.assertAlmostEqual(self.m.wasp.started-start, 3, delta=.1)
+        until(lambda: self.fc.overrides.get(3) == 1900)
+        self.assertEqual(self.fc.overrides[3], 1900)
+        self.command("abort", "1")
+        until(lambda: self.m.phase == "IDLE" and self.m.idle.confirmed)
+        self.fc.mode = 0; self.fc.armed = False
+        until(lambda: not self.c.armed and self.m.phase == "PILOT")
+
+        self.wasp_ready(launch_s=3)
+        self.command("engage", "1")
+        until(lambda: self.m.wasp.launch_t is not None)
+        self.command("abort", "1")
+        until(lambda: self.m.phase == "IDLE")
+        self.assertIsNone(self.m.wasp.launch_t)
+        self.assertIsNone(self.m.wasp.started)
+        self.assertNotEqual(self.fc.overrides.get(3), 1900)
+
     def test_wasp_crosses_ceiling_and_guides_until_idle_deadline(self):
         self.wasp_ready(idle_s=3)
         self.target["on"] = True
@@ -62,7 +143,10 @@ class RecoveryMavlinkTests(WifiFixture):
                 until(lambda: self.m.idle.stage == "HOLD")
                 until(lambda: self.fc.overrides.get(3) == 1500)
                 self.fc.mode = 0
-                until(lambda: self.m.phase == "PILOT" and not self.fc.overrides)
+                # After pilot takeover, WASP keeps its disarm latch in WASP_DONE.
+                # PILOT can last only one control tick as Idle releases its output.
+                until(lambda: self.c.mode_name == "STABILIZE"
+                      and self.m.phase in ("PILOT", "WASP_DONE") and not self.fc.overrides)
                 count = len(self.fc.mode_requests)
                 sleep(.3)
                 self.assertEqual(len(self.fc.mode_requests), count, "never fight RC mode takeover")
@@ -87,7 +171,8 @@ class RecoveryMavlinkTests(WifiFixture):
             self.assertEqual(self.m.idle.started, start)
             self.assertEqual(self.fc.mode, 2)
             self.fc.mode = 0
-            until(lambda: not self.fc.overrides and self.m.phase == "PILOT")
+            until(lambda: self.c.mode_name == "STABILIZE" and not self.fc.overrides
+                  and self.m.phase in (("PILOT", "WASP_DONE") if wasp else ("PILOT",)))
             self.fc.armed = False
             until(lambda: not self.c.armed)
 

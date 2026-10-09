@@ -87,6 +87,9 @@ class FlightLoggingTests(unittest.TestCase):
         else:
             self.assertEqual(m.request_engage(), "")
         self.tick()
+        if kind == "wasp":
+            self.assertIsNone(self.c._flight_logs.active, "countdown must not start the flight clock")
+            self.tick(m.wasp.params["launch_s"])
         self.assertEqual(self.c._flight_logs.active["flight_mode"], kind)
         return Path(self.c._flight_logs.active["csv"])
 

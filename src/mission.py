@@ -4,6 +4,7 @@ import json
 import math
 import os
 import threading
+from time import perf_counter
 from wasp import Wasp, WaspGuidance
 from idle import Idle
 
@@ -88,6 +89,7 @@ AUTO_FILE = os.path.join(CONF_DIR, "auto.json")
 LEVELS_FILE = os.path.join(CONF_DIR, "levels.json")
 DETECT_FILE = os.path.join(CONF_DIR, "detection.json")
 IDLE_FILE = os.path.join(CONF_DIR, "idle.json")
+WASP_FILE = os.path.join(CONF_DIR, "wasp.json")
 DETECT_SAVED = {"follow": bool, "cam": int}
 
 
@@ -247,6 +249,12 @@ def phone_command(m, key, value, now):
         return m.set_wasp_param(k.strip(), v.strip())
     if key == "idles":
         return m.set_idle_seconds(value)
+    if key == "testmode":
+        if value.strip().lower() not in ("on", "off"):
+            return "test mode: on or off"
+        return m.set_test_mode(value.strip().lower() == "on")
+    if key == "testtarget":
+        return m.set_test_target(value)
     if key == "abort":
         return m.request_abort()
     if key == "lvl":
@@ -319,7 +327,8 @@ class Mission:
     )
 
     def __init__(self, mapper, min_conf=0.20, ceiling_m=30.0,
-                 accel_z=5.0, jerk_z=5.0, log=(lambda *_args, **_kwargs: None), idle_path=None):
+                 accel_z=5.0, jerk_z=5.0, log=(lambda *_args, **_kwargs: None), idle_path=None,
+                 wasp_path=None):
         self.mapper = mapper
         self.min_conf = float(min_conf)
         self.ceiling_m = float(ceiling_m)
@@ -345,6 +354,12 @@ class Mission:
         self._req_auto = None
         self.auto_enabled = False
         self.wasp = Wasp()
+        self.test_mode = False
+        self.test_target = None
+        self._test_target_started = None
+        self.wasp_path = wasp_path
+        if wasp_path:
+            self.wasp.load_defaults(_read_json(wasp_path))
         self.idle_s = 10.0
         self.idle_path = idle_path
         self.idle = Idle()
@@ -443,6 +458,10 @@ class Mission:
             if self.wasp.enabled:
                 if self.phase != "WASP_READY" or self.wasp.used:
                     return "WASP launch unavailable: check readiness; disarm after each attempt"
+                if self.test_mode and self.test_target is None:
+                    return "place a test target on the image before launch"
+                if self.wasp.launch_t is not None or self._req_engage:
+                    return "WASP launch is already counting down"
                 self._req_engage = True
                 return ""
             if self.engaged:
@@ -483,8 +502,13 @@ class Mission:
             if selection and on:
                 self.auto_enabled = False
             self.wasp.enabled = bool(on)
+            if not on:
+                self.test_mode = False
+                self.test_target = None
+                self._test_target_started = None
             self.wasp.camera_confirmed = False
             self.wasp.started = None
+            self.wasp.launch_t = None
             self.wasp.used = False
             self._req_engage = False
             self._req_auto = None
@@ -512,25 +536,97 @@ class Mission:
 
     def set_wasp_param(self, key, value):
         if key == "profile":
-            settings = Wasp.STEERING_PROFILES.get(str(value).strip().lower())
-            if settings is None:
-                return "steering response: smooth, standard or responsive"
+            profile = str(value).strip().lower()
+            if profile not in self.wasp.profiles:
+                return "steering response: smooth, standard, responsive or extra"
         else:
             try:
                 v = float(value)
             except (ValueError, TypeError):
                 return "bad WASP value"
-            if key not in Wasp.SETTINGS or v not in Wasp.SETTINGS[key]:
+            if not Wasp.valid_param(key, v):
+                if key == "launch_s":
+                    return "Launch timer: enter 0 to 60 seconds"
+                if key == "centre_timer":
+                    return "Centre timer: enter 0 to 60 seconds"
                 return "unknown WASP setting or value"
-            settings = {key: v}
         with self._lock:
-            error = self._configuration_error()
+            error = self._wasp_configuration_error()
             if error:
                 return error
+            profile = profile if key == "profile" else self.wasp.active_profile
+            settings = (dict(self.wasp.profiles[profile]) if key == "profile"
+                        else dict(self.wasp.params, **{key: v}))
+            profiles = dict(self.wasp.profiles, **{profile: settings})
+            if self.wasp_path and not _write_json(self.wasp_path, dict(selected=profile, profiles=profiles)):
+                return "could not save WASP defaults on the Jetson"
+            self.wasp.profiles = profiles
+            self.wasp.active_profile = profile
             self.wasp.params.update(settings)
-            if key == "camera_roll":
-                self.wasp.camera_confirmed = False
         return ""
+
+    def _wasp_configuration_error(self):
+        if self.wasp.launch_t is not None or self._req_engage:
+            return "wait until the launch countdown is cancelled before changing WASP settings"
+        if self.wasp.enabled and self.phase == "WASP_READY" and not self.wasp.used:
+            return ""
+        return self._configuration_error()
+
+    def set_test_mode(self, on):
+        with self._lock:
+            if not self.wasp.enabled:
+                return "select WASP before enabling test mode"
+            error = self._wasp_configuration_error()
+            if error:
+                return error
+            if self.test_mode != bool(on):
+                self.test_mode = bool(on)
+                self.test_target = None
+                self._test_target_started = None
+        return ""
+
+    def set_test_target(self, value):
+        try:
+            x, y = (float(part) for part in str(value).split(":"))
+        except (ValueError, TypeError):
+            return "test target: enter an image position"
+        if not all(math.isfinite(v) and 0 <= v <= 1 for v in (x, y)):
+            return "test target must be inside the image"
+        with self._lock:
+            if not self.test_mode or not self.wasp.enabled:
+                return "enable test mode before placing a target"
+            error = self._wasp_configuration_error()
+            if error:
+                return error
+            self.test_target = dict(x=max(.05, min(.95, x)), y=max(.05, min(.95, y)))
+            self._test_target_started = None
+        return ""
+
+    def _test_target_position(self, now):
+        # Called under the mission lock so video and UI use the same trajectory.
+        if not self.test_mode or not self.wasp.enabled or self.test_target is None:
+            return None
+        if self._test_target_started is None:
+            return dict(self.test_target)
+        seconds = self.wasp.params["centre_timer"]
+        fraction = 1.0 if seconds == 0 else max(0.0, min(1.0, (now-self._test_target_started)/seconds))
+        blend = smoothstep(fraction)
+        return {axis: value + (.5-value)*blend for axis, value in self.test_target.items()}
+
+    def _stop_test_target(self, now):
+        with self._lock:
+            if self._test_target_started is not None:
+                self.test_target = self._test_target_position(now)
+                self._test_target_started = None
+
+    def test_target_box(self, width, height, now=None):
+        with self._lock:
+            position = self._test_target_position(perf_counter() if now is None else now)
+            if position is None:
+                return None
+            cx, cy = position["x"] * width, position["y"] * height
+        bw, bh = max(1, round(width * .1)), max(1, round(height * .1))
+        return cx, cy, round(cx - bw / 2), round(cy - bh / 2), bw, bh
 
     def set_idle_seconds(self, value, save=True):
         try:
@@ -703,8 +799,16 @@ class Mission:
             lock_req, self._req_lock = self._req_lock, None
             auto_req, self._req_auto = self._req_auto, None
 
+        if abort:
+            self._stop_test_target(now)
         if self.idle.active:
             return self._idle_cycle(now, ctx)
+        if self.phase == "IDLE":
+            # A cancelled ground launch stays idle without commanding takeoff.
+            if ctx.get("gate_ok") and getattr(self.mapper, "armed", False):
+                return {}
+            self.engaged = False
+            self._set_phase("PILOT", now)
         if self.phase == "IDLE_FAILED":
             if ctx.get("gate_ok") and getattr(self.mapper, "armed", False):
                 return {}
@@ -776,22 +880,35 @@ class Mission:
         w = self.wasp
         if not getattr(self.mapper, "armed", False):
             w.used = False
-        if abort or not ctx.get("gate_ok"):
+        if abort:
+            if self.idle_supported and ctx.get("gate_ok"):
+                return self._start_idle(now, ctx, "WASP ABORT")
             if w.started is not None:
                 w.used = True
             w.started = None
+            w.launch_t = None
+            self._run_t = None
+            self._set_phase("WASP_DONE" if w.used else "PILOT", now)
+            self._note("WASP ABORT: every channel returned to the pilot", now)
+            return {}
+        if not ctx.get("gate_ok"):
+            self._stop_test_target(now)
+            if self.phase not in ("PILOT", "WASP_DONE"):
+                self._note("WASP lost control: every channel returned to the pilot", now)
+            if w.started is not None:
+                w.used = True
+            w.started = None
+            w.launch_t = None
 
             self._run_t = None
             self._set_phase("WASP_DONE" if w.used else "PILOT", now)
-            if abort:
-                self._note("WASP ABORT: every channel returned to the pilot", now)
             return {}
-        if w.used and w.started is None:
+        if w.used and w.started is None and w.launch_t is None:
             self._set_phase("WASP_DONE", now)
             return {}
         if w.started is None:
             self._set_phase("WASP_READY", now)
-            if not engage:
+            if not engage and w.launch_t is None:
                 return {}
             why = ""
             if ctx.get("att") is None:
@@ -799,9 +916,18 @@ class Mission:
             if not w.camera_confirmed or self.camera_mount_deg != 90.0:
                 why = "confirm the fixed 90 degree camera before launch"
             if why:
+                w.launch_t = None
                 self._refuse(why, now)
                 return {}
+            if w.launch_t is None:
+                w.launch_t = now + w.params["launch_s"]
+                self._note(f"WASP launch countdown started: {w.params['launch_s']:g}s", now)
+            if now < w.launch_t:
+                return {}
             w.begin(now, target_acquired=False)
+            with self._lock:
+                if self.test_mode and self.test_target is not None:
+                    self._test_target_started = now
             self._run_t = now
             self._note(f"WASP launched: Idle in {self.idle_s:g}s from throttle start", now)
             self._set_phase("WASP_FLIGHT", now)
@@ -836,7 +962,10 @@ class Mission:
         return {}
 
     def _start_idle(self, now, ctx, reason):
+        ground_abort = (self.wasp.enabled and self.wasp.started is None
+                        and self._run_t is None and ctx.get("airborne") is False)
         self.wasp.started = None
+        self.wasp.launch_t = None
         if self.wasp.enabled:
             self.wasp.used = True
         self._reset_motion()
@@ -844,6 +973,10 @@ class Mission:
         self.engaged = True
         with self._lock:
             self._hold = None
+        if ground_abort:
+            self._note(f"IDLE: {reason}; ground launch cancelled", now)
+            self._set_phase("IDLE", now)
+            return {}
         try:
             self.idle.begin(now, ctx, self.ceiling_m)
             if not self.mapper.idle_request_alt_hold():
@@ -862,6 +995,7 @@ class Mission:
 
     def _idle_cycle(self, now, ctx):
         if not ctx.get("gate_ok"):
+            self._stop_test_target(now)
             self.idle.stop()
             self._reset_motion()
             self.engaged = False
@@ -1369,6 +1503,11 @@ class Mission:
             lv = dict(self.level)
             wasp_params = dict(self.wasp.params)
             wasp_profile = self.wasp.steering_profile()
+            wasp_editable = not self._wasp_configuration_error()
+            test_mode = self.test_mode
+            test_target = self._test_target_position(now)
+            test_centre_remaining = (None if self._test_target_started is None else
+                round(max(0.0, self.wasp.params["centre_timer"]-(now-self._test_target_started)), 2))
         return dict(
             phase=self.phase, phase_s=round(now - self.phase_t, 1),
             hold=hold, event=self.event,
@@ -1393,6 +1532,10 @@ class Mission:
             wasp_camera_confirmed=self.wasp.camera_confirmed,
             wasp_params=wasp_params,
             wasp_steering_profile=wasp_profile,
+            wasp_params_editable=wasp_editable,
+            test_mode=test_mode,
+            test_target=test_target,
+            test_centre_remaining_s=test_centre_remaining,
             idle_s=self.idle_s,
             idle=self.idle.snapshot(),
             idle_remaining_s=None if self._run_t is None else round(max(0.0, self.idle_s-(now-self._run_t)), 2),
