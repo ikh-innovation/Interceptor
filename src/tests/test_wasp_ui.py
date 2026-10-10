@@ -131,7 +131,7 @@ async function main(){
  await load();
  await check('startup has no chooser or blocking popup',!q('#modechooser')&&!visible('#modechange')&&!q('.app').inert);
  await check('startup is read-only',(await req('/commands')).length===0);
- await check('Seeker keeps its original flight controls',visible('#normal_pad')&&visible('#b_lock')&&visible('#b_wasp_abort')&&visible('#dial')&&visible('#hbox')&&visible('#tape')&&!visible('#wasp_pad'));
+ await check('Seeker keeps Engage and Lock without Auto or Abort',visible('#normal_pad')&&visible('#b_lock')&&visible('#b_eng')&&!q('#b_auto')&&!visible('#b_wasp_abort')&&visible('#dial')&&visible('#hbox')&&visible('#tape')&&!visible('#wasp_pad'));
  await check('TensorRT FPS stays green',q('#c_ai_k').textContent==='TensorRT'&&q('#c_ai').classList.contains('ok'));
  parameters();
  await check('three Seeker parameter sections in order',[...f.contentDocument.querySelectorAll('.param-title')].filter(x=>x.getClientRects().length).map(x=>x.textContent).join('|')==='1Flight mode|2Detection|3Flight parametersSEEKER');
@@ -157,6 +157,7 @@ async function main(){
  q('#ptab_auto').click();
  await check('Auto tab replaces Manual controls',visible('#pp_auto')&&!visible('#pp_semi'));
  q('[data-autoen="on"]').click();await until(()=>q('#autotag').textContent==='ON');
+ await check('Seeker Auto labels the primary action Auto Engage',q('#engtxt').textContent==='AUTO ENGAGE'&&q('#b_eng').getAttribute('aria-label')==='AUTO ENGAGE'&&!visible('#b_wasp_abort')&&!q('#b_auto'));
  q('[data-ap="height"][data-av="20"]').click();await until(()=>q('[data-ap="height"][data-av="20"]').classList.contains('on'));
  await check('choice applies without a default popup',!q('#defask')&&(await req('/state')).mission.auto_params.height===20);
  q('[data-save="auto:height"]').click();await sleep(150);
@@ -324,7 +325,7 @@ async function main(){
  q('#sh_speed [data-close]').click();await flightLayout();parameters();
  await switchMode('normal');
  await check('leaving WASP disables Test mode',!(await req('/state')).mission.test_mode&&!visible('#test_target'));
- await check('Abort is available in Seeker too',visible('#b_wasp_abort'));
+ await check('Abort is hidden in Seeker',!visible('#b_wasp_abort'));
  await check('returning to Seeker restores flight controls',visible('#normal_pad')&&visible('#b_lock')&&visible('#dial')&&visible('#hbox')&&visible('#tape')&&!visible('#wasp_pad'));
  await check('return to Normal confirms 30 degrees and changes flight parameters',q('#mountstatus').textContent==='30° ✓'&&visible('#normal_params')&&!visible('#pp_wasp'));
  q('[data-sky="on"]').click();q('[data-fol="on"]').click();q('[data-cam="30"]').click();await until(()=>q('[data-cam="30"]').classList.contains('on'));

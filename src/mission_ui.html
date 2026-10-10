@@ -543,8 +543,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
         <span class="timer-label">Timer</span><div class="timer-wheel" id="wasp_launch_main" role="listbox" tabindex="0" aria-label="Launch countdown in seconds" aria-disabled="false"></div><span>s</span>
       </div>
-      <button class="rbtn auto" id="b_auto" aria-label="AUTO"><span id="autotxt">AUTO</span></button>
-      <button class="rbtn auto" id="b_wasp_abort" style="background:#ad3030;border-color:#ad3030" aria-label="Abort to Idle">ABORT</button>
+      <button class="rbtn auto" id="b_wasp_abort" data-only="wasp" hidden style="background:#ad3030;border-color:#ad3030" aria-label="Abort to Idle">ABORT</button>
       <button class="rbtn lock" id="b_lock" aria-label="LOCK"><span id="locktxt">LOCK</span></button>
       <button class="rbtn eng" id="b_eng" aria-label="ENGAGE"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE</span></button>
       <p class="wasp-save-note" data-only="wasp" hidden>Settings save automatically. Throttle and countdown apply to every response.</p>
@@ -831,18 +830,13 @@
     e.preventDefault();
     var fill = $("engfill"); fill.style.opacity = ".6";
     setTimeout(function () { fill.style.opacity = "0"; }, 180);
-    cmd("engage=1");
+    var m = LAST && LAST.mission || {};
+    var autoStart = !m.wasp_enabled && m.auto_enabled && ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(m.phase) >= 0;
+    cmd(autoStart ? "auto=on" : "engage=1");
   });
   $("b_wasp_abort").addEventListener("pointerdown", function (e) {
     if (this.disabled) return;
     e.preventDefault(); cmd("abort=1");
-  });
-
-  $("b_auto").addEventListener("pointerdown", function (e) {
-    var el = $("b_auto");
-    if (el.disabled) return;
-    e.preventDefault();
-    cmd("auto=" + (LAST && LAST.mission && LAST.mission.auto ? "off" : "on"));
   });
 
   $("b_lock").addEventListener("pointerdown", function (e) {
@@ -1159,7 +1153,6 @@
     if (pendingMode && j.armed) T("mode_note", "Disarm to change mode.");
     T("flight_mode_tag", wasp ? "WASP" : "SEEKER");
     document.querySelectorAll("[data-only]").forEach(function (el) { el.hidden = el.getAttribute("data-only") !== currentMode; });
-    $("b_auto").style.display = wasp ? "none" : "";
     $("b_wasp_abort").disabled = VIEW;
     var ctl = j.control || "free";
     var locked = !!m.locked;
@@ -1212,8 +1205,10 @@
     var eng = $("b_eng"), done = !!m.engaged || !!m.ai_steering || ph === "WASP_FLIGHT" || ph === "WASP_DONE" || ph === "IDLE" || ph === "IDLE_FAILED";
     eng.className = "rbtn eng" + (done ? " go" : ph === "PUSH" ? " push" : "");
     var AUTOPH = ["AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN"], inAuto = AUTOPH.indexOf(ph) >= 0;
-    eng.disabled = done || !((ph === "HOVER" || ph === "SCOUT" || inAuto) && !VIEW && ctl !== "other");
-    $("engtxt").innerHTML = !done ? (ph === "PUSH" ? "PUSH" : "ENGAGE")
+    var autoRun = !!m.auto_run && ["PUSH", "AI", "STOP"].indexOf(ph) >= 0;
+    var autoMode = !wasp && (!!m.auto_enabled || inAuto || !!m.auto_run);
+    eng.disabled = done || !((ph === "HOVER" || ph === "SCOUT" || inAuto || (autoMode && manual)) && !VIEW && ctl !== "other");
+    $("engtxt").innerHTML = !done ? (ph === "PUSH" ? "PUSH" : autoMode ? "AUTO ENGAGE" : "ENGAGE")
       : (ph === "AI" || ph === "PUSH") ? "AI ✓" : "DONE ✓";
     if (wasp) {
       eng.disabled = ph !== "WASP_READY" || !m.wasp_camera_confirmed || m.wasp_attitude_fresh === false
@@ -1227,17 +1222,11 @@
       }
     }
     if (ph === "IDLE" || ph === "IDLE_FAILED") { eng.disabled = true; $("engtxt").textContent = ph === "IDLE" ? "IDLE" : "PILOT"; }
-    eng.setAttribute("aria-label", wasp ? $("engtxt").textContent : "ENGAGE");
+    eng.setAttribute("aria-label", wasp ? $("engtxt").textContent : autoMode ? "AUTO ENGAGE" : "ENGAGE");
 
     CANLOCK = ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other";
     dial.classList.toggle("off", !CANLOCK);
     if (!CANLOCK) { if (drag) dialEnd(false); if ($("ask").classList.contains("on")) closeAsk(); }
-    var au = $("b_auto"), autoRun = !!m.auto_run && ["PUSH", "AI", "STOP"].indexOf(ph) >= 0;
-    au.className = "rbtn auto" + (inAuto || autoRun ? " on" : "") + (autoRun ? " run" : "");
-    au.disabled = !((inAuto || (manual && !done && m.auto_enabled)) && !VIEW && ctl !== "other");
-    $("autotxt").innerHTML = "AUTO" + ({AUTO_CLIMB: "<small>UP " + Math.round(m.auto_height_m || 10) + " m</small>",
-      AUTO_HOLD: "<small>WATCHING</small>", AUTO_ALIGN: "<small>LINING UP</small>"}[ph] ||
-      (autoRun ? "<small>" + ({PUSH: "GO", AI: "AI", STOP: "DONE"}[ph]) + "</small>" : ""));
     var lk = $("b_lock");
     lk.className = "rbtn lock" + (locked ? " on" : "");
     lk.disabled = !(["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other");
