@@ -608,7 +608,7 @@ class Mission:
         return ""
 
     def _test_target_position(self, now):
-        # Called under the mission lock so video and UI use the same trajectory.
+
         if not self.test_mode or not self.wasp.enabled or self.test_target is None:
             return None
         if self._test_target_started is None:
@@ -809,7 +809,7 @@ class Mission:
         if self.idle.active:
             return self._idle_cycle(now, ctx)
         if self.phase == "IDLE":
-            # A cancelled ground launch stays idle without commanding takeoff.
+
             if ctx.get("gate_ok") and getattr(self.mapper, "armed", False):
                 return {}
             self.engaged = False

@@ -140,6 +140,5 @@ runs/**/*.onnx
 
 replays/
 
-# Temporary profiles created by the UI browser checks.
 src/.ui-browser-*/
 src/.wasp-browser-*/

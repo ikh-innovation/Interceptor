@@ -1,9 +1,4 @@
-"""Bounded, time-based visual target estimation for optional WASP assistance.
 
-Detections anchor identity. Sparse flow can bridge a short detection gap, but
-never extends the detector's lifetime. All filtering happens in world bearing
-coordinates so aircraft rotation is not interpreted as target motion.
-"""
 
 from collections import deque
 import math
@@ -133,8 +128,8 @@ class WaspMotionEstimator:
         self.history.append((now, np.array(world), quality))
         while self.history and now - self.history[0][0] > self.HISTORY_S:
             self.history.popleft()
-        # Use more evidence for slow motion and a shorter window for fast
-        # motion; otherwise a long regression window lags a genuine turn.
+
+
         window = max(0.08, self.HISTORY_S / (1 + 6 * float(np.linalg.norm(self.velocity))))
         recent = [row for row in self.history if now - row[0] <= window]
         velocity, trust, residual = np.zeros(3), 0.0, pixel_rad
@@ -142,7 +137,7 @@ class WaspMotionEstimator:
             times = np.array([r[0] - now for r in recent])
             values = np.array([r[1] for r in recent])
             weights = np.array([max(0.05, r[2]) for r in recent])
-            # Two robust weighted fits suppress residual measurement spikes.
+
             for _ in range(2):
                 mt = np.average(times, weights=weights)
                 mean = np.average(values, axis=0, weights=weights)
@@ -173,11 +168,7 @@ class WaspMotionEstimator:
 
     def update(self, frame, detection, att, now, tan_h, tan_v, camera_roll=0,
                min_conf=0.2, synthetic=False):
-        """Return a fresh steering observation, or None; never invent a target.
 
-        detection is (centre_x, centre_y, width, height, confidence) in frame
-        coordinates. Synthetic test boxes use filtering but bypass optical flow.
-        """
         height, width = frame.shape[:2]
         signature = (width, height, tan_h, tan_v, camera_roll, synthetic)
         expired = self.detector_t is not None and now - self.detector_t > self.DETECTOR_TTL
@@ -230,8 +221,8 @@ class WaspMotionEstimator:
                            3 * self.noise_rad) + max(0.10, float(np.linalg.norm(self.velocity)) * 1.5) * dt
                 jump = 0 if reference is None else float(np.linalg.norm(candidate - reference))
                 accepted = synthetic or not self.needs_confirmation and (reference is None or jump <= gate)
-                # A consistent new trajectory can pass after two measurements,
-                # but cannot overrule good flow of the already-confirmed target.
+
+
                 if not accepted and flow is None:
                     if self.pending is not None:
                         pt, pending = self.pending
@@ -267,8 +258,8 @@ class WaspMotionEstimator:
         if accepted and not synthetic:
             self._seed(gray)
         self.gray, self.frame_t = gray, now
-        # Compensate only the known filter delay, using already confidence-weighted
-        # velocity. Camera age and the user's target lead are applied by guidance.
+
+
         current_bearing = unit(self.bearing + self.velocity * self.filter_lag_s)
         centre = project_bearing(current_bearing, att, width, height, tan_h, tan_v, camera_roll)
         if centre is None:

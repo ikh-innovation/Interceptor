@@ -32,7 +32,7 @@ class RecoveryMavlinkTests(WifiFixture):
     def test_armed_test_launch_centres_target_then_abort_enters_idle(self):
         self.wasp_ready(idle_s=8)
         self.command("waspp", "profile:extra")
-        # The pilot is already armed in ACRO when the phone timers are edited.
+
         self.assertTrue(self.c.armed)
         self.assertEqual(self.c.mode_name, "ACRO")
         self.command("waspp", "launch_s:3")
@@ -165,8 +165,8 @@ class RecoveryMavlinkTests(WifiFixture):
                 until(lambda: self.m.idle.stage == "HOLD")
                 until(lambda: self.fc.overrides.get(3) == 1500)
                 self.fc.mode = 0
-                # After pilot takeover, WASP keeps its disarm latch in WASP_DONE.
-                # PILOT can last only one control tick as Idle releases its output.
+
+
                 until(lambda: self.c.mode_name == "STABILIZE"
                       and self.m.phase in ("PILOT", "WASP_DONE") and not self.fc.overrides)
                 count = len(self.fc.mode_requests)

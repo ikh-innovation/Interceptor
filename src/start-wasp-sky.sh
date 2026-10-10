@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 
 set -u
-cd /home/iknowhow/Documents/Interceptor-1/src || exit 1
+WASP_SRC_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+cd "$WASP_SRC_DIR" || exit 1
 
-export PATH=/home/iknowhow/Documents/Interceptor-1/.env/yolo/bin:$PATH
+export PATH="$WASP_SRC_DIR/../.env/yolo/bin:$PATH"
 
 export CAM_TILT_DEG=${CAM_TILT_DEG:-30}
 

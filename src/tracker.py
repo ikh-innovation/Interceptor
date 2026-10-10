@@ -437,7 +437,7 @@ class DroneTracker:
             return candidates[0]
         size = max(self.last_bbox[2:]) if self.last_bbox else 8
         scale = max(8.0, size)
-        # Prefer a plausible continuation over a higher-confidence distractor.
+
         return max(candidates, key=lambda d: math.log(max(d[6], 1e-9))
                    - 0.5*((d[0]-hint[0])**2+(d[1]-hint[1])**2)/(scale*scale))
 
@@ -778,7 +778,7 @@ class DroneTracker:
             if centre is not None and self.motion.box is not None:
                 cx, cy = centre
                 half = max(self.MIN_ROI_HALF, max(self.motion.box[2:]) * 1.5)
-                # Expand according to actual elapsed time and camera rotation.
+
                 half += max(self._rotation_margin())
                 roi = (max(0, int(cx-half)), max(0, int(cy-half)),
                        min(self.fw, int(cx+half)), min(self.fh, int(cy+half)))
@@ -1681,7 +1681,7 @@ class DroneTracker:
             motion_on = bool(mission is not None and mission.wasp.enabled
                              and mission.wasp.params.get("motion_assist"))
             detector_due = is_yolo_frame
-            # Flow runs on every captured frame, including detector-skip frames.
+
             is_yolo_frame = is_yolo_frame or motion_on or getattr(self, "_motion_enabled", False)
 
             if self._t_ui_prev is not None:

@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Five offline 30 FPS stress comparisons with genuine TensorRT inference.
 
-A photographed drone and sky are projected through a translating, rotating
-camera. Movement is synthetic. Both production trackers see identical pixels
-and the same simulated capture-time attitude. Truth is used only for scoring
-and drawing; it never seeds or influences a tracker. No FC is connected.
-Only five MP4 files and a Markdown report are produced, without JSON/CSV dumps.
-"""
 
 import argparse
 import hashlib
@@ -35,7 +28,7 @@ TH, TV = math.tan(math.radians(31.1)), math.tan(math.radians(24.4))
 FX, FY = W/(2*TH), H/(2*TV)
 BLUE, GREEN, YELLOW, RED = (255, 194, 85), (134, 232, 122), (74, 206, 255), (97, 92, 244)
 WHITE, DIM = (241, 239, 229), (164, 151, 128)
-# Camera CV axes (right, down, forward) expressed in the guidance body basis.
+
 BASIS = np.array([[0., 1., 0.], [1., 0., 0.], [0., 0., -1.]])
 SCENARIOS = (
     ('01-zigzag', 'FAST ZIGZAGS / RAPID SIZE CHANGES', 27091),
@@ -71,7 +64,7 @@ def matches(candidate, truth):
 
 
 class DetectorAudit:
-    """Record genuine neural boxes without modifying model inputs or outputs."""
+
     def __init__(self, model, tracker):
         self.model, self.tracker = model, tracker
         self.region, self.boxes, self.calls = None, [], 0
@@ -231,7 +224,7 @@ def trajectory(index, duration):
         zoom = .5+.39*math.sin(2*math.pi*.61*t+phase[2])+.10*math.sin(2*math.pi*1.37*t)
         width = math.exp(math.log(3.2)+(math.log(46)-math.log(3.2))*zoom)
         width = (1-envelope)*20+envelope*width
-        distance = FX*.6/width  # Assumed 0.6m target; changing range, fixed lens.
+        distance = FX*.6/width
         rotation, angles = camera(t, index)
         body = BASIS@rotation@BASIS.T
         omega = np.zeros(3) if previous is None else cv2.Rodrigues(previous['body'].T@body)[0].ravel()*FPS
@@ -286,8 +279,8 @@ def make_image(background, sprite, sample, previous):
     intrinsic = np.array([[2*FX, 0., nw/2], [0., 2*FY, nh/2], [0., 0., 1.]])
     source_k = intrinsic.copy()
     source_k[:2, 2] = (background.shape[1]/2, background.shape[0]/2)
-    # A 900m cloud plane has translation parallax; the lens follows the body
-    # rotation directly. This is a kinematic stress model, without a gimbal.
+
+
     translation = np.diag([1., 1., 1-sample['camera_position'][2]/900])
     transform = intrinsic@sample['rotation'].T@translation@np.linalg.inv(source_k)
     frame = cv2.warpPerspective(background, transform, NATIVE, borderMode=cv2.BORDER_REFLECT_101)
@@ -297,8 +290,8 @@ def make_image(background, sprite, sample, previous):
     if sample['distractor']:
         distractor = sample['distance']*np.array([-.18, .08, 1.])
         paste(frame, sprite, project_patch(sample, sprite, intrinsic, distractor, .9))
-    # Approximate exposure blur, based on actual inter-frame camera movement.
-    # Target blur adds its relative screen displacement rather than fake boxes.
+
+
     blur = 0
     if previous is not None and corners is not None:
         centre = corners.mean(axis=0)
@@ -467,66 +460,7 @@ def run(model, args, sprite, sky, index):
 
 
 def write_report(args, model, results):
-    digest = hashlib.sha256(args.engine.read_bytes()).hexdigest()
-    lines = ['# WASP: five hard 30 FPS TensorRT comparisons', '',
-        'Motion assist OFF is on the left; ON is on the right. These are offline vision stress tests.', '',
-        'The target and sky are photographs from frame 2430 of '
-        '`/home/iknowhow/Documents/Interceptor/data/ClipExport.mp4`. The original target '
-        'box was `[455, 348, 508, 378]`, with TensorRT confidence 0.875. '
-        'Movement, size changes and camera motion are synthetic. Neural detections are genuine.', '',
-        'The suite uses one photographed target pose. It is a stress comparison of the current '
-        'pipelines, not a model-accuracy benchmark on unseen flight footage.', '',
-        f'Engine: `{args.engine}`; SHA-256 `{digest}`. '
-        f'Backend: `{type(model.predictor.model.backend).__name__}` on `{model.predictor.model.device}`. '
-        f'Model confidence threshold: {model.predictor.args.conf}.', '',
-        'Every video uses 30 FPS, native 1280×960 pixels and 640×480 tracking coordinates. '
-        f'Each contains {args.duration:g} seconds of motion plus a 2-second results card. '
-        'Playback FPS does not establish real-time inference throughput.', '',
-        'Both production trackers receive identical frames and capture-time camera attitude. '
-        'OFF retains the existing Kalman/follower path; ON uses the current motion-assist estimator. '
-        'Existing sky gating and detector settings remain enabled. No tracker tuning or model '
-        'weight changes were made for these tests. Ground truth never seeds a detector or tracker.', '',
-        'The camera follows the same prescribed path in both modes, independently of tracking '
-        'outputs. These videos isolate vision behavior rather than simulate closed-loop steering.', '',
-        'The camera translates forward at an assumed 25 m/s and rotates with the simulated body, '
-        'without a gimbal. A cloud plane at 900m supplies translation parallax; bank, pitch, yaw '
-        'and 9–13Hz vibration supply rigid-camera motion. The photographed target is projected '
-        'as a 0.6m planar object whose range changes repeatedly, producing apparent zoom without '
-        'changing the fixed lens calibration. Exposure blur is an approximate directional image '
-        'filter, capped at 21 native pixels. This kinematic model is not calibrated against the '
-        'physical drone, and camera angles/accelerations are deliberately aggressive.', '',
-        'Coverage denominators include only frames where the entire target is in view and '
-        'not deliberately occluded. Each video also shows visible-frame counts, so leaving '
-        'the camera view cannot masquerade as a detector failure or improvement. '
-        'A correct box requires centre distance <= max(3px, half target width) and bbox IoU >= 0.10. '
-        'Measured tracking can come from a detector, follower or validated flow. Held/predicted '
-        'boxes are excluded. The centre-error RMS includes all measured estimates while the '
-        'target is visible, including wrong associations; it does not penalize missing estimates.', '',
-        '| Scenario | Fresh model OFF / ON | Correct tracking OFF / ON | Centre RMS OFF / ON | Target visible |',
-        '| --- | ---: | ---: | ---: | ---: |']
-    for s in results:
-        a, b = s['baseline'], s['assisted']
-        rms = lambda r: '--' if r['error_rms'] is None else '%.2f'%r['error_rms']
-        lines.append(f'| [{s["name"]}]({s["video"]}) | {a["model_pct"]:.1f}% / {b["model_pct"]:.1f}% | '
-            f'{a["tracking_pct"]:.1f}% / {b["tracking_pct"]:.1f}% | {rms(a)} / {rms(b)} px | '
-            f'{a["visible"]}/{a["frames"]} |')
-    lines += ['', '| Scenario | Apparent speed p95 / max | Apparent width min–max | Max body rotation | Seed |',
-              '| --- | ---: | ---: | ---: | ---: |']
-    for s in results:
-        lines.append(f'| {s["name"]} | {s["speed_p95"]:.0f} / {s["speed_max"]:.0f} px/s | '
-            f'{s["width_min"]:.1f}–{s["width_max"]:.1f} px | {s["camera_rate_max"]:.0f} deg/s | {s["seed"]} |')
-    lines += ['', 'The earlier videos, previews and JSON/CSV files were removed. Only these five '
-        'MP4 comparisons, this report and the two real photographic assets remain.', '',
-        'Reproduce from the repository root:', '', '```bash',
-        '.env/yolo/bin/python src/tests/render_wasp_motion_stress.py', '```', '',
-        'Use `--ffmpeg /path/to/ffmpeg` if ffmpeg is not on PATH. The script accepts '
-        '`--scenario 1` through `--scenario 5` for a single scenario and requires the genuine '
-        'TensorRT backend. It opens no FC connection and sends no flight commands.', '']
-    if len(results) == 5 and all(s['baseline']['tracking_pct'] > s['assisted']['tracking_pct'] for s in results):
-        lines += ['', 'Verdict: OFF has higher correct-tracking coverage in all five scenarios. '
-            'The current ON estimator accepts far fewer correct tracks. Motion assist remains '
-            'OFF by default; these results do not support treating ON as a flight improvement.', '']
-    (args.output/'README.md').write_text('\n'.join(lines))
+    pass
 
 
 def main():

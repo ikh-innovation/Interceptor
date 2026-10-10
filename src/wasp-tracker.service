@@ -1,19 +1,19 @@
 [Unit]
-Description=WASP drone tracker (auto-start at Jetson power-up, intercept law)
+Description=WASP
 
 
 StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-WorkingDirectory=/home/iknowhow/Documents/Interceptor-1/src
+WorkingDirectory=%h/Documents/wasp/src
 
 
 
 
 ExecStartPre=/bin/sleep 15
 
-ExecStart=/home/iknowhow/Documents/Interceptor-1/src/start-wasp.sh
+ExecStart=%h/Documents/wasp/src/start-wasp.sh
 
 StandardOutput=append:/home/iknowhow/wasp-logs/wasp-tracker.log
 StandardError=append:/home/iknowhow/wasp-logs/wasp-tracker.log

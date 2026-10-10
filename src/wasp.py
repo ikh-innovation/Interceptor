@@ -100,8 +100,8 @@ class WaspGuidance:
         world = observation["bearing"]
         velocity = observation["bearing_rate"]
         assist = bool(observation.get("motion_assist"))
-        # Assisted velocity already carries its confidence weight; applying it
-        # again here would double the attenuation and create unnecessary lag.
+
+
         predicted = unit(tuple(v + (age+lead_s)*d for v, d in zip(world, velocity)))
         mat = rotation(att)
         body = rotate(mat, predicted, inverse=True)
@@ -110,8 +110,8 @@ class WaspGuidance:
 
         error = cross((0.0, 0.0, -1.0), body)
         if assist:
-            # A continuous, noise-sized reduction near centre avoids alternating
-            # corrections for subpixel measurement noise without a large deadzone.
+
+
             norm = math.hypot(*error[:2])
             weight = max(0.0, 1 - min(0.003, 0.5*observation.get("noise_rad", 0.0)) / max(norm, 1e-9))
             error = tuple(v * weight for v in error)
@@ -187,8 +187,8 @@ class Wasp:
                     if self.valid_param(key, value):
                         self.profiles[name][key] = value
         self.params.update(self.profiles[self.active_profile])
-        # Older files stored launch settings in each profile. Keep the active
-        # profile's values when migrating, then store them separately from now on.
+
+
         legacy = profiles.get(self.active_profile, {}) if isinstance(profiles, dict) else {}
         legacy = legacy if isinstance(legacy, dict) else {}
         shared = saved.get("shared", {})
