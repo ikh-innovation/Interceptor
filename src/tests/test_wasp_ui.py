@@ -77,6 +77,13 @@ async function check(name,ok){await req('/report?data='+encodeURIComponent(JSON.
 async function until(fn){for(let i=0;i<100;i++){if(await fn())return;await sleep(50)}throw Error('timeout: '+fn)}
 async function load(){f.src='/?t='+Date.now();await new Promise(r=>f.onload=r);await until(()=>q('[data-wp="throttle"] button.on')&&q('#c_ai').classList.contains('ok'))}
 function parameters(){q('#t_menu').click();q('#t_par').click()}
+async function countdown(seconds){
+ const wasOpen=q('#sh_speed').classList.contains('open');
+ if(wasOpen)q('#sh_speed [data-close]').click();
+ q('#wasp_launch_main [data-seconds="'+seconds+'"]').click();
+ await until(async()=>q('#wasp_launch_main').value===String(seconds)&&(await req('/state')).mission.wasp_params.launch_s===seconds);
+ if(wasOpen)parameters();
+}
 function tap(s){q(s).dispatchEvent(new f.contentWindow.PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:1}))}
 async function switchMode(mode){q('[data-flightmode="'+mode+'"]').click();await until(()=>visible('#modechange'));await check('camera warning '+mode,q('#mode_degrees').textContent===(mode==='wasp'?'90°':'30°'));q('#mode_confirm').click();await until(()=>!visible('#modechange'))}
 async function layout(mode){
@@ -179,21 +186,15 @@ async function main(){
  q('#wasp_profiles [data-wasp-profile="extra"]').click();await until(()=>q('#wasp_pad [data-wasp-profile="extra"]').classList.contains('on'));
  const extra=(await req('/state')).mission.wasp_params;
  await check('Extra applies exact steering settings from Parameters',extra.blend===0.25&&extra.rate===120&&extra.gain===6&&extra.lead===0.08&&extra.camera_roll===0);
- await check('Launch countdown defaults to 3 seconds',q('#wasp_launch_seconds').value==='3');
- const timer=q('#wasp_launch_seconds');timer.focus();timer.value='4.25';await sleep(400);
- await check('polling preserves typed launch countdown',timer.value==='4.25');
- timer.dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));timer.blur();
- await until(()=>q('#wasp_launch_main').value==='4.25');
+ await check('Launch countdown is only controlled from the main screen',!q('#wasp_launch_seconds')&&q('#wasp_launch_main').value==='3');
+ await countdown(4);
  await check('manual timer keeps selected steering profile',(await req('/state')).mission.wasp_steering_profile==='extra');
- const timerCommands=(await req('/commands')).length;
- timer.value='-1';timer.dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));
- await check('invalid launch timer sends nothing',timer.value==='4.25'&&(await req('/commands')).length===timerCommands);
  q('[data-wasp-profile="standard"]').click();await until(()=>q('[data-wasp-profile="standard"]').classList.contains('on'));
- await check('launch countdown stays the same when steering changes',(await req('/state')).mission.wasp_params.launch_s===4.25);
- q('#wasp_profiles [data-wasp-profile="extra"]').click();await until(()=>q('#wasp_profiles [data-wasp-profile="extra"]').classList.contains('on')&&q('#wasp_launch_seconds').value==='4.25');
+ await check('launch countdown stays the same when steering changes',(await req('/state')).mission.wasp_params.launch_s===4);
+ q('#wasp_profiles [data-wasp-profile="extra"]').click();await until(()=>q('#wasp_profiles [data-wasp-profile="extra"]').classList.contains('on')&&q('#wasp_launch_main').value==='4');
  await check('Extra uses the same shared timer',(await req('/state')).mission.wasp_steering_profile==='extra');
- q('#wasp_profiles [data-wasp-profile="standard"]').click();await until(()=>q('#wasp_profiles [data-wasp-profile="standard"]').classList.contains('on')&&q('#wasp_launch_seconds').value==='4.25');
- await check('main screen shows active steering and timer before launch',q('#wasp_pad [data-wasp-profile="standard"]').classList.contains('on')&&q('#wasp_launch_main').value==='4.25');
+ q('#wasp_profiles [data-wasp-profile="standard"]').click();await until(()=>q('#wasp_profiles [data-wasp-profile="standard"]').classList.contains('on')&&q('#wasp_launch_main').value==='4');
+ await check('main screen shows active steering and timer before launch',q('#wasp_pad [data-wasp-profile="standard"]').classList.contains('on')&&q('#wasp_launch_main').value==='4');
  q('#wasp_advanced').open=true;
  await check('Wasp has motion assist plus seven existing parameter groups and no old timers',q('#pp_wasp').querySelectorAll('[data-wp]').length===8&&!q('[data-wp="duration"]')&&!q('[data-wp="no_det"]'));
  await check('Idle is shared across modes',q('#idle_seconds').value==='12.5');
@@ -217,8 +218,7 @@ async function main(){
  q('[data-wp="straight"] [data-wv="0.5"]').click();await until(()=>q('[data-wp="straight"] [data-wv="0.5"]').classList.contains('on'));
  q('[data-wp="blend"] [data-wv="0.25"]').click();
  await until(()=>q('[data-wp="blend"] [data-wv="0.25"]').classList.contains('on'));
- q('#wasp_launch_seconds').value='4.25';q('#wasp_launch_seconds').dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));
- await until(()=>q('#wasp_launch_main').value==='4.25');
+ await countdown(4);
  const count=(await req('/commands')).length;
  await load();
  await check('refresh has no popup and sends no mode command',!visible('#modechange')&&!q('.app').inert&&(await req('/commands')).length===count);
@@ -228,10 +228,10 @@ async function main(){
  await check('refresh preserves Idle, rate and gain',q('#idle_seconds').value==='7'&&q('[data-wp="rate"] [data-wv="45"]').classList.contains('on')&&q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
  await check('refresh preserves edited profile and collapsed advanced view',q('#wasp_pad [data-wasp-profile="standard"]').classList.contains('on')&&!q('#wasp_advanced').open);
  await check('refresh preserves camera confirmation',q('#mountstatus').textContent==='90° ✓');
- await check('refresh preserves manual launch countdown',q('#wasp_launch_seconds').value==='4.25');
+ await check('refresh preserves manual launch countdown',q('#wasp_launch_main').value==='4');
  await req('/set?armed=1&phase=WASP_READY');await until(()=>q('[data-flightmode="normal"]').disabled);
  await check('Idle locked while armed',q('#idle_seconds').disabled);
- await check('launch countdown editable while armed and ready',!q('#wasp_launch_seconds').disabled&&!q('#wasp_launch_main').disabled);
+ await check('launch countdown editable while armed and ready',!q('#wasp_launch_main').disabled);
  await check('Wasp profiles and parameters editable while ready',[...f.contentDocument.querySelectorAll('[data-wp] button, [data-wasp-profile]')].every(x=>!x.disabled));
  q('[data-flightmode="normal"]').click();await sleep(100);
  await check('armed mode click sends nothing',(await req('/commands')).length===count&&!visible('#modechange'));
@@ -239,22 +239,21 @@ async function main(){
  await flightLayout();
  q('#wasp_pad [data-wasp-profile="extra"]').click();await until(()=>q('#wasp_pad [data-wasp-profile="extra"]').classList.contains('on'));
  await check('Extra can be selected while armed and ready',(await req('/state')).mission.wasp_params.rate===120);
- q('#wasp_pad [data-wasp-profile="standard"]').click();await until(()=>q('#wasp_launch_main').value==='4.25'&&q('#wasp_pad [data-wasp-profile="standard"]').classList.contains('on'));
+ q('#wasp_pad [data-wasp-profile="standard"]').click();await until(()=>q('#wasp_launch_main').value==='4'&&q('#wasp_pad [data-wasp-profile="standard"]').classList.contains('on'));
  await check('switching back restores edited advanced defaults',(await req('/state')).mission.wasp_params.rate===45&&(await req('/state')).mission.wasp_params.blend===0.25);
  await check('Main throttle row offers all three choices',[...q('#wasp_main_throttle').children].map(b=>b.textContent).join(',')==='75%,85%,100%');
  q('#wasp_main_throttle [data-wv="0.85"]').click();await until(()=>q('#pp_wasp [data-wp="throttle"] [data-wv="0.85"]').classList.contains('on'));
  for(const profile of ['smooth','responsive','extra','standard']){
   q('#wasp_pad [data-wasp-profile="'+profile+'"]').click();await until(()=>q('#wasp_pad [data-wasp-profile="'+profile+'"]').classList.contains('on'));
-  await check('Throttle and launch countdown stay independent of '+profile,q('#wasp_main_throttle [data-wv="0.85"]').classList.contains('on')&&q('#wasp_launch_main').value==='4.25'&&(await req('/state')).mission.wasp_params.throttle===.85);
+  await check('Throttle and launch countdown stay independent of '+profile,q('#wasp_main_throttle [data-wv="0.85"]').classList.contains('on')&&q('#wasp_launch_main').value==='4'&&(await req('/state')).mission.wasp_params.throttle===.85);
  }
  q('#wasp_main_throttle [data-wv="0.75"]').click();await until(()=>q('#pp_wasp [data-wp="throttle"] [data-wv="0.75"]').classList.contains('on'));
  await check('main timer is a scroll picker without text input',q('#wasp_launch_main').getAttribute('role')==='listbox'&&!q('.main-countdown input'));
  const wheel=q('#wasp_launch_main'), rows=[...wheel.children], index=rows.findIndex(x=>x.getAttribute('data-seconds')==='5');
  wheel.dispatchEvent(new f.contentWindow.WheelEvent('wheel',{deltaY:50,bubbles:true}));wheel.scrollTop=index*rows[0].getBoundingClientRect().height;
- await until(()=>q('#wasp_launch_seconds').value==='5');
- await check('rolling the main timer syncs to Parameters',(await req('/state')).mission.wasp_params.launch_s===5);
- parameters();q('#wasp_launch_seconds').value='4.25';q('#wasp_launch_seconds').dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));await until(()=>q('#wasp_launch_main').value==='4.25');
- q('#sh_speed [data-close]').click();
+ await until(async()=>q('#wasp_launch_main').value==='5'&&(await req('/state')).mission.wasp_params.launch_s===5);
+ await check('rolling the main timer saves the countdown',(await req('/state')).mission.wasp_params.launch_s===5);
+ await countdown(4);
  await check('Wasp aim and launch controls remain correct',q('#aim').style.top==='50%'&&!visible('#arc')&&q('#b_up').disabled&&!q('#b_eng').disabled);
  await req('/set?armed=1&target=0');await until(()=>q('#c_det').textContent==='NO');
  await check('launch is available without an initial detection',!q('#b_eng').disabled);
@@ -284,7 +283,7 @@ async function main(){
  await check('rotating preserves the test target',q('#test_target').style.left==='25%'&&q('#test_target').style.top==='75%');
  tap('#b_eng');await until(()=>q('#b_eng').classList.contains('countdown'));
  await check('launch countdown runs in the backend and blocks repeated launches',(await req('/state')).mission.wasp_progress.stage==='COUNTDOWN'&&q('#b_eng').disabled);
- await check('settings lock during countdown',q('#wasp_launch_main').disabled&&q('#wasp_launch_seconds').disabled&&q('#test_centre_timer').disabled&&q('#wasp_pad [data-wasp-profile="extra"]').disabled);
+ await check('settings lock during countdown',q('#wasp_launch_main').disabled&&q('#test_centre_timer').disabled&&q('#wasp_pad [data-wasp-profile="extra"]').disabled);
  await check('Motion assist locks during countdown',q('[data-wp="motion_assist"] [data-wv="1"]').disabled);
  const targetBefore=(await req('/state')).mission.test_target;point(.8,.2);await sleep(200);
  await check('Test target stays fixed during countdown',JSON.stringify((await req('/state')).mission.test_target)===JSON.stringify(targetBefore));
@@ -293,8 +292,7 @@ async function main(){
  tap('#b_wasp_abort');await until(()=>q('#engtxt').textContent==='IDLE');
  await check('Abort cancels the launch countdown',(await req('/state')).mission.wasp_progress.stage!=='COUNTDOWN');
  await req('/set?armed=0&phase=PILOT');await sleep(350);parameters();
- q('#wasp_launch_seconds').focus();q('#wasp_launch_seconds').value='3';q('#wasp_launch_seconds').dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));q('#wasp_launch_seconds').blur();
- await until(()=>q('#wasp_launch_main').value==='3');
+ await countdown(3);
  q('#sh_speed [data-close]').click();await req('/set?armed=1&phase=WASP_READY');await until(()=>!q('#b_eng').disabled);
  tap('#b_eng');await until(()=>q('#engtxt strong')&&q('#engtxt strong').textContent==='3');
  await until(()=>q('#engtxt strong')&&q('#engtxt strong').textContent==='2');

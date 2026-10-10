@@ -610,7 +610,6 @@
         <div class="parameter-grid">
           <div class="grp"><div class="lbl">Launch throttle</div><div class="seg" data-wp="throttle" data-values="0.75,0.85,1" data-labels="75%,85%,100%"></div></div>
           <div class="grp"><div class="lbl">Steering response</div><div class="seg" id="wasp_profiles" role="group" aria-label="Steering response"><button data-wasp-profile="smooth" aria-pressed="false">Smooth</button><button data-wasp-profile="standard" aria-pressed="false">Standard</button><button data-wasp-profile="responsive" aria-pressed="false">Responsive</button><button data-wasp-profile="extra" aria-pressed="false">Extra</button></div><p class="steering-help" id="wasp_profile_help"></p></div>
-          <div class="grp"><label class="lbl" for="wasp_launch_seconds">Launch countdown</label><div class="idle-input"><input id="wasp_launch_seconds" type="number" min="0" max="60" step="any" value="3" inputmode="decimal"><span>s</span></div><p class="steering-help">Saved automatically. Throttle and countdown apply to every response. Default countdown: 3 s.</p></div>
           <div class="grp"><div class="lbl">Motion assist</div><div class="seg" data-wp="motion_assist" data-values="0,1" data-labels="OFF,ON" role="group" aria-label="WASP motion assist"></div><p class="steering-help">ON: reduce box noise and validate motion with optical flow when reliable. OFF: existing bbox steering. Saved for every response.</p></div>
         </div>
         <p class="steering-help" id="wasp_timing"></p>
@@ -1048,18 +1047,6 @@
   $("idle_seconds").addEventListener("keydown", function (e) {
     if (e.key === "Enter") { e.preventDefault(); this.blur(); }
   });
-  $("wasp_launch_seconds").addEventListener("change", function () {
-    var field = this, value = Number(field.value);
-    if (!field.value || !isFinite(value) || value < 0 || value > 60) {
-      note("Launch countdown: 0–60 s", true);
-      field.value = LAST && LAST.mission ? LAST.mission.wasp_params.launch_s : 3;
-      return;
-    }
-    cmd("waspp=launch_s:" + encodeURIComponent(value));
-  });
-  $("wasp_launch_seconds").addEventListener("keydown", function (e) {
-    if (e.key === "Enter") { e.preventDefault(); this.blur(); }
-  });
   $("test_centre_timer").addEventListener("change", function () {
     var field = this, value = Number(field.value);
     if (!field.value || !isFinite(value) || value < 0 || value > 60) {
@@ -1206,8 +1193,6 @@
     var waspSettingsLocked = !waspEditable || VIEW || ctl === "other";
     $("test_centre_timer").disabled = waspSettingsLocked;
     if (document.activeElement !== $("test_centre_timer") && m.wasp_params) $("test_centre_timer").value = m.wasp_params.centre_timer;
-    $("wasp_launch_seconds").disabled = waspSettingsLocked;
-    if (document.activeElement !== $("wasp_launch_seconds") && m.wasp_params) $("wasp_launch_seconds").value = m.wasp_params.launch_s;
     launchWheel.disabled = waspSettingsLocked;
     launchWheel.setAttribute("aria-disabled", String(waspSettingsLocked));
     launchWheel.tabIndex = waspSettingsLocked ? -1 : 0;
