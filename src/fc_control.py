@@ -2613,10 +2613,13 @@ class AcroCommander:
             ceiling_m=self._mission_cfg["ceiling_m"],
             accel_z=getattr(b, "accel_z", 2.5) or 2.5,
             jerk_z=getattr(b, "jerk_z", 5.0) or 5.0,
-            log=lambda m: None, idle_path=_mission_mod.IDLE_FILE, wasp_path=_mission_mod.WASP_FILE)
+            log=lambda m: None, idle_path=_mission_mod.IDLE_FILE, wasp_path=_mission_mod.WASP_FILE,
+            auto_path=_mission_mod.AUTO_FILE, levels_path=_mission_mod.LEVELS_FILE,
+            flight_path=_mission_mod.FLIGHT_FILE)
         _saved = _mission_mod.load_auto_params(self.mission)
         _lv = _mission_mod.load_levels(self.mission)
         _mission_mod.load_idle_settings(self.mission)
+        _mission_mod.load_flight_settings(self.mission)
 
 
 

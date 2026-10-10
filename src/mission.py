@@ -90,7 +90,9 @@ LEVELS_FILE = os.path.join(CONF_DIR, "levels.json")
 DETECT_FILE = os.path.join(CONF_DIR, "detection.json")
 IDLE_FILE = os.path.join(CONF_DIR, "idle.json")
 WASP_FILE = os.path.join(CONF_DIR, "wasp.json")
-DETECT_SAVED = {"follow": bool, "cam": int}
+FLIGHT_FILE = os.path.join(CONF_DIR, "flight.json")
+DETECT_SAVED = {"follow": bool, "cam": int, "sky": bool}
+SAVED_COMMANDS = ("autop", "autoreset", "autoen", "waspen", "flightmode", "mount", "lvl")
 
 
 def _read_json(path):
@@ -166,9 +168,35 @@ def load_idle_settings(m):
     return ""
 
 
+def load_flight_settings(m):
+    d = _read_json(m.flight_path) if m.flight_path else {}
+    if d.get("flightmode") in ("normal", "wasp"):
+        m.set_wasp_enabled(d["flightmode"] == "wasp", selection=True)
+    if "mount" in d:
+        m.confirm_mount(d["mount"])
+    if isinstance(d.get("auto"), bool):
+        m.set_auto_enabled(d["auto"])
+
+
+def save_settings(m):
+    ok = True
+    if m.auto_path:
+        ok = save_auto_params(m, m.auto_path) and ok
+    if m.levels_path:
+        if _write_json(m.levels_path, dict(m.level)):
+            m.level_defaults = dict(m.level)
+        else:
+            ok = False
+    if m.flight_path:
+        ok = _write_json(m.flight_path, dict(
+            flightmode="wasp" if m.wasp.enabled else "normal",
+            mount=m.camera_mount_deg, auto=m.auto_enabled)) and ok
+    return "" if ok else "could not save on the Jetson"
+
+
 def save_detection_default(key, on, path=DETECT_FILE):
     if key not in DETECT_SAVED:
-        return "the SKY GATE always starts ON: it is not saved"
+        return "unknown detection setting"
     d = _read_json(path)
     d[key] = DETECT_SAVED[key](on)
     return "" if _write_json(path, d) else "could not save on the Jetson"
@@ -201,6 +229,13 @@ def save_default(m, what, auto_path=AUTO_FILE, levels_path=LEVELS_FILE):
 
 
 def phone_command(m, key, value, now):
+    r = _phone_command(m, key, value, now)
+    if r == "" and key in SAVED_COMMANDS:
+        r = save_settings(m)
+    return r
+
+
+def _phone_command(m, key, value, now):
     value = str(value)
     if key == "hold":
         kind, _, session = value.partition(":")
@@ -328,7 +363,7 @@ class Mission:
 
     def __init__(self, mapper, min_conf=0.20, ceiling_m=30.0,
                  accel_z=5.0, jerk_z=5.0, log=(lambda *_args, **_kwargs: None), idle_path=None,
-                 wasp_path=None):
+                 wasp_path=None, auto_path=None, levels_path=None, flight_path=None):
         self.mapper = mapper
         self.min_conf = float(min_conf)
         self.ceiling_m = float(ceiling_m)
@@ -362,6 +397,9 @@ class Mission:
             self.wasp.load_defaults(_read_json(wasp_path))
         self.idle_s = 10.0
         self.idle_path = idle_path
+        self.auto_path = auto_path
+        self.levels_path = levels_path
+        self.flight_path = flight_path
         self.idle = Idle()
         self.idle_supported = callable(getattr(mapper, "idle_pwm", None))
         self._run_t = None

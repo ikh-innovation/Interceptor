@@ -325,6 +325,8 @@ class DroneTracker:
         _saved = mission_mod.load_detection_defaults()
         if "follow" in _saved and "FOLLOW" not in os.environ:
             self.use_follower = _saved["follow"]
+        if "sky" in _saved:
+            self.use_sky_mask = _saved["sky"]
         self.follower_default = self.use_follower
         self.follow_hits     = 0
         self._gate_rejects   = 0
@@ -1343,11 +1345,11 @@ class DroneTracker:
             if m is not None:
                 m.set_level("ai", self.mode_name)
         elif key == "sky":
-            return self.set_sky_gate(value)
+            return self.set_sky_gate(value) or self._save_detection_default("sky")
         elif key == "follow":
-            return self.set_follower(value)
+            return self.set_follower(value) or self._save_detection_default("follow")
         elif key == "cam":
-            return self.set_camera(value)
+            return self.set_camera(value) or self._save_detection_default("cam")
         elif key == "def" and str(value).startswith("det:"):
             return self._save_detection_default(str(value)[4:].strip().lower())
         elif key in ("hold", "release", "step", "engage", "abort", "lvl", "lock", "auto", "autoen", "waspen", "waspp", "mount", "flightmode",
@@ -1385,6 +1387,8 @@ class DroneTracker:
                 self.cam_default = want
 
             return r
+        if key == "sky":
+            return mission_mod.save_detection_default("sky", self.use_sky_mask)
         if key != "follow":
             return mission_mod.save_detection_default(key, True)
         r = mission_mod.save_detection_default("follow", self.use_follower)

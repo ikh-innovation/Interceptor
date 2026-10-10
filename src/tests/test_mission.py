@@ -855,12 +855,47 @@ check("unknown names are refused, nothing written",
       and M.save_default(q2.m, "x:y", af, lf) != "")
 q3 = M.Mission(FakeMapper(), log=lambda *_: None)
 M.load_auto_params(q3, af); M.load_levels(q3, lf)
-check("the AUTO button is never saved: a fresh power-up with saved defaults starts with AUTO OFF",
+check("saved AUTO defaults alone do not switch AUTO on: a fresh power-up starts with AUTO OFF",
       not q3.auto_enabled and q3.AUTO_HEIGHT_M == 15.0)
-check("FOLLOWER default saved and read back; the SKY GATE is refused (always ON at power-up)",
-      M.save_detection_default("follow", False, df) == "" and M.load_detection_defaults(df) == {"follow": False}
-      and M.save_detection_default("sky", False, df) != "" and "sky" not in json.load(open(df)))
+check("FOLLOWER and SKY GATE defaults saved and read back",
+      M.save_detection_default("follow", False, df) == "" and M.save_detection_default("sky", False, df) == ""
+      and M.load_detection_defaults(df) == {"follow": False, "sky": False})
 check("a broken file: ignored, never fatal", (open(lf, "w").write("{oops") or True) and M.load_levels(auto_rig().m, lf) == {})
+
+
+class WaspMapper(FakeMapper):
+    def wasp_pwm(self, rates, throttle):
+        return {}
+
+
+def saving_mission(directory):
+    paths = {k: os.path.join(directory, k + ".json") for k in ("auto", "levels", "flight")}
+    m = M.Mission(WaspMapper(), log=lambda *_: None, auto_path=paths["auto"],
+                  levels_path=paths["levels"], flight_path=paths["flight"])
+    M.load_auto_params(m, paths["auto"]); M.load_levels(m, paths["levels"]); M.load_flight_settings(m)
+    return m
+
+
+sd = tempfile.mkdtemp()
+sm = saving_mission(sd)
+check("with config paths: every change saves itself and becomes the default",
+      M.phone_command(sm, "autop", "height:20", 0) == "" and M.phone_command(sm, "lvl", "yaw:FAST", 0) == ""
+      and M.phone_command(sm, "autoen", "on", 0) == ""
+      and json.load(open(os.path.join(sd, "auto.json")))["height"] == 20.0
+      and json.load(open(os.path.join(sd, "levels.json")))["yaw"] == "FAST"
+      and json.load(open(os.path.join(sd, "flight.json")))["auto"] is True
+      and sm.auto_defaults["height"] == 20.0 and sm.level_defaults["yaw"] == "FAST")
+sm2 = saving_mission(sd)
+check("after a restart: AUTO params, levels and the AUTO switch come back",
+      sm2.AUTO_HEIGHT_M == 20.0 and sm2.level["yaw"] == "FAST" and sm2.auto_enabled)
+check("flight mode and camera mount save too",
+      M.phone_command(sm2, "flightmode", "wasp", 0) == "" and M.phone_command(sm2, "mount", "90", 0) == ""
+      and json.load(open(os.path.join(sd, "flight.json"))) == {"flightmode": "wasp", "mount": 90.0, "auto": False})
+sm3 = saving_mission(sd)
+check("after a restart: WASP selected with the 90 degree camera confirmed",
+      sm3.wasp.enabled and sm3.camera_mount_deg == 90.0 and sm3.wasp.camera_confirmed and not sm3.auto_enabled)
+check("a refused change writes nothing",
+      M.phone_command(sm3, "autoen", "on", 0) != "" and json.load(open(os.path.join(sd, "flight.json")))["auto"] is False)
 
 from fc_control import ArduPilotAcro
 

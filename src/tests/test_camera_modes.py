@@ -161,8 +161,8 @@ check("CAMERA 60 saved and read back as an int, next to the follower",
       and M.load_detection_defaults(df) == {"cam": 60, "follow": False})
 open(df, "w").write('{"cam": "x", "follow": true}')
 check("a broken entry is skipped, the rest kept", M.load_detection_defaults(df) == {"follow": True})
-check("the SKY GATE is still refused", M.save_detection_default("sky", False, df) != ""
-      and "sky" not in json.load(open(df)))
+check("the SKY GATE is saved and read back as a bool", M.save_detection_default("sky", False, df) == ""
+      and json.load(open(df))["sky"] is False and M.load_detection_defaults(df)["sky"] is False)
 
 
 with contextlib.redirect_stdout(io.StringIO()):

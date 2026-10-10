@@ -62,6 +62,9 @@ class WifiFixture(unittest.TestCase):
         self.m = self.c.mission
         self.m.idle_path = str(Path(self.logs.name)/"idle.json")
         self.m.wasp_path = str(Path(self.logs.name)/"wasp.json")
+        self.m.auto_path = str(Path(self.logs.name)/"auto.json")
+        self.m.levels_path = str(Path(self.logs.name)/"levels.json")
+        self.m.flight_path = str(Path(self.logs.name)/"flight.json")
         self.m.log = lambda *_: None
         self.sent = []
         send = self.c.backend._send_override

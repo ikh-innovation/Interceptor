@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 from time import perf_counter, sleep
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -60,9 +61,11 @@ c = AcroCommander(conn=f"udpin:127.0.0.1:{PORT}", transport="mavlink",
                   axes=("roll", "pitch", "yaw", "throttle"), law=law, send_hz=50.0,
                   steer_modes=frozenset({"ALT_HOLD"}), mission=True,
                   log_dir=LOGDIR, verbose=False)
-with contextlib.redirect_stdout(io.StringIO()):
+with contextlib.redirect_stdout(io.StringIO()), patch("mission._read_json", return_value={}):
     c.connect()
 M = c.mission
+M.auto_path, M.levels_path, M.flight_path = (os.path.join(LOGDIR, n) for n in ("auto.json", "levels.json", "flight.json"))
+M.idle_path, M.wasp_path = os.path.join(LOGDIR, "idle.json"), os.path.join(LOGDIR, "wasp.json")
 
 
 def hold(kind, secs, session="s"):
