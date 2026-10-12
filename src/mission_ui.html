@@ -273,6 +273,10 @@
          background:none;color:var(--dim);font:700 13px/1 var(--sans);letter-spacing:.12em}
   .row{display:flex;justify-content:space-between;align-items:center;width:100%;margin-top:6px;padding:16px;border-radius:12px;
        border:1px solid var(--line);background:var(--bg2);color:var(--ink);font:700 15px/1 var(--sans);letter-spacing:.1em}
+  .minigame-entry{gap:14px;border-color:#b8c792;background:linear-gradient(115deg,#f1f5e7,var(--bg2))}
+  .minigame-entry svg{flex:none;color:#677e32}
+  #sh_minigame>h3{max-width:1800px}
+  #minigame_frame{flex:1;min-height:0;width:100%;max-width:1800px;border:1px solid var(--line);border-radius:16px;background:#101619}
   .row span{color:var(--faint);font-size:20px}
   .row > div{flex:1;min-width:0;text-align:left}
   .log{font:12px/1.45 var(--mono);white-space:pre-wrap;word-break:break-word;color:#1d2229;-webkit-user-select:text;user-select:text}
@@ -561,8 +565,13 @@
   <div class="body">
     <button class="row" id="t_par"><div>PARAMETERS</div><span>›</span></button>
     <button class="row" id="t_log"><div>MESSAGES</div><span>›</span></button>
+    <button class="row minigame-entry" id="t_minigame" aria-controls="sh_minigame"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 7h8c3 0 5 9 3 10-1 1-3-2-4-2H9c-1 0-3 3-4 2-2-1 0-10 3-10Z"/><path d="M7 10v4m-2-2h4"/><circle cx="15" cy="11" r=".7"/><circle cx="18" cy="13" r=".7"/></svg><div>MINIGAME<small>Flight playground · try your steering profiles</small></div><span>›</span></button>
     <div class="byline"><img src="/img/ikd-logo.svg" alt="IKnowHow Defence"><span>WASP</span></div>
   </div>
+</div>
+<div class="sheet sub" id="sh_minigame" role="dialog" aria-label="Minigame flight playground">
+  <h3><span>MINIGAME<small>FLIGHT PLAYGROUND</small></span><button data-close aria-label="Close minigame">&#x2715;</button></h3>
+  <iframe id="minigame_frame" title="Drone flight playground" allow="fullscreen"></iframe>
 </div>
 <div class="sheet sub" id="sh_speed">
   <h3><span>PARAMETERS</span><button data-close aria-label="close">&#x2715;</button></h3>
@@ -904,6 +913,10 @@
     if (id === "sh_log") { var B = $("logbody"); B.scrollTop = B.scrollHeight; }
   }
   $("t_menu").onclick = function () { openSheet("sh_menu"); };
+  $("t_minigame").onclick = function () {
+    $("minigame_frame").src = "/minigame/";
+    openSheet("sh_minigame");
+  };
   $("t_par").onclick = function () { openSheet("sh_speed"); };
   document.querySelectorAll("[data-open]").forEach(function (b) {
     b.onclick = function () { openSheet(b.getAttribute("data-open")); };
@@ -975,7 +988,13 @@
 
   $("t_log").onclick = function () { openSheet("sh_log"); };
   document.querySelectorAll("[data-close]").forEach(function (b) {
-    b.onclick = function () { b.closest(".sheet").classList.remove("open"); };
+    b.onclick = function () {
+      var sheet = b.closest(".sheet"); sheet.classList.remove("open");
+      if (sheet.id === "sh_minigame") {
+        $("minigame_frame").removeAttribute("src");
+        $("t_minigame").focus();
+      }
+    };
   });
   document.querySelectorAll(".seg[data-g]").forEach(function (seg) {
     var g = seg.getAttribute("data-g");

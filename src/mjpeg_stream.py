@@ -77,6 +77,12 @@ class MJPEGServer:
                 path = self.path.split("?", 1)[0]
                 if path in ("/", "/index.html"):
                     self._send_page()
+                elif path == "/minigame":
+                    self.send_response(302)
+                    self.send_header("Location", "/minigame/")
+                    self.end_headers()
+                elif path.startswith("/minigame/"):
+                    self._minigame(path[len("/minigame/"):])
                 elif path in ("/stream.mjpg", "/stream", "/video"):
                     self._send_stream()
                 elif path in ("/snapshot.jpg", "/snapshot"):
@@ -168,6 +174,20 @@ class MJPEGServer:
 
             def _send_font(self, name):
                 self._send_file(_FONT_DIR / name, "font/ttf", "max-age=31536000, immutable")
+
+            def _minigame(self, name):
+                from minigame.wasp_minigame import HERE, settings
+                if name == "settings":
+                    self._json(settings())
+                    return
+                assets = {"": ("minigame.html", "text/html; charset=utf-8"),
+                          "simulator.js": ("simulator.js", "text/javascript; charset=utf-8"),
+                          "guidance.js": ("guidance.js", "text/javascript; charset=utf-8")}
+                if name not in assets:
+                    self.send_error(404)
+                    return
+                filename, mime = assets[name]
+                self._send_file(HERE / filename, mime, "no-store")
 
             def _send_img(self, name):
                 self._send_file(_IMG_DIR / name, "image/svg+xml", "max-age=3600")
