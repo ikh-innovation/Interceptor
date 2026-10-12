@@ -158,6 +158,7 @@
        border-radius:12px;padding:16px 2px 12px;font:700 15px/1 var(--sans);letter-spacing:.04em}
   .seg button i{display:block;font:normal 11px/1 var(--mono);color:var(--faint);margin-top:6px}
   .seg button.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink)}.seg button.on i{color:var(--acc-ink)}
+  .camnow{font:11px/1.35 var(--mono);color:var(--faint);margin-top:6px;min-height:1.35em;overflow-wrap:anywhere}.camnow.bad{color:var(--bad)}
   .sheet.sub2{z-index:9}
   .cat{display:flex;align-items:center;gap:14px;width:100%;margin:0 0 10px;padding:14px 14px 14px 12px;border-radius:16px;
        border:1px solid var(--line);background:var(--bg2);color:var(--ink);text-align:left;box-shadow:0 1px 2px rgba(16,19,23,.06)}
@@ -583,9 +584,9 @@
       <div class="detection-row"><div class="detection-label"><div class="lbl">Follower</div><button class="unsaved" data-save="det:follow" aria-label="Save follower default" title="Save default">↧</button></div><div class="seg" id="folseg">
         <button data-fol="on">ON</button><button data-fol="off">OFF</button>
       </div></div>
-      <div class="detection-row"><div class="detection-label"><div class="lbl">Camera</div><button class="unsaved" data-save="det:cam" aria-label="Save camera default" title="Save default">↧</button></div><div class="seg" id="camseg">
-        <button data-cam="30">30 FPS</button><button data-cam="60">60 FPS</button>
-      </div></div>
+      <div class="detection-row"><div class="detection-label"><div class="lbl">Camera</div><button class="unsaved" data-save="det:cam" aria-label="Save camera default" title="Save default">↧</button></div><div><div class="seg" id="camseg">
+        <button data-cam="30">30 FPS</button><button data-cam="60">60 FPS</button><button data-cam="21" title="Full sensor, 3280×2464 at 21 FPS">8 MP<i>21 FPS</i></button>
+      </div><div class="camnow" id="cam_now" aria-live="polite" title="What the camera is delivering right now"></div></div></div>
       <div class="detection-row"><div class="detection-label"><div class="lbl" id="stabilization_label">Video Stabilization</div></div><div class="seg" id="stabilizationseg" role="group" aria-labelledby="stabilization_label">
         <button data-stabilization="on" aria-pressed="false">ON</button><button data-stabilization="off" aria-pressed="true">OFF</button>
       </div></div>
@@ -1212,7 +1213,7 @@
     S("c_det", fresh ? "YES · " + fmt(conf, 2) : "NO", fresh ? (conf >= (m.min_conf || 0.2) ? "ok" : "warn") : "");
     var trt = testMode || j.detector === "TensorRT", fps_ = j.fps || 0;
     T("c_ai_k", testMode ? "Test target" : (j.detector || "Detector") + (j.lat_ms ? " · " + j.lat_ms + " ms" : ""));
-    S("c_ai", j.cam_busy ? "camera…" : fmt(fps_, 0) + " fps" + (Number(j.cam_fps) === 60 ? " · cam 60" : ""),
+    S("c_ai", j.cam_busy ? "camera…" : fmt(fps_, 0) + " fps" + (Number(j.cam_fps) === 60 ? " · cam 60" : Number(j.cam_fps) === 21 ? " · cam 8 MP" : ""),
       !trt ? "bad" : fps_ >= 20 ? "ok" : "warn");
     $("idle_seconds").disabled = arm || VIEW || ctl === "other";
     if (document.activeElement !== $("idle_seconds") && m.idle_s !== undefined) $("idle_seconds").value = m.idle_s;
@@ -1396,6 +1397,10 @@
       x.classList.toggle("isdef", Number(j.cam_default || 30) === f);
       x.disabled = !!j.cam_busy || VIEW || ctl === "other" || flying || m.engaged || ph === "WASP_FLIGHT";
     });
+    var fr = j.cam_frame, cap = j.cam_capture || "";
+    T("cam_now", j.cam_busy ? "switching camera…" : [fr ? fr[0] + "×" + fr[1] : "", cap, j.cam_error || ""]
+      .filter(Boolean).join(" · "));
+    $("cam_now").className = "camnow" + (j.cam_error || /failed/.test(cap) ? " bad" : "");
     document.querySelectorAll("[data-stabilization]").forEach(function (x) {
       var on = (x.getAttribute("data-stabilization") === "on") === !!j.video_stabilization;
       x.classList.toggle("on", on);

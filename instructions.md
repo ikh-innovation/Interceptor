@@ -86,7 +86,7 @@ diagnostic run, set `WASP_MODEL` to `best.pt` and `USE_ENGINE=0`.
 | --- | --- |
 | FC USB and baud | `FC_DEV=/dev/serial/by-id/...`, `FC_BAUD=115200`; check the actual port and firmware |
 | Camera connection | CSI sensor ID, ribbon/driver; `CAM_DEV`, `CAM_SENSOR_ID` |
-| Camera modes | `CameraConfig` and `CAM_MODES` in `src/tracker.py`; current IMX219: mode 3 / 1280×960 / 30 FPS, mode 4 / 1280×720 / 60 FPS |
+| Camera modes | `CameraConfig` and `CAM_MODES` in `src/tracker.py`; current IMX219: mode 3 / 1280×960 / 30 FPS, mode 4 / 1280×720 / 60 FPS, mode 0 / 3280×2464 / 21 FPS (8 MP). Frames stay in NVMM memory: `src/hw_capture.py` scales the preview and detection crops on the VIC (`HW_CAPTURE=0` forces the old CPU pipeline, which is also the automatic fallback). A switch only counts once the camera delivers the mode's frame size; the app's Camera row shows what it is delivering |
 | Camera field of view | Measure lens/sensor FOV; set `CAM_HFOV_DEG`, `CAM_VFOV_DEG`, and the 60 FPS crop fractions in `CAM_MODES` |
 | Physical mounting | `MOUNT_TILT_DEG` in `src/flight_config.py`, `CAMERA_MOUNT_DEG`; confirm 30° for Seeker or 90° for Wasp in the UI |
 | Image rotation | `CAM_FLIP_METHOD`; Wasp Advanced → Camera alignment must match the image/body axes |

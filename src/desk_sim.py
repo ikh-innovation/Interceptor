@@ -15,7 +15,8 @@ TGT_BRG0, TGT_V = 178.0, 3.5
 START_HDG, START_H = 110.0, 0.5
 TILT = 30.0
 HFOV, VFOV = 62.2, 48.8
-CAM_CROP = {30: (1.0, 1.0), 60: (2560 / 3280, 1440 / 2464)}
+CAM_CROP = {21: (1.0, 1.0), 30: (1.0, 1.0), 60: (2560 / 3280, 1440 / 2464)}
+CAM_FRAME = {21: (3280, 2464), 30: (1280, 960), 60: (1280, 720)}
 HIT_R, RESTART_S = 2.0, 3.5
 G, DRAG = 9.80665, 0.0159
 FOCAL_PX, FRAME_W = 640.0 / math.tan(math.radians(HFOV / 2)), 1280.0
@@ -267,7 +268,8 @@ class DeskSim:
                     cam_fps=self.cam, cam_default=30, cam_busy=False,
                     video_stabilization=self.video_stabilization,
                     cam_hfov=round(self.hfov, 2), cam_vfov=round(self.vfov, 2),
-                    cam_aspect=round(4.0 / 3.0 if self.cam == 30 else 16.0 / 9.0, 4),
+                    cam_aspect=round(16.0 / 9.0 if self.cam == 60 else 4.0 / 3.0, 4),
+                    cam_frame=list(CAM_FRAME[self.cam]), cam_capture="SIM", cam_error="",
                     sim=dict(bf=self.bf, scene=scene))
 
     def command(self, key, value):
@@ -315,7 +317,7 @@ class DeskSim:
                 except ValueError:
                     return "bad CAMERA value"
                 if cam not in CAM_CROP:
-                    return "CAMERA: 30 or 60"
+                    return "CAMERA: 21, 30 or 60"
                 if self.m.phase in ("PUSH", "AI", "STOP") + M.AUTO_PHASES:
                     return f"not during {self.m.phase}: the picture is dark a moment while it switches"
                 if cam != self.cam:

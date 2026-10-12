@@ -207,6 +207,15 @@ check("a 30 px target is 'small' (zoom) in both modes: the same pixels", small30
 t._cam_busy, t._cam_req, t._last_sent, t.cam_mode = False, None, False, 30
 check("phone: 60 accepted, 45 / 'x' refused", t.set_camera("60") == "" and t._cam_req == 60
       and t.set_camera("45") != "" and t.set_camera("x") != "")
+check("phone: 21 (full 8 MP) accepted", t.set_camera("21") == "" and t._cam_req == 21)
+t._apply_cam_mode(21)
+p = t.camera_pipeline
+check("21: sensor mode 0, the full 3280x2464 sensor at 21/1, 640 x 640, the law's full view exactly",
+      "sensor-mode=0" in p and "width=3280" in p and "height=2464" in p and "framerate=21/1" in p
+      and t.display_size == (640, 640) and abs(t.cam_aspect - 4 / 3) < 0.01
+      and t.ap.law.h_fov == math.radians(62.2) and t.ap.law.v_fov == math.radians(48.8), p)
+t._ui_fps = 21.0
+check("21: frame counts are what they always were", t._frames(20) == 20 and t._frames(3) == 3)
 
 
 class Phase:
@@ -226,6 +235,8 @@ check("TEST: cam=60 narrows the pretend camera; the state says so",
       and s.state()["cam_fps"] == 60 and abs(s.m.auto_aim_el() + 10.45) < 0.01)
 check("TEST: back to 30", s.command("cam", "30") == "" and s.state()["cam_vfov"] == 48.8
       and s.m.auto_aim_el() == -20.0)
+check("TEST: cam=21 keeps the full 4:3 view", s.command("cam", "21") == "" and s.state()["cam_vfov"] == 48.8
+      and s.state()["cam_fps"] == 21 and abs(s.state()["cam_aspect"] - 4 / 3) < 1e-3)
 
 
 if FAILED:

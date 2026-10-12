@@ -65,7 +65,9 @@ def state():
     return dict(mission=s, armed=mapper.armed, linked=True,
                 fc_mode="ACRO" if m.wasp.enabled else "ALT_HOLD", control="you",
                 detector="TensorRT", fps=30,
-                cam_aspect=16/9 if detector_settings["cam_fps"] == 60 else 4/3, **detector_settings)
+                cam_aspect=16/9 if detector_settings["cam_fps"] == 60 else 4/3,
+                cam_frame={21: [3280, 2464], 30: [1280, 960], 60: [1280, 720]}[detector_settings["cam_fps"]],
+                cam_capture="VIC", cam_error="", **detector_settings)
 
 
 HARNESS = r'''<!doctype html><html><head><meta charset="utf-8"></head><body><iframe id="f" width="390" height="844"></iframe><script>
@@ -320,12 +322,16 @@ async function main(){
  await check('each launch attempt sent once',(await req('/commands')).filter(x=>x[0]==='engage').length===2);
  await load();
  await check('armed refresh preserves the active flight',!visible('#modechange')&&!q('.app').inert&&(await req('/state')).mission.phase==='WASP_FLIGHT'&&(await req('/commands')).filter(x=>x[0]==='engage').length===2);
- parameters();await check('camera switching blocked during Wasp flight',q('[data-cam="30"]').disabled&&q('[data-cam="60"]').disabled);
+ parameters();await check('camera switching blocked during Wasp flight',q('[data-cam="30"]').disabled&&q('[data-cam="60"]').disabled&&q('[data-cam="21"]').disabled);
  await check('Video Stabilization remains switchable during Wasp flight',!q('[data-stabilization="on"]').disabled&&!q('[data-stabilization="off"]').disabled);
  q('#sh_speed [data-close]').click();tap('#b_wasp_abort');await until(()=>q('#engtxt').textContent==='IDLE');
  await check('abort remains available and sends once per tap',(await req('/commands')).filter(x=>x[0]==='abort').length===2&&q('#b_eng').disabled);
  await check('Idle identifies height hold and drift',q('#badge').textContent==='IDLE · HOLD · XY DRIFT');
  await req('/set?armed=0&phase=PILOT');await sleep(350);parameters();
+ q('[data-cam="30"]').click();await until(()=>q('[data-cam="30"]').classList.contains('on'));
+ q('[data-cam="21"]').click();await until(()=>q('[data-cam="21"]').classList.contains('on'));
+ await check('8 MP camera option applies to backend',(await req('/state')).cam_fps===21&&!q('[data-cam="30"]').classList.contains('on'));
+ await check('camera readout shows the frame the camera delivers',q('#cam_now').textContent==='3280×2464 · VIC'&&!q('#cam_now').classList.contains('bad'));
  q('[data-cam="30"]').click();await until(()=>q('[data-cam="30"]').classList.contains('on'));
  q('#sh_speed [data-close]').click();await flightLayout();parameters();
  await switchMode('normal');

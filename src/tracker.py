@@ -23,7 +23,19 @@ from mjpeg_stream import MJPEGServer
 import mission as mission_mod
 from follower import TargetFollower, search_radius
 from video_stabilization import VideoStabilizer, PreviewWorker, camera_gyro
+import hw_capture
 
+
+
+def shrink_to(img, w, h):
+    # One INTER_LINEAR resize past 2x skips pixels: small targets flicker and noise is
+    # never averaged (8 MP search shrinks 5x). Exact halvings are a cheap 2x2 average.
+    while img.shape[1] >= 2 * w and img.shape[0] >= 2 * h:
+        img = cv2.resize(img, (img.shape[1] // 2, img.shape[0] // 2),
+                         interpolation=cv2.INTER_LINEAR)
+    if (img.shape[1], img.shape[0]) != (w, h):
+        img = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
+    return img
 
 
 class SkyDetector:
@@ -368,6 +380,8 @@ class DroneTracker:
                 else self.cam_default
         self._cam_req  = None
         self._cam_busy = False
+        self.cam_capture = None
+        self.cam_error   = ""
         self._apply_cam_mode(start)
         self._update_log_context()
 
@@ -415,7 +429,21 @@ class DroneTracker:
         if x2r - x1r < 2 or y2r - y1r < 2:
             return None
 
-        crop = frame_full[y1r:y2r, x1r:x2r]
+        cw, ch = x2r - x1r, y2r - y1r
+        r = imgsz / float(max(cw, ch))
+        sw, sh = max(1, round(cw * r)), max(1, round(ch * r))
+        if isinstance(frame_full, np.ndarray):
+            crop = frame_full[y1r:y2r, x1r:x2r]
+            if r < 1.0:
+                crop = shrink_to(crop, sw, sh)
+        else:
+            # The VIC hands over the model's input size; YOLO would upscale a small crop anyway.
+            crop, used = frame_full.crop(x1r, y1r, x2r, y2r, sw, sh)
+            if crop is None:
+                return None
+            x1r, y1r, x2r, y2r = used
+            cw, ch = x2r - x1r, y2r - y1r
+        sx, sy = cw / float(crop.shape[1]), ch / float(crop.shape[0])
         if enhance:
             crop = self._enhance(crop)
 
@@ -429,7 +457,8 @@ class DroneTracker:
         for idx in order:
             if confs[idx] < self.conf_thresh:
                 break
-            x1, y1, x2, y2 = boxes.xyxy[idx].int().cpu().tolist()
+            x1, y1, x2, y2 = (int(v * s) for v, s in
+                              zip(boxes.xyxy[idx].cpu().tolist(), (sx, sy, sx, sy)))
             det = self._accept_box(x1 + x1r, y1 + y1r, x2 + x1r, y2 + y1r, confs[idx])
             if det is not None:
                 return det
@@ -498,7 +527,7 @@ class DroneTracker:
         except ValueError:
             return "bad CAMERA value"
         if want not in CAM_MODES:
-            return "CAMERA: 30 or 60"
+            return "CAMERA: 21, 30 or 60"
         if self.camera_config is None:
             return "this run cannot switch the camera (no camera config)"
         if want == (self._cam_req or self.cam_mode):
@@ -632,6 +661,9 @@ class DroneTracker:
             cam_busy=bool(getattr(self, "_cam_busy", False)
                           or getattr(self, "_cam_req", None) is not None),
             cam_aspect=round(self.cam_aspect, 4),
+            cam_frame=([self.full_w, self.full_h] if self.full_w else None),
+            cam_capture=getattr(self, "cam_capture", None),
+            cam_error=getattr(self, "cam_error", ""),
             video_stabilization=bool(getattr(self, "video_stabilization", False)),
             stabilization=getattr(self, "_stabilization_status", dict(source="off", ms=0.0)),
             preview_geometry=getattr(self, "_preview_geometry", None),
@@ -1462,6 +1494,31 @@ class DroneTracker:
     def _open_capture(self):
         if self.camera_pipeline is None:
             raise RuntimeError("camera_pipeline is required (no capture source set).")
+        hw_error = None
+        if (self.camera_config is not None and os.environ.get("HW_CAPTURE", "1") != "0"
+                and hw_capture.available()):
+            cfg = self._cam_cfg
+            for attempt in range(min(2, self.CAM_OPEN_RETRIES)):
+                try:
+                    cap = hw_capture.HwCapture(make_hw_source(cfg), native_size(cfg),
+                                               self.display_size, cfg.fps)
+                except RuntimeError as exc:
+                    hw_error = exc
+                    sleep(self.CAM_RETRY_WAIT_S)
+                    continue
+                ok, first = cap.read()
+                if not ok:
+                    hw_error = RuntimeError(cap.error or "no frames")
+                    cap.release()
+                    sleep(self.CAM_RETRY_WAIT_S)
+                    continue
+                try:
+                    self._check_frame_size(first.shape)
+                except RuntimeError:
+                    cap.release()
+                    raise
+                self.cam_capture = "VIC"
+                return cap, float(cfg.fps), f"camera (VIC, ~{cfg.fps:.1f} fps)"
 
 
         cap  = None
@@ -1498,12 +1555,27 @@ class DroneTracker:
                 f"Pipeline: {self.camera_pipeline}"
             )
 
+        if self.camera_config is not None:
+            try:
+                self._check_frame_size(warm.shape)
+            except RuntimeError:
+                cap.release()
+                raise
         reported = cap.get(cv2.CAP_PROP_FPS)
         src_fps  = reported if (reported and reported == reported and reported > 1) \
                    else self.camera_fps
         label = f"camera (pipeline, ~{src_fps:.1f} fps)"
+        self.cam_capture = "CPU" if hw_error is None else f"CPU (VIC failed: {hw_error})"
 
         return cap, src_fps, label
+
+    def _check_frame_size(self, shape):
+        # The mode is only switched once the camera really delivers its frame size.
+        want = native_size(self._cam_cfg)
+        got = (shape[1], shape[0])
+        if got != want:
+            raise RuntimeError(f"camera delivered {got[0]}x{got[1]}, "
+                               f"mode {self.cam_mode} needs {want[0]}x{want[1]}")
 
     def _apply_cam_mode(self, mode):
         spec = CAM_MODES[mode]
@@ -1514,6 +1586,7 @@ class DroneTracker:
             if "sensor_mode" in spec:
                 cfg = _dc_replace(cfg, sensor_mode=spec["sensor_mode"], width=spec["width"],
                                   height=spec["height"], fps=spec["fps"])
+            self._cam_cfg = cfg
             self.camera_pipeline = make_pipeline(cfg)
             self.camera_fps = float(cfg.fps)
             self.cam_aspect = cfg.width / float(cfg.height)
@@ -1547,8 +1620,9 @@ class DroneTracker:
                 pass
             try:
                 self._cap, _fps, _label = self._open_capture()
+                self.cam_error = ""
             except RuntimeError as exc:
-
+                self.cam_error = f"{want} failed, back to {old}: {str(exc).splitlines()[0]}"
 
                 self._apply_cam_mode(old)
                 self._cap, _fps, _label = self._open_capture()
@@ -1674,10 +1748,12 @@ class DroneTracker:
                 break
 
             _tp = perf_counter()
-            frame_full           = np.ascontiguousarray(frame_full)
+            if isinstance(frame_full, np.ndarray):
+                frame_full = np.ascontiguousarray(frame_full)
+                frame_disp = cv2.resize(frame_full, self.display_size)
+            else:
+                frame_disp = frame_full.disp
             self.full_h, self.full_w = frame_full.shape[:2]
-
-            frame_disp = cv2.resize(frame_full, self.display_size)
             frame_disp = np.ascontiguousarray(frame_disp)
             _tp = self._lap("resize", _tp)
             cx_f, cy_f = self.fw // 2, self.fh // 2
@@ -1852,13 +1928,15 @@ class CameraConfig:
 
 
 CAM_MODES = {
+    21: dict(crop=(1.0, 1.0),
+             sensor_mode=0, width=3280, height=2464, fps=21),
     30: dict(crop=(1.0, 1.0)),
     60: dict(crop=(2560 / 3280, 1440 / 2464),
              sensor_mode=4, width=1280, height=720, fps=60),
 }
 
 
-def make_pipeline(cfg: CameraConfig) -> str:
+def camera_source(cfg: CameraConfig) -> str:
     props = [
         f"sensor-id={cfg.sensor_id}",
         f"tnr-mode={cfg.tnr_mode}",
@@ -1889,12 +1967,18 @@ def make_pipeline(cfg: CameraConfig) -> str:
             f'ispdigitalgainrange="{cfg.digital_gain} {cfg.digital_gain}"'
         )
 
-    pipeline = (
+    return (
         f"nvarguscamerasrc {' '.join(props)} ! "
         f"video/x-raw(memory:NVMM), "
         f"width={cfg.width}, "
         f"height={cfg.height}, "
-        f"framerate={cfg.fps}/1 ! "
+        f"framerate={cfg.fps}/1"
+    )
+
+
+def make_pipeline(cfg: CameraConfig) -> str:
+    pipeline = (
+        f"{camera_source(cfg)} ! "
         f"nvvidconv flip-method={cfg.flip_method} ! "
         f"video/x-raw, format=BGRx ! "
         f"videoconvert ! "
@@ -1906,6 +1990,19 @@ def make_pipeline(cfg: CameraConfig) -> str:
     )
 
     return pipeline
+
+
+def make_hw_source(cfg: CameraConfig) -> str:
+    # Stays in NVMM memory: hw_capture scales the preview and detection crops on the VIC.
+    if cfg.flip_method == 0:
+        return camera_source(cfg)
+    return (f"{camera_source(cfg)} ! nvvidconv flip-method={cfg.flip_method} ! "
+            f"video/x-raw(memory:NVMM), format=NV12")
+
+
+def native_size(cfg: CameraConfig):
+    # flip-methods 1, 3, 5 and 7 turn the picture by 90 degrees.
+    return (cfg.height, cfg.width) if cfg.flip_method in (1, 3, 5, 7) else (cfg.width, cfg.height)
 
 
 
