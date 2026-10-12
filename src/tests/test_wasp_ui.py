@@ -36,7 +36,8 @@ mapper = Mapper()
 settings_tmp = tempfile.TemporaryDirectory(prefix="wasp-ui-settings-")
 m = Mission(mapper, log=lambda *_: None, wasp_path=str(Path(settings_tmp.name)/"wasp.json"))
 commands, reports = [], []
-detector_settings = dict(sky_gate=True, follower=True, follower_default=True, cam_fps=30, cam_default=30, cam_busy=False)
+detector_settings = dict(sky_gate=True, follower=True, follower_default=True, cam_fps=30, cam_default=30, cam_busy=False,
+                         video_stabilization=False)
 simulation = dict(target=True, attitude=True, gate_why="")
 done = threading.Event()
 lock = threading.Lock()
@@ -96,8 +97,10 @@ async function layout(mode){
   await check(mode+' no horizontal overflow '+size,d.documentElement.scrollWidth<=size[0]&&q('#sh_speed .body').scrollWidth<=q('#sh_speed .body').clientWidth);
   const buttons=[...d.querySelectorAll('#sh_speed .seg button')].filter(x=>x.getClientRects().length);
   await check(mode+' choice text fits '+size,buttons.every(x=>x.scrollWidth<=x.clientWidth+1));
+  if(mode==='wasp') await check('Wasp matrix fits '+size,q('#wasp_profile_matrix').scrollWidth<=q('#wasp_profile_matrix').clientWidth+1&&[...q('#wasp_profile_matrix').querySelectorAll('th,td')].every(x=>x.scrollWidth<=x.clientWidth+1));
   await check(mode+' equal choices '+size,[...d.querySelectorAll('#sh_speed .seg')].filter(x=>x.getClientRects().length).every(x=>{const a=[...x.children].map(b=>b.getBoundingClientRect().width);return Math.max(...a)-Math.min(...a)<1}));
-  await check('Idle stays below Camera '+size,q('#idle_seconds').getBoundingClientRect().top>=q('#camseg').getBoundingClientRect().bottom);
+  await check('Video Stabilization sits directly below Camera '+size,q('#stabilizationseg').closest('.detection-row').previousElementSibling.contains(q('#camseg'))&&q('#stabilizationseg').getBoundingClientRect().top>=q('#camseg').getBoundingClientRect().bottom);
+  await check('Idle stays below Video Stabilization '+size,q('#idle_seconds').getBoundingClientRect().top>=q('#stabilizationseg').getBoundingClientRect().bottom);
  }
  f.width=390;f.height=844;await sleep(150);
 }
@@ -169,14 +172,16 @@ async function main(){
  await check('mode and mount sent in the correct order',JSON.stringify((await req('/commands')).slice(-2))===JSON.stringify([['flightmode','wasp'],['mount','90']]));
  await check('Wasp flight parameters replace Normal',visible('#pp_wasp')&&!visible('#normal_params')&&q('#flight_mode_tag').textContent==='WASP');
  await check('simple steering is visible and advanced controls start collapsed',visible('#wasp_profiles')&&!q('#wasp_advanced').open&&!visible('[data-wp="blend"]')&&!visible('[data-wp="gain"]')&&visible('[data-wp="throttle"]'));
- await check('Motion assist is visible and defaults OFF',visible('[data-wp="motion_assist"]')&&q('[data-wp="motion_assist"] [data-wv="0"]').getAttribute('aria-pressed')==='true');
- q('[data-wp="motion_assist"] [data-wv="1"]').click();await until(()=>q('[data-wp="motion_assist"] [data-wv="1"]').getAttribute('aria-pressed')==='true');
- await check('Motion assist applies to the backend',(await req('/state')).mission.wasp_params.motion_assist===1);
- q('#wasp_profiles [data-wasp-profile="extra"]').click();await until(()=>q('#wasp_profiles [data-wasp-profile="extra"]').classList.contains('on'));
- await check('Motion assist survives profile changes',(await req('/state')).mission.wasp_params.motion_assist===1);
- q('[data-wp="motion_assist"] [data-wv="0"]').click();await until(()=>q('[data-wp="motion_assist"] [data-wv="0"]').getAttribute('aria-pressed')==='true');
- q('#wasp_profiles [data-wasp-profile="standard"]').click();await until(()=>q('#wasp_profiles [data-wasp-profile="standard"]').classList.contains('on'));
- await check('Standard is selected from actual backend settings',q('[data-wasp-profile="standard"]').getAttribute('aria-pressed')==='true'&&q('#wasp_profile_help').textContent.includes('Standard defaults'));
+ await check('Motion assist has been removed',!q('[data-wp="motion_assist"]')&&!('motion_assist' in (await req('/state')).mission.wasp_params));
+ await check('Video Stabilization defaults OFF',q('[data-stabilization="off"]').getAttribute('aria-pressed')==='true');
+ q('[data-stabilization="on"]').click();await until(()=>q('[data-stabilization="on"]').getAttribute('aria-pressed')==='true');
+ await check('Video Stabilization ON reaches backend',(await req('/state')).video_stabilization===true);
+ q('[data-stabilization="off"]').click();await until(()=>q('[data-stabilization="off"]').getAttribute('aria-pressed')==='true');
+ await check('Video Stabilization OFF reaches backend',(await req('/state')).video_stabilization===false);
+ await check('Standard is selected from actual backend settings',q('[data-wasp-profile="standard"]').getAttribute('aria-pressed')==='true'&&q('#wasp_profile_matrix th[data-profile-col="standard"]').getAttribute('aria-current')==='true');
+ await check('compact matrix replaces save and countdown prose',visible('#wasp_profile_matrix')&&!q('#wasp_profile_help')&&!q('#wasp_timing')&&q('#wasp_profile_matrix tbody').children.length===6);
+ await check('matrix contains saved advanced settings for all four responses',[...q('#wasp_profile_matrix').querySelectorAll('td')].length===24&&[...q('#wasp_profile_matrix').querySelectorAll('td')].every(x=>x.textContent!=='—'));
+ await check('matrix shows all profile rates and lead',q('[data-profile-col="smooth"][data-profile-setting="rate"]').textContent==='45'&&q('[data-profile-col="standard"][data-profile-setting="rate"]').textContent==='60'&&q('[data-profile-col="responsive"][data-profile-setting="rate"]').textContent==='90'&&q('[data-profile-col="extra"][data-profile-setting="rate"]').textContent==='120'&&q('[data-profile-col="extra"][data-profile-setting="lead"]').textContent==='80');
  const profileStart=(await req('/commands')).length;
  q('[data-wasp-profile="smooth"]').click();await until(()=>q('[data-wasp-profile="smooth"]').classList.contains('on'));
  const smooth=(await req('/state')).mission.wasp_params;
@@ -197,7 +202,7 @@ async function main(){
  q('#wasp_profiles [data-wasp-profile="standard"]').click();await until(()=>q('#wasp_profiles [data-wasp-profile="standard"]').classList.contains('on')&&q('#wasp_launch_main').value==='4');
  await check('main screen shows active steering and timer before launch',q('#wasp_pad [data-wasp-profile="standard"]').classList.contains('on')&&q('#wasp_launch_main').value==='4');
  q('#wasp_advanced').open=true;
- await check('Wasp has motion assist plus seven existing parameter groups and no old timers',q('#pp_wasp').querySelectorAll('[data-wp]').length===8&&!q('[data-wp="duration"]')&&!q('[data-wp="no_det"]'));
+ await check('Wasp has seven parameter groups and no old timers',q('#pp_wasp').querySelectorAll('[data-wp]').length===7&&!q('[data-wp="duration"]')&&!q('[data-wp="no_det"]'));
  await check('Idle is shared across modes',q('#idle_seconds').value==='12.5');
  q('#idle_seconds').focus();q('#idle_seconds').value='7';q('#idle_seconds').dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));
  q('#idle_seconds').dispatchEvent(new f.contentWindow.KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
@@ -205,7 +210,7 @@ async function main(){
  await check('Wasp has gain 2 by default',q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
  q('[data-wp="rate"] [data-wv="45"]').click();await until(()=>q('[data-wp="rate"] [data-wv="45"]').classList.contains('on'));
  await check('Idle and 45-degree choices apply to backend',(await req('/state')).mission.idle_s===7&&(await req('/state')).mission.wasp_params.rate===45);
- await check('edited steering becomes selected profile default',q('#wasp_profile_help').textContent.includes('Standard defaults')&&q('#wasp_profiles [data-wasp-profile="standard"]').classList.contains('on'));
+ await check('edited steering updates only the selected matrix column',q('[data-profile-col="standard"][data-profile-setting="rate"]').textContent==='45'&&q('[data-profile-col="responsive"][data-profile-setting="rate"]').textContent==='90'&&q('#wasp_profiles [data-wasp-profile="standard"]').classList.contains('on'));
  await check('Enter ends Idle editing',f.contentDocument.activeElement!==q('#idle_seconds'));
  await layout('wasp');
  q('[data-sky="off"]').click();await until(()=>q('[data-sky="off"]').classList.contains('on'));
@@ -285,7 +290,6 @@ async function main(){
  tap('#b_eng');await until(()=>q('#b_eng').classList.contains('countdown'));
  await check('launch countdown runs in the backend and blocks repeated launches',(await req('/state')).mission.wasp_progress.stage==='COUNTDOWN'&&q('#b_eng').disabled);
  await check('settings lock during countdown',q('#wasp_launch_main').disabled&&q('#test_centre_timer').disabled&&q('#wasp_pad [data-wasp-profile="extra"]').disabled);
- await check('Motion assist locks during countdown',q('[data-wp="motion_assist"] [data-wv="1"]').disabled);
  const targetBefore=(await req('/state')).mission.test_target;point(.8,.2);await sleep(200);
  await check('Test target stays fixed during countdown',JSON.stringify((await req('/state')).mission.test_target)===JSON.stringify(targetBefore));
  await load();
@@ -317,6 +321,7 @@ async function main(){
  await load();
  await check('armed refresh preserves the active flight',!visible('#modechange')&&!q('.app').inert&&(await req('/state')).mission.phase==='WASP_FLIGHT'&&(await req('/commands')).filter(x=>x[0]==='engage').length===2);
  parameters();await check('camera switching blocked during Wasp flight',q('[data-cam="30"]').disabled&&q('[data-cam="60"]').disabled);
+ await check('Video Stabilization remains switchable during Wasp flight',!q('[data-stabilization="on"]').disabled&&!q('[data-stabilization="off"]').disabled);
  q('#sh_speed [data-close]').click();tap('#b_wasp_abort');await until(()=>q('#engtxt').textContent==='IDLE');
  await check('abort remains available and sends once per tap',(await req('/commands')).filter(x=>x[0]==='abort').length===2&&q('#b_eng').disabled);
  await check('Idle identifies height hold and drift',q('#badge').textContent==='IDLE · HOLD · XY DRIFT');
@@ -375,6 +380,8 @@ class Handler(BaseHTTPRequestHandler):
                         detector_settings["sky_gate" if k == "sky" else "follower"] = v[0] == "on"
                     elif k == "cam":
                         detector_settings["cam_fps"] = int(v[0])
+                    elif k == "stabilization":
+                        detector_settings["video_stabilization"] = v[0] == "on"
                     elif k == "def":
                         kind, name = v[0].split(":")
                         if kind == "auto":

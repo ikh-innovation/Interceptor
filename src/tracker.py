@@ -22,7 +22,7 @@ from fc_control import AcroCommander, ControlLaw, commander_from_env
 from mjpeg_stream import MJPEGServer
 import mission as mission_mod
 from follower import TargetFollower, search_radius
-from wasp_motion import WaspMotionEstimator
+from video_stabilization import VideoStabilizer, PreviewWorker, camera_gyro
 
 
 
@@ -294,10 +294,15 @@ class DroneTracker:
         self.stream         = None
 
         self.kalman  = KalmanTracker()
-        self.motion = WaspMotionEstimator()
-        self._motion_enabled = False
-        self._motion_observation = None
-        self._motion_hint = None
+        self.stabilizer = VideoStabilizer()
+        self.video_stabilization = False
+        self._stabilization_lock = threading.Lock()
+        self._stabilization_generation = 0
+        self._stabilization_seen = 0
+        self._preview_geometry = None
+        self._stabilization_status = dict(source="off", ms=0.0)
+        self._preview_worker = None
+        self._preview_frame = None
         self.ap      = commander or commander_from_env(
             log_dir=(str(log_dir) if log_dir else str(_DATA_DIR)))
         self.sky     = SkyDetector(
@@ -414,34 +419,21 @@ class DroneTracker:
         if enhance:
             crop = self._enhance(crop)
 
-        assisted = bool(getattr(self, "_motion_enabled", False))
         res = self.model(crop, imgsz=imgsz, classes=[self.target_class],
-                         max_det=6 if assisted else 1, verbose=False)
+                         max_det=1, verbose=False)
         if not res or not res[0].boxes:
             return None
         boxes = res[0].boxes
         confs = boxes.conf.cpu().numpy()
         order = np.argsort(confs)[::-1]
-        candidates = []
         for idx in order:
             if confs[idx] < self.conf_thresh:
                 break
             x1, y1, x2, y2 = boxes.xyxy[idx].int().cpu().tolist()
             det = self._accept_box(x1 + x1r, y1 + y1r, x2 + x1r, y2 + y1r, confs[idx])
             if det is not None:
-                if not assisted:
-                    return det
-                candidates.append(det)
-        if not candidates:
-            return None
-        hint = getattr(self, "_motion_hint", None)
-        if hint is None:
-            return candidates[0]
-        size = max(self.last_bbox[2:]) if self.last_bbox else 8
-        scale = max(8.0, size)
-
-        return max(candidates, key=lambda d: math.log(max(d[6], 1e-9))
-                   - 0.5*((d[0]-hint[0])**2+(d[1]-hint[1])**2)/(scale*scale))
+                return det
+        return None
 
 
     _STAB = dict(slew_per_s=3.0, rate_tau=0.22, deadband_frac=0.050,
@@ -518,6 +510,92 @@ class DroneTracker:
 
         return ""
 
+    def set_stabilization(self, value):
+        v = str(value).strip().lower()
+        if v not in ("on", "off", "1", "0", "true", "false"):
+            return "bad VIDEO STABILIZATION value"
+        on = v in ("on", "1", "true")
+        # HTTP threads request changes; only the preview worker resets CV history.
+        with self._stabilization_lock:
+            if self.video_stabilization != on:
+                self.video_stabilization = on
+                self._stabilization_generation += 1
+                self._preview_frame = self._preview_geometry = None
+                self._stabilization_status = dict(source="warming up" if on else "off", ms=0.0)
+        return ""
+
+    def _preview_transform(self, frame, capture_t):
+        with self._stabilization_lock:
+            on, generation = self.video_stabilization, self._stabilization_generation
+        if generation != self._stabilization_seen:
+            self.stabilizer.reset()
+            self._stabilization_seen = generation
+        if not on:
+            self._preview_geometry = None
+            self._stabilization_status = dict(source="off", ms=0.0)
+            return None
+        start = perf_counter()
+        law = getattr(self.ap, "law", None)
+        mission = getattr(self.ap, "mission", None)
+        mount = getattr(mission, "camera_mount_deg", None)
+        roll = mission.wasp.params["camera_roll"] if mission is not None and mission.wasp.enabled else 0
+        flip = getattr(self.camera_config, "flip_method", 0)
+        tan_h, tan_v = getattr(law, "_tan_h", 0.603), getattr(law, "_tan_v", 0.454)
+        gyro = None
+        backend = getattr(self.ap, "backend", None)
+        attitude_get = getattr(backend, "attitude", None)
+        # Telemetry is optional and must never prevent optical-flow stabilization.
+        if mount is not None and flip == 0 and callable(attitude_get):
+            try:
+                try:
+                    attitude = attitude_get(max_age=0.10, at_t=capture_t)
+                except TypeError:
+                    attitude = attitude_get(max_age=0.10)
+            except (ValueError, TypeError, AttributeError):
+                attitude = None
+            gyro = camera_gyro(attitude, mount, roll)
+        try:
+            transform = self.stabilizer.update(frame, capture_t, gyro, tan_h, tan_v,
+                                               context=(self.cam_mode, mount, roll, flip))
+        except (cv2.error, ValueError, TypeError):
+            self.stabilizer.reset()
+            with self._stabilization_lock:
+                if generation == self._stabilization_generation:
+                    self._preview_geometry = None
+                    self._stabilization_status = dict(source="recovering", ms=0.0)
+            return None
+        with self._stabilization_lock:
+            if generation == self._stabilization_generation:
+                self._stabilization_status = dict(source=self.stabilizer.source,
+                                                 ms=round((perf_counter()-start)*1000, 2))
+        return transform
+
+    def _stabilize_preview(self, raw, annotated, capture_t, generation):
+        with self._stabilization_lock:
+            if not self.video_stabilization or generation != self._stabilization_generation:
+                return
+        start = perf_counter()
+        transform = self._preview_transform(raw, capture_t)
+        try:
+            preview = self.stabilizer.render(annotated, transform) if transform is not None else annotated
+        except cv2.error:
+            self.stabilizer.reset()
+            preview, transform = annotated, None
+        with self._stabilization_lock:
+            # A command may arrive during CV work. Never publish an old ON frame
+            # after OFF has already restored the original feed.
+            if not self.video_stabilization or generation != self._stabilization_generation:
+                self._preview_geometry = None
+                self._stabilization_status = dict(source="warming up" if self.video_stabilization else "off", ms=0.0)
+                return
+            self._preview_geometry = (transform.geometry((raw.shape[1], raw.shape[0]))
+                                      if transform is not None else None)
+            self._stabilization_status = dict(source=self.stabilizer.source if transform is not None else "recovering",
+                                             ms=round((perf_counter()-start)*1000, 2))
+            self._preview_frame = preview
+            if self.stream is not None:
+                self.stream.publish(preview)
+
     def _camera_locked(self):
         if self._cam_busy:
             return "the camera is switching"
@@ -554,6 +632,9 @@ class DroneTracker:
             cam_busy=bool(getattr(self, "_cam_busy", False)
                           or getattr(self, "_cam_req", None) is not None),
             cam_aspect=round(self.cam_aspect, 4),
+            video_stabilization=bool(getattr(self, "video_stabilization", False)),
+            stabilization=getattr(self, "_stabilization_status", dict(source="off", ms=0.0)),
+            preview_geometry=getattr(self, "_preview_geometry", None),
         )
         if law is not None and hasattr(law, "h_fov"):
             out["cam_hfov"] = round(math.degrees(law.h_fov), 2)
@@ -757,76 +838,8 @@ class DroneTracker:
                 int(roi[2] * sx), int(roi[3] * sy))
 
 
-    def _process_motion(self, frame_full, frame_disp, capture_t, run_detector=True, synthetic=None):
-        mission = self.ap.mission
-        dt = None if self._t_last_frame is None else capture_t - self._t_last_frame
-        self._t_last_frame = capture_t
-        if dt is not None and 0 < dt < 1:
-            self._frame_dt = dt
-        att, tan_h, tan_v = self.ap.wasp_motion_context(capture_t)
-        self._motion_observation = None
-        roi, detection, model_ms = None, None, 0.0
-        if synthetic is not None:
-            cx, cy, x, y, w, h = synthetic
-            detection = (cx, cy, w, h, 1.0)
-        elif run_detector:
-            self.sky_mask = self.sky.mask(frame_disp) if self.use_sky_mask else None
-            if att is not None:
-                centre = self.motion.predicted_center(att, self.fw, self.fh, tan_h, tan_v,
-                    mission.wasp.params["camera_roll"], capture_t)
-            else:
-                centre = None
-            self._motion_hint = centre
-            if centre is not None and self.motion.box is not None:
-                cx, cy = centre
-                half = max(self.MIN_ROI_HALF, max(self.motion.box[2:]) * 1.5)
-
-                half += max(self._rotation_margin())
-                roi = (max(0, int(cx-half)), max(0, int(cy-half)),
-                       min(self.fw, int(cx+half)), min(self.fh, int(cy+half)))
-                if roi[2] <= roi[0] or roi[3] <= roi[1]:
-                    roi = None
-            region = self._roi_disp_to_native(roi) if roi else self._sky_bbox_native()
-            start = perf_counter()
-            det = None if region is None else self._detect_region(frame_full, region,
-                self.IMGSZ_TRACK if roi else self.IMGSZ_SEARCH, enhance=self.USE_CLAHE)
-            if det is not None:
-                cx, cy, x, y, w, h, conf = det
-                detection = (cx, cy, w, h, conf)
-            model_ms = (perf_counter()-start)*1000
-        observation = self.motion.update(frame_disp, detection, att, capture_t, tan_h, tan_v,
-            mission.wasp.params["camera_roll"], min_conf=mission.min_conf,
-            synthetic=synthetic is not None)
-        if observation is None:
-            centre = None if att is None else self.motion.predicted_center(att, self.fw, self.fh,
-                tan_h, tan_v, mission.wasp.params["camera_roll"], capture_t)
-            self.pos = centre
-            if centre is not None and self.motion.box is not None:
-                w, h = self.motion.box[2:]
-                self.last_bbox = (round(centre[0]-w/2), round(centre[1]-h/2), round(w), round(h))
-            self.state = "PREDICT" if centre is not None else "SEARCH"
-            self.layer = "MOTION: HOLD" if centre is not None else "MOTION: SEARCH"
-            self.gate_note = "OUTLIER" if self.motion.source == "REJECTED" else ""
-            if centre is None:
-                self.last_bbox = self.conf = None
-            return centre, 0.0, model_ms, roi, False
-        self._motion_observation = observation
-        cx, cy, w, h = observation["box"]
-        self.pos, self.last_bbox = (cx, cy), (round(cx-w/2), round(cy-h/2), round(w), round(h))
-        self.conf, self.missed, self.state = observation["confidence"], 0, "LOCK"
-        self.layer = "TEST TARGET" if synthetic is not None else "MOTION " + observation["source"]
-        self.gate_note = ""
-        return self.pos, 0.0, model_ms, roi, True
-
-    def _process(self, frame_full, frame_disp, capture_t=None, run_detector=True):
+    def _process(self, frame_full, frame_disp, capture_t=None):
         mission = getattr(self.ap, "mission", None)
-        motion_on = bool(mission is not None and mission.wasp.enabled
-                         and mission.wasp.params.get("motion_assist"))
-        if motion_on != getattr(self, "_motion_enabled", False):
-            self._reset()
-            self._motion_enabled = motion_on
-        if motion_on and not hasattr(self, "motion"):
-            self.motion = WaspMotionEstimator()
         capture_t = perf_counter() if capture_t is None else capture_t
         if mission is not None and getattr(mission, "test_mode", False):
             if not getattr(self, "_test_mode_active", False):
@@ -838,8 +851,6 @@ class DroneTracker:
                 self.pos = self.last_bbox = self.conf = None
                 self.state, self.layer = "SEARCH", "TEST: TAP IMAGE"
                 return None, 0.0, 0.0, None, False
-            if motion_on:
-                return self._process_motion(frame_full, frame_disp, capture_t, synthetic=target)
             cx, cy, x, y, bw, bh = target
             self.kalman.update(cx, cy)
             self.last_bbox = (x, y, bw, bh)
@@ -849,12 +860,6 @@ class DroneTracker:
         if getattr(self, "_test_mode_active", False):
             self._test_mode_active = False
             self._reset()
-        if motion_on:
-            wanted = mission.ai_level_now()
-            if wanted != self.mode_name and wanted in self.MODES:
-                self.set_mode(wanted)
-        if motion_on:
-            return self._process_motion(frame_full, frame_disp, capture_t, run_detector)
         self.sky_mask = self.sky.mask(frame_disp) if self.use_sky_mask else None
         self._ground_rejected = False
         _m = getattr(self.ap, "mission", None)
@@ -963,10 +968,6 @@ class DroneTracker:
         return fused, t_kf, t_yolo, roi, (yolo_det is not None or fol_hit is not None)
 
     def _reset(self):
-        if hasattr(self, "motion"):
-            self.motion.reset()
-        self._motion_observation = None
-        self._motion_hint = None
         self.state     = "SEARCH"
         self.missed    = 0
         self.last_bbox = None
@@ -1350,6 +1351,8 @@ class DroneTracker:
             return self.set_follower(value) or self._save_detection_default("follow")
         elif key == "cam":
             return self.set_camera(value) or self._save_detection_default("cam")
+        elif key == "stabilization":
+            return self.set_stabilization(value)
         elif key == "def" and str(value).startswith("det:"):
             return self._save_detection_default(str(value)[4:].strip().lower())
         elif key in ("hold", "release", "step", "engage", "abort", "lvl", "lock", "auto", "autoen", "waspen", "waspp", "mount", "flightmode",
@@ -1566,6 +1569,8 @@ class DroneTracker:
         try:
             self._run()
         finally:
+            if self._preview_worker is not None:
+                self._preview_worker.close()
             self.ap.close()
             if self.stream is not None:
                 self.stream.stop()
@@ -1682,11 +1687,6 @@ class DroneTracker:
             is_yolo_frame = (self._frame_idx % period == 0
                              or (mission is not None and getattr(mission, "test_mode", False))
                              or getattr(self, "_test_mode_active", False))
-            motion_on = bool(mission is not None and mission.wasp.enabled
-                             and mission.wasp.params.get("motion_assist"))
-            detector_due = is_yolo_frame
-
-            is_yolo_frame = is_yolo_frame or motion_on or getattr(self, "_motion_enabled", False)
 
             if self._t_ui_prev is not None:
                 _d = t_cap - self._t_ui_prev
@@ -1696,7 +1696,7 @@ class DroneTracker:
 
             if is_yolo_frame:
                 fused, _t_kf, _t_yolo, roi, detected = self._process(
-                    frame_full, frame_disp, capture_t=t_cap, run_detector=detector_due)
+                    frame_full, frame_disp, capture_t=t_cap)
                 _tp = self._lap("detect", _tp)
                 if self.PROFILE:
                     self._prof["  model"] = (self._prof.get("  model", 0.0)
@@ -1722,8 +1722,7 @@ class DroneTracker:
                         target_off = (fused[0] - cx_f, fused[1] - cy_f)
                         cmd = self.ap.compute(target_off[0], target_off[1],
                                               self.state, self.fw, self.fh,
-                                              bbox=self.last_bbox, capture_t=t_cap,
-                                              **({"observation": self._motion_observation} if motion_on else {}))
+                                              bbox=self.last_bbox, capture_t=t_cap)
                     else:
                         cmd = self.ap.neutral_command()
                     self.ap.update(cmd, target_off, have_target=bool(fused),
@@ -1741,11 +1740,27 @@ class DroneTracker:
             self._update_log_context()
 
             _tp = self._lap("control", _tp)
+            with self._stabilization_lock:
+                stabilization_on = self.video_stabilization
+                generation = self._stabilization_generation
+            # Own raw pixels before annotation; detection and recording retain
+            # their existing frames. All stabilization CV work is asynchronous.
+            preview_raw = frame_disp.copy() if stabilization_on else None
             self._draw(frame_disp, frame_full, fused, roi, cmd, actually_sent)
             _tp = self._lap("draw", _tp)
-
-            if self.stream is not None:
-                self.stream.publish(frame_disp)
+            with self._stabilization_lock:
+                # Also handle toggles arriving while the HUD was being drawn.
+                if stabilization_on and self.video_stabilization and generation == self._stabilization_generation:
+                    if self._preview_worker is None:
+                        self._preview_worker = PreviewWorker(self._stabilize_preview)
+                    self._preview_worker.submit(preview_raw, frame_disp, t_cap, generation)
+                else:
+                    if self._preview_worker is not None:
+                        self._preview_worker.discard()
+                    self._preview_frame = self._preview_geometry = None
+                    if self.stream is not None:
+                        self.stream.publish(frame_disp)
+                frame_preview = self._preview_frame if self._preview_frame is not None else frame_disp
             _tp = self._lap("stream", _tp)
 
             if rec_on:
@@ -1788,7 +1803,7 @@ class DroneTracker:
             _tp = self._lap("print", _tp)
 
             if not self.headless:
-                cv2.imshow(self._WIN, frame_disp)
+                cv2.imshow(self._WIN, frame_preview)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
             _tp = self._lap("imshow", _tp)

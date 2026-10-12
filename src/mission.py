@@ -1545,6 +1545,7 @@ class Mission:
             hold = self._hold[0] if self._hold else None
             lv = dict(self.level)
             wasp_params = dict(self.wasp.params)
+            wasp_profiles = {name: dict(settings) for name, settings in self.wasp.profiles.items()}
             wasp_profile = self.wasp.steering_profile()
             wasp_editable = not self._wasp_configuration_error()
             test_mode = self.test_mode
@@ -1574,6 +1575,7 @@ class Mission:
             wasp_enabled=self.wasp.enabled,
             wasp_camera_confirmed=self.wasp.camera_confirmed,
             wasp_params=wasp_params,
+            wasp_profiles=wasp_profiles,
             wasp_steering_profile=wasp_profile,
             wasp_params_editable=wasp_editable,
             test_mode=test_mode,

@@ -2466,12 +2466,7 @@ class AcroCommander:
         self._tx = threading.Thread(target=self._tx_loop, daemon=True)
         self._tx.start()
 
-    def wasp_motion_context(self, capture_t):
-        b = self.backend
-        att = b.wasp_attitude(at_t=capture_t) if isinstance(b, ArduPilotAcro) else None
-        return att, self.law._tan_h, self.law._tan_v
-
-    def compute(self, err_x, err_y, state, fw, fh, bbox=None, capture_t=None, observation=None):
+    def compute(self, err_x, err_y, state, fw, fh, bbox=None, capture_t=None):
         if self.mission is not None and self.mission.wasp.enabled:
             cmd = self.law.neutral()
             if state == "SEARCH":
@@ -2481,11 +2476,6 @@ class AcroCommander:
             att = b.wasp_attitude(at_t=capture_t) if isinstance(b, ArduPilotAcro) else None
             if att is None or capture_t is None:
                 self.wasp_guidance.reset()
-                return cmd
-            if self.mission.wasp.params.get("motion_assist"):
-                self.wasp_guidance.reset()
-                if observation is not None:
-                    cmd.update(observation)
                 return cmd
             try:
                 cmd.update(self.wasp_guidance.observe(
@@ -3029,12 +3019,6 @@ class AcroCommander:
                     **{f"cmd_{axis}_rate_dps": None if rate is None else round(math.degrees(rate), 3)
                        for axis, rate in zip(("roll", "pitch", "yaw"), rates)},
                     cam_fps=context.get("cam_fps"), processing_fps=context.get("processing_fps"),
-                    wasp_motion_assist=int(m.wasp.enabled and bool(m.wasp.params.get("motion_assist"))),
-                    target_estimate_source=cmd.get("source", ""),
-                    target_motion_confidence=cmd.get("motion_confidence"),
-                    target_flow_quality=cmd.get("flow_quality"),
-                    target_noise_rad=cmd.get("noise_rad"),
-                    target_outliers_rejected=cmd.get("rejected"),
                     mission_event=m.event, mission_event_t=m.event_t,
                     gate_reason=self._mission_why)
 

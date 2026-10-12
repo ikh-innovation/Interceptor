@@ -15,8 +15,8 @@ ExecStartPre=/bin/sleep 15
 
 ExecStart=%h/Documents/wasp/src/start-wasp.sh
 
-StandardOutput=append:/home/iknowhow/wasp-logs/wasp-tracker.log
-StandardError=append:/home/iknowhow/wasp-logs/wasp-tracker.log
+StandardOutput=append:%h/wasp-logs/wasp-tracker.log
+StandardError=append:%h/wasp-logs/wasp-tracker.log
 
 Restart=on-failure
 RestartSec=10

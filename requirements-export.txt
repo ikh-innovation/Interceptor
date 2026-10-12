@@ -1,0 +1,10 @@
+# Optional engine rebuild dependencies. Use --no-deps with requirements-jetson.txt.
+onnx==1.16.1
+onnxslim==0.1.98
+onnxruntime==1.23.2
+protobuf>=3.20.2,<8
+coloredlogs==15.0.1
+humanfriendly==10.0
+flatbuffers==25.12.19
+colorama==0.4.6
+ml-dtypes==0.5.3

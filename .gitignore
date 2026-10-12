@@ -137,6 +137,8 @@ src/captures/
 
 runs/**/*.engine
 runs/**/*.onnx
+!runs/detect/v0/weights/best.engine
+!runs/detect/v0/weights/best.onnx
 
 replays/
 

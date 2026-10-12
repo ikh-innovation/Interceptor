@@ -20,9 +20,10 @@ def _find_yolo_py() -> Path:
     override = os.environ.get("WASP_YOLO_PY")
     if override:
         return Path(override).expanduser()
-    project_venv = HERE.parent / ".venv/bin/python"
-    if project_venv.exists():
-        return project_venv
+    for relative in (".venv/bin/python", ".env/yolo/bin/python"):
+        project_venv = HERE.parent / relative
+        if project_venv.exists():
+            return project_venv
     for name in ("yolo-env", "yolo"):
         cand = HOME / name / "bin/python"
         if cand.exists():

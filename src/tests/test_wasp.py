@@ -455,7 +455,7 @@ class LifecycleTests(unittest.TestCase):
                 self.assertTrue(restored.set_wasp_param("rate", 120))
             self.assertEqual(restored.wasp.params, before)
             saved = json.loads(Path(path).read_text())
-            self.assertEqual(saved["shared"], dict(launch_s=5.25, throttle=.85, motion_assist=0.0))
+            self.assertEqual(saved["shared"], dict(launch_s=5.25, throttle=.85))
             self.assertTrue(all(not any(key in settings for key in Wasp.SHARED_KEYS)
                                 for settings in saved["profiles"].values()))
 
@@ -473,6 +473,27 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(self.m.set_wasp_param("profile", name), "")
             self.assertEqual(self.m.wasp.params["launch_s"], 2.5)
             self.assertEqual(self.m.wasp.params["throttle"], .85)
+
+    def test_removed_motion_assist_is_ignored_in_old_saved_settings(self):
+        w = Wasp()
+        w.load_defaults(dict(selected="extra", shared=dict(throttle=.85, motion_assist=1),
+            params=dict(motion_assist=1), profiles={"extra": dict(rate=120, motion_assist=1)}))
+        self.assertNotIn("motion_assist", w.params)
+        self.assertTrue(all("motion_assist" not in p for p in w.profiles.values()))
+        self.assertEqual(w.params["throttle"], .85)
+        self.assertFalse(w.valid_param("motion_assist", 1))
+        self.assertTrue(self.m.set_wasp_param("motion_assist", 1))
+
+    def test_snapshot_exposes_saved_profile_matrix_without_mutable_references(self):
+        initial = self.m.snapshot(100)["wasp_profiles"]
+        self.assertEqual(list(initial), ["smooth", "standard", "responsive", "extra"])
+        self.assertEqual([p["rate"] for p in initial.values()], [45, 60, 90, 120])
+        self.assertEqual(self.m.set_wasp_param("rate", 45), "")
+        current = self.m.snapshot(101)["wasp_profiles"]
+        self.assertEqual(current["standard"]["rate"], 45)
+        self.assertEqual(initial["standard"]["rate"], 60)
+        current["standard"]["gain"] = 99
+        self.assertEqual(self.m.wasp.profiles["standard"]["gain"], 2)
 
     def test_abort_wins_over_launch(self):
         self.m.request_engage()

@@ -220,8 +220,13 @@
   #sh_speed .mount-chip{display:block;margin:10px 0 0 auto;padding:5px 8px;border:0;border-radius:7px;background:var(--bg3);color:var(--dim);font:500 11px/1 var(--sans)}
   #sh_speed .mount-chip.warn{color:#8a5900;background:#fff6dc}
   #waspfcstatus{margin:0 0 14px;color:var(--bad);font:500 12px/1.3 var(--sans)}
-  #pp_wasp .steering-help{margin:8px 0 0;font:12px/1.4 var(--sans);color:var(--dim)}
-  #pp_wasp .steering-help.custom{color:#8a5900}
+  .profile-matrix{width:100%;margin-top:12px;border-collapse:collapse;table-layout:fixed;font:500 11px/1.3 var(--mono);text-align:center}
+  .profile-matrix caption{text-align:left;margin-bottom:7px;font:500 12px/1.3 var(--sans);color:var(--dim)}
+  .profile-matrix th,.profile-matrix td{padding:6px 3px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+  .profile-matrix th{font:500 10px/1.3 var(--sans);color:var(--dim)}
+  .profile-matrix th:first-child{width:28%;text-align:left}
+  .profile-matrix .selected{background:#edf3fc;color:var(--acc);font-weight:700}
+  @media(max-width:360px){.profile-matrix{font-size:10px}.profile-matrix th{font-size:9px}.profile-matrix th,.profile-matrix td{padding:5px 2px}}
   #sh_speed #wasp_profiles{grid-auto-flow:row;grid-template-columns:repeat(2,minmax(0,1fr))}
   #sh_speed [data-wp="rate"] button{font-size:11px;padding-left:1px;padding-right:1px}
   #wasp_advanced{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
@@ -581,6 +586,9 @@
       <div class="detection-row"><div class="detection-label"><div class="lbl">Camera</div><button class="unsaved" data-save="det:cam" aria-label="Save camera default" title="Save default">↧</button></div><div class="seg" id="camseg">
         <button data-cam="30">30 FPS</button><button data-cam="60">60 FPS</button>
       </div></div>
+      <div class="detection-row"><div class="detection-label"><div class="lbl" id="stabilization_label">Video Stabilization</div></div><div class="seg" id="stabilizationseg" role="group" aria-labelledby="stabilization_label">
+        <button data-stabilization="on" aria-pressed="false">ON</button><button data-stabilization="off" aria-pressed="true">OFF</button>
+      </div></div>
       <div class="detection-row"><div class="detection-label"><label class="lbl" for="idle_seconds">Idle</label></div><div class="idle-input"><input id="idle_seconds" type="number" min="1" max="600" step="any" inputmode="decimal" aria-label="Idle seconds"><span>s</span></div></div>
     </section>
     <section class="param-block" id="flight_params" aria-labelledby="flight_params_title">
@@ -608,10 +616,10 @@
         <div id="waspfcstatus" role="status" hidden></div>
         <div class="parameter-grid">
           <div class="grp"><div class="lbl">Launch throttle</div><div class="seg" data-wp="throttle" data-values="0.75,0.85,1" data-labels="75%,85%,100%"></div></div>
-          <div class="grp"><div class="lbl">Steering response</div><div class="seg" id="wasp_profiles" role="group" aria-label="Steering response"><button data-wasp-profile="smooth" aria-pressed="false">Smooth</button><button data-wasp-profile="standard" aria-pressed="false">Standard</button><button data-wasp-profile="responsive" aria-pressed="false">Responsive</button><button data-wasp-profile="extra" aria-pressed="false">Extra</button></div><p class="steering-help" id="wasp_profile_help"></p></div>
-          <div class="grp"><div class="lbl">Motion assist</div><div class="seg" data-wp="motion_assist" data-values="0,1" data-labels="OFF,ON" role="group" aria-label="WASP motion assist"></div><p class="steering-help">ON: reduce box noise and validate motion with optical flow when reliable. OFF: existing bbox steering. Saved for every response.</p></div>
+          <div class="grp"><div class="lbl">Steering response</div><div class="seg" id="wasp_profiles" role="group" aria-label="Steering response"><button data-wasp-profile="smooth" aria-pressed="false">Smooth</button><button data-wasp-profile="standard" aria-pressed="false">Standard</button><button data-wasp-profile="responsive" aria-pressed="false">Responsive</button><button data-wasp-profile="extra" aria-pressed="false">Extra</button></div>
+            <table class="profile-matrix" id="wasp_profile_matrix"><caption>Advanced settings by response</caption><thead><tr><th scope="col">Setting</th><th scope="col" data-profile-col="smooth">Smooth</th><th scope="col" data-profile-col="standard">Standard</th><th scope="col" data-profile-col="responsive">Responsive</th><th scope="col" data-profile-col="extra">Extra</th></tr></thead><tbody></tbody></table>
+          </div>
         </div>
-        <p class="steering-help" id="wasp_timing"></p>
         <details id="wasp_advanced"><summary>Advanced settings</summary><div class="parameter-grid">
           <div class="grp"><div class="lbl">Straight launch</div><div class="seg" data-wp="straight" data-values="0,0.5,1,2" data-labels="OFF,0.5 s,1 s,2 s"></div></div>
           <div class="grp"><div class="lbl">Steering blend</div><div class="seg" data-wp="blend" data-values="0.25,0.5,1" data-labels="0.25 s,0.5 s,1 s"></div></div>
@@ -997,6 +1005,22 @@
   document.querySelectorAll("[data-wasp-profile]").forEach(function (b) {
     b.onclick = function () { cmd("waspp=profile:" + b.getAttribute("data-wasp-profile")); };
   });
+  var matrixProfiles = ["smooth", "standard", "responsive", "extra"];
+  var matrixSettings = [
+    {key:"straight", label:"Straight (s)"}, {key:"blend", label:"Blend (s)"},
+    {key:"rate", label:"Rate (°/s)"}, {key:"gain", label:"Gain"},
+    {key:"lead", label:"Lead (ms)"}, {key:"camera_roll", label:"Alignment (°)"}
+  ];
+  matrixSettings.forEach(function (setting) {
+    var row = document.createElement("tr"), label = document.createElement("th");
+    label.scope = "row"; label.textContent = setting.label; row.appendChild(label);
+    matrixProfiles.forEach(function (profile) {
+      var cell = document.createElement("td");
+      cell.setAttribute("data-profile-col", profile); cell.setAttribute("data-profile-setting", setting.key);
+      cell.textContent = "—"; row.appendChild(cell);
+    });
+    $("wasp_profile_matrix").querySelector("tbody").appendChild(row);
+  });
   document.querySelectorAll("[data-testmode]").forEach(function (b) {
     b.onclick = function () {
       var on = b.getAttribute("data-testmode") === "on";
@@ -1014,10 +1038,20 @@
     var r = $("v").getBoundingClientRect();
     var x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
     var y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+    var g = LAST.preview_geometry;
+    if (g) {
+      var px = x * g.width, py = y * g.height, a = g.inverse;
+      x = (a[0][0]*px + a[0][1]*py + a[0][2]) / g.frame_width;
+      y = (a[1][0]*px + a[1][1]*py + a[1][2]) / g.frame_height;
+      if (x < 0 || x > 1 || y < 0 || y > 1) return;
+    }
     cmd("testtarget=" + encodeURIComponent(x + ":" + y));
   });
   document.querySelectorAll("[data-sky]").forEach(function (b) {
     b.onclick = function () { cmd("sky=" + b.getAttribute("data-sky")); };
+  });
+  document.querySelectorAll("[data-stabilization]").forEach(function (b) {
+    b.onclick = function () { cmd("stabilization=" + b.getAttribute("data-stabilization")); };
   });
   document.querySelectorAll("[data-fol]").forEach(function (b) {
     b.onclick = function () {
@@ -1331,22 +1365,22 @@
       });
     });
     var steeringProfile = m.wasp_steering_profile || "custom";
-    var steeringNames = {smooth:"Smooth", standard:"Standard", responsive:"Responsive", extra:"Extra", custom:"Custom"};
-    var steeringHelp = {smooth:"Gentler corrections and a slower steering handover.",
-      standard:"Recommended starting point. Balanced steering response.",
-      responsive:"Stronger corrections. More sensitive to detection movement.",
-      extra:"Fastest response: 0.25 s blend, 120°/s rate, 6 gain, 80 ms lead, 0° alignment.",
-      custom:"Custom steering values. Review Advanced settings or choose a profile."};
     document.querySelectorAll("[data-wasp-profile]").forEach(function (b) {
       var on = b.getAttribute("data-wasp-profile") === steeringProfile;
       b.classList.toggle("on", on);
       b.setAttribute("aria-pressed", String(on));
       b.disabled = waspSettingsLocked;
     });
-    T("wasp_profile_help", "Changes save automatically as " + (steeringNames[steeringProfile] || "Standard") + " defaults.");
-    $("wasp_profile_help").classList.toggle("custom", steeringProfile === "custom");
-    var steeringParams = m.wasp_params || {};
-    T("wasp_timing", "Countdown " + Number(steeringParams.launch_s || 0) + " s before launch. Straight launch " + Number(steeringParams.straight || 0) + " s, then steering ramps over " + Number(steeringParams.blend || 0) + " s. Idle after " + Number(m.idle_s || 0) + " s from launch.");
+    $("wasp_profile_matrix").querySelectorAll("[data-profile-col]").forEach(function (cell) {
+      var profile = cell.getAttribute("data-profile-col"), selected = profile === steeringProfile;
+      cell.classList.toggle("selected", selected);
+      if (cell.tagName === "TH") cell.setAttribute("aria-current", String(selected));
+      var key = cell.getAttribute("data-profile-setting");
+      if (!key) return;
+      var settings = selected ? (m.wasp_params || {}) : (m.wasp_profiles || {})[profile] || {};
+      var value = settings[key];
+      cell.textContent = value === undefined ? "—" : String(Math.round(Number(value) * (key === "lead" ? 1000 : 1) * 100) / 100);
+    });
     document.querySelectorAll("[data-sky]").forEach(function (x) {
       x.classList.toggle("on", j.sky_gate !== undefined && (x.getAttribute("data-sky") === "on") === !!j.sky_gate);
       x.disabled = VIEW || ctl === "other";
@@ -1361,6 +1395,12 @@
       x.classList.toggle("on", Number(j.cam_fps || 30) === f);
       x.classList.toggle("isdef", Number(j.cam_default || 30) === f);
       x.disabled = !!j.cam_busy || VIEW || ctl === "other" || flying || m.engaged || ph === "WASP_FLIGHT";
+    });
+    document.querySelectorAll("[data-stabilization]").forEach(function (x) {
+      var on = (x.getAttribute("data-stabilization") === "on") === !!j.video_stabilization;
+      x.classList.toggle("on", on);
+      x.setAttribute("aria-pressed", String(on));
+      x.disabled = j.video_stabilization === undefined || VIEW || ctl === "other";
     });
     document.querySelectorAll("[data-sky=on], [data-autoen=off]").forEach(function (x) { x.classList.add("isdef"); });
     document.querySelectorAll(".seg[data-g]").forEach(function (seg) {

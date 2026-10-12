@@ -71,6 +71,7 @@ class DeskSim:
         self.sky_gate = True
         self.follower = True
         self.cam = 30
+        self.video_stabilization = False
         self._lk = threading.Lock()
         self._thread = None
         self._touch = 0.0
@@ -264,6 +265,7 @@ class DeskSim:
                     lat_ms=None, tilt_deg=30.0, target="DRONE", mission=snap, console_seq=seq,
                     sky_gate=self.sky_gate, follower=self.follower,
                     cam_fps=self.cam, cam_default=30, cam_busy=False,
+                    video_stabilization=self.video_stabilization,
                     cam_hfov=round(self.hfov, 2), cam_vfov=round(self.vfov, 2),
                     cam_aspect=round(4.0 / 3.0 if self.cam == 30 else 16.0 / 9.0, 4),
                     sim=dict(bf=self.bf, scene=scene))
@@ -300,6 +302,12 @@ class DeskSim:
                     return "bad FOLLOWER value"
                 self.follower = v in ("on", "1", "true")
                 self._log(f"[SIM] follower {'ON' if self.follower else 'OFF'}")
+                return ""
+            if key == "stabilization":
+                v = str(value).strip().lower()
+                if v not in ("on", "off", "1", "0", "true", "false"):
+                    return "bad VIDEO STABILIZATION value"
+                self.video_stabilization = v in ("on", "1", "true")
                 return ""
             if key == "cam":
                 try:

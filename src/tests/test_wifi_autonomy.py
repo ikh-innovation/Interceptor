@@ -24,8 +24,6 @@ from fc_control import AcroCommander, InterceptLaw
 from fake_fc import FakeArduPilot
 from mission import phone_command
 from mjpeg_stream import MJPEGServer
-import numpy as np
-from wasp_motion import WaspMotionEstimator
 
 
 def until(predicate, timeout=3):
@@ -78,32 +76,20 @@ class WifiFixture(unittest.TestCase):
         self.stop = threading.Event()
 
         def detections():
-            estimator = WaspMotionEstimator()
-            frame = np.full((640, 640, 3), 210, np.uint8)
             while not self.stop.is_set():
                 if self.m.test_mode and self.m.test_target is not None:
                     cx, cy, bx, by, bw, bh = self.m.test_target_box(640, 640)
                     x, y = cx-320, cy-320
                     captured = perf_counter()-.03
-                    observation = None
-                    if self.m.wasp.params.get("motion_assist"):
-                        att, th, tv = self.c.wasp_motion_context(captured)
-                        observation = estimator.update(frame, (cx, cy, bw, bh, 1), att,
-                            captured, th, tv, self.m.wasp.params["camera_roll"], synthetic=True)
                     cmd = self.c.compute(x, y, "LOCK", 640, 640, bbox=(bx, by, bw, bh),
-                                         capture_t=captured, observation=observation)
+                                         capture_t=captured)
                     self.c.update(cmd, (x, y), True, detected=True, conf=1.0,
                                   bbox=(bx, by, bw, bh))
                 elif self.target["on"] and not self.m.test_mode:
                     x, y = self.target["x"], self.target["y"]
                     captured = perf_counter()-.03
-                    observation = None
-                    if self.m.wasp.params.get("motion_assist"):
-                        att, th, tv = self.c.wasp_motion_context(captured)
-                        observation = estimator.update(frame, (320+x, 320+y, 20, 20, .9), att,
-                            captured, th, tv, self.m.wasp.params["camera_roll"])
                     cmd = self.c.compute(x, y, "LOCK", 640, 640, bbox=(0, 0, 20, 20),
-                                         capture_t=captured, observation=observation)
+                                         capture_t=captured)
                     self.c.update(cmd, (x, y), True, detected=True, conf=.9,
                                   bbox=(0, 0, 20, 20))
                 sleep(.03)
