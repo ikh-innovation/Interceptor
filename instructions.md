@@ -75,6 +75,10 @@ If the GPU or TensorRT differs, rebuild **on the destination** from the tracked
 ```
 
 Export uses FP16, 640 × 640, batch 1, static shapes, workspace 2 GiB.
+A larger input for far, small targets is built the same way next to it, without touching
+`best.engine`: `"$WASP_PY" scripts/export-engine.py --imgsz 960` writes `best_960.engine`.
+The tracker loads every `best_<size>.engine` beside the selected engine at start; the app's
+Detection > Engine row switches between them between frames and saves the choice as the default.
 The rebuilt engine will have a different checksum. Verify the shipped checksums
 before rebuilding; the source `.pt` stays unchanged. Select the verified engine
 explicitly with `WASP_MODEL=/absolute/path/to/best.engine`. For a CPU/PyTorch

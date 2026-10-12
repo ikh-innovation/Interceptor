@@ -83,6 +83,49 @@ class DetectionInputTests(unittest.TestCase):
             self.assertLess(max(mass) - min(mass), 0.05 * max(mass), (width, height, mass))
 
 
+class EngineTests(unittest.TestCase):
+    def tracker(self, phase="PILOT"):
+        t = DroneTracker.__new__(DroneTracker)
+        small, big = object(), object()
+        t.engines, t.model, t.engine_size, t.engine_default = {640: small, 960: big}, small, 640, 640
+        t._engine_req, t._last_sent = None, False
+        t.ap = type("AP", (), {"mission": type("M", (), {"phase": phase})()})()
+        return t, small, big
+
+    def test_sized_engines_sit_next_to_the_640_engine(self):
+        import tempfile
+        from tracker import sized_engines
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("best.engine", "best_960.engine", "best_1280.engine", "best_640.engine",
+                         "best_last.engine", "best_1000.engine", "last_960.engine"):
+                Path(d, name).touch()
+            found = sized_engines(Path(d, "best.engine"))
+        self.assertEqual(sorted(found), [960, 1280])
+        self.assertEqual(found[960].name, "best_960.engine")
+
+    def test_a_switch_waits_for_the_next_frame_and_model_and_size_change_together(self):
+        t, small, big = self.tracker()
+        self.assertEqual(t.set_engine("960"), "")
+        self.assertIs(t.model, small)          # the HTTP thread never swaps mid-frame
+        t._apply_engine(t._engine_req)
+        self.assertIs(t.model, big)
+        self.assertEqual((t.engine_size, t.IMGSZ_SEARCH, t.IMGSZ_TRACK, t.IMGSZ_CLOSE), (960, 960, 960, 960))
+        self.assertEqual(t.set_engine("1280"), "ENGINE: 640 or 960")
+        self.assertEqual(t.set_engine("x"), "bad ENGINE value")
+
+    def test_no_switch_in_flight(self):
+        t, _, _ = self.tracker("WASP_FLIGHT")
+        self.assertEqual(t.set_engine("960"), "not during WASP_FLIGHT")
+        self.assertIsNone(t._engine_req)
+
+    def test_the_choice_is_saved_like_the_camera(self):
+        t, _, _ = self.tracker()
+        t.set_engine("960")
+        with patch("tracker.mission_mod.save_detection_default", return_value="") as save:
+            self.assertEqual(t._save_detection_default("engine"), "")
+        save.assert_called_once_with("engine", 960)
+        self.assertEqual(t.engine_default, 960)
+
 class SearchBoundsTests(unittest.TestCase):
     def test_search_bounds_preserve_inclusive_pixels_and_padding(self):
         rng = np.random.default_rng(11)

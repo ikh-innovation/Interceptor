@@ -72,6 +72,7 @@ class DeskSim:
         self.sky_gate = True
         self.follower = True
         self.cam = 30
+        self.engine = 640
         self.video_stabilization = False
         self._lk = threading.Lock()
         self._thread = None
@@ -270,6 +271,7 @@ class DeskSim:
                     cam_hfov=round(self.hfov, 2), cam_vfov=round(self.vfov, 2),
                     cam_aspect=round(16.0 / 9.0 if self.cam == 60 else 4.0 / 3.0, 4),
                     cam_frame=list(CAM_FRAME[self.cam]), cam_capture="SIM", cam_error="",
+                    engine=self.engine, engines=[640, 960], engine_default=640, engine_busy=False,
                     sim=dict(bf=self.bf, scene=scene))
 
     def command(self, key, value):
@@ -323,6 +325,11 @@ class DeskSim:
                 if cam != self.cam:
                     self._set_cam(cam)
                     self._log(f"[SIM] camera {cam} fps: {self.hfov:.1f} x {self.vfov:.1f} deg")
+                return ""
+            if key == "engine":
+                if str(value).strip() not in ("640", "960"):
+                    return "ENGINE: 640 or 960"
+                self.engine = int(value)
                 return ""
             if key == "def":
                 return "TEST: settings are not saved as defaults"

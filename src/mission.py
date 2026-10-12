@@ -91,7 +91,7 @@ DETECT_FILE = os.path.join(CONF_DIR, "detection.json")
 IDLE_FILE = os.path.join(CONF_DIR, "idle.json")
 WASP_FILE = os.path.join(CONF_DIR, "wasp.json")
 FLIGHT_FILE = os.path.join(CONF_DIR, "flight.json")
-DETECT_SAVED = {"follow": bool, "cam": int, "sky": bool}
+DETECT_SAVED = {"follow": bool, "cam": int, "sky": bool, "engine": int}
 SAVED_COMMANDS = ("autop", "autoreset", "autoen", "waspen", "flightmode", "mount", "lvl")
 
 

@@ -590,6 +590,9 @@
       <div class="detection-row"><div class="detection-label"><div class="lbl" id="stabilization_label">Video Stabilization</div></div><div class="seg" id="stabilizationseg" role="group" aria-labelledby="stabilization_label">
         <button data-stabilization="on" aria-pressed="false">ON</button><button data-stabilization="off" aria-pressed="true">OFF</button>
       </div></div>
+      <div class="detection-row"><div class="detection-label"><div class="lbl">Engine</div><button class="unsaved" data-save="det:engine" aria-label="Save engine default" title="Save default">↧</button></div><div><div class="seg" id="engseg">
+        <button data-engine="640">640<i>px input</i></button><button data-engine="960">960<i>px input</i></button>
+      </div></div></div>
       <div class="detection-row"><div class="detection-label"><label class="lbl" for="idle_seconds">Idle</label></div><div class="idle-input"><input id="idle_seconds" type="number" min="1" max="600" step="any" inputmode="decimal" aria-label="Idle seconds"><span>s</span></div></div>
     </section>
     <section class="param-block" id="flight_params" aria-labelledby="flight_params_title">
@@ -1060,6 +1063,9 @@
       setThen("follow=" + b.getAttribute("data-fol"), "det:follow", on);
     };
   });
+  document.querySelectorAll("[data-engine]").forEach(function (b) {
+    b.onclick = function () { setThen("engine=" + b.getAttribute("data-engine")); };
+  });
   document.querySelectorAll("[data-cam]").forEach(function (b) {
     b.onclick = function () {
       var fps = Number(b.getAttribute("data-cam"));
@@ -1212,7 +1218,7 @@
     var conf = m.det_conf, fresh = m.det_age_s !== null && m.det_age_s !== undefined && m.det_age_s < 0.5;
     S("c_det", fresh ? "YES · " + fmt(conf, 2) : "NO", fresh ? (conf >= (m.min_conf || 0.2) ? "ok" : "warn") : "");
     var trt = testMode || j.detector === "TensorRT", fps_ = j.fps || 0;
-    T("c_ai_k", testMode ? "Test target" : (j.detector || "Detector") + (j.lat_ms ? " · " + j.lat_ms + " ms" : ""));
+    T("c_ai_k", testMode ? "Test target" : (j.detector || "Detector") + (j.engine ? " " + j.engine : "") + (j.lat_ms ? " · " + j.lat_ms + " ms" : ""));
     S("c_ai", j.cam_busy ? "camera…" : fmt(fps_, 0) + " fps" + (Number(j.cam_fps) === 60 ? " · cam 60" : Number(j.cam_fps) === 21 ? " · cam 8 MP" : ""),
       !trt ? "bad" : fps_ >= 20 ? "ok" : "warn");
     $("idle_seconds").disabled = arm || VIEW || ctl === "other";
@@ -1335,6 +1341,8 @@
       else if (w[1] === "follow") off = j.follower_default !== undefined && !!j.follower_default !== !!j.follower;
       else if (w[1] === "cam") off = j.cam_default !== undefined && j.cam_fps !== undefined
         && Number(j.cam_default) !== Number(j.cam_fps);
+      else if (w[1] === "engine") off = j.engine_default != null && j.engine != null
+        && Number(j.engine_default) !== Number(j.engine);
       x.classList.toggle("on", off);
     });
     var tag = $("autotag"); tag.textContent = m.auto_enabled ? "ON" : "OFF"; tag.className = "tag" + (m.auto_enabled ? " on" : "");
@@ -1401,6 +1409,14 @@
     T("cam_now", j.cam_busy ? "switching camera…" : [fr ? fr[0] + "×" + fr[1] : "", cap, j.cam_error || ""]
       .filter(Boolean).join(" · "));
     $("cam_now").className = "camnow" + (j.cam_error || /failed/.test(cap) ? " bad" : "");
+    var engs = j.engines || [];
+    document.querySelectorAll("[data-engine]").forEach(function (x) {
+      var e = Number(x.getAttribute("data-engine")), have = engs.indexOf(e) >= 0;
+      x.classList.toggle("on", Number(j.engine) === e);
+      x.classList.toggle("isdef", Number(j.engine_default) === e);
+      x.disabled = !have || !!j.engine_busy || VIEW || ctl === "other" || flying || m.engaged || ph === "WASP_FLIGHT";
+      x.title = have ? "" : "No " + e + " px engine on the Jetson";
+    });
     document.querySelectorAll("[data-stabilization]").forEach(function (x) {
       var on = (x.getAttribute("data-stabilization") === "on") === !!j.video_stabilization;
       x.classList.toggle("on", on);

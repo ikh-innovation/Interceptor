@@ -286,6 +286,19 @@ class DroneTracker:
         self.using_engine = str(model_path).endswith(".engine")
         if self.using_engine:
             self.IMGSZ_SEARCH = self.IMGSZ_TRACK = self.IMGSZ_CLOSE = 640
+        # Every engine is loaded and warmed now so a switch from the phone is instant.
+        self.engines = {640: self.model} if self.using_engine else {}
+        for size, path in (sized_engines(model_path) if self.using_engine else {}).items():
+            try:
+                eng = YOLO(str(path), task="detect")
+                eng.predict(np.zeros((size, size, 3), np.uint8), imgsz=size, verbose=False)
+            except Exception:
+                continue
+            if eng.names == self.model.names:
+                self.engines[size] = eng
+        self.engine_size = 640 if self.using_engine else None
+        self.engine_default = self.engine_size
+        self._engine_req = None
 
 
         self.conf_thresh  = conf_thresh
@@ -369,6 +382,10 @@ class DroneTracker:
         self.CAM_OPEN_RETRIES  = 5
         self.CAM_WARMUP_READS  = 30
         self.CAM_RETRY_WAIT_S  = 0.8
+
+        if _saved.get("engine") in self.engines:
+            self.engine_default = _saved["engine"]
+            self._apply_engine(self.engine_default)
 
         self.cam_default = 30
         start = 30
@@ -539,6 +556,30 @@ class DroneTracker:
 
         return ""
 
+    def set_engine(self, value):
+        try:
+            want = int(str(value).strip())
+        except ValueError:
+            return "bad ENGINE value"
+        if want not in self.engines:
+            return ("ENGINE: " + " or ".join(map(str, sorted(self.engines)))
+                    if self.engines else "no TensorRT engine loaded")
+        if want == (self._engine_req or self.engine_size):
+            return ""
+        m = getattr(self.ap, "mission", None)
+        if m is not None and m.phase in self._LOCK_PHASES + mission_mod.AUTO_PHASES:
+            return f"not during {m.phase}"
+        if m is None and self._last_sent:
+            return "not while the AI steers"
+        self._engine_req = want
+        return ""
+
+    def _apply_engine(self, size):
+        # Static TensorRT engines: the model and its input size change together, between frames.
+        self.model = self.engines[size]
+        self.engine_size = size
+        self.IMGSZ_SEARCH = self.IMGSZ_TRACK = self.IMGSZ_CLOSE = size
+
     def set_stabilization(self, value):
         v = str(value).strip().lower()
         if v not in ("on", "off", "1", "0", "true", "false"):
@@ -625,11 +666,13 @@ class DroneTracker:
             if self.stream is not None:
                 self.stream.publish(preview)
 
+    _LOCK_PHASES = ("PUSH", "AI", "STOP", "WASP_READY", "WASP_FLIGHT", "IDLE")
+
     def _camera_locked(self):
         if self._cam_busy:
             return "the camera is switching"
         m = getattr(self.ap, "mission", None)
-        if m is not None and m.phase in ("PUSH", "AI", "STOP", "WASP_READY", "WASP_FLIGHT", "IDLE") + mission_mod.AUTO_PHASES:
+        if m is not None and m.phase in self._LOCK_PHASES + mission_mod.AUTO_PHASES:
             return f"not during {m.phase}: the picture is dark a moment while it switches"
         if m is None and self._last_sent:
             return "not while the AI steers: the picture is dark a moment while it switches"
@@ -661,6 +704,10 @@ class DroneTracker:
             cam_busy=bool(getattr(self, "_cam_busy", False)
                           or getattr(self, "_cam_req", None) is not None),
             cam_aspect=round(self.cam_aspect, 4),
+            engine=getattr(self, "engine_size", None),
+            engines=sorted(getattr(self, "engines", {})),
+            engine_default=getattr(self, "engine_default", None),
+            engine_busy=getattr(self, "_engine_req", None) is not None,
             cam_frame=([self.full_w, self.full_h] if self.full_w else None),
             cam_capture=getattr(self, "cam_capture", None),
             cam_error=getattr(self, "cam_error", ""),
@@ -1383,6 +1430,8 @@ class DroneTracker:
             return self.set_follower(value) or self._save_detection_default("follow")
         elif key == "cam":
             return self.set_camera(value) or self._save_detection_default("cam")
+        elif key == "engine":
+            return self.set_engine(value) or self._save_detection_default("engine")
         elif key == "stabilization":
             return self.set_stabilization(value)
         elif key == "def" and str(value).startswith("det:"):
@@ -1421,6 +1470,14 @@ class DroneTracker:
             if r == "":
                 self.cam_default = want
 
+            return r
+        if key == "engine":
+            want = self._engine_req or self.engine_size
+            if want is None:
+                return "no TensorRT engine loaded"
+            r = mission_mod.save_detection_default("engine", want)
+            if r == "":
+                self.engine_default = want
             return r
         if key == "sky":
             return mission_mod.save_detection_default("sky", self.use_sky_mask)
@@ -1742,6 +1799,9 @@ class DroneTracker:
         while self._cap.isOpened():
             if self._cam_req is not None:
                 self._switch_camera(pre_buf)
+            if getattr(self, "_engine_req", None) is not None:
+                self._apply_engine(self._engine_req)
+                self._engine_req = None
             ret, frame_full = self._cap.read()
             t_cap = perf_counter()
             if not ret or frame_full is None:
@@ -1990,6 +2050,17 @@ def make_pipeline(cfg: CameraConfig) -> str:
     )
 
     return pipeline
+
+
+def sized_engines(model_path):
+    # best.engine is the 640 engine; best_960.engine is the same weights built for 960.
+    p = Path(model_path)
+    out = {}
+    for f in sorted(p.parent.glob(f"{p.stem}_*.engine")):
+        size = f.stem[len(p.stem) + 1:]
+        if size.isdigit() and int(size) != 640 and int(size) % 32 == 0:
+            out[int(size)] = f
+    return out
 
 
 def make_hw_source(cfg: CameraConfig) -> str:

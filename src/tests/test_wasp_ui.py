@@ -37,7 +37,8 @@ settings_tmp = tempfile.TemporaryDirectory(prefix="wasp-ui-settings-")
 m = Mission(mapper, log=lambda *_: None, wasp_path=str(Path(settings_tmp.name)/"wasp.json"))
 commands, reports = [], []
 detector_settings = dict(sky_gate=True, follower=True, follower_default=True, cam_fps=30, cam_default=30, cam_busy=False,
-                         video_stabilization=False)
+                         video_stabilization=False, engine=640, engines=[640, 960], engine_default=640,
+                         engine_busy=False)
 simulation = dict(target=True, attitude=True, gate_why="")
 done = threading.Event()
 lock = threading.Lock()
@@ -137,7 +138,7 @@ async function main(){
  await check('startup has no chooser or blocking popup',!q('#modechooser')&&!visible('#modechange')&&!q('.app').inert);
  await check('startup is read-only',(await req('/commands')).length===0);
  await check('Seeker keeps Engage and Lock without Auto or Abort',visible('#normal_pad')&&visible('#b_lock')&&visible('#b_eng')&&!q('#b_auto')&&!visible('#b_wasp_abort')&&visible('#dial')&&visible('#hbox')&&visible('#tape')&&!visible('#wasp_pad'));
- await check('TensorRT FPS stays green',q('#c_ai_k').textContent==='TensorRT'&&q('#c_ai').classList.contains('ok'));
+ await check('TensorRT FPS stays green',q('#c_ai_k').textContent==='TensorRT 640'&&q('#c_ai').classList.contains('ok'));
  parameters();
  await check('three Seeker parameter sections in order',[...f.contentDocument.querySelectorAll('.param-title')].filter(x=>x.getClientRects().length).map(x=>x.textContent).join('|')==='1Flight mode|2Detection|3Flight parametersSEEKER');
  await check('Seeker ON and Wasp OFF',q('[data-flightmode="normal"]').textContent.startsWith('Seeker drone')&&q('[data-flightmode="normal"]').getAttribute('aria-pressed')==='true'&&q('[data-flightmode="wasp"]').getAttribute('aria-pressed')==='false');
@@ -146,7 +147,7 @@ async function main(){
  const field=q('#idle_seconds');field.focus();field.value='12.5';await sleep(400);
  await check('polling preserves typed Idle value',field.value==='12.5');
  field.dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));field.blur();
- await until(()=>q('#idle_seconds').value==='12.5');
+ await until(async()=>q('#idle_seconds').value==='12.5'&&(await req('/state')).mission.idle_s===12.5);
  await check('custom Idle applies',(await req('/state')).mission.idle_s===12.5);
  const idleCommands=(await req('/commands')).length;
  field.value='0';field.dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));
@@ -323,6 +324,7 @@ async function main(){
  await load();
  await check('armed refresh preserves the active flight',!visible('#modechange')&&!q('.app').inert&&(await req('/state')).mission.phase==='WASP_FLIGHT'&&(await req('/commands')).filter(x=>x[0]==='engage').length===2);
  parameters();await check('camera switching blocked during Wasp flight',q('[data-cam="30"]').disabled&&q('[data-cam="60"]').disabled&&q('[data-cam="21"]').disabled);
+ await check('engine switching blocked during Wasp flight',q('[data-engine="640"]').disabled&&q('[data-engine="960"]').disabled);
  await check('Video Stabilization remains switchable during Wasp flight',!q('[data-stabilization="on"]').disabled&&!q('[data-stabilization="off"]').disabled);
  q('#sh_speed [data-close]').click();tap('#b_wasp_abort');await until(()=>q('#engtxt').textContent==='IDLE');
  await check('abort remains available and sends once per tap',(await req('/commands')).filter(x=>x[0]==='abort').length===2&&q('#b_eng').disabled);
@@ -332,6 +334,9 @@ async function main(){
  q('[data-cam="21"]').click();await until(()=>q('[data-cam="21"]').classList.contains('on'));
  await check('8 MP camera option applies to backend',(await req('/state')).cam_fps===21&&!q('[data-cam="30"]').classList.contains('on'));
  await check('camera readout shows the frame the camera delivers',q('#cam_now').textContent==='3280×2464 · VIC'&&!q('#cam_now').classList.contains('bad'));
+ q('[data-engine="960"]').click();await until(()=>q('[data-engine="960"]').classList.contains('on'));
+ await check('960 engine option applies to backend',(await req('/state')).engine===960&&!q('[data-engine="640"]').classList.contains('on'));
+ q('[data-engine="640"]').click();await until(()=>q('[data-engine="640"]').classList.contains('on'));
  q('[data-cam="30"]').click();await until(()=>q('[data-cam="30"]').classList.contains('on'));
  q('#sh_speed [data-close]').click();await flightLayout();parameters();
  await switchMode('normal');
@@ -339,7 +344,8 @@ async function main(){
  await check('Abort is hidden in Seeker',!visible('#b_wasp_abort'));
  await check('returning to Seeker restores flight controls',visible('#normal_pad')&&visible('#b_lock')&&visible('#dial')&&visible('#hbox')&&visible('#tape')&&!visible('#wasp_pad'));
  await check('return to Normal confirms 30 degrees and changes flight parameters',q('#mountstatus').textContent==='30° ✓'&&visible('#normal_params')&&!visible('#pp_wasp'));
- q('[data-sky="on"]').click();q('[data-fol="on"]').click();q('[data-cam="30"]').click();await until(()=>q('[data-cam="30"]').classList.contains('on'));
+ q('[data-sky="on"]').click();q('[data-fol="on"]').click();q('[data-cam="30"]').click();
+ await until(async()=>{const s=await req('/state');return s.sky_gate&&s.follower&&s.cam_fps===30});
  await check('detection controls work in Normal',(await req('/state')).sky_gate&&(await req('/state')).follower&&(await req('/state')).cam_fps===30);
  q('[data-flightmode="wasp"]').click();await until(()=>visible('#modechange'));
  await req('/set?armed=1&phase=PILOT');await until(()=>q('#mode_confirm').disabled);
@@ -386,6 +392,8 @@ class Handler(BaseHTTPRequestHandler):
                         detector_settings["sky_gate" if k == "sky" else "follower"] = v[0] == "on"
                     elif k == "cam":
                         detector_settings["cam_fps"] = int(v[0])
+                    elif k == "engine":
+                        detector_settings["engine"] = int(v[0])
                     elif k == "stabilization":
                         detector_settings["video_stabilization"] = v[0] == "on"
                     elif k == "def":
