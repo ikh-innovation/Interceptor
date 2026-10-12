@@ -1,10 +1,6 @@
 # Drone playground
 
-In the main app, open **Menu → Minigame** (below Messages). The playground opens
-inside the app and is served on the same port; no separate minigame server is
-needed. Closing the panel unloads the simulation.
-
-To run it separately from the repository root with Python 3 (standard library only):
+Run the standalone playground from the repository root with Python 3 (standard library only):
 
 ```sh
 python3 src/minigame/wasp_minigame.py
