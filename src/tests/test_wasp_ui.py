@@ -170,7 +170,15 @@ async function main(){
  await check('explicit save sends the correct default command',(await req('/commands')).some(x=>x[0]==='def'&&x[1]==='auto:height'));
  q('#ptab_semi').click();q('.seg[data-g="vert"] [data-lv="FAST"]').click();await until(()=>q('.seg[data-g="vert"] [data-lv="FAST"]').classList.contains('on'));
  await check('Manual speed changes apply',(await req('/state')).mission.levels.vert==='FAST');
- await switchMode('wasp');
+ await check('no camera prompt in Seeker',!visible('#mount_flash'));
+ await req('/cmd?c=test&flightmode=wasp');
+ await until(()=>visible('#mount_flash'));
+ await check('unconfirmed Wasp camera flashes a prompt on the video',q('#mount_flash').textContent==='90°Turn the camera to 90°, then tap here to confirm'
+   &&!q('#mount_flash').disabled&&getComputedStyle(q('#mount_flash')).animationName==='mountflash'&&q('#mountstatus').textContent==='90° required');
+ q('#mount_flash').click();await until(()=>visible('#modechange'));
+ await check('camera prompt opens the 90 degree confirmation',q('#mode_degrees').textContent==='90°');
+ q('#mode_confirm').click();await until(()=>!visible('#modechange'));
+ await until(()=>!visible('#mount_flash'));
  await check('Wasp switch disables Auto and confirms 90 degrees',(await req('/state')).mission.wasp_camera_confirmed&&!(await req('/state')).mission.auto_enabled&&q('#mountstatus').textContent==='90° ✓');
  await check('mode and mount sent in the correct order',JSON.stringify((await req('/commands')).slice(-2))===JSON.stringify([['flightmode','wasp'],['mount','90']]));
  await check('Wasp flight parameters replace Normal',visible('#pp_wasp')&&!visible('#normal_params')&&q('#flight_mode_tag').textContent==='WASP');
@@ -204,6 +212,18 @@ async function main(){
  await check('Extra uses the same shared timer',(await req('/state')).mission.wasp_steering_profile==='extra');
  q('#wasp_profiles [data-wasp-profile="standard"]').click();await until(()=>q('#wasp_profiles [data-wasp-profile="standard"]').classList.contains('on')&&q('#wasp_launch_main').value==='4');
  await check('main screen shows active steering and timer before launch',q('#wasp_pad [data-wasp-profile="standard"]').classList.contains('on')&&q('#wasp_launch_main').value==='4');
+ q('#wasp_advanced').open=true;
+ if(!q('#sh_speed').classList.contains('open'))parameters();
+ await until(()=>(q('#align_img').getAttribute('src')||'').startsWith('/stream.mjpg'));
+ const nose=()=>[parseFloat(q('#align_nose').style.left),parseFloat(q('#align_nose').style.top)];
+ await check('camera alignment shows a live view with the nose at the bottom for 0 degrees',visible('#align_view')&&nose()[1]>80&&Math.abs(nose()[0]-50)<1
+   &&q('#align_help').textContent.startsWith('Nose is at the bottom of the picture'));
+ q('[data-wp="camera_roll"] [data-wv="90"]').click();await until(()=>q('#align_help').textContent.startsWith('Nose is at the right'));
+ await check('changing camera alignment moves and flashes the nose marker',nose()[0]>80&&Math.abs(nose()[1]-50)<1&&q('#align_view').classList.contains('flash')
+   &&q('#align_arrow').style.transform.indexOf('rotate(90deg)')>0&&(await req('/state')).mission.wasp_params.camera_roll===90);
+ q('[data-wp="camera_roll"] [data-wv="0"]').click();await until(()=>q('#align_help').textContent.startsWith('Nose is at the bottom'));
+ q('#wasp_advanced').open=false;await until(()=>(q('#align_img').getAttribute('src')||'').startsWith('data:'));
+ await check('closing Advanced settings stops the alignment stream',!(q('#align_img').getAttribute('src')||'').startsWith('/stream'));
  q('#wasp_advanced').open=true;
  await check('Wasp has seven parameter groups and no old timers',q('#pp_wasp').querySelectorAll('[data-wp]').length===7&&!q('[data-wp="duration"]')&&!q('[data-wp="no_det"]'));
  await check('Idle is shared across modes',q('#idle_seconds').value==='12.5');

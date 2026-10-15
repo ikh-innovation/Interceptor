@@ -109,6 +109,14 @@ class GuidanceTests(unittest.TestCase):
         self.assertAlmostEqual(r, 0)
         self.assertLess(p, 0)
 
+    def test_camera_alignment_helper_marks_the_nose_where_guidance_sees_it(self):
+        # The app's NOSE marker (mission_ui.html, syncAlign) puts the nose at image
+        # direction (sin a, cos a): bottom, right, top, left for 0, 90, 180, 270.
+        for angle, (dx, dy) in ((0, (0, 1)), (90, (1, 0)), (180, (0, -1)), (270, (-1, 0))):
+            forward, right, _ = camera_ray(dx * 200, dy * 150, 640, 480, TH, TV, angle)
+            self.assertGreater(forward, 0.2, angle)
+            self.assertAlmostEqual(right, 0, places=9, msg=angle)
+
     def test_wrap_and_vertical_slerp(self):
 
         a, b = (0, math.pi/2, 0), (math.pi, math.pi/2, math.pi)

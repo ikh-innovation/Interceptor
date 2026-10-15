@@ -234,6 +234,16 @@
   #wasp_advanced summary{min-height:36px;color:var(--dim);font:500 13px/1.4 var(--sans);cursor:pointer}
   #wasp_advanced .parameter-grid{margin-top:12px}
   #wasp_advanced:not([open]) > .parameter-grid{display:none}
+  .align-view{position:relative;width:100%;max-width:280px;aspect-ratio:var(--ar, 4 / 3);margin-top:10px;border-radius:10px;overflow:hidden;background:#0b0d10}
+  .align-view img{width:100%;height:100%;display:block;object-fit:fill}
+  .align-arrow{position:absolute;left:50%;top:50%;width:46%;aspect-ratio:1;pointer-events:none;transform:translate(-50%,-50%) rotate(180deg);transition:transform .25s ease;
+       filter:drop-shadow(0 0 2px rgba(0,0,0,.85))}
+  .align-nose{position:absolute;left:50%;top:88%;transform:translate(-50%,-50%);padding:3px 8px;border-radius:999px;background:var(--warn);color:#1f1500;
+       font:700 11px/1 var(--cond);letter-spacing:.1em;transition:left .25s ease,top .25s ease;pointer-events:none}
+  .align-view.flash .align-arrow,.align-view.flash .align-nose{animation:alignflash .35s ease-in-out 4 alternate}
+  @keyframes alignflash{from{opacity:1}to{opacity:.15}}
+  @media (prefers-reduced-motion:reduce){.align-view.flash .align-arrow,.align-view.flash .align-nose{animation:none}.align-arrow,.align-nose{transition:none}}
+  .align-help{font:12.5px/1.35 var(--sans);color:var(--faint);margin:8px 0 0}
   #modechange{z-index:110}
   #modechange .q{letter-spacing:.04em}
   #modechange button{font-size:14px;letter-spacing:0}
@@ -411,6 +421,14 @@
   body[data-flight-mode="wasp"] .eng.countdown strong{font-size:24px}
   .wasp-save-note{grid-column:1/-1;align-self:end;margin:0;font:11px/1.35 var(--sans);color:var(--dim)}
   .test-help{margin:10px 0 0;color:var(--dim);font:12px/1.4 var(--sans)}
+  .mount-flash{position:absolute;left:50%;top:48px;transform:translateX(-50%);width:calc(100% - 32px);max-width:300px;padding:10px 14px;
+       border:2px solid var(--warn);border-radius:12px;background:rgba(43,30,0,.9);color:#fff;text-align:center;font:500 13px/1.35 var(--sans);
+       animation:mountflash .8s ease-in-out infinite alternate}
+  .mount-flash b{display:block;font:700 30px/1.05 var(--mono);color:var(--warn);margin-bottom:3px}
+  .mount-flash:disabled{opacity:.9}
+  .mount-flash[hidden]{display:none}
+  @keyframes mountflash{from{box-shadow:0 0 0 0 rgba(232,162,0,.8);border-color:var(--warn)}to{box-shadow:0 0 0 9px rgba(232,162,0,0);border-color:#fff1c2}}
+  @media (prefers-reduced-motion:reduce){.mount-flash{animation:none}}
   .test-prompt{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:300px;padding:16px;border:1px solid #81a8e0;border-radius:12px;background:rgba(20,43,76,.9);color:#fff;text-align:center;font:500 14px/1.4 var(--sans);pointer-events:none}
   .test-target{position:absolute;width:10%;height:10%;transform:translate(-50%,-50%);border:2px solid #2f66b8;box-shadow:0 0 0 1px rgba(255,255,255,.8);background:rgba(47,102,184,.08);pointer-events:none}
   .vbox.test-picking{cursor:crosshair}
@@ -511,6 +529,7 @@
     <div class="test-prompt" id="test_prompt" role="status" hidden>Test mode is on.<br>Tap anywhere in the image to place a target.</div>
     <canvas class="tape" id="tape"></canvas>
     <div class="badge" id="badge" style="display:none"></div>
+    <button class="mount-flash" id="mount_flash" hidden><b>90°</b><span id="mount_flash_txt"></span></button>
     <div class="toast" id="toast"></div>
   </div>
   <div class="belt">
@@ -630,7 +649,11 @@
           <div class="grp"><div class="lbl">Steering rate</div><div class="seg" data-wp="rate" data-values="30,45,60,90,120" data-labels="30°/s,45°/s,60°/s,90°/s,120°/s"></div></div>
           <div class="grp"><div class="lbl">Steering gain</div><div class="seg" data-wp="gain" data-values="2,4,6" data-labels="2,4,6"></div></div>
           <div class="grp"><div class="lbl">Target lead</div><div class="seg" data-wp="lead" data-values="0,0.08,0.15" data-labels="0 ms,80 ms,150 ms"></div></div>
-          <div class="grp"><div class="lbl">Camera alignment</div><div class="seg" data-wp="camera_roll" data-values="0,90,180,270" data-labels="0°,90°,180°,270°"></div></div>
+          <div class="grp"><div class="lbl">Camera alignment</div><div class="seg" data-wp="camera_roll" data-values="0,90,180,270" data-labels="0°,90°,180°,270°"></div>
+            <div class="align-view" id="align_view"><img id="align_img" alt="Live camera" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+              <svg class="align-arrow" id="align_arrow" viewBox="-50 -50 100 100" aria-hidden="true"><path d="M0 6V-34" stroke="#fff" stroke-width="5" stroke-linecap="round"/><path d="M0-47L-11-29H11Z" fill="#fff"/><circle r="5" fill="#fff"/></svg>
+              <span class="align-nose" id="align_nose">NOSE</span></div>
+            <p class="align-help" id="align_help" aria-live="polite"></p></div>
         </div></details>
       </div>
     </section>
@@ -706,6 +729,7 @@
     };
   });
   $("mountstatus").onclick = function () { askMode(UI_MODE); };
+  $("mount_flash").onclick = function () { askMode("wasp"); };
   $("mode_cancel").onclick = closeMode;
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && pendingMode) closeMode();
@@ -902,6 +926,34 @@
   });
   $("ask_no").addEventListener("click", closeAsk);
 
+  // Camera alignment helper: a live view with the drone's nose as Wasp guidance reads it.
+  // Its stream runs only while the Advanced settings are open.
+  var BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=", alignLive = false, alignRoll = null;
+  var NOSE_SIDE = {0: "bottom", 90: "right", 180: "top", 270: "left"};
+  function syncAlign(m) {
+    var live = $("sh_speed").classList.contains("open") && $("wasp_advanced").open && !!m.wasp_enabled;
+    if (live !== alignLive) {
+      alignLive = live;
+      $("align_img").src = live ? "/stream.mjpg?view=align" : BLANK;
+      if (live) alignRoll = null;
+    }
+    var roll = Number((m.wasp_params || {}).camera_roll) || 0;
+    if (roll === alignRoll) return;
+    var first = alignRoll === null, a = roll * Math.PI / 180, view = $("align_view");
+    alignRoll = roll;
+    // camera_ray in wasp.py: the image direction (sin a, cos a) is the drone's nose.
+    $("align_arrow").style.transform = "translate(-50%,-50%) rotate(" + (180 - roll) + "deg)";
+    $("align_nose").style.left = (50 + 38 * Math.sin(a)) + "%";
+    $("align_nose").style.top = (50 + 38 * Math.cos(a)) + "%";
+    $("align_help").textContent = "Nose is at the " + (NOSE_SIDE[roll] || roll + "°") + " of the picture. "
+      + "Wave a hand above the drone's nose: it must appear on the NOSE side.";
+    if (!first || live) {
+      view.classList.remove("flash"); void view.offsetWidth; view.classList.add("flash");
+    }
+  }
+  $("align_view").addEventListener("animationend", function () { $("align_view").classList.remove("flash"); });
+  $("wasp_advanced").addEventListener("toggle", function () { if (LAST && LAST.mission) syncAlign(LAST.mission); });
+
   function openSheet(id) {
     releaseAll();
     $(id).classList.add("open");
@@ -1037,6 +1089,7 @@
   });
   $("vbox").addEventListener("pointerdown", function (e) {
     var m = LAST && LAST.mission;
+    if (e.target.closest("#mount_flash")) return;
     if (!m || !m.wasp_enabled || !m.test_mode || !m.wasp_params_editable || VIEW || LAST.control === "other") return;
     e.preventDefault();
     var r = $("v").getBoundingClientRect();
@@ -1358,6 +1411,12 @@
     T("mountstatus", requiredMount + "°" + (mountOK ? " ✓" : " required"));
     $("mountstatus").classList.toggle("warn", !mountOK);
     $("mountstatus").disabled = arm || VIEW || ctl === "other" || choosing;
+    // Wasp refuses to launch until the fixed 90° camera is confirmed: say so on the video.
+    var flashOff = arm || VIEW || ctl === "other" || choosing;
+    $("mount_flash").hidden = !wasp || mountOK;
+    $("mount_flash").disabled = flashOff;
+    T("mount_flash_txt", !flashOff ? "Turn the camera to 90°, then tap here to confirm"
+      : arm ? "Camera not confirmed: disarm to confirm 90°" : "Camera not confirmed at 90°");
     document.querySelectorAll("[data-waspen]").forEach(function (x) {
       x.classList.toggle("on", (x.getAttribute("data-waspen") === "on") === wasp);
       x.disabled = arm || VIEW || ctl === "other" || (x.getAttribute("data-waspen") === "on" && !!m.auto_enabled);
@@ -1366,6 +1425,7 @@
       x.disabled = arm || VIEW || ctl === "other" || (wasp && x.getAttribute("data-mount") === "30");
       x.classList.toggle("on", Number(x.getAttribute("data-mount")) === m.camera_mount_deg && (!wasp || m.wasp_camera_confirmed));
     });
+    syncAlign(m);
     document.querySelectorAll("[data-wp]").forEach(function (seg) {
       seg.querySelectorAll("button").forEach(function (b) {
         b.disabled = waspSettingsLocked;
