@@ -175,6 +175,11 @@ class LifecycleTests(unittest.TestCase):
         self.m = Mission(self.mapper, log=lambda *_: None)
         self.assertEqual(self.m.set_wasp_enabled(True), "")
         self.assertEqual(self.m.confirm_mount(90), "")
+        # The lifecycle timings below were written for a 1 s straight launch at
+        # full throttle from the first cycle; the shipped defaults have their own test.
+        self.m.wasp.params.update(ramp=0.0, straight=1.0)
+        for settings in self.m.wasp.profiles.values():
+            settings["straight"] = 1.0
         self.mapper.armed = True
         self.ctx = dict(gate_ok=True, att=ATT, height=0, ai_cmd=observe(WaspGuidance()),
                         det_t=100, det_conf=.9)
@@ -186,13 +191,54 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.m.cycle(97, self.ctx), {})
         return self.m.cycle(100, self.ctx)
 
-    def test_launch_has_no_hover_or_ramp(self):
+    def test_shipped_defaults_ramp_in_0_1_s_and_go_straight_0_5_s(self):
+        w = Wasp()
+        self.assertEqual((w.params["throttle"], w.params["ramp"], w.params["straight"]), (1.0, 0.1, 0.5))
+        self.assertTrue(all(p["straight"] == 0.5 for p in w.profiles.values()))
+        sent = []
+        mapper = type("M", (), {"wasp_pwm": lambda _s, rates, throttle: sent.append((rates, throttle)) or {}})()
+        w.begin(100, target_acquired=False)
+        for t in (100, 100.05, 100.1, 100.2):
+            w.output(mapper, t, dict(ai_cmd=None, att=ATT))
+        self.assertEqual([round(thr, 3) for _r, thr in sent], [0.0, 0.5, 1.0, 1.0])
+        w.begin(100, target_acquired=True)
+        self.assertEqual(w.progress(100.49)["stage"], "STRAIGHT")
+        self.assertEqual(w.progress(100.51)["stage"], "BLEND")
+
+    def test_ramp_off_launches_at_full_throttle_without_hover(self):
+        self.assertEqual(self.m.wasp.params["ramp"], 0.0)
         out = self.launch()
         self.assertEqual(out["throttle"], 2000)
         self.assertEqual(self.m.phase, "WASP_FLIGHT")
         self.assertEqual(set(out), {"roll", "pitch", "yaw", "throttle"})
         self.assertTrue(self.m.request_hold("up", "x", 100))
         self.assertTrue(self.m.request_lock(True))
+
+    def test_launch_ramps_throttle_from_zero_then_holds(self):
+        self.mapper.armed = False
+        self.assertEqual(self.m.set_wasp_param("ramp", 0.5), "")
+        self.assertEqual(self.m.set_wasp_param("throttle", 0.85), "")
+        self.mapper.armed = True
+        sent = []
+        self.mapper.wasp_pwm = lambda rates, throttle: sent.append(throttle) or {"throttle": throttle}
+        self.launch()
+        for t in (100.125, 100.25, 100.5, 101, 103):
+            self.m.cycle(t, self.ctx)
+        self.assertEqual(sent[0], 0.0)
+        for got, want in zip(sent[1:], (.85*.25, .85*.5, .85, .85, .85)):
+            self.assertAlmostEqual(got, want)
+        self.assertEqual(self.m.phase, "WASP_FLIGHT")
+
+    def test_ramp_choices_are_shared_and_validated(self):
+        self.mapper.armed = False
+        for value in Wasp.SETTINGS["ramp"]:
+            self.assertEqual(self.m.set_wasp_param("ramp", value), "")
+            self.assertEqual(self.m.wasp.params["ramp"], value)
+        for bad in (-1, .3, 2, float("nan")):
+            self.assertTrue(self.m.set_wasp_param("ramp", bad))
+        self.assertEqual(self.m.set_wasp_param("profile", "extra"), "")
+        self.assertEqual(self.m.wasp.params["ramp"], 0.5)
+        self.assertNotIn("ramp", self.m.wasp.profiles["extra"])
 
     def test_straight_then_smooth_live_target_handover(self):
         sent = []
@@ -466,7 +512,7 @@ class LifecycleTests(unittest.TestCase):
                 self.assertTrue(restored.set_wasp_param("rate", 120))
             self.assertEqual(restored.wasp.params, before)
             saved = json.loads(Path(path).read_text())
-            self.assertEqual(saved["shared"], dict(launch_s=5.25, throttle=.85))
+            self.assertEqual(saved["shared"], dict(launch_s=5.25, throttle=.85, ramp=0.0))
             self.assertTrue(all(not any(key in settings for key in Wasp.SHARED_KEYS)
                                 for settings in saved["profiles"].values()))
 

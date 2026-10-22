@@ -121,13 +121,13 @@ class Wasp:
 
 
 
-    SETTINGS = {"throttle": (0.75, 0.85, 1.0),
+    SETTINGS = {"throttle": (0.75, 0.85, 1.0), "ramp": (0.0, 0.1, 0.25, 0.5),
                 "straight": (0.0, 0.5, 1.0, 2.0), "blend": (0.25, 0.5, 1.0),
                 "rate": (30.0, 45.0, 60.0, 90.0, 120.0), "gain": (2.0, 4.0, 6.0),
                 "lead": (0.0, 0.08, 0.15), "camera_roll": (0.0, 90.0, 180.0, 270.0)}
     LAUNCH_SECONDS_MIN = 0.0
     LAUNCH_SECONDS_MAX = 60.0
-    SHARED_KEYS = ("throttle", "launch_s")
+    SHARED_KEYS = ("throttle", "launch_s", "ramp")
     STEERING_PROFILES = {
         "smooth": dict(blend=1.0, rate=45.0, gain=2.0),
         "standard": dict(blend=0.5, rate=60.0, gain=2.0),
@@ -138,7 +138,7 @@ class Wasp:
     def __init__(self):
         self.enabled = False
         self.camera_confirmed = False
-        self.params = dict(throttle=1.0, straight=1.0, blend=0.5,
+        self.params = dict(throttle=1.0, ramp=0.1, straight=0.5, blend=0.5,
                            rate=60.0, gain=2.0, lead=0.08, camera_roll=0.0, launch_s=3.0,
                            centre_timer=3.0)
         profile_defaults = {key: value for key, value in self.params.items() if key not in self.SHARED_KEYS}
@@ -273,4 +273,9 @@ class Wasp:
         scale = min(1.0, 2*math.radians(p["rate"])/p["blend"]*dt/max(norm, 1e-9))
         self._rates = tuple(v+d*scale for v, d in zip(self._rates, delta))
         self._output_t = now
-        return mapper.wasp_pwm(self._rates, p["throttle"])
+        # Optional ramp from the pilot's zero stick.  Off by default: the FC
+        # already spools up from ground idle over MOT_SPOOL_TIME, and a fast
+        # launch clears a tripod or slope before the tilt costs height.
+        ramp = p.get("ramp", 0.0)
+        fraction = 1.0 if ramp <= 0 else max(0.0, min(1.0, (now-self.started)/ramp))
+        return mapper.wasp_pwm(self._rates, p["throttle"]*fraction)

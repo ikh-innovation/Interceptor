@@ -225,7 +225,7 @@ async function main(){
  q('#wasp_advanced').open=false;await until(()=>(q('#align_img').getAttribute('src')||'').startsWith('data:'));
  await check('closing Advanced settings stops the alignment stream',!(q('#align_img').getAttribute('src')||'').startsWith('/stream'));
  q('#wasp_advanced').open=true;
- await check('Wasp has seven parameter groups and no old timers',q('#pp_wasp').querySelectorAll('[data-wp]').length===7&&!q('[data-wp="duration"]')&&!q('[data-wp="no_det"]'));
+ await check('Wasp has eight parameter groups including the throttle ramp, and no old timers',q('#pp_wasp').querySelectorAll('[data-wp]').length===8&&q('#pp_wasp [data-wp="ramp"] [data-wv="0.1"]')&&q('#pp_wasp [data-wp="ramp"] [data-wv="0.1"]').classList.contains('on')&&!q('[data-wp="duration"]')&&!q('[data-wp="no_det"]'));
  await check('Idle is shared across modes',q('#idle_seconds').value==='12.5');
  q('#idle_seconds').focus();q('#idle_seconds').value='7';q('#idle_seconds').dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));
  q('#idle_seconds').dispatchEvent(new f.contentWindow.KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
