@@ -1,2 +1,3 @@
 8475e09d53466ffce41cdf8a00fd4d993674bdc411c52d56619860b77adadad9  runs/detect/v0/weights/best.pt
-1d0533efaeb571e1d4bd50a52248ea4a40879bccf2d0d5b06c96277bd6fd3e1a  runs/detect/v0/weights/best.engine
+21b920f2c496c4f5016b2f2f469819264cd6cd85b6a04bcb971f68c6010cd514  runs/detect/v0/weights/best.engine
+d0cf0ee5a709c32e9821d2469e501c20c6b78847c6c4e224808c459f395bf4f8  runs/detect/v0/weights/best_960.engine

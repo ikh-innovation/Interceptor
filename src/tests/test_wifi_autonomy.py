@@ -36,6 +36,10 @@ def until(predicate, timeout=3):
 
 
 class WifiFixture(unittest.TestCase):
+    # Per-class fake FC parameters / radio channels, applied before connect().
+    fake_params = {}
+    fake_radio = {}
+
     def setUp(self):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.bind(("127.0.0.1", 0))
@@ -49,6 +53,8 @@ class WifiFixture(unittest.TestCase):
             self.fc.params.update({f"RC{ch}_MIN": 1100, f"RC{ch}_MAX": 1900,
                                    f"RC{ch}_TRIM": 1500, f"RC{ch}_DZ": 20})
         self.fc.vfr["alt"] = 8
+        self.fc.params.update(self.fake_params)
+        self.fc.radio.update(self.fake_radio)
         self.fc.start()
         self.logs = tempfile.TemporaryDirectory(prefix="wasp-wifi-test-")
         self.c = AcroCommander(conn=f"udpin:127.0.0.1:{port}", transport="mavlink",
@@ -242,10 +248,13 @@ class WifiAutonomyTests(WifiFixture):
         self.assertFalse(self.fc.mode_requests)
         self.assert_transmitting(perf_counter()-1)
         self.assertTrue(self.m.request_engage())
-        self.fc.mode = 0
+        # LAND is not a STABILIZE takeover: every channel back, no recovery.
+        self.fc.mode = 9
         until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides)
+        self.assertFalse(self.m.idle.active)
+        self.assertFalse(self.fc.mode_requests)
 
-    def test_wasp_flies_past_idle_setting_offline_until_stabilize(self):
+    def test_wasp_flies_past_idle_setting_offline_until_stabilize_then_recovers(self):
         self.wasp_ready(idle_s=2)
         self.command("engage", "1")
         until(lambda: self.m.phase == "WASP_FLIGHT" and self.fc.overrides)
@@ -261,8 +270,16 @@ class WifiAutonomyTests(WifiFixture):
         self.assertEqual(self.c.backend.mode_name, "ACRO")
         self.assert_transmitting(perf_counter()-1)
         self.assertEqual(self.fc.overrides.get(3), 1900)
+        # STABILIZE in flight hands over to the ALT_HOLD recovery, phone or not.
+        self.fc.mode = 0
+        until(lambda: self.m.phase == "IDLE" and self.m.idle.recovery)
+        until(lambda: self.c.mode_name == "ALT_HOLD" and self.m.idle.confirmed)
+        self.assertEqual([mode for _t, mode in self.fc.mode_requests], [2])
+        until(lambda: self.m.idle.stage == "CLIMB" and 1600 < self.fc.overrides.get(3, 0) < 1900)
+        self.assert_transmitting(perf_counter()-1)
         self.fc.mode = 0
         until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides)
+        self.assertTrue(self.fc.armed and self.c.armed)
 
     def test_manual_held_move_expires_when_http_disappears(self):
         self.seeker_ready()

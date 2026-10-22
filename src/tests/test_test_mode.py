@@ -46,7 +46,8 @@ class TestTargetTests(unittest.TestCase):
         self.assertTrue(self.m.set_test_mode(False))
         self.assertEqual(self.m.cycle(102.99, ctx), {})
         ctx.update(ai_cmd=observe(WaspGuidance(), x=64, y=-48, t=103), det_t=103, det_conf=1)
-        self.assertEqual(self.m.cycle(103, ctx)["throttle"], 2000)
+        self.assertEqual(self.m.cycle(103, ctx)["throttle"], 1000)   # 0.1 s launch ramp starts at zero
+        self.assertEqual(self.m.cycle(103.1, ctx)["throttle"], 2000)
         self.assertEqual(self.m.wasp.params["rate"], 120)
         self.assertEqual(self.m.wasp.params["gain"], 6)
         self.assertEqual(self.m.wasp.params["blend"], .25)
@@ -104,7 +105,8 @@ class TestTargetTests(unittest.TestCase):
             self.assertEqual(self.m.snapshot(now)["test_target"], dict(x=.8, y=.2))
             self.assertIsNone(self.m.snapshot(now)["test_centre_remaining_s"])
             self.assertEqual(self.m.cycle(now, ctx), {})
-        self.assertEqual(self.m.cycle(103, ctx)["throttle"], 2000)
+        self.assertEqual(self.m.cycle(103, ctx)["throttle"], 1000)   # 0.1 s launch ramp starts at zero
+        self.assertEqual(self.m.cycle(103.1, ctx)["throttle"], 2000)
         self.assertEqual(self.m._test_target_started, self.m.wasp.started)
         self.assertEqual(self.m.snapshot(103)["test_centre_remaining_s"], 4)
         self.assertTrue(self.m.set_wasp_param("centre_timer", 2))

@@ -94,7 +94,10 @@ async function layout(mode){
  for(const size of [[320,640],[390,844],[820,1180],[1180,820],[1366,657]]){
   f.width=size[0];f.height=size[1];await sleep(150);
   const d=f.contentDocument, blocks=[...d.querySelectorAll('.param-block')].filter(x=>x.getClientRects().length).map(x=>x.getBoundingClientRect());
-  const segs=[...d.querySelectorAll('#detection_params .seg, #detection_params .idle-input')].map(x=>x.getBoundingClientRect());
+  // Only rows that are shown take part: WASP hides the Idle row (data-only="normal"),
+  // and a hidden row's box is 0 wide at x=0.
+  const segs=[...d.querySelectorAll('#detection_params .seg, #detection_params .idle-input')].filter(x=>x.getClientRects().length).map(x=>x.getBoundingClientRect());
+  await check(mode+' Idle row shown only in Seeker '+size,mode==='wasp'?!visible('#idle_seconds')&&segs.length===q('#detection_params').querySelectorAll('.seg').length:visible('#idle_seconds'));
   await check(mode+' section edges '+size,blocks.every(x=>Math.abs(x.left-blocks[0].left)<1&&Math.abs(x.width-blocks[0].width)<1));
   await check(mode+' detection alignment '+size,segs.every(x=>Math.abs(x.left-segs[0].left)<1&&Math.abs(x.width-segs[0].width)<1));
   await check(mode+' no horizontal overflow '+size,d.documentElement.scrollWidth<=size[0]&&q('#sh_speed .body').scrollWidth<=q('#sh_speed .body').clientWidth);
@@ -103,7 +106,7 @@ async function layout(mode){
   if(mode==='wasp') await check('Wasp matrix fits '+size,q('#wasp_profile_matrix').scrollWidth<=q('#wasp_profile_matrix').clientWidth+1&&[...q('#wasp_profile_matrix').querySelectorAll('th,td')].every(x=>x.scrollWidth<=x.clientWidth+1));
   await check(mode+' equal choices '+size,[...d.querySelectorAll('#sh_speed .seg')].filter(x=>x.getClientRects().length).every(x=>{const a=[...x.children].map(b=>b.getBoundingClientRect().width);return Math.max(...a)-Math.min(...a)<1}));
   await check('Video Stabilization sits directly below Camera '+size,q('#stabilizationseg').closest('.detection-row').previousElementSibling.contains(q('#camseg'))&&q('#stabilizationseg').getBoundingClientRect().top>=q('#camseg').getBoundingClientRect().bottom);
-  await check('Idle stays below Video Stabilization '+size,q('#idle_seconds').getBoundingClientRect().top>=q('#stabilizationseg').getBoundingClientRect().bottom);
+  if(mode!=='wasp') await check('Idle stays below Video Stabilization '+size,q('#idle_seconds').getBoundingClientRect().top>=q('#stabilizationseg').getBoundingClientRect().bottom);
  }
  f.width=390;f.height=844;await sleep(150);
 }
@@ -226,15 +229,13 @@ async function main(){
  await check('closing Advanced settings stops the alignment stream',!(q('#align_img').getAttribute('src')||'').startsWith('/stream'));
  q('#wasp_advanced').open=true;
  await check('Wasp has eight parameter groups including the throttle ramp, and no old timers',q('#pp_wasp').querySelectorAll('[data-wp]').length===8&&q('#pp_wasp [data-wp="ramp"] [data-wv="0.1"]')&&q('#pp_wasp [data-wp="ramp"] [data-wv="0.1"]').classList.contains('on')&&!q('[data-wp="duration"]')&&!q('[data-wp="no_det"]'));
- await check('Idle is shared across modes',q('#idle_seconds').value==='12.5');
- q('#idle_seconds').focus();q('#idle_seconds').value='7';q('#idle_seconds').dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));
- q('#idle_seconds').dispatchEvent(new f.contentWindow.KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
- await until(()=>q('#idle_seconds').value==='7'&&q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
+ // WASP has no Idle time limit: the Idle row is hidden, and the Seeker value is kept.
+ await check('Idle row is hidden in Wasp and keeps the Seeker value',!visible('#idle_seconds')&&q('#idle_seconds').value==='12.5'&&(await req('/state')).mission.idle_s===12.5);
+ await until(()=>q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
  await check('Wasp has gain 2 by default',q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
  q('[data-wp="rate"] [data-wv="45"]').click();await until(()=>q('[data-wp="rate"] [data-wv="45"]').classList.contains('on'));
- await check('Idle and 45-degree choices apply to backend',(await req('/state')).mission.idle_s===7&&(await req('/state')).mission.wasp_params.rate===45);
+ await check('45-degree choice applies to backend and Idle is unchanged',(await req('/state')).mission.idle_s===12.5&&(await req('/state')).mission.wasp_params.rate===45);
  await check('edited steering updates only the selected matrix column',q('[data-profile-col="standard"][data-profile-setting="rate"]').textContent==='45'&&q('[data-profile-col="responsive"][data-profile-setting="rate"]').textContent==='90'&&q('#wasp_profiles [data-wasp-profile="standard"]').classList.contains('on'));
- await check('Enter ends Idle editing',f.contentDocument.activeElement!==q('#idle_seconds'));
  await layout('wasp');
  q('[data-sky="off"]').click();await until(()=>q('[data-sky="off"]').classList.contains('on'));
  q('[data-fol="off"]').click();await until(()=>q('[data-fol="off"]').classList.contains('on'));
@@ -254,7 +255,7 @@ async function main(){
  parameters();
  await check('refresh preserves Wasp mode',q('[data-flightmode="wasp"]').classList.contains('on'));
  await check('refresh preserves throttle',q('[data-wp="throttle"] [data-wv="0.75"]').classList.contains('on'));
- await check('refresh preserves Idle, rate and gain',q('#idle_seconds').value==='7'&&q('[data-wp="rate"] [data-wv="45"]').classList.contains('on')&&q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
+ await check('refresh preserves Idle, rate and gain',q('#idle_seconds').value==='12.5'&&!visible('#idle_seconds')&&q('[data-wp="rate"] [data-wv="45"]').classList.contains('on')&&q('[data-wp="gain"] [data-wv="2"]').classList.contains('on'));
  await check('refresh preserves edited profile and collapsed advanced view',q('#wasp_pad [data-wasp-profile="standard"]').classList.contains('on')&&!q('#wasp_advanced').open);
  await check('refresh preserves camera confirmation',q('#mountstatus').textContent==='90° ✓');
  await check('refresh preserves manual launch countdown',q('#wasp_launch_main').value==='4');
@@ -348,9 +349,14 @@ async function main(){
  parameters();await check('camera switching blocked during Wasp flight',q('[data-cam="30"]').disabled&&q('[data-cam="60"]').disabled&&q('[data-cam="21"]').disabled);
  await check('engine switching blocked during Wasp flight',q('[data-engine="640"]').disabled&&q('[data-engine="960"]').disabled);
  await check('Video Stabilization remains switchable during Wasp flight',!q('[data-stabilization="on"]').disabled&&!q('[data-stabilization="off"]').disabled);
- q('#sh_speed [data-close]').click();tap('#b_wasp_abort');await until(()=>q('#engtxt').textContent==='DONE · DISARM');
+ q('#sh_speed [data-close]').click();await check('Abort says it recovers',q('#b_wasp_abort').getAttribute('aria-label')==='Abort: recover, level and hold height');
+ tap('#b_wasp_abort');await until(()=>q('#badge').textContent.startsWith('RECOVERY'));
  await check('abort remains available and sends once per tap',(await req('/commands')).filter(x=>x[0]==='abort').length===2&&q('#b_eng').disabled);
- await check('WASP abort releases to the pilot without Idle',q('#badge').textContent==='PILOT · DISARM TO RESET'&&(await req('/state')).mission.phase==='WASP_DONE');
+ const recovering=(await req('/state')).mission;
+ await check('WASP abort in flight starts the ALT_HOLD recovery',recovering.phase==='IDLE'&&recovering.idle.recovery===true&&recovering.idle_remaining_s===null);
+ await check('recovery badge tells the pilot to change mode to take over',q('#badge').textContent==='RECOVERY · HOLD · CHANGE MODE TO TAKE OVER'&&q('#engtxt').textContent==='IDLE'&&q('#b_eng').disabled);
+ await req('/set?armed=1&phase=IDLE_FAILED&idle=stop');await until(()=>q('#badge').textContent==='RECOVERY FAILED · PILOT');
+ await check('failed recovery tells the pilot it has the drone',q('#badge').textContent==='RECOVERY FAILED · PILOT'&&q('#b_eng').disabled);
  await req('/set?armed=0&phase=PILOT');await sleep(350);parameters();
  q('[data-cam="30"]').click();await until(()=>q('[data-cam="30"]').classList.contains('on'));
  q('[data-cam="21"]').click();await until(()=>q('[data-cam="21"]').classList.contains('on'));
@@ -438,7 +444,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(dict(state(), refused=why))
             if u.path == "/set":
                 mapper.armed = q.get("armed", ["0"])[0] == "1"
-                if not mapper.armed:
+                if not mapper.armed or q.get("idle", [""])[0] == "stop":
                     m.idle.stop()
                     m.wasp.used = False
                     m.engaged = False

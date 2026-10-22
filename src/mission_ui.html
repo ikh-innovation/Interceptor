@@ -568,7 +568,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
         <span class="timer-label">Timer</span><div class="timer-wheel" id="wasp_launch_main" role="listbox" tabindex="0" aria-label="Launch countdown in seconds" aria-disabled="false"></div><span>s</span>
       </div>
-      <button class="rbtn auto" id="b_wasp_abort" data-only="wasp" hidden style="background:#ad3030;border-color:#ad3030" aria-label="Abort to Idle">ABORT</button>
+      <button class="rbtn auto" id="b_wasp_abort" data-only="wasp" hidden style="background:#ad3030;border-color:#ad3030" aria-label="Abort: recover, level and hold height">ABORT</button>
       <button class="rbtn lock" id="b_lock" aria-label="LOCK"><span id="locktxt">LOCK</span></button>
       <button class="rbtn eng" id="b_eng" aria-label="ENGAGE"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE</span></button>
       <p class="wasp-save-note" data-only="wasp" hidden>Settings save automatically. Throttle and countdown apply to every response.</p>
@@ -612,7 +612,7 @@
       <div class="detection-row"><div class="detection-label"><div class="lbl">Engine</div><button class="unsaved" data-save="det:engine" aria-label="Save engine default" title="Save default">↧</button></div><div><div class="seg" id="engseg">
         <button data-engine="640">640<i>px input</i></button><button data-engine="960">960<i>px input</i></button>
       </div></div></div>
-      <div class="detection-row"><div class="detection-label"><label class="lbl" for="idle_seconds">Idle</label></div><div class="idle-input"><input id="idle_seconds" type="number" min="1" max="600" step="any" inputmode="decimal" aria-label="Idle seconds"><span>s</span></div></div>
+      <div class="detection-row" data-only="normal"><div class="detection-label"><label class="lbl" for="idle_seconds">Idle</label></div><div class="idle-input"><input id="idle_seconds" type="number" min="1" max="600" step="any" inputmode="decimal" aria-label="Idle seconds"><span>s</span></div></div>
     </section>
     <section class="param-block" id="flight_params" aria-labelledby="flight_params_title">
       <h4 class="param-title" id="flight_params_title"><span class="num">3</span>Flight parameters<span class="tag" id="flight_mode_tag">SEEKER</span></h4>
@@ -1368,7 +1368,9 @@
     if (ph === "IDLE" || ph === "IDLE_FAILED") {
       bd.style.display = "block"; bd.className = "badge";
       var idle = m.idle || {};
-      bd.textContent = ph === "IDLE_FAILED" ? "IDLE FAILED · PILOT" : wasp && idle.active === false ? "IDLE · LAUNCH CANCELLED" : "IDLE · " + (idle.stage || "LEVEL") + " · XY DRIFT";
+      bd.textContent = wasp && idle.recovery ? "RECOVERY · " + (idle.stage || "LEVEL") + " · CHANGE MODE TO TAKE OVER"
+        : wasp && ph === "IDLE_FAILED" ? "RECOVERY FAILED · PILOT"
+        : ph === "IDLE_FAILED" ? "IDLE FAILED · PILOT" : wasp && idle.active === false ? "IDLE · LAUNCH CANCELLED" : "IDLE · " + (idle.stage || "LEVEL") + " · XY DRIFT";
     }
 
     var lv = m.levels || {}, sp = m.speeds || {};

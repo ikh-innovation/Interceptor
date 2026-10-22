@@ -14,7 +14,8 @@ WASP_PY="$PROJECT_ROOT/.env/yolo/bin/python"
 sha256sum -c models.sha256
 ```
 
-The trained `runs/detect/v0/weights/best.pt` and its `best.engine` are both in Git.
+The trained `runs/detect/v0/weights/best.pt` and its `best.engine` (640 px) and
+`best_960.engine` (960 px) are in Git, built on an Orin Nano Super with TensorRT 10.3.
 The repository-root engines are older alternatives; the configured model is the
 pair under `runs/detect/v0/weights`. Code, UI, fonts, logo, tests, launchers and
 service template are included. Python environments and flight logs are local.
@@ -109,6 +110,43 @@ using controls. Keep controller-specific tuning out of the shared model files.
 Stabilization starts OFF. It uses full-frame black padding and fresh existing
 gyro rates when mounting/axes are known; otherwise optical flow. It changes the
 preview only. Wasp motion assist has been removed. See [stabilization details](src/VIDEO_STABILIZATION.md).
+
+## 4b. Replacement flight controller, camera or settings
+
+Everything needed to rebuild the drone is in the repository:
+
+| What | Where |
+| --- | --- |
+| FC parameters (all 1265, read 2026-10-22) | `deploy/fc/TBS_LUCID_H7_2026-10-22.param` |
+| What each WASP-critical parameter does | `controller-settings.md` |
+| App settings (WASP profiles, throttle, ramp, timers, camera, engine) | `deploy/wasp-config/*.json` |
+| Pilot procedure (Greek) | `pilot-instructions-el.md` |
+
+**New FC (same model, ArduCopter):**
+1. Flash the same ArduCopter version.
+2. In Mission Planner or QGC, Config → Full Parameter List → Load from file
+   `deploy/fc/TBS_LUCID_H7_2026-10-22.param` → Write Params → reboot the FC.
+3. **Recalibrate on the new board.** The file carries the old board's sensor
+   offsets. Do the accelerometer, compass, radio (RC) and ESC calibration, and
+   check motor order and direction with Motor Test, props off.
+4. Check the WASP-critical values in `controller-settings.md` section 1:
+   `ACRO_TRAINER=0`, `RC_OVERRIDE_TIME=1`, `FLTMODE_CH=6` with switch
+   low = ACRO / middle = STABILIZE / high = ALT_HOLD, and `SYSID_MYGCS=255`.
+5. For a different FC model or frame, don't load the whole file. Set only
+   section 1 of `controller-settings.md` by hand.
+
+**New camera:** same IMX219 module, nothing to change. For another sensor or
+lens, measure the field of view and set `CAM_HFOV_DEG`, `CAM_VFOV_DEG` and the
+`CAM_MODES` table (section 4). Then confirm the 90° mount and the camera alignment
+in the app (Parameters → WASP → Advanced).
+
+**App settings:** with identical hardware, copy them before the first start:
+`mkdir -p ~/.config/wasp && cp deploy/wasp-config/*.json ~/.config/wasp/`.
+Otherwise leave them out and set the values in the UI.
+
+**After any replacement:** do a props-off bench check. Arm in ACRO, press GO
+(full throttle in 0.1 s), switch to STABILIZE (recovery: FC goes to ALT_HOLD),
+switch to ALT_HOLD (sticks back to the pilot), disarm.
 
 ## 5. Start manually, then install automatic startup
 

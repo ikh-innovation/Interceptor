@@ -277,5 +277,6 @@ class Wasp:
         # already spools up from ground idle over MOT_SPOOL_TIME, and a fast
         # launch clears a tripod or slope before the tilt costs height.
         ramp = p.get("ramp", 0.0)
-        fraction = 1.0 if ramp <= 0 else max(0.0, min(1.0, (now-self.started)/ramp))
+        elapsed = now - self.started
+        fraction = 1.0 if ramp <= 0 or elapsed >= ramp - 1e-6 else max(0.0, elapsed/ramp)
         return mapper.wasp_pwm(self._rates, p["throttle"]*fraction)

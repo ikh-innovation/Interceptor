@@ -19,6 +19,13 @@ class FakeArduPilot(threading.Thread):
         self.mode_requests = []
         self.mode_ack = mavutil.mavlink.MAV_RESULT_ACCEPTED
         self.apply_mode = True
+        # Test knobs: heartbeat period / on-off, VFR_HUD on-off, and a delay
+        # before the DO_SET_MODE ACK (the mode is applied with the ACK).
+        self.hb_period = 0.15
+        self.heartbeat = True
+        self.vfr_on = True
+        self.ack_delay = 0.0
+        self._pending_acks = []
         self.att = dict(roll=0.0, pitch=0.0, rollspeed=0.0, pitchspeed=0.0,
                         yawspeed=0.0, yaw=0.0)
         self.stop = threading.Event()
@@ -58,7 +65,10 @@ class FakeArduPilot(threading.Thread):
         t_hb = t_rc = t_att = 0.0
         while not self.stop.is_set():
             now = perf_counter()
-            if now - t_hb > 0.15:
+            while self._pending_acks and self._pending_acks[0][0] <= now:
+                _due, command, mode = self._pending_acks.pop(0)
+                self._ack_mode(command, mode)
+            if self.heartbeat and now - t_hb > self.hb_period:
                 t_hb = now
                 base = 0x80 if self.armed else 0
                 self.m.mav.heartbeat_send(
@@ -69,7 +79,7 @@ class FakeArduPilot(threading.Thread):
                 t_rc = now
                 vals = [self.overrides.get(i, self.radio[i]) for i in range(1, 19)]
                 self.m.mav.rc_channels_send(int(now * 1000), 8, *vals, 100)
-            if now - t_att > 0.05:
+            if self.vfr_on and now - t_att > 0.05:
                 self.m.mav.vfr_hud_send(0.0, 0.0, int(self.vfr["heading"]), 0,
                                         float(self.vfr["alt"]),
                                         float(self.vfr["climb"]))
@@ -101,9 +111,10 @@ class FakeArduPilot(threading.Thread):
                         len(self.params), 0)
             elif t == "COMMAND_LONG" and msg.command == mavutil.mavlink.MAV_CMD_DO_SET_MODE:
                 self.mode_requests.append((perf_counter(), int(msg.param2)))
-                self.m.mav.command_ack_send(msg.command, self.mode_ack)
-                if self.apply_mode and self.mode_ack == mavutil.mavlink.MAV_RESULT_ACCEPTED:
-                    self.mode = int(msg.param2)
+                if self.ack_delay:
+                    self._pending_acks.append((perf_counter()+self.ack_delay, msg.command, int(msg.param2)))
+                else:
+                    self._ack_mode(msg.command, int(msg.param2))
             elif t == "RC_CHANNELS_OVERRIDE":
                 if msg.get_srcSystem() != self.sysid_mygcs:
                     self.rejected_from.add(msg.get_srcSystem())
@@ -116,6 +127,11 @@ class FakeArduPilot(threading.Thread):
                         self.overrides.pop(i, None)
                     elif v != 65535:
                         self.overrides[i] = v
+
+    def _ack_mode(self, command, mode):
+        self.m.mav.command_ack_send(command, self.mode_ack)
+        if self.apply_mode and self.mode_ack == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+            self.mode = mode
 
     def shutdown(self):
         self.stop.set()

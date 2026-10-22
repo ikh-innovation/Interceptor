@@ -1,0 +1,14 @@
+{
+ "height": 15.0,
+ "climb": 3.0,
+ "turn": 30.0,
+ "adjust": 5.0,
+ "window": 5.0,
+ "ready": 0.25,
+ "giveup": 2.0,
+ "closing": 3.0,
+ "floor": 3.0,
+ "line": 30.0,
+ "ai": "MAX",
+ "steer": 0.6
+}

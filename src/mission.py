@@ -924,6 +924,8 @@ class Mission:
         w = self.wasp
         if not getattr(self.mapper, "armed", False):
             w.used = False
+        if abort and w.started is not None and ctx.get("gate_ok"):
+            return self._start_recovery(now, ctx, "ABORT")
         if abort:
             if w.started is not None:
                 w.used = True
@@ -933,6 +935,8 @@ class Mission:
             self._set_phase("WASP_DONE" if w.used else "PILOT", now)
             self._note("WASP ABORT: every channel returned to the pilot", now)
             return {}
+        if w.started is not None and ctx.get("pilot_takeover"):
+            return self._start_recovery(now, ctx, "pilot switched to STABILIZE")
         if not ctx.get("gate_ok"):
             self._stop_test_target(now)
             if self.phase not in ("PILOT", "WASP_DONE"):
@@ -1000,6 +1004,42 @@ class Mission:
         self._wasp_last_out = out
         return out
 
+    RECOVERY_GROUND_S = 0.5
+
+    def _start_recovery(self, now, ctx, reason):
+        # ABORT or the pilot's ACRO -> STABILIZE mid-launch: ALT_HOLD stops the
+        # sink and levels the drone, which bleeds off the launch speed, then it
+        # climbs RECOVERY_RISE_M and holds until the pilot changes mode again.
+        hold = self.wasp.params["throttle"]
+        on_ground = (ctx.get("airborne") is False and self.wasp.started is not None
+                     and now - self.wasp.started < self.RECOVERY_GROUND_S)
+        self._stop_test_target(now)
+        if on_ground:
+            # Still on the tripod or ground: cancel instead of taking off into a climb.
+            self.wasp.started = None
+            self.wasp.launch_t = None
+            self.wasp.used = True
+            self._note(f"WASP {reason} on the ground: launch cancelled, every channel to the pilot", now)
+            self._set_phase("WASP_DONE", now)
+            return {}
+        self.wasp.started = None
+        self.wasp.launch_t = None
+        self.wasp.used = True
+        self._reset_motion()
+        self._unlock()
+        self.engaged = True
+        with self._lock:
+            self._hold = None
+        try:
+            self.idle.begin(now, ctx, self.ceiling_m, recovery=True, hold_throttle=hold)
+            if not self.mapper.idle_request_alt_hold():
+                raise ValueError("could not request ALT_HOLD")
+            self._note(f"RECOVERY: {reason}; ALT_HOLD, level, climb {self.idle.rise_m:g} m, then hold", now)
+            self._set_phase("IDLE", now)
+            return self.idle.output(self.mapper, now, ctx)
+        except (ValueError, KeyError, TypeError, OverflowError) as exc:
+            return self._idle_failed(now, str(exc))
+
     def _start_idle(self, now, ctx, reason):
         ground_abort = (self.wasp.enabled and self.wasp.started is None
                         and self._run_t is None and ctx.get("airborne") is False)
@@ -1033,6 +1073,16 @@ class Mission:
         return {}
 
     def _idle_cycle(self, now, ctx):
+        if self.idle.switch_moved(ctx.get("mode_switch")):
+            # Any flick of the mode switch is the pilot taking over, even onto
+            # ALT_HOLD, which the FC is already in and so shows no mode change.
+            self._stop_test_target(now)
+            self.idle.stop()
+            self._reset_motion()
+            self.engaged = False
+            self._note("RECOVERY ended: pilot moved the mode switch; every channel to the pilot", now)
+            self._set_phase("PILOT", now)
+            return {}
         if not ctx.get("gate_ok"):
             self._stop_test_target(now)
             self.idle.stop()

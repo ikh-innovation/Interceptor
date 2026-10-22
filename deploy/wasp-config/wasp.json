@@ -1,0 +1,46 @@
+{
+ "selected": "smooth",
+ "profiles": {
+  "smooth": {
+   "straight": 0.5,
+   "blend": 1.0,
+   "rate": 45.0,
+   "gain": 2.0,
+   "lead": 0.08,
+   "camera_roll": 0.0,
+   "centre_timer": 3.0
+  },
+  "standard": {
+   "straight": 0.5,
+   "blend": 0.5,
+   "rate": 60.0,
+   "gain": 2.0,
+   "lead": 0.08,
+   "camera_roll": 0.0,
+   "centre_timer": 3.0
+  },
+  "responsive": {
+   "straight": 0.5,
+   "blend": 0.5,
+   "rate": 90.0,
+   "gain": 4.0,
+   "lead": 0.08,
+   "camera_roll": 0.0,
+   "centre_timer": 3.0
+  },
+  "extra": {
+   "straight": 0.5,
+   "blend": 0.25,
+   "rate": 120.0,
+   "gain": 6.0,
+   "lead": 0.08,
+   "camera_roll": 0.0,
+   "centre_timer": 3.0
+  }
+ },
+ "shared": {
+  "throttle": 1.0,
+  "launch_s": 0.0,
+  "ramp": 0.1
+ }
+}
