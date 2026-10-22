@@ -317,8 +317,9 @@ async function main(){
  await check('Test target stays fixed during countdown',JSON.stringify((await req('/state')).mission.test_target)===JSON.stringify(targetBefore));
  await load();
  await check('refresh preserves launch countdown',q('#b_eng').classList.contains('countdown')&&(await req('/commands')).filter(x=>x[0]==='engage').length===1);
- tap('#b_wasp_abort');await until(()=>q('#engtxt').textContent==='IDLE');
- await check('Abort cancels the launch countdown',(await req('/state')).mission.wasp_progress.stage!=='COUNTDOWN');
+ tap('#b_wasp_abort');await until(()=>q('#engtxt').textContent==='LAUNCH WASP'&&!q('#b_eng').classList.contains('countdown'));
+ const cancelled=(await req('/state')).mission;
+ await check('Abort cancels the launch countdown without Idle',cancelled.wasp_progress.stage!=='COUNTDOWN'&&['PILOT','WASP_READY'].includes(cancelled.phase)&&cancelled.idle_remaining_s===null);
  await req('/set?armed=0&phase=PILOT');await sleep(350);parameters();
  await countdown(3);
  q('#sh_speed [data-close]').click();await req('/set?armed=1&phase=WASP_READY');await until(()=>!q('#b_eng').disabled);
@@ -327,7 +328,7 @@ async function main(){
  await until(()=>q('#engtxt strong')&&q('#engtxt strong').textContent==='1');
  await check('default countdown displays 3, 2, 1',q('#b_eng').disabled);
  await until(()=>q('#engtxt').textContent==='WASP FLYING');
- await check('initial acquisition shows the total countdown',q('#badge').textContent.includes('STRAIGHT')&&q('#badge').textContent.includes(' s'));
+ await check('flight badge tells the pilot how to take over',q('#badge').textContent==='TEST · STRAIGHT · STAB TO TAKE OVER'&&(await req('/state')).mission.idle_remaining_s===null);
  await until(()=>parseFloat(q('#test_target').style.left)>25&&parseFloat(q('#test_target').style.left)<50);
  await check('Test target moves toward the center only after launch',parseFloat(q('#test_target').style.top)<75&&parseFloat(q('#test_target').style.top)>50);
  await load();
@@ -335,20 +336,21 @@ async function main(){
  await until(()=>q('#test_target').style.left==='50%'&&q('#test_target').style.top==='50%');
  await sleep(250);
  await check('Test target stays centered',q('#test_target').style.left==='50%'&&q('#test_target').style.top==='50%');
- await req('/set?armed=1&phase=WASP_FLIGHT&elapsed=2');await until(()=>q('#badge').textContent.includes('STRAIGHT · 4.'));
- await check('no-detection wait remains active after Straight launch',q('#b_eng').disabled);
+ await req('/set?armed=1&phase=WASP_FLIGHT&elapsed=2');await until(()=>q('#badge').textContent.includes('STRAIGHT · STAB TO TAKE OVER'));
+ await check('no-detection wait remains active after Straight launch with no time limit',q('#b_eng').disabled&&(await req('/state')).mission.idle_remaining_s===null);
  await req('/set?armed=1&target=1&acquired=1');await until(()=>q('#badge').textContent.includes('BLENDING'));
  await check('late acquisition shows the steering transition',q('#badge').textContent.includes('BLENDING'));
  await req('/set?armed=1&phase=WASP_FLIGHT&elapsed=1.25');await until(()=>q('#badge').textContent.includes('GUIDING'));
+ await check('guiding badge shows the STABILIZE takeover hint',q('#badge').textContent==='TEST · GUIDING · STAB TO TAKE OVER');
  await check('each launch attempt sent once',(await req('/commands')).filter(x=>x[0]==='engage').length===2);
  await load();
  await check('armed refresh preserves the active flight',!visible('#modechange')&&!q('.app').inert&&(await req('/state')).mission.phase==='WASP_FLIGHT'&&(await req('/commands')).filter(x=>x[0]==='engage').length===2);
  parameters();await check('camera switching blocked during Wasp flight',q('[data-cam="30"]').disabled&&q('[data-cam="60"]').disabled&&q('[data-cam="21"]').disabled);
  await check('engine switching blocked during Wasp flight',q('[data-engine="640"]').disabled&&q('[data-engine="960"]').disabled);
  await check('Video Stabilization remains switchable during Wasp flight',!q('[data-stabilization="on"]').disabled&&!q('[data-stabilization="off"]').disabled);
- q('#sh_speed [data-close]').click();tap('#b_wasp_abort');await until(()=>q('#engtxt').textContent==='IDLE');
+ q('#sh_speed [data-close]').click();tap('#b_wasp_abort');await until(()=>q('#engtxt').textContent==='DONE · DISARM');
  await check('abort remains available and sends once per tap',(await req('/commands')).filter(x=>x[0]==='abort').length===2&&q('#b_eng').disabled);
- await check('Idle identifies height hold and drift',q('#badge').textContent==='IDLE · HOLD · XY DRIFT');
+ await check('WASP abort releases to the pilot without Idle',q('#badge').textContent==='PILOT · DISARM TO RESET'&&(await req('/state')).mission.phase==='WASP_DONE');
  await req('/set?armed=0&phase=PILOT');await sleep(350);parameters();
  q('[data-cam="30"]').click();await until(()=>q('[data-cam="30"]').classList.contains('on'));
  q('[data-cam="21"]').click();await until(()=>q('[data-cam="21"]').classList.contains('on'));
@@ -445,7 +447,6 @@ class Handler(BaseHTTPRequestHandler):
                     m.set_wasp_enabled(q["mode"][0] == "wasp", selection=True)
                 if "elapsed" in q:
                     m.wasp.started = time.perf_counter()-float(q["elapsed"][0])
-                    m._run_t = m.wasp.started
                     if m.wasp.acquired_t is not None:
                         m.wasp.acquired_t = m.wasp.started
                 for key in ("target", "attitude"):

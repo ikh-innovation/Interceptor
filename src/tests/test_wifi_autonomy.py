@@ -216,9 +216,10 @@ class WifiAutonomyTests(WifiFixture):
         until(lambda: self.m.phase == "PILOT" and not self.fc.overrides)
 
     def test_wasp_acquires_steers_and_continues_straight_during_loss_offline(self):
-        self.wasp_ready()
+        self.wasp_ready(idle_s=2)
         self.command("engage", "1")
         until(lambda: self.m.phase == "WASP_FLIGHT" and len(self.fc.overrides) == 4)
+        launch = self.m.wasp.started
         offline = self.disconnect_phone()
         self.assertEqual(self.m.wasp.progress(perf_counter())["stage"], "SEARCH")
         self.assert_transmitting(offline)
@@ -235,26 +236,33 @@ class WifiAutonomyTests(WifiFixture):
         self.assertTrue(self.fc.overrides)
         self.target["on"] = True
         until(lambda: self.m.wasp.progress(perf_counter())["stage"] == "GUIDE")
-        until(lambda: self.m.phase == "IDLE" and self.c.backend.mode_name == "ALT_HOLD", timeout=10)
-        self.assertTrue(self.fc.overrides)
+        until(lambda: perf_counter()-launch > 3, timeout=10)
+        self.assertEqual(self.m.phase, "WASP_FLIGHT")
+        self.assertEqual(self.c.backend.mode_name, "ACRO")
+        self.assertFalse(self.fc.mode_requests)
+        self.assert_transmitting(perf_counter()-1)
         self.assertTrue(self.m.request_engage())
+        self.fc.mode = 0
+        until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides)
 
-    def test_wasp_idle_deadline_and_hold_continue_offline(self):
-        self.wasp_ready(idle_s=4)
+    def test_wasp_flies_past_idle_setting_offline_until_stabilize(self):
+        self.wasp_ready(idle_s=2)
         self.command("engage", "1")
         until(lambda: self.m.phase == "WASP_FLIGHT" and self.fc.overrides)
+        launch = self.m.wasp.started
         offline = self.disconnect_phone()
         self.assertEqual(self.m.phase, "WASP_FLIGHT")
         self.assert_transmitting(offline)
-        until(lambda: self.m.phase == "IDLE" and self.c.backend.mode_name == "ALT_HOLD", timeout=3)
-        self.assertIn("Idle time limit", self.m.event)
-        self.fc.vfr["alt"] += 1.5
-        until(lambda: self.m.idle.stage == "HOLD")
-        sleep(1.2)
-        self.assertEqual(self.m.phase, "IDLE")
+        until(lambda: perf_counter()-launch > 4, timeout=4)
+        self.assertEqual(self.m.phase, "WASP_FLIGHT")
+        self.assertNotIn("Idle time limit", self.m.event)
+        self.assertFalse(self.m.idle.active)
+        self.assertFalse(self.fc.mode_requests)
+        self.assertEqual(self.c.backend.mode_name, "ACRO")
         self.assert_transmitting(perf_counter()-1)
+        self.assertEqual(self.fc.overrides.get(3), 1900)
         self.fc.mode = 0
-        until(lambda: self.m.phase == "PILOT" and not self.fc.overrides)
+        until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides)
 
     def test_manual_held_move_expires_when_http_disappears(self):
         self.seeker_ready()

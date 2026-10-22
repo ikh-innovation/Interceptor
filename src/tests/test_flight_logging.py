@@ -98,7 +98,7 @@ class FlightLoggingTests(unittest.TestCase):
             return list(csv.DictReader(handle))
 
     def test_idle_retains_each_mode_and_timer_after_mission_reset(self):
-        for kind in ("auto", "semi_auto", "wasp"):
+        for kind in ("auto", "semi_auto"):
             with self.subTest(kind=kind):
                 path = self.start(kind)
                 self.tick(10)
@@ -126,6 +126,61 @@ class FlightLoggingTests(unittest.TestCase):
                 self.assertEqual(self.c.mission.set_wasp_enabled(False, selection=True), "")
                 self.b.armed = True
                 self.tick()
+
+    def test_wasp_logs_past_idle_limit_and_pilot_takeover_then_disarm_closes(self):
+        path = self.start("wasp")
+        m = self.c.mission
+        self.tick(10)
+        self.tick(5)
+        self.assertEqual(m.phase, "WASP_FLIGHT")
+        self.assertIsNone(m._run_t)
+        self.assertFalse(m.idle.active)
+        self.assertTrue(self.c._mission_out)
+        rows = self.rows(path)
+        self.assertEqual({r["flight_mode"] for r in rows}, {"wasp"})
+        self.assertEqual(rows[-1]["phase"], "WASP_FLIGHT")
+        self.assertGreaterEqual(float(rows[-1]["flight_elapsed_s"]), 15)
+        self.assertNotIn("IDLE", {r["phase"] for r in rows})
+        self.assertTrue(self.c._flight_logs.snapshot()["active"])
+        self.b.mode_name = self.ctx["fc_mode"] = "STABILIZE"
+        self.ctx.update(gate_ok=False, gate_why="pilot switched to STABILIZE")
+        self.c._mission_why = self.ctx["gate_why"]
+        self.tick()
+        self.assertEqual(m.phase, "WASP_DONE")
+        self.assertFalse(self.c._mission_out)
+        self.assertEqual(self.rows(path)[-1]["phase"], "WASP_DONE")
+        self.assertFalse(self.c._flight_logs.snapshot()["active"])
+        metadata = json.loads(path.with_suffix(".json").read_text())
+        self.assertEqual(metadata["end_reason"], "pilot switched to STABILIZE")
+        self.assertEqual(metadata["status"], "complete")
+        # Disarm resets WASP; a second launch then ends by disarming mid-flight.
+        self.b.armed = False
+        self.ctx["gate_why"] = self.c._mission_why = "disarmed"
+        self.tick()
+        self.ctx.update(gate_ok=True, gate_why="")
+        self.c._mission_why = ""
+        self.b.mode_name = self.ctx["fc_mode"] = "ACRO"
+        self.b.armed = True
+        self.tick()
+        self.assertEqual(m.phase, "WASP_READY")
+        self.assertEqual(m.request_engage(), "")
+        self.tick()
+        self.tick(m.wasp.params["launch_s"])
+        self.assertEqual(m.phase, "WASP_FLIGHT")
+        second = Path(self.c._flight_logs.active["csv"])
+        self.assertNotEqual(second, path)
+        self.tick(12)
+        self.assertEqual(m.phase, "WASP_FLIGHT")
+        self.b.armed = False
+        self.ctx.update(gate_ok=False, gate_why="disarmed")
+        self.c._mission_why = "disarmed"
+        self.tick()
+        self.assertFalse(self.c._mission_out)
+        self.assertFalse(self.c._flight_logs.snapshot()["active"])
+        metadata = json.loads(second.with_suffix(".json").read_text())
+        self.assertEqual(metadata["end_reason"], "disarmed")
+        self.assertEqual(metadata["status"], "complete")
+        self.assertNotIn("IDLE", {r["phase"] for r in self.rows(second)})
 
     def test_standby_does_not_create_a_flight_and_headers_are_unique(self):
         self.assertFalse(list(self.directory.glob("flight_*")))

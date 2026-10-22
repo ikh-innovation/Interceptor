@@ -390,7 +390,9 @@ class LifecycleTests(unittest.TestCase):
         self.assertAlmostEqual(self.m.wasp.launch_t - 100, 3.0)
         self.assertEqual(self.m.cycle(103.0, self.ctx), self.mapper.wasp_pwm((0, 0, 0), 1))
         self.assertEqual(self.m.phase, "WASP_FLIGHT")
-        self.assertEqual(self.m._run_t, 103)
+        self.assertEqual(self.m.wasp.started, 103)
+        # WASP has no Idle clock: the launch must not start the Idle timer.
+        self.assertIsNone(self.m._run_t)
 
     def test_manual_launch_countdown_applies_to_every_profile(self):
         self.mapper.armed = False
@@ -409,7 +411,8 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.m.cycle(100, self.ctx), {})
         self.assertEqual(self.m.cycle(104.24, self.ctx), {})
         self.assertTrue(self.m.cycle(104.25, self.ctx))
-        self.assertEqual(self.m._run_t, 104.25)
+        self.assertEqual(self.m.wasp.started, 104.25)
+        self.assertIsNone(self.m._run_t)
 
     def test_countdown_cancels_on_abort_gate_or_attitude_loss(self):
         for change in ("abort", "gate", "attitude"):
@@ -517,7 +520,7 @@ class LifecycleTests(unittest.TestCase):
         self.ctx.update(ai_cmd=observe(WaspGuidance(), t=100.3), det_t=100.3)
         self.assertTrue(self.m.cycle(100.3, self.ctx))
         self.assertEqual(self.m.wasp.acquired_t, 100.3)
-        self.assertEqual(self.m._run_t, 100)
+        self.assertIsNone(self.m._run_t)
 
     def test_gate_loss_and_abort_release_all_channels(self):
         self.launch()
@@ -530,28 +533,79 @@ class LifecycleTests(unittest.TestCase):
         self.m.cycle(100.03, self.ctx)
         self.assertFalse(self.m.wasp.used)
 
-    def test_pilot_takeover_resets_idle_clock(self):
+    def test_wasp_flight_has_no_idle_clock_and_pilot_takeover_releases(self):
         self.mapper.armed = False
         self.assertEqual(self.m.set_idle_seconds(160, save=False), "")
         self.mapper.armed = True
         self.launch()
-        self.assertEqual(self.m.snapshot(150)["idle_remaining_s"], 110)
-        self.ctx["gate_ok"] = False
-        self.m.cycle(150, self.ctx)
+        self.assertIsNone(self.m._run_t)
+        self.assertIsNone(self.m.snapshot(150)["idle_remaining_s"])
+        self.ctx.update(att=None)
+        self.assertEqual(self.m.cycle(150, self.ctx), self.mapper.wasp_pwm((0, 0, 0), 1))
+        self.assertEqual(self.m.phase, "WASP_FLIGHT")
+        # The pilot switching out of ACRO drops the commander gate.
+        self.ctx.update(att=ATT, gate_ok=False)
+        self.assertEqual(self.m.cycle(150.01, self.ctx), {})
+        self.assertEqual(self.m.phase, "WASP_DONE")
         self.ctx["gate_ok"] = True
-        self.m.cycle(155, self.ctx)
+        self.assertEqual(self.m.cycle(155, self.ctx), {})
+        self.assertEqual(self.m.phase, "WASP_DONE")
         self.assertIsNone(self.m._run_t)
         self.assertIsNone(self.m.snapshot(155)["idle_remaining_s"])
 
-    def test_timeout_releases_with_live_detection(self):
+    def test_live_detection_keeps_flying_past_the_idle_limit(self):
+        self.assertEqual(self.m.idle_s, 10)
         self.launch()
-        for now in (100.5, 101.25, 101.75, 102, 105, 109.99):
+        for now in (100.5, 101.25, 101.75, 102, 105, 109.99, 110, 110.01, 125, 160):
             self.ctx.update(ai_cmd=observe(WaspGuidance(), t=now), det_t=now)
             self.assertTrue(self.m.cycle(now, self.ctx))
             self.assertEqual(self.m.phase, "WASP_FLIGHT")
-        self.ctx.update(ai_cmd=observe(WaspGuidance(), t=110), det_t=110)
-        self.assertEqual(self.m.cycle(110, self.ctx), {})
-        self.assertIn("time limit", self.m.event)
+            self.assertIsNone(self.m.snapshot(now)["idle_remaining_s"])
+        self.assertNotIn("time limit", self.m.event)
+        self.assertFalse(self.m.idle.active)
+        self.ctx["gate_ok"] = False
+        self.assertEqual(self.m.cycle(160.01, self.ctx), {})
+        self.assertEqual(self.m.phase, "WASP_DONE")
+
+    def test_stale_attitude_mid_flight_holds_throttle_at_zero_rates_then_reacquires(self):
+        sent = []
+        self.mapper.wasp_pwm = lambda rates, throttle: sent.append((rates, throttle)) or {"rates": rates, "throttle": throttle}
+        self.launch()
+        for i in range(1, 251):
+            now = 100+i*.01
+            self.ctx.update(ai_cmd=observe(WaspGuidance(), x=80, t=now), det_t=now)
+            self.m.cycle(now, self.ctx)
+        self.assertEqual(self.m.wasp.progress(now)["stage"], "GUIDE")
+        self.assertGreater(sent[-1][0][0], 0)
+        for i in range(1, 101):
+            now = 102.5+i*.01
+            self.ctx.update(ai_cmd=observe(WaspGuidance(), x=80, t=now), det_t=now, att=None)
+            out = self.m.cycle(now, self.ctx)
+            self.assertEqual(out, {"rates": (0, 0, 0), "throttle": 1})
+            self.assertEqual(self.m.phase, "WASP_FLIGHT")
+            self.assertIsNone(self.m.wasp.acquired_t)
+        now = 103.51
+        self.ctx.update(ai_cmd=observe(WaspGuidance(), x=80, t=now), det_t=now, att=ATT)
+        self.assertEqual(self.m.cycle(now, self.ctx)["throttle"], 1)
+        self.assertEqual(self.m.wasp.acquired_t, now)
+        for i in range(1, 61):
+            now = 103.51+i*.01
+            self.ctx.update(ai_cmd=observe(WaspGuidance(), x=80, t=now), det_t=now)
+            out = self.m.cycle(now, self.ctx)
+            full = WaspGuidance.rates(self.ctx["ai_cmd"], ATT, now, max_rate_dps=60)
+            self.assertAlmostEqual(out["rates"][0], full[0]*self.m.wasp.progress(now)["steering_blend"])
+        self.assertEqual(self.m.wasp.progress(now)["stage"], "GUIDE")
+
+    def test_output_failure_mid_flight_keeps_sending(self):
+        self.launch()
+        good = self.m.cycle(100.01, self.ctx)
+        self.assertTrue(good)
+        real = self.mapper.wasp_pwm
+        self.mapper.wasp_pwm = lambda rates, throttle: (_ for _ in ()).throw(ValueError("bad"))
+        self.assertEqual(self.m.cycle(100.02, self.ctx), good)
+        self.assertEqual(self.m.phase, "WASP_FLIGHT")
+        self.mapper.wasp_pwm = real
+        self.assertEqual(self.m.cycle(100.03, self.ctx), real((0, 0, 0), 1))
 
     def test_launch_requires_attitude_and_confirmation(self):
         self.m.request_engage()
@@ -560,7 +614,7 @@ class LifecycleTests(unittest.TestCase):
         self.m.wasp.camera_confirmed = False
         self.assertEqual(self.launch(), {})
 
-    def test_no_detection_choices_hold_zero_rates_then_release_and_latch(self):
+    def test_no_detection_holds_zero_rates_past_any_idle_setting_until_abort_and_latch(self):
         for limit in (3, 5, 7, 10):
             for tilt in (0, 45, 90):
                 with self.subTest(limit=limit, tilt=tilt):
@@ -573,14 +627,17 @@ class LifecycleTests(unittest.TestCase):
                     sent = []
                     self.mapper.wasp_pwm = lambda rates, throttle: sent.append((rates, throttle)) or {"throttle": throttle}
                     self.assertTrue(self.launch())
-                    for offset in (0, .5, 1.25, limit-.01):
+                    for offset in (0, .5, 1.25, limit-.01, limit, limit+5, 30):
                         self.assertTrue(self.m.cycle(100+offset, self.ctx))
                         self.assertEqual(sent[-1], ((0, 0, 0), 1))
                         progress = self.m.wasp.progress(100+offset)
                         self.assertEqual(progress["stage"], "SEARCH")
-                        self.assertAlmostEqual(self.m.snapshot(100+offset)["idle_remaining_s"], limit-offset)
+                        self.assertIsNone(self.m.snapshot(100+offset)["idle_remaining_s"])
+                        self.assertEqual(self.m.phase, "WASP_FLIGHT")
+                    self.m.request_abort()
                     self.assertEqual(self.m.cycle(100+limit, self.ctx), {})
                     self.assertEqual(self.m.phase, "WASP_DONE")
+                    self.assertFalse(self.m.idle.active)
                     self.assertTrue(self.m.request_engage())
                     self.ctx.update(ai_cmd=observe(WaspGuidance(), t=100+limit+.01),
                                     det_t=100+limit+.01, det_conf=.9)
@@ -609,10 +666,10 @@ class LifecycleTests(unittest.TestCase):
                     self.assertEqual(out["throttle"], 1)
                 self.assertEqual(self.m.wasp.progress(now)["stage"], "GUIDE")
 
-                self.ctx.update(ai_cmd=observe(WaspGuidance(), t=109.99), det_t=109.99)
-                self.assertTrue(self.m.cycle(109.99, self.ctx))
-                self.ctx.update(ai_cmd=observe(WaspGuidance(), t=110), det_t=110)
-                self.assertEqual(self.m.cycle(110, self.ctx), {})
+                for now in (109.99, 110, 120):
+                    self.ctx.update(ai_cmd=observe(WaspGuidance(), t=now), det_t=now)
+                    self.assertEqual(self.m.cycle(now, self.ctx)["throttle"], 1)
+                    self.assertEqual(self.m.phase, "WASP_FLIGHT")
 
     def test_invalid_initial_detections_do_not_acquire_or_steer(self):
         cmd = observe(WaspGuidance(), x=80)
@@ -633,7 +690,7 @@ class LifecycleTests(unittest.TestCase):
                 self.assertTrue(self.m.cycle(now, self.ctx))
                 self.assertEqual(self.m.wasp.acquired_t, now)
 
-    def test_acquisition_abort_gate_and_attitude_release(self):
+    def test_acquisition_abort_and_gate_release_but_attitude_loss_holds(self):
         for failure in ("abort", "gate", "attitude"):
             self.setUp()
             self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)
@@ -644,18 +701,25 @@ class LifecycleTests(unittest.TestCase):
                 self.ctx["gate_ok"] = False
             else:
                 self.ctx["att"] = None
-            self.assertEqual(self.m.cycle(100.01, self.ctx), {})
-            self.assertEqual(self.m.phase, "WASP_DONE")
+            out = self.m.cycle(100.01, self.ctx)
+            if failure == "attitude":
+                self.assertEqual(out, self.mapper.wasp_pwm((0, 0, 0), 1))
+                self.assertEqual(self.m.phase, "WASP_FLIGHT")
+            else:
+                self.assertEqual(out, {})
+                self.assertEqual(self.m.phase, "WASP_DONE")
+            self.assertFalse(self.m.idle.active)
 
-    def test_no_detection_deadline_wins_over_new_detection(self):
+    def test_late_first_detection_after_idle_limit_still_acquires(self):
         self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)
         self.launch()
         self.ctx.update(ai_cmd=observe(WaspGuidance(), t=110), det_t=110, det_conf=.9)
-        self.assertEqual(self.m.cycle(110, self.ctx), {})
-        self.assertIsNone(self.m.wasp.acquired_t)
-        self.assertIn("Idle time limit", self.m.event)
+        self.assertEqual(self.m.cycle(110, self.ctx), self.mapper.wasp_pwm((0, 0, 0), 1))
+        self.assertEqual(self.m.wasp.acquired_t, 110)
+        self.assertEqual(self.m.phase, "WASP_FLIGHT")
+        self.assertNotIn("Idle time limit", self.m.event)
 
-    def test_total_flight_limit_bounds_acquisition_and_new_parameter_validation(self):
+    def test_idle_seconds_validation_does_not_bound_wasp_flight(self):
         self.mapper.armed = False
         self.assertEqual(self.m.set_wasp_param("straight", 0), "")
         self.assertEqual(self.m.set_idle_seconds(1), "")
@@ -665,10 +729,11 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(self.m.set_idle_seconds(3))
         self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)
         self.launch()
-        self.assertEqual(self.m.snapshot(100)["idle_remaining_s"], 1)
-        self.assertTrue(self.m.cycle(100.99, self.ctx))
-        self.assertEqual(self.m.cycle(101, self.ctx), {})
-        self.assertIn("Idle time limit", self.m.event)
+        self.assertIsNone(self.m.snapshot(100)["idle_remaining_s"])
+        for now in (100.99, 101, 111):
+            self.assertTrue(self.m.cycle(now, self.ctx))
+            self.assertEqual(self.m.phase, "WASP_FLIGHT")
+        self.assertNotIn("Idle time limit", self.m.event)
 
 
 class BackendTests(unittest.TestCase):
@@ -685,6 +750,27 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(b.wasp_pwm((0, 0, 0), 1)["throttle"], 1100)
         b.mode_name = "ALT_HOLD"
         b.steer_wasp_pwm(out)
+        self.assertEqual(b.sent[-1], [0]*8)
+
+    def test_in_flight_steering_ignores_stale_telemetry_and_releases_only_to_pilot(self):
+        b = backend()
+        out = b.wasp_pwm((0, 0, 0), 1)
+        b._heartbeat_t -= 5
+        b._att_hist = []
+        self.assertTrue(b.wasp_ready())
+        self.assertEqual(b.wasp_flight_ready(), "")
+        b.steer_wasp_pwm(out)
+        self.assertEqual(b.sent[-1], [0]*8)
+        b.steer_wasp_pwm(out, in_flight=True)
+        self.assertEqual(b.sent[-1][3], 1900)
+        b.mode_name = "STABILIZE"
+        self.assertIn("STABILIZE", b.wasp_flight_ready())
+        b.steer_wasp_pwm(out, in_flight=True)
+        self.assertEqual(b.sent[-1], [0]*8)
+        b.mode_name = "ACRO"
+        b.armed = False
+        self.assertEqual(b.wasp_flight_ready(), "disarmed")
+        b.steer_wasp_pwm(out, in_flight=True)
         self.assertEqual(b.sent[-1], [0]*8)
 
     def test_expo_is_inverted_with_rc_deadzone_and_reversal(self):
@@ -743,6 +829,35 @@ class BackendTests(unittest.TestCase):
         c.commit_chan = 7
         b._commit = 0
         self.assertIn("commit", c._mission_gate()[1])
+
+    def test_commander_gate_in_wasp_flight_needs_only_armed_acro(self):
+        b = backend()
+        c = AcroCommander(law=InterceptLaw(), mission=True)
+        c.backend = b
+        c.mission = Mission(c, log=lambda *_: None)
+        c.mission.wasp.enabled = True
+        c.mission.wasp.started = 100
+        b._heartbeat_t -= 5
+        b._att_hist = []
+        b.params["ACRO_TRAINER"] = 1
+        self.assertTrue(b.wasp_ready())
+        self.assertEqual(c._mission_gate(), (True, ""))
+        b.mode_name = "STABILIZE"
+        ok, why = c._mission_gate()
+        self.assertFalse(ok)
+        self.assertIn("STABILIZE", why)
+        b.mode_name = "ACRO"
+        b.armed = False
+        self.assertFalse(c._mission_gate()[0])
+        b.armed = True
+        c.commit_chan = 7
+        b._commit = 0
+        self.assertIn("commit", c._mission_gate()[1])
+        c.mission.wasp.started = None
+        c.commit_chan = 0
+        c.mission.wasp.camera_confirmed = True
+        c.mission.camera_mount_deg = 90
+        self.assertFalse(c._mission_gate()[0])
 
 
 if __name__ == "__main__":
