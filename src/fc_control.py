@@ -1447,8 +1447,18 @@ class ArduPilotAcro(FcBackend):
         out["throttle"] = round(cfg["min"] + fraction*(cfg["max"]-cfg["min"]))
         return out
 
-    def steer_wasp_pwm(self, pwm_by_axis):
-        if self.wasp_ready():
+    def wasp_flight_ready(self):
+        # Once WASP has launched only the pilot ends it: disarm, or a mode
+        # switch out of ACRO.  A late heartbeat or attitude sample must not
+        # drop the throttle back to a stick that is probably at the bottom.
+        if not self.armed:
+            return "disarmed"
+        if self.mode_name != "ACRO":
+            return f"pilot switched to {self.mode_name}"
+        return ""
+
+    def steer_wasp_pwm(self, pwm_by_axis, in_flight=False):
+        if self.wasp_flight_ready() if in_flight else self.wasp_ready():
             return self.release()
         return self._steer_calibrated_pwm(pwm_by_axis)
 
@@ -2539,7 +2549,18 @@ class AcroCommander:
         while not self._stop.is_set():
             now = perf_counter()
             if self.mission is not None:
-                self._mission_tx(now)
+                try:
+                    self._mission_tx(now)
+                except Exception as exc:
+                    # A dead TX thread lets the overrides lapse mid-launch, so
+                    # keep repeating the last WASP output until the pilot ends it.
+                    print(f"[CTRL] mission cycle failed: {exc!r}", flush=True)
+                    if (self.mission.wasp.started is not None and self._mission_out
+                            and self.linked):
+                        try:
+                            self.backend.steer_wasp_pwm(self._mission_out, in_flight=True)
+                        except Exception:
+                            pass
                 next_t += period
                 dt = next_t - perf_counter()
                 if dt > 0:
@@ -2694,11 +2715,16 @@ class AcroCommander:
         elif wasp:
             if not isinstance(b, ArduPilotAcro):
                 return False, "WASP requires ArduPilot MAVLink"
-            if not self.mission.wasp.camera_confirmed or self.mission.camera_mount_deg != 90:
-                return False, "confirm camera fixed at 90 degrees in PARAMETERS > WASP"
-            why = b.wasp_ready()
-            if why:
-                return False, why
+            if self.mission.wasp.started is not None:
+                why = b.wasp_flight_ready()
+                if why:
+                    return False, why
+            else:
+                if not self.mission.wasp.camera_confirmed or self.mission.camera_mount_deg != 90:
+                    return False, "confirm camera fixed at 90 degrees in PARAMETERS > WASP"
+                why = b.wasp_ready()
+                if why:
+                    return False, why
         elif self.mission is not None and (abs(self.mission.camera_mount_deg - 30) > 0.1
                 or abs(math.degrees(getattr(self.law, "cam_tilt", math.pi/6)) - 30) > 0.1):
             return False, "restore and confirm the 30 degree camera for AUTO / SEMI-AUTO"
@@ -2747,7 +2773,8 @@ class AcroCommander:
             if self.mission.idle.active:
                 written = b.steer_idle_pwm(out, allow_acro=not self.mission.idle.confirmed)
             else:
-                written = b.steer_wasp_pwm(out) if self.mission.wasp.enabled else b.steer_pwm(out)
+                written = (b.steer_wasp_pwm(out, in_flight=self.mission.wasp.started is not None)
+                           if self.mission.wasp.enabled else b.steer_pwm(out))
         else:
             written = b.release() if self.linked else False
         self._mission_out = dict(out)

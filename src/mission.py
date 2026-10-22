@@ -403,6 +403,7 @@ class Mission:
         self.idle = Idle()
         self.idle_supported = callable(getattr(mapper, "idle_pwm", None))
         self._run_t = None
+        self._wasp_last_out = {}
         self.camera_mount_deg = float(getattr(mapper, "camera_mount_deg", 30.0))
         for _k, attrs, _c in self.AUTO_SETTINGS:
             for a in attrs:
@@ -858,10 +859,10 @@ class Mission:
             self._set_phase("PILOT", now)
 
 
-        if (abort and ctx.get("gate_ok") and self.idle_supported
+        if (abort and ctx.get("gate_ok") and self.idle_supported and not self.wasp.enabled
                 and (self._run_t is not None or ctx.get("airborne"))):
             return self._start_idle(now, ctx, "ABORT")
-        if (self.idle_supported and self._run_t is not None
+        if (self.idle_supported and not self.wasp.enabled and self._run_t is not None
                 and now-self._run_t >= self.idle_s and ctx.get("gate_ok")):
             return self._start_idle(now, ctx, "Idle time limit")
 
@@ -924,8 +925,6 @@ class Mission:
         if not getattr(self.mapper, "armed", False):
             w.used = False
         if abort:
-            if self.idle_supported and ctx.get("gate_ok"):
-                return self._start_idle(now, ctx, "WASP ABORT")
             if w.started is not None:
                 w.used = True
             w.started = None
@@ -968,41 +967,38 @@ class Mission:
             if now < w.launch_t:
                 return {}
             w.begin(now, target_acquired=False)
+            self._wasp_last_out = {}
             with self._lock:
                 if self.test_mode and self.test_target is not None:
                     self._test_target_started = now
-            self._run_t = now
-            self._note(f"WASP launched: Idle in {self.idle_s:g}s from throttle start", now)
+            self._note("WASP launched: holding until the pilot leaves ACRO or disarms", now)
             self._set_phase("WASP_FLIGHT", now)
-        why = "no fresh attitude" if ctx.get("att") is None else ""
-        if now - w.started >= self.idle_s:
-            why = "Idle time limit"
-        if not why:
-            tracking = not w.fault(now, ctx, self.min_conf)
-            if tracking:
-                try:
-
-                    if w.acquired_t is None:
-                        w.acquire(now, ctx)
-                        self._note("WASP target acquired: blended steering", now)
-                    else:
-                        WaspGuidance.rates(ctx["ai_cmd"], ctx["att"], now,
-                            gain=w.params["gain"], lead_s=w.params["lead"], max_rate_dps=w.params["rate"])
-                except (ValueError, KeyError, TypeError, OverflowError):
-                    tracking = False
-            if not tracking:
-                w.lose_target()
-        if not why:
+        # No Idle and no timeout: WASP keeps the sticks until the pilot switches
+        # out of ACRO (or disarms).  A stale attitude or target only drops the
+        # steering back to zero rates at the launch throttle.
+        tracking = not w.fault(now, ctx, self.min_conf)
+        if tracking:
             try:
-                return w.output(self.mapper, now, ctx)
-            except (ValueError, KeyError, TypeError, OverflowError) as exc:
-                why = str(exc)
-        w.started = None
-        if self.idle_supported:
-            return self._start_idle(now, ctx, why)
-        self._note(f"WASP ended: {why}; every channel returned to the pilot", now)
-        self._set_phase("WASP_DONE", now)
-        return {}
+                if w.acquired_t is None:
+                    w.acquire(now, ctx)
+                    self._note("WASP target acquired: blended steering", now)
+                else:
+                    WaspGuidance.rates(ctx["ai_cmd"], ctx["att"], now,
+                        gain=w.params["gain"], lead_s=w.params["lead"], max_rate_dps=w.params["rate"])
+            except (ValueError, KeyError, TypeError, OverflowError):
+                tracking = False
+        if not tracking and w.acquired_t is not None:
+            w.lose_target()
+        try:
+            out = w.output(self.mapper, now, ctx)
+        except (ValueError, KeyError, TypeError, OverflowError):
+            w.lose_target()
+            try:
+                out = w.output(self.mapper, now, ctx)
+            except (ValueError, KeyError, TypeError, OverflowError):
+                out = self._wasp_last_out
+        self._wasp_last_out = out
+        return out
 
     def _start_idle(self, now, ctx, reason):
         ground_abort = (self.wasp.enabled and self.wasp.started is None

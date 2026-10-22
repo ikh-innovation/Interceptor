@@ -1360,7 +1360,7 @@
       var wp = m.wasp_progress || {};
       var wpStage = wp.stage === "COUNTDOWN" ? "COUNTDOWN " + Math.max(1, Math.ceil(Number(wp.launch_countdown_s || 0)))
         : wp.stage === "SEARCH" ? "STRAIGHT" : wp.stage === "STRAIGHT" ? "LAUNCH" : wp.stage === "BLEND" ? "BLENDING" : wp.stage === "GUIDE" ? "GUIDING" : "READY";
-      var flightLabel = "WASP · " + wpStage + " · " + Number(m.idle_remaining_s || 0).toFixed(1) + " s";
+      var flightLabel = "WASP · " + wpStage + " · STAB TO TAKE OVER";
       bd.textContent = m.gate_why || (ph === "WASP_DONE" ? "PILOT · DISARM TO RESET" : ph === "WASP_FLIGHT" ? flightLabel : ph === "WASP_READY" && wp.stage === "COUNTDOWN" ? "WASP · " + wpStage : "WASP · READY");
       if (testMode) bd.textContent = bd.textContent.replace(/^WASP/, "TEST");
     }
