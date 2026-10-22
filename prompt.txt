@@ -1,0 +1,17 @@
+On this Jetson the WASP app (systemd user service wasp-tracker.service) keeps its
+launch settings in ~/.config/wasp/wasp.json under "shared". I want the WASP launch
+to count down 5 s (5,4,3,2,1) and then launch at 100% throttle.
+
+Do this through the running app's HTTP API, not by editing the JSON (the app
+rewrites that file from memory):
+  curl -s "http://127.0.0.1:8080/cmd?c=claude-setup&waspp=launch_s:5"
+  curl -s "http://127.0.0.1:8080/cmd?c=claude-setup&waspp=throttle:1"
+Each response should show "applied": ["waspp"] and an empty "refused". If it says
+another phone has control, wait 3 s and retry. The quad must be disarmed.
+
+Then verify ~/.config/wasp/wasp.json shows "shared": {"throttle": 1.0, "launch_s": 5.0}.
+If the service is not running, start it with `systemctl --user start wasp-tracker`,
+wait ~30 s for port 8080, and then run the commands above.
+
+Do not change any code and do not commit anything. Tell me the before and after
+values of "shared".
