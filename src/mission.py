@@ -7,6 +7,7 @@ import threading
 from time import perf_counter
 from wasp import Wasp, WaspGuidance
 from idle import Idle
+from safedown import Handover, SafeDown
 
 SPEEDS = {
     "climb":   {"SLOW": 1.0, "MEDIUM": 3.0, "FAST": 8.0},
@@ -24,7 +25,8 @@ HOLD_KINDS = {"up": ("throttle", +1), "down": ("throttle", -1),
 
 PHASES = ("PILOT", "HOVER", "CLIMB", "DESCEND", "SCOUT",
           "AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN", "PUSH", "AI", "STOP",
-          "WASP_READY", "WASP_FLIGHT", "WASP_DONE", "IDLE", "IDLE_FAILED")
+          "WASP_READY", "WASP_FLIGHT", "WASP_DONE", "IDLE", "IDLE_FAILED",
+          "SAFEDOWN", "SAFEDOWN_FAILED")
 AUTO_PHASES = ("AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN")
 
 
@@ -290,7 +292,7 @@ def _phone_command(m, key, value, now):
         return m.set_test_mode(value.strip().lower() == "on")
     if key == "testtarget":
         return m.set_test_target(value)
-    if key == "abort":
+    if key in ("abort", "safedown"):
         return m.request_abort()
     if key == "lvl":
         group, _, level = value.partition(":")
@@ -401,6 +403,8 @@ class Mission:
         self.levels_path = levels_path
         self.flight_path = flight_path
         self.idle = Idle()
+        self.safedown = SafeDown()
+        self._pilot_stabilize = self._stabilize_edge = False
         self.idle_supported = callable(getattr(mapper, "idle_pwm", None))
         self._run_t = None
         self._wasp_last_out = {}
@@ -456,7 +460,8 @@ class Mission:
                 return "hold already released"
             if self.phase in ("AUTO_CLIMB", "AUTO_HOLD") and HOLD_KINDS[kind][0] == "yaw":
                 pass
-            elif self.phase in ("PUSH", "AI", "STOP", "IDLE", "IDLE_FAILED") + AUTO_PHASES:
+            elif self.phase in ("PUSH", "AI", "STOP", "IDLE", "IDLE_FAILED",
+                                "SAFEDOWN", "SAFEDOWN_FAILED") + AUTO_PHASES:
                 return f"no manual moves during {self.phase}"
             if self.phase == "PILOT":
                 return "the pilot has it (not armed / not ALT_HOLD)"
@@ -843,10 +848,19 @@ class Mission:
             lock_req, self._req_lock = self._req_lock, None
             auto_req, self._req_auto = self._req_auto, None
 
+        stabilize = bool(ctx.get("pilot_stabilize"))
+        self._stabilize_edge = stabilize and not self._pilot_stabilize
+        self._pilot_stabilize = stabilize
         if abort:
             self._stop_test_target(now)
+        if self.safedown.active:
+            return self._safedown_cycle(now, ctx)
         if self.idle.active:
             return self._idle_cycle(now, ctx)
+        if self.phase == "SAFEDOWN_FAILED":
+            if ctx.get("gate_ok") and getattr(self.mapper, "armed", False):
+                return {}
+            self._set_phase("PILOT", now)
         if self.phase == "IDLE":
 
             if ctx.get("gate_ok") and getattr(self.mapper, "armed", False):
@@ -924,8 +938,14 @@ class Mission:
         w = self.wasp
         if not getattr(self.mapper, "armed", False):
             w.used = False
-        if abort and w.started is not None and ctx.get("gate_ok"):
-            return self._start_recovery(now, ctx, "ABORT")
+        # After a launch, and after a handover to the pilot, SAFEDOWN and a flip
+        # onto STABILIZE both land it on its own while it is in the air.
+        in_air = (w.started is None and w.used and getattr(self.mapper, "armed", False)
+                  and ctx.get("safedown_ok") and ctx.get("airborne"))
+        if abort and ((w.started is not None and ctx.get("gate_ok")) or in_air):
+            return self._start_safedown(now, ctx, "SAFEDOWN button")
+        if self._stabilize_edge and in_air:
+            return self._start_safedown(now, ctx, "pilot switched to STABILIZE")
         if abort:
             if w.started is not None:
                 w.used = True
@@ -933,10 +953,10 @@ class Mission:
             w.launch_t = None
             self._run_t = None
             self._set_phase("WASP_DONE" if w.used else "PILOT", now)
-            self._note("WASP ABORT: every channel returned to the pilot", now)
+            self._note("WASP SAFEDOWN: not in the air, every channel returned to the pilot", now)
             return {}
         if w.started is not None and ctx.get("pilot_takeover"):
-            return self._start_recovery(now, ctx, "pilot switched to STABILIZE")
+            return self._start_safedown(now, ctx, "pilot switched to STABILIZE")
         if not ctx.get("gate_ok"):
             self._stop_test_target(now)
             if self.phase not in ("PILOT", "WASP_DONE"):
@@ -1004,41 +1024,81 @@ class Mission:
         self._wasp_last_out = out
         return out
 
-    RECOVERY_GROUND_S = 0.5
+    SAFEDOWN_GROUND_S = 0.5
 
-    def _start_recovery(self, now, ctx, reason):
-        # ABORT or the pilot's ACRO -> STABILIZE mid-launch: ALT_HOLD stops the
-        # sink and levels the drone, which bleeds off the launch speed, then it
-        # climbs RECOVERY_RISE_M and holds until the pilot changes mode again.
+    def _start_safedown(self, now, ctx, reason):
+        # The SAFEDOWN button or the pilot's switch onto STABILIZE: level, stop and
+        # land on its own (safedown.py).
         hold = self.wasp.params["throttle"]
         on_ground = (ctx.get("airborne") is False and self.wasp.started is not None
-                     and now - self.wasp.started < self.RECOVERY_GROUND_S)
+                     and now - self.wasp.started < self.SAFEDOWN_GROUND_S)
         self._stop_test_target(now)
-        if on_ground:
-            # Still on the tripod or ground: cancel instead of taking off into a climb.
-            self.wasp.started = None
-            self.wasp.launch_t = None
-            self.wasp.used = True
-            self._note(f"WASP {reason} on the ground: launch cancelled, every channel to the pilot", now)
-            self._set_phase("WASP_DONE", now)
-            return {}
         self.wasp.started = None
         self.wasp.launch_t = None
         self.wasp.used = True
+        if on_ground:
+            # Still on the tripod or ground: cancel instead of taking off.
+            self._note(f"WASP {reason} on the ground: launch cancelled, every channel to the pilot", now)
+            self._set_phase("WASP_DONE", now)
+            return {}
         self._reset_motion()
         self._unlock()
         self.engaged = True
         with self._lock:
             self._hold = None
+        self.safedown.begin(now, ctx, reason, hold)
+        self._note(f"SAFEDOWN: {reason}; level, stop, then LAND on its own", now)
+        self._set_phase("SAFEDOWN", now)
+        # This cycle's gate is still the launch's (often closed by the very
+        # mode change that started it): fly straight away.
+        return self._safedown_output(now, ctx)
+
+    def _end_safedown(self, now, text):
+        self._stop_test_target(now)
+        self.safedown.stop()
+        self._reset_motion()
+        self.engaged = False
+        self._note(text, now)
+        self._set_phase("PILOT", now)
+        return {}
+
+    def _safedown_cycle(self, now, ctx):
+        r = self.safedown
+        if r.switch_moved(ctx.get("mode_switch")):
+            selected = ctx.get("mode_switch_mode")
+            if selected == "STABILIZE":
+                # The switch's SafeDown position: carry on, whoever started it.
+                r.reassert()
+                self._note("SAFEDOWN: pilot switch on STABILIZE, SafeDown carries on", now)
+            else:
+                # Plan B: any other position is the pilot taking over, even
+                # ALT_HOLD, which the FC may already be in.
+                return self._end_safedown(
+                    now, f"SAFEDOWN ended: pilot switched to {selected or 'another mode'}; "
+                         "every channel to the pilot")
+        if not ctx.get("gate_ok"):
+            why = ctx.get("gate_why") or "gate"
+            if why == "disarmed" and r.stage == "DESCEND":
+                return self._end_safedown(now, "SAFEDOWN complete: landed, FC disarmed")
+            return self._end_safedown(now, f"SAFEDOWN ended: {why}; every channel to the pilot")
+        return self._safedown_output(now, ctx)
+
+    def _safedown_output(self, now, ctx):
+        r = self.safedown
         try:
-            self.idle.begin(now, ctx, self.ceiling_m, recovery=True, hold_throttle=hold)
-            if not self.mapper.idle_request_alt_hold():
-                raise ValueError("could not request ALT_HOLD")
-            self._note(f"RECOVERY: {reason}; ALT_HOLD, level, climb {self.idle.rise_m:g} m, then hold", now)
-            self._set_phase("IDLE", now)
-            return self.idle.output(self.mapper, now, ctx)
+            out = r.output(self.mapper, now, ctx)
+        except Handover as exc:
+            return self._end_safedown(now, f"SAFEDOWN ended: {exc}; every channel to the pilot")
         except (ValueError, KeyError, TypeError, OverflowError) as exc:
-            return self._idle_failed(now, str(exc))
+            self._stop_test_target(now)
+            r.stop()
+            self._note(f"SAFEDOWN FAILED: {exc}; every channel to the pilot", now)
+            self._set_phase("SAFEDOWN_FAILED", now)
+            return {}
+        finally:
+            for text in r.take_notes():
+                self._note(f"SAFEDOWN: {text}", now)
+        return out
 
     def _start_idle(self, now, ctx, reason):
         ground_abort = (self.wasp.enabled and self.wasp.started is None
@@ -1073,16 +1133,6 @@ class Mission:
         return {}
 
     def _idle_cycle(self, now, ctx):
-        if self.idle.switch_moved(ctx.get("mode_switch")):
-            # Any flick of the mode switch is the pilot taking over, even onto
-            # ALT_HOLD, which the FC is already in and so shows no mode change.
-            self._stop_test_target(now)
-            self.idle.stop()
-            self._reset_motion()
-            self.engaged = False
-            self._note("RECOVERY ended: pilot moved the mode switch; every channel to the pilot", now)
-            self._set_phase("PILOT", now)
-            return {}
         if not ctx.get("gate_ok"):
             self._stop_test_target(now)
             self.idle.stop()
@@ -1629,6 +1679,7 @@ class Mission:
             test_centre_remaining_s=test_centre_remaining,
             idle_s=self.idle_s,
             idle=self.idle.snapshot(),
+            safedown=self.safedown.snapshot(),
             idle_remaining_s=None if self._run_t is None else round(max(0.0, self.idle_s-(now-self._run_t)), 2),
             wasp_progress=self.wasp.progress(now),
             camera_mount_deg=self.camera_mount_deg,

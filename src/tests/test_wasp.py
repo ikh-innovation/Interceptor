@@ -165,19 +165,31 @@ class Mapper:
     armed = False
     camera_mount_deg = 90
 
-    alt_hold_requests = 0
+    hover_thrust = .125
+
+    def __init__(self):
+        self.mode_requests = []
+        self.disarms = 0
+
+    @property
+    def alt_hold_requests(self):
+        return self.mode_requests.count("ALT_HOLD")
 
     def wasp_pwm(self, rates, throttle):
         return dict(roll=1500+int(rates[0]*100), pitch=1500+int(rates[1]*100),
                     yaw=1500, throttle=1000+int(throttle*1000))
 
-    # WASP recovery: ALT_HOLD sticks are told apart from ACRO ones by the
+    # SafeDown: ALT_HOLD sticks are told apart from ACRO ones by the
     # "idle" key, so a test can see which of the two the mission sent.
     def idle_pwm(self, yaw, climb):
         return dict(roll=1500, pitch=1500, yaw=1500, throttle=1500, idle=(yaw, climb))
 
-    def idle_request_alt_hold(self):
-        self.alt_hold_requests += 1
+    def request_mode(self, name):
+        self.mode_requests.append(name)
+        return True
+
+    def request_disarm(self, force=False):
+        self.disarms += 1
         return True
 
 
@@ -307,11 +319,11 @@ class LifecycleTests(unittest.TestCase):
                 else:
                     self.ctx["det_t"] = now-.26
                 out = self.m.cycle(now+.01, self.ctx)
-                self.assertEqual(self.m.phase, "IDLE" if abort else "WASP_FLIGHT")
-                self.assertEqual(self.m.idle.recovery, abort)
+                self.assertEqual(self.m.phase, "SAFEDOWN" if abort else "WASP_FLIGHT")
+                self.assertEqual(self.m.safedown.active, abort)
                 self.assertEqual(self.mapper.alt_hold_requests, 1 if abort else 0)
                 # Either way: level sticks at the launch throttle (the FC has
-                # not ACKed ALT_HOLD yet in the recovery case).
+                # not ACKed ALT_HOLD yet in the SafeDown case).
                 self.assertEqual(out, self.mapper.wasp_pwm((0, 0, 0), 1))
                 if abort:
                     self.assertIsNone(self.m.wasp.started)
@@ -610,12 +622,12 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.m.cycle(150, self.ctx), self.mapper.wasp_pwm((0, 0, 0), 1))
         self.assertEqual(self.m.phase, "WASP_FLIGHT")
         # The pilot switching out of ACRO to anything but STABILIZE drops the
-        # commander gate without a takeover: every channel back, no recovery.
+        # commander gate without a takeover: every channel back, no SafeDown.
         self.ctx.update(att=ATT, gate_ok=False, fc_mode="LOITER")
         self.assertEqual(self.m.cycle(150.01, self.ctx), {})
         self.assertEqual(self.m.phase, "WASP_DONE")
-        self.assertFalse(self.m.idle.active)
-        self.assertEqual(self.mapper.alt_hold_requests, 0)
+        self.assertFalse(self.m.safedown.active)
+        self.assertEqual(self.mapper.mode_requests, [])
         self.ctx["gate_ok"] = True
         self.assertEqual(self.m.cycle(155, self.ctx), {})
         self.assertEqual(self.m.phase, "WASP_DONE")
@@ -704,15 +716,22 @@ class LifecycleTests(unittest.TestCase):
                         self.assertIsNone(self.m.snapshot(100+offset)["idle_remaining_s"])
                         self.assertEqual(self.m.phase, "WASP_FLIGHT")
                     self.m.request_abort()
-                    self.assertEqual(self.m.cycle(100+limit, self.ctx), {"throttle": 1})
-                    self.assertEqual(sent[-1], ((0, 0, 0), 1))
-                    self.assertEqual(self.m.phase, "IDLE")
-                    self.assertTrue(self.m.idle.recovery)
+                    self.assertTrue(self.m.cycle(100+limit, self.ctx))
+                    rates, throttle = sent[-1]
+                    # SafeDown in ACRO: rates that level it, the launch throttle
+                    # only while it is not past 60 degrees.
+                    self.assertEqual(rates[2], 0)
+                    self.assertLess(rates[0], 0)  # rolled .2 rad right
+                    if tilt:
+                        self.assertLess(rates[1], 0)
+                    self.assertEqual(throttle, 1) if tilt <= 60 else self.assertLess(throttle, .5)
+                    self.assertEqual(self.m.phase, "SAFEDOWN")
+                    self.assertTrue(self.m.safedown.active)
                     self.assertEqual(self.mapper.alt_hold_requests, 1)
-                    # The pilot changes mode: the gate drops and recovery ends.
-                    self.ctx.update(gate_ok=False, fc_mode="STABILIZE")
+                    # The FC changes to a mode of the pilot's: SafeDown ends.
+                    self.ctx.update(gate_ok=False, fc_mode="LOITER")
                     self.assertEqual(self.m.cycle(100+limit+.005, self.ctx), {})
-                    self.assertFalse(self.m.idle.active)
+                    self.assertFalse(self.m.safedown.active)
                     self.assertEqual(self.m.cycle(100+limit+.007, self.ctx), {})
                     self.assertEqual(self.m.phase, "WASP_DONE")
                     self.ctx.update(gate_ok=True, fc_mode="ACRO")
@@ -787,8 +806,8 @@ class LifecycleTests(unittest.TestCase):
                     self.assertEqual(self.m.phase, "WASP_FLIGHT")
                 elif failure == "abort":
                     self.assertEqual(out, self.mapper.wasp_pwm((0, 0, 0), 1))
-                    self.assertEqual(self.m.phase, "IDLE")
-                    self.assertTrue(self.m.idle.recovery)
+                    self.assertEqual(self.m.phase, "SAFEDOWN")
+                    self.assertTrue(self.m.safedown.active)
                     self.assertEqual(self.mapper.alt_hold_requests, 1)
                     continue
                 else:
@@ -798,87 +817,66 @@ class LifecycleTests(unittest.TestCase):
                 if failure == "ground abort":
                     self.assertIn("on the ground", self.m.event)
                 self.assertEqual(self.mapper.alt_hold_requests, 0)
-                self.assertFalse(self.m.idle.active)
+                self.assertFalse(self.m.safedown.active)
 
     def recover(self, now=101.5, **ctx):
-        """Start a WASP recovery by ABORT at `now`, the FC still in ACRO."""
+        """Start SafeDown by the SAFEDOWN button at `now`, the FC still in ACRO."""
         self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)
         self.launch()
         self.ctx.update(ctx)
         self.m.request_abort()
         return self.m.cycle(now, self.ctx)
 
-    def test_recovery_sticks_level_at_launch_throttle_until_ack_then_climb_3_m_and_hold(self):
+    def ack(self, mode, accepted=True, t=None):
+        self.ctx["mode_ack"] = (mode, accepted, t if t is not None else len(self.mapper.mode_requests))
+
+    def test_safedown_bridges_at_launch_throttle_then_alt_hold_levels_stops_and_lands(self):
         self.mapper.armed = False
         self.assertEqual(self.m.set_wasp_param("throttle", .85), "")
         self.mapper.armed = True
         self.assertEqual(self.recover(height=5), self.mapper.wasp_pwm((0, 0, 0), .85))
-        self.assertEqual((self.m.phase, self.m.idle.stage), ("IDLE", "SWITCHING"))
-        self.assertEqual(self.m.idle.height, 5+Idle.RECOVERY_RISE_M)
+        self.assertEqual((self.m.phase, self.m.safedown.stage), ("SAFEDOWN", "SWITCHING"))
+        self.assertEqual(self.m.snapshot(101.5)["safedown"]["stage"], "SWITCHING")
         self.assertIsNone(self.m.snapshot(101.5)["idle_remaining_s"])
-        self.assertTrue(self.m.snapshot(101.5)["idle"]["recovery"])
-        # No ACK and still ACRO: level sticks at the 85 % launch throttle.
-        for now in (101.52, 102, 103.4):
+        # No ACK and still ACRO: level sticks at the 85 % launch throttle, briefly.
+        for now in (101.52, 101.8, 101.99):
             self.assertEqual(self.m.cycle(now, self.ctx), self.mapper.wasp_pwm((0, 0, 0), .85))
         # The ACK alone switches the sticks to their ALT_HOLD meaning.
-        self.ctx["idle_mode_accepted"] = True
-        out = self.m.cycle(103.42, self.ctx)
-        self.assertIn("idle", out)
-        self.assertEqual(self.m.phase, "IDLE")
-        climbs = []
+        self.ack("ALT_HOLD")
+        self.assertEqual(self.m.cycle(101.995, self.ctx)["idle"], (0, 0))
         self.ctx["fc_mode"] = "ALT_HOLD"
-        for i in range(1, 301):
-            out = self.m.cycle(103.42+i*.01, self.ctx)
-            climbs.append(out["idle"][1])
-        self.assertTrue(self.m.idle.confirmed)
-        self.assertGreater(climbs[-1], 0)
-        self.assertAlmostEqual(max(climbs), Idle.RECOVERY_CLIMB_MPS)
-        self.assertTrue(all(b-a <= .01+1e-9 for a, b in zip(climbs, climbs[1:])))
-        self.assertEqual(self.m.idle.stage, "CLIMB")
-        # At the target the climb ramps back to zero and it holds there.
-        self.ctx.update(height=5+Idle.RECOVERY_RISE_M)
-        for i in range(1, 301):
-            out = self.m.cycle(106.42+i*.01, self.ctx)
-        self.assertEqual(out["idle"], (0, 0))
-        self.assertEqual((self.m.phase, self.m.idle.stage), ("IDLE", "HOLD"))
-        # No time limit: still holding long after the Idle setting.
-        for now in (130, 200):
+        for i in range(1, 201):
+            out = self.m.cycle(101.995+i*.01, self.ctx)
+        self.assertEqual(self.m.safedown.stage, "DESCEND")
+        self.assertEqual(self.mapper.mode_requests[-1], "LAND")
+        self.ack("LAND")
+        self.ctx["fc_mode"] = "LAND"
+        for now in (104.1, 130, 200):
             self.assertEqual(self.m.cycle(now, self.ctx)["idle"], (0, 0))
-        self.assertEqual(self.mapper.alt_hold_requests, 1)
+        self.assertEqual(self.m.phase, "SAFEDOWN")
+        self.mapper.armed = False
+        self.ctx.update(gate_ok=False, gate_why="disarmed")
+        self.assertEqual(self.m.cycle(201, self.ctx), {})
+        self.assertIn("SAFEDOWN complete: landed", self.m.event)
 
-    def test_recovery_climbs_only_once_level_and_caps_at_the_ceiling(self):
-        self.recover(height=self.m.ceiling_m-1, idle_mode_accepted=True,
-                     att=dict(roll=0, pitch=math.radians(30), yaw=0))
-        self.assertEqual(self.m.idle.height, self.m.ceiling_m)
-        self.ctx["fc_mode"] = "ALT_HOLD"
-        for i in range(1, 51):
-            self.assertEqual(self.m.cycle(101.5+i*.01, self.ctx)["idle"][1], 0)
-        self.assertEqual(self.m.idle.stage, "LEVEL")
-        self.ctx["att"] = ATT
-        for i in range(1, 51):
-            out = self.m.cycle(102+i*.01, self.ctx)
-        self.assertGreater(out["idle"][1], 0)
-
-    def test_stabilize_takeover_in_flight_starts_the_same_recovery(self):
+    def test_stabilize_takeover_in_flight_starts_the_same_safedown(self):
         self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)
         self.launch()
-        self.ctx.update(gate_ok=False, pilot_takeover=True, fc_mode="STABILIZE", height=4)
+        self.ctx.update(gate_ok=False, pilot_takeover=True, pilot_stabilize=True, fc_mode="STABILIZE", height=4)
         self.assertEqual(self.m.cycle(101, self.ctx), self.mapper.wasp_pwm((0, 0, 0), 1))
-        self.assertEqual(self.m.phase, "IDLE")
-        self.assertTrue(self.m.idle.recovery)
-        self.assertEqual(self.m.idle.source_mode, "STABILIZE")
+        self.assertEqual(self.m.phase, "SAFEDOWN")
+        self.assertEqual(self.m.safedown.source_mode, "STABILIZE")
         self.assertEqual(self.mapper.alt_hold_requests, 1)
         self.assertIn("STABILIZE", self.m.event)
-        # The commander's recovery gate accepts STABILIZE while switching.
+        # The commander's SafeDown gate accepts STABILIZE while switching.
         self.ctx.update(gate_ok=True, pilot_takeover=False)
         self.assertEqual(self.m.cycle(101.1, self.ctx), self.mapper.wasp_pwm((0, 0, 0), 1))
         self.ctx.update(fc_mode="ALT_HOLD")
         self.assertIn("idle", self.m.cycle(101.2, self.ctx))
-        self.assertEqual(self.m.idle.height, 4+Idle.RECOVERY_RISE_M)
-        # The pilot changes mode again: the gate drops, every channel back.
-        self.ctx.update(gate_ok=False, fc_mode="STABILIZE")
+        # The FC goes to a mode SafeDown did not ask for: every channel back.
+        self.ctx.update(fc_mode="LOITER")
         self.assertEqual(self.m.cycle(101.3, self.ctx), {})
-        self.assertFalse(self.m.idle.active)
+        self.assertFalse(self.m.safedown.active)
         self.ctx.update(gate_ok=True, fc_mode="ACRO")
         self.assertTrue(self.m.request_engage())
         self.assertEqual(self.m.cycle(101.4, self.ctx), {})
@@ -888,118 +886,99 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.mapper.alt_hold_requests, 1)
 
     def test_trigger_on_the_ground_in_the_first_half_second_cancels(self):
-        for trigger in ("abort", "stabilize"):
-            for after, airborne, recovers in ((.1, False, False), (.49, False, False),
-                                              (.51, False, True), (.1, True, True)):
+        for trigger in ("safedown", "stabilize"):
+            for after, airborne, lands in ((.1, False, False), (.49, False, False),
+                                           (.51, False, True), (.1, True, True)):
                 with self.subTest(trigger=trigger, after=after, airborne=airborne):
                     self.setUp()
                     self.launch()
                     self.ctx["airborne"] = airborne
-                    if trigger == "abort":
+                    if trigger == "safedown":
                         self.m.request_abort()
                     else:
                         self.ctx.update(gate_ok=False, pilot_takeover=True, fc_mode="STABILIZE")
                     out = self.m.cycle(100+after, self.ctx)
-                    self.assertEqual(self.mapper.alt_hold_requests, int(recovers))
-                    self.assertEqual(self.m.idle.active, recovers)
-                    self.assertEqual(self.m.phase, "IDLE" if recovers else "WASP_DONE")
-                    self.assertEqual(out, self.mapper.wasp_pwm((0, 0, 0), 1) if recovers else {})
+                    self.assertEqual(self.mapper.alt_hold_requests, int(lands))
+                    self.assertEqual(self.m.safedown.active, lands)
+                    self.assertEqual(self.m.phase, "SAFEDOWN" if lands else "WASP_DONE")
+                    self.assertEqual(out, self.mapper.wasp_pwm((0, 0, 0), 1) if lands else {})
                     self.assertIsNone(self.m.wasp.started)
-                    if not recovers:
+                    if not lands:
                         self.assertIn("launch cancelled", self.m.event)
 
-    def test_recovery_holds_through_stale_telemetry_and_centres_sticks_in_alt_hold(self):
-        self.recover(idle_mode_accepted=True)
-        self.ctx["fc_mode"] = "ALT_HOLD"
-        self.assertIn("idle", self.m.cycle(101.6, self.ctx))
-        for stale in (dict(att=None), dict(height=None), dict(idle_ok=False, idle_why="no fresh FC heartbeat")):
-            with self.subTest(stale=stale):
-                good = dict(self.ctx)
-                self.ctx.update(stale)
-                for i in range(1, 101):
-                    out = self.m.cycle(101.6+i*.01, self.ctx)
-                    self.assertEqual(out["idle"], (0, 0))
-                    self.assertEqual((self.m.phase, self.m.idle.stage), ("IDLE", "HOLD"))
-                self.ctx = good
-                self.assertIn("idle", self.m.cycle(102.7, self.ctx))
-        self.assertTrue(self.m.idle.active)
-
-    def test_recovery_starts_on_a_stale_sample_and_takes_the_target_from_the_first_fresh_one(self):
+    def test_safedown_starts_on_a_stale_sample_and_centres_sticks_in_alt_hold(self):
         self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)
         self.launch()
         self.ctx.update(att=None, height=None)
         self.m.request_abort()
         self.assertEqual(self.m.cycle(101, self.ctx), self.mapper.wasp_pwm((0, 0, 0), 1))
-        self.assertEqual(self.m.phase, "IDLE")
-        self.assertIsNone(self.m.idle.height)
+        self.assertEqual(self.m.phase, "SAFEDOWN")
         self.ctx.update(fc_mode="ALT_HOLD")
-        self.assertEqual(self.m.cycle(101.1, self.ctx)["idle"], (0, 0))
-        self.ctx.update(att=ATT, height=6)
-        self.assertIn("idle", self.m.cycle(101.2, self.ctx))
-        self.assertEqual(self.m.idle.height, 6+Idle.RECOVERY_RISE_M)
+        for i in range(1, 101):
+            self.assertEqual(self.m.cycle(101+i*.01, self.ctx)["idle"], (0, 0))
+        self.assertEqual(self.m.phase, "SAFEDOWN")
 
-    def test_recovery_fails_to_the_pilot_when_alt_hold_is_rejected_or_never_confirmed(self):
-        for case in ("denied", "timeout", "acked but never shown"):
-            with self.subTest(case=case):
-                self.setUp()
-                self.recover(now=101)
-                if case == "denied":
-                    self.ctx["idle_mode_denied"] = True
-                    self.assertEqual(self.m.cycle(101.1, self.ctx), {})
-                    self.assertIn("rejected ALT_HOLD", self.m.event)
-                else:
-                    self.ctx["idle_mode_accepted"] = case != "timeout"
-                    self.assertTrue(self.m.cycle(102.99, self.ctx))
-                    self.assertEqual(self.m.phase, "IDLE")
-                    self.assertEqual(self.m.cycle(103.01, self.ctx), {})
-                    self.assertIn("not confirmed", self.m.event)
-                self.assertEqual(self.m.phase, "IDLE_FAILED")
-                self.assertFalse(self.m.idle.active)
-                # No relaunch until disarm, whatever the gate does.
-                self.assertTrue(self.m.request_engage())
-                self.assertEqual(self.m.cycle(103.2, self.ctx), {})
-                self.ctx["gate_ok"] = False
-                self.assertEqual(self.m.cycle(103.3, self.ctx), {})
-                self.assertEqual(self.m.phase, "WASP_DONE")
-                self.ctx["gate_ok"] = True
-                self.assertTrue(self.m.request_engage())
-                self.assertEqual(self.m.cycle(103.4, self.ctx), {})
-                self.assertEqual(self.m.phase, "WASP_DONE")
-                self.assertEqual(self.mapper.alt_hold_requests, 1)
+    def test_alt_hold_and_stabilize_refused_fails_to_the_pilot_until_disarm(self):
+        self.recover(now=101)
+        self.ack("ALT_HOLD", False)
+        self.m.cycle(101.1, self.ctx)
+        self.assertEqual(self.mapper.mode_requests, ["ALT_HOLD", "STABILIZE"])
+        self.assertEqual(self.m.safedown.fallback, "STABILIZE")
+        self.ack("STABILIZE", False)
+        self.assertEqual(self.m.cycle(101.2, self.ctx), {})
+        self.assertIn("SAFEDOWN FAILED", self.m.event)
+        self.assertEqual(self.m.phase, "SAFEDOWN_FAILED")
+        self.assertFalse(self.m.safedown.active)
+        # No relaunch until disarm, whatever the gate does.
+        self.assertTrue(self.m.request_engage())
+        self.assertEqual(self.m.cycle(103.2, self.ctx), {})
+        self.ctx["gate_ok"] = False
+        self.assertEqual(self.m.cycle(103.3, self.ctx), {})
+        self.assertEqual(self.m.phase, "WASP_DONE")
+        self.ctx["gate_ok"] = True
+        self.assertTrue(self.m.request_engage())
+        self.assertEqual(self.m.cycle(103.4, self.ctx), {})
+        self.assertEqual(self.m.phase, "WASP_DONE")
 
-    def test_recovery_ends_when_the_pilot_changes_mode_or_disarms(self):
-        for end in ("STABILIZE", "LOITER", "ACRO", "disarm", "switch"):
+    def test_safedown_ends_on_plan_b_switch_fc_mode_or_disarm(self):
+        for end in ("LOITER", "ACRO", "disarm", "switch up", "switch down"):
             with self.subTest(end=end):
                 self.setUp()
-                self.recover(idle_mode_accepted=True, mode_switch=0)
+                self.recover(mode_switch=0, mode_switch_mode="ACRO")
+                self.ack("ALT_HOLD")
                 self.ctx["fc_mode"] = "ALT_HOLD"
                 self.assertIn("idle", self.m.cycle(101.6, self.ctx))
                 if end == "disarm":
                     self.mapper.armed = False
                     self.ctx.update(gate_ok=False, gate_why="disarmed")
-                elif end == "switch":
+                elif end == "switch up":
                     # Even onto ALT_HOLD, where the FC mode does not change.
-                    self.ctx["mode_switch"] = 5
+                    self.ctx.update(mode_switch=5, mode_switch_mode="ALT_HOLD")
+                elif end == "switch down":
+                    self.ctx.update(mode_switch=1, mode_switch_mode="ACRO")
                 else:
-                    self.ctx.update(gate_ok=False, fc_mode=end)
+                    self.ctx["fc_mode"] = end
                 self.assertEqual(self.m.cycle(101.7, self.ctx), {})
-                self.assertFalse(self.m.idle.active)
-                if end == "switch":
-                    self.assertIn("moved the mode switch", self.m.event)
+                self.assertFalse(self.m.safedown.active)
+                if end.startswith("switch"):
+                    self.assertIn("pilot switched to", self.m.event)
                     self.ctx["gate_ok"] = False
                 self.assertEqual(self.m.cycle(101.8, self.ctx), {})
                 self.assertEqual(self.m.phase, "PILOT" if end == "disarm" else "WASP_DONE")
                 self.assertEqual(self.mapper.alt_hold_requests, 1)
 
-    def test_recovery_survives_a_late_heartbeat_showing_acro_or_stabilize(self):
-        self.recover(idle_mode_accepted=True, mode_switch=0)
-        for mode in ("ACRO", "STABILIZE", "ACRO"):
-            self.ctx["fc_mode"] = mode
+    def test_safedown_rides_a_late_heartbeat_and_the_switch_onto_stabilize(self):
+        self.recover(mode_switch=0, mode_switch_mode="ACRO")
+        self.ack("ALT_HOLD")
+        for _ in range(3):  # ACKed, the heartbeat still shows ACRO
             self.assertIn("idle", self.m.cycle(101.6, self.ctx))
-            self.assertEqual(self.m.phase, "IDLE")
+        self.ctx.update(fc_mode="STABILIZE", mode_switch=2, mode_switch_mode="STABILIZE")
+        self.assertNotIn("idle", self.m.cycle(101.62, self.ctx), "the app holds the STABILIZE throttle")
+        self.assertEqual(self.m.phase, "SAFEDOWN")
+        self.assertEqual(self.mapper.mode_requests[-1], "ALT_HOLD")
         self.ctx["fc_mode"] = "LOITER"
         self.assertEqual(self.m.cycle(101.7, self.ctx), {})
-        self.assertFalse(self.m.idle.active)
+        self.assertFalse(self.m.safedown.active)
 
     def test_late_first_detection_after_idle_limit_still_acquires(self):
         self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)

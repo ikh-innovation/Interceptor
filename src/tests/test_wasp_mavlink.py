@@ -4,13 +4,12 @@ from time import perf_counter, sleep
 import unittest
 from pymavlink import mavutil
 from test_wifi_autonomy import WifiFixture, until  # sets sys.path
-from idle import Idle
 
 ALT_HOLD, STABILIZE, ACRO, LOITER, LAND = 2, 0, 1, 5, 9
 
 
-class RecoveryMavlinkTests(WifiFixture):
-    def test_test_launch_countdown_centre_and_abort_recovers_in_alt_hold(self):
+class SafeDownMavlinkTests(WifiFixture):
+    def test_test_launch_countdown_centre_and_safedown_lands(self):
         self.wasp_ready(idle_s=8, launch_s=.3)
         self.command("waspp", "straight:0")
         self.command("waspp", "centre_timer:1")
@@ -26,13 +25,13 @@ class RecoveryMavlinkTests(WifiFixture):
         until(lambda: abs(self.fc.overrides.get(1,0)-1500)<=21
               and abs(self.fc.overrides.get(2,0)-1500)<=21)
         self.assertEqual(self.fc.overrides[3],1780)
-        self.command("abort","1")
-        self.assert_recovers()
+        self.command("safedown","1")
+        self.assert_safedown()
         self.assertIsNone(self.m._test_target_started)
-        self.assert_climbs()
-        self.release_by_pilot()
+        self.assert_holds()
+        self.assert_lands()
 
-    def test_armed_test_launch_centres_target_then_abort_recovers_in_alt_hold(self):
+    def test_armed_test_launch_centres_target_then_safedown_holds_in_alt_hold(self):
         self.wasp_ready(idle_s=8)
         self.command("waspp", "profile:extra")
 
@@ -61,14 +60,14 @@ class RecoveryMavlinkTests(WifiFixture):
         self.assertEqual(self.m.phase, "WASP_FLIGHT")
         self.assertEqual(self.fc.overrides[3], 1780)
         self.assertEqual(self.m.wasp.params["rate"], 120)
-        self.command("abort", "1")
-        self.assert_recovers()
+        self.command("safedown", "1")
+        self.assert_safedown()
         self.assertIsNone(self.m._test_target_started)
         self.assertEqual(self.m.snapshot(perf_counter())["test_target"], dict(x=.5, y=.5))
-        self.assert_climbs()
+        self.assert_holds()
         self.release_by_pilot()
 
-    def test_fixed_test_target_launches_with_selected_steering_and_abort_recovers(self):
+    def test_fixed_test_target_launches_with_selected_steering_and_safedown_holds(self):
         self.wasp_ready(idle_s=5)
         self.command("waspp", "profile:extra")
         self.command("waspp", "launch_s:0.2")
@@ -83,9 +82,9 @@ class RecoveryMavlinkTests(WifiFixture):
         self.assertGreater(self.fc.overrides[1], 1500)
         self.assertEqual(self.m.test_target, dict(x=.65, y=.4))
         self.assertTrue(self.m.set_test_target(".2:.2"))
-        self.command("abort", "1")
-        self.assert_recovers()
-        self.assert_climbs()
+        self.command("safedown", "1")
+        self.assert_safedown()
+        self.assert_holds()
         self.release_by_pilot()
 
     def test_default_countdown_waits_before_throttle_and_abort_cancels(self):
@@ -101,8 +100,8 @@ class RecoveryMavlinkTests(WifiFixture):
         self.assertAlmostEqual(self.m.wasp.started-start, 3, delta=.1)
         until(lambda: self.fc.overrides.get(3) == 1900)
         self.assertEqual(self.fc.overrides[3], 1900)
-        # Still at the arming height and inside RECOVERY_GROUND_S: cancelled.
-        self.command("abort", "1")
+        # Still at the arming height and inside SAFEDOWN_GROUND_S: cancelled.
+        self.command("safedown", "1")
         self.assert_cancelled_on_ground()
         self.fc.mode = 0; self.fc.armed = False
         until(lambda: not self.c.armed and self.m.phase == "PILOT")
@@ -110,10 +109,10 @@ class RecoveryMavlinkTests(WifiFixture):
         self.wasp_ready(launch_s=3)
         self.command("engage", "1")
         until(lambda: self.m.wasp.launch_t is not None)
-        self.command("abort", "1")
+        self.command("safedown", "1")
         until(lambda: self.m.wasp.launch_t is None)
         self.assertIsNone(self.m.wasp.started)
-        self.assertIn("WASP ABORT", self.m.event)
+        self.assertIn("WASP SAFEDOWN", self.m.event)
         sleep(3.2)
         # The countdown was cancelled: never launched, ready for a fresh ENGAGE.
         self.assertIsNone(self.m.wasp.started)
@@ -121,9 +120,9 @@ class RecoveryMavlinkTests(WifiFixture):
         self.assertEqual(self.m.phase, "WASP_READY")
         self.assertFalse(self.fc.overrides)
         self.assertFalse(self.fc.mode_requests)
-        self.assertFalse(self.m.idle.active)
+        self.assertFalse(self.m.safedown.active)
 
-    def test_wasp_crosses_ceiling_and_guides_past_idle_setting_until_stabilize_recovers_without_climbing(self):
+    def test_wasp_crosses_ceiling_and_guides_past_idle_setting_until_stabilize_lands_it(self):
         self.wasp_ready(idle_s=3)
         self.target["on"] = True
         self.command("engage", "1")
@@ -143,17 +142,16 @@ class RecoveryMavlinkTests(WifiFixture):
         self.assertFalse(self.fc.mode_requests)
         self.assertNotIn("Idle time limit", self.m.event)
         self.fc.mode = STABILIZE
-        self.assert_recovers()
+        self.assert_safedown()
         self.assertIn("STABILIZE", self.m.event)
-        # Above the ceiling already: the target is the current height, so it
-        # holds there instead of climbing further.
-        self.assertAlmostEqual(self.m.idle.height, self.m.ceiling_m + 20, delta=.5)
-        until(lambda: self.m.idle.stage == "HOLD" and self.fc.overrides.get(3) == 1500)
+        # Above the ceiling already: centred ALT_HOLD sticks hold it there,
+        # never a climb, and then it lands.
+        self.assert_holds()
         sleep(.3)
         self.assertEqual(self.fc.overrides.get(3), 1500)
-        self.release_by_pilot()
+        self.assert_lands()
 
-    def test_wasp_platform_angles_launch_loss_reacquisition_and_stabilize_takeover_recovers(self):
+    def test_wasp_platform_angles_launch_loss_reacquisition_and_stabilize_takeover_levels(self):
         for tilt in (0, 45, 90):
             with self.subTest(tilt=tilt):
                 self.fc.att.update(pitch=-math.radians(tilt), roll=0, yaw=.7)
@@ -183,14 +181,15 @@ class RecoveryMavlinkTests(WifiFixture):
                 self.assertFalse(self.m.idle.active)
                 self.assertIsNone(self.m._run_t)
                 self.fc.mode = STABILIZE
-                self.assert_recovers()
+                self.assert_safedown()
                 if tilt:
-                    # Not level yet: ALT_HOLD with zero climb until within 10 degrees.
-                    until(lambda: self.m.idle.stage == "LEVEL" and self.fc.overrides.get(3) == 1500)
-                    sleep(.3)
-                    self.assertEqual(self.fc.overrides.get(3), 1500)
+                    # Not level yet: ALT_HOLD with centred sticks, no LAND.
+                    until(lambda: self.m.safedown.stage == "LEVEL" and self.fc.overrides == self.CENTRED)
+                    sleep(2.5)
+                    self.assertEqual(self.m.safedown.stage, "LEVEL")
+                    self.assertNotIn(LAND, [m for _t, m in self.fc.mode_requests])
                     self.fc.att.update(pitch=0)
-                self.assert_climbs()
+                self.assert_holds()
                 self.release_by_pilot()
                 self.fc.armed = False; self.target["on"] = False
                 self.fc.att.update(pitch=-math.radians(tilt))
@@ -228,14 +227,14 @@ class RecoveryMavlinkTests(WifiFixture):
         self.fc.armed = False
         until(lambda: not self.fc.overrides and not self.m.idle.active)
 
-    def test_wasp_abort_on_the_ground_right_after_launch_cancels_without_recovery(self):
+    def test_wasp_safedown_on_the_ground_right_after_launch_cancels(self):
         self.wasp_ready()
         self.command("engage", "1")
         until(lambda: len(self.fc.overrides) == 4)
         self.assertFalse(self.c.backend.airborne()[0])
-        self.command("abort", "1")
+        self.command("safedown", "1")
         self.assert_cancelled_on_ground()
-        self.command("abort", "1"); sleep(.2)
+        self.command("safedown", "1"); sleep(.2)
         self.assertEqual(self.m.phase, "WASP_DONE")
         self.assertFalse(self.fc.overrides)
         self.assertFalse(self.fc.mode_requests)
@@ -257,7 +256,7 @@ class RecoveryMavlinkTests(WifiFixture):
         self.assert_transmitting(launch+1.5)
         self.assertEqual(self.fc.overrides[3], 1900)
         self.assertFalse(self.fc.mode_requests)
-        self.assertFalse(self.m.idle.active)
+        self.assertFalse(self.m.safedown.active)
         self.assertIsNone(self.m.snapshot(perf_counter())["idle_remaining_s"])
 
     def test_wasp_disarm_mid_flight_releases(self):
@@ -271,7 +270,7 @@ class RecoveryMavlinkTests(WifiFixture):
               and self.m.phase in ("PILOT", "WASP_DONE"))
         self.assertIsNone(self.m.wasp.started)
         self.assertFalse(self.fc.mode_requests)
-        self.assertFalse(self.m.idle.active)
+        self.assertFalse(self.m.safedown.active)
         sleep(.3)
         self.assertFalse(self.fc.overrides)
 
@@ -302,8 +301,7 @@ class RecoveryMavlinkTests(WifiFixture):
     def assert_mode_change_releases(self, mode):
         self.fc.mode = mode
         until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides)
-        self.assertFalse(self.m.idle.active)
-        self.assertFalse(self.m.idle.recovery)
+        self.assertFalse(self.m.safedown.active)
         self.assertFalse(self.fc.mode_requests)
         self.assertTrue(self.fc.armed and self.c.armed)
         sleep(.3)
@@ -323,36 +321,38 @@ class RecoveryMavlinkTests(WifiFixture):
         self.assertEqual(self.m.phase, "WASP_FLIGHT")
         return launch
 
-    def assert_recovers(self):
-        until(lambda: self.m.phase == "IDLE" and self.m.idle.recovery)
+    CENTRED = {1: 1500, 2: 1500, 3: 1500, 4: 1500}
+
+    def assert_safedown(self):
+        until(lambda: self.m.phase == "SAFEDOWN" and self.m.safedown.active)
         self.assertIsNone(self.m.wasp.started)
         self.assertIsNone(self.m.snapshot(perf_counter())["idle_remaining_s"])
-        until(lambda: [mode for _t, mode in self.fc.mode_requests] == [ALT_HOLD])
-        until(lambda: self.c.mode_name == "ALT_HOLD" and self.m.idle.confirmed)
-        self.assertEqual(self.m.phase, "IDLE")
+        until(lambda: self.fc.mode_requests and self.c.mode_name == "ALT_HOLD")
+        self.assertEqual({mode for _t, mode in self.fc.mode_requests}, {ALT_HOLD})
+        self.assertEqual(self.m.phase, "SAFEDOWN")
         self.assertTrue(self.fc.overrides)
 
-    def assert_climbs(self):
-        # ALT_HOLD climb sticks: level, throttle above mid, below full stick.
-        until(lambda: self.m.idle.stage == "CLIMB" and 1600 < self.fc.overrides.get(3, 0) < 1900)
-        self.assertEqual((self.fc.overrides[1], self.fc.overrides[2]), (1500, 1500))
-        self.assertLess(abs(self.fc.overrides[4]-1500), 25)
-        self.assertEqual(len(self.fc.mode_requests), 1)
+    def assert_holds(self):
+        # ALT_HOLD with centred sticks: level, heading hold, no climb.
+        until(lambda: self.m.safedown.stage in ("LEVEL", "STOP") and self.fc.overrides == self.CENTRED)
+        self.assertEqual(self.c.mode_name, "ALT_HOLD")
 
-    def assert_holds_at_target(self):
-        start = self.m.idle.height - Idle.RECOVERY_RISE_M
-        self.assertAlmostEqual(start, self.c.backend.height()[0], delta=.5)
-        self.fc.vfr["alt"] = 8 + self.m.idle.height
-        until(lambda: self.m.idle.stage == "HOLD" and self.fc.overrides.get(3) == 1500, timeout=4)
-        sleep(.3)
-        self.assertEqual(self.m.phase, "IDLE")
-        self.assertEqual(self.fc.overrides.get(3), 1500)
+    def assert_lands(self):
+        """LAND after the stop, the FC's own touchdown disarm, then the pilot."""
+        until(lambda: self.c.mode_name == "LAND", timeout=12)
+        self.assertEqual(self.m.safedown.stage, "DESCEND")
+        self.assertEqual(self.fc.mode_requests[-1][1], LAND)
+        until(lambda: self.fc.overrides == self.CENTRED)
+        until(lambda: not self.fc.armed and not self.c.armed and not self.m.safedown.active, timeout=4)
+        self.assertIn("SAFEDOWN complete: landed", self.m.event)
+        until(lambda: not self.fc.overrides)
+        self.assertIn(self.m.phase, ("PILOT", "WASP_READY"))
 
-    def release_by_pilot(self, mode=STABILIZE):
+    def release_by_pilot(self, mode=LOITER):
         count = len(self.fc.mode_requests)
         self.fc.mode = mode
         until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides)
-        self.assertFalse(self.m.idle.active)
+        self.assertFalse(self.m.safedown.active)
         self.assertTrue(self.fc.armed and self.c.armed)
         self.assertTrue(self.m.request_engage())
         sleep(.3)
@@ -363,9 +363,9 @@ class RecoveryMavlinkTests(WifiFixture):
 
     def assert_cancelled_on_ground(self):
         until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides)
-        self.assertIn("WASP ABORT", self.m.event)
+        self.assertIn("WASP SAFEDOWN", self.m.event)
         self.assertIn("on the ground", self.m.event)
-        self.assertFalse(self.m.idle.active)
+        self.assertFalse(self.m.safedown.active)
         self.assertIsNone(self.m.wasp.started)
         self.assertIsNone(self.m._run_t)
         self.assertFalse(self.fc.mode_requests)
@@ -390,110 +390,128 @@ class RecoveryMavlinkTests(WifiFixture):
         self.assertGreater(len(samples), 10)
         for sample in samples:
             self.assertEqual(sample, {1: 1500, 2: 1500, 3: throttle_pwm, 4: 1500})
-        self.assertEqual((self.m.phase, self.m.idle.stage), ("IDLE", "SWITCHING"))
+        self.assertEqual((self.m.phase, self.m.safedown.stage), ("SAFEDOWN", "SWITCHING"))
         self.assertNotEqual(self.c.mode_name, "ALT_HOLD")
 
-    def test_wasp_abort_in_flight_levels_at_launch_throttle_then_climbs_and_holds_in_alt_hold(self):
+    def test_wasp_safedown_in_flight_bridges_at_launch_throttle_then_levels_and_lands(self):
         self.fc.ack_delay = .5
         self.fly(throttle=.85)
         self.assertEqual(self.fc.overrides[3], 1780)
-        self.command("abort", "1")
-        until(lambda: self.m.phase == "IDLE" and self.m.idle.recovery)
-        self.assertIn("RECOVERY: ABORT", self.m.event)
+        self.command("safedown", "1")
+        until(lambda: self.m.phase == "SAFEDOWN")
+        self.assertIn("SAFEDOWN: SAFEDOWN button", self.m.event)
         self.assert_level_at_launch_throttle_until_ack(1780)
-        self.assert_recovers()
-        self.assertAlmostEqual(self.m.idle.height, Idle.RECOVERY_RISE_M, delta=.2)
-        self.assert_climbs()
-        self.assert_holds_at_target()
-        # No time limit in recovery either.
-        sleep(1.2)
-        self.assertEqual((self.m.phase, self.m.idle.stage), ("IDLE", "HOLD"))
+        self.assert_safedown()
+        self.assert_holds()
         self.assert_transmitting(perf_counter()-1)
-        self.release_by_pilot()
+        self.assert_lands()
+        self.assertFalse(self.fc.disarm_requests, "LAND disarms by itself")
 
-    def test_wasp_stabilize_takeover_in_flight_recovers_in_alt_hold(self):
+    def test_wasp_stabilize_takeover_in_flight_runs_the_same_safedown(self):
         self.fc.ack_delay = .5
         self.fly(after=1)
         self.fc.mode = STABILIZE
-        until(lambda: self.m.phase == "IDLE" and self.m.idle.recovery)
-        self.assertEqual(self.m.idle.source_mode, "STABILIZE")
+        until(lambda: self.m.phase == "SAFEDOWN")
+        self.assertEqual(self.m.safedown.source_mode, "STABILIZE")
         self.assertIn("STABILIZE", self.m.event)
         self.assert_level_at_launch_throttle_until_ack(1900)
-        self.assert_recovers()
-        self.assert_climbs()
-        self.assert_holds_at_target()
-        self.release_by_pilot(LOITER)
+        self.assert_safedown()
+        self.assert_holds()
+        self.assert_lands()
 
-    def test_wasp_recovery_fails_to_the_pilot_when_fc_rejects_alt_hold(self):
-        self.fc.mode_ack = mavutil.mavlink.MAV_RESULT_DENIED
+    def test_the_old_abort_command_is_safedown_too(self):
         self.fly()
         self.command("abort", "1")
-        until(lambda: self.m.phase == "IDLE_FAILED" and not self.fc.overrides)
-        self.assertIn("rejected ALT_HOLD", self.m.event)
-        self.assertFalse(self.m.idle.active)
-        self.assertEqual([mode for _t, mode in self.fc.mode_requests], [ALT_HOLD])
+        self.assert_safedown()
+        self.release_by_pilot()
+
+    def test_alt_hold_refused_flies_stabilize_with_the_app_throttle_then_lands(self):
+        self.fc.deny_modes.add(ALT_HOLD)
+        self.fc.landed_state = 2
+        self.fly()
+        self.command("safedown", "1")
+        until(lambda: self.c.mode_name == "STABILIZE" and self.m.safedown.fallback == "STABILIZE")
+        self.assertIn("ALT_HOLD refused", self.m.event)
+        # STABILIZE levels; the throttle is the app's: near the FC's mid-stick
+        # hover, not the launch throttle and not centred ALT_HOLD sticks.
+        until(lambda: self.m.safedown.stage in ("LEVEL", "STOP"))
+        sleep(.6)
+        self.assertEqual((self.fc.overrides[1], self.fc.overrides[2], self.fc.overrides[4]), (1500, 1500, 1500))
+        self.assertLess(abs(self.fc.overrides[3]-1500), 60)
+        until(lambda: sum(1 for _t, m in self.fc.mode_requests if m == ALT_HOLD) > 1)  # still offered
+        self.assert_lands()
+
+    def test_alt_hold_and_stabilize_refused_fail_to_the_pilot(self):
+        self.fc.deny_modes.update((ALT_HOLD, STABILIZE))
+        self.fly()
+        self.command("safedown", "1")
+        until(lambda: self.m.phase == "SAFEDOWN_FAILED" and not self.fc.overrides, timeout=4)
+        self.assertIn("SAFEDOWN FAILED", self.m.event)
+        self.assertFalse(self.m.safedown.active)
         self.assertEqual(self.c.mode_name, "ACRO")
         self.assertTrue(self.fc.armed and self.c.armed)
         self.assertTrue(self.m.request_engage())
         sleep(.5)
         self.assertFalse(self.fc.overrides)
         self.assertIsNone(self.m.wasp.started)
-        self.assertEqual(len(self.fc.mode_requests), 1)
-        self.fc.mode = STABILIZE
-        until(lambda: self.m.phase == "WASP_DONE")
-        self.assertFalse(self.fc.overrides)
 
-    def test_wasp_recovery_fails_when_alt_hold_never_shows_in_the_heartbeat(self):
+    def test_land_refused_descends_in_alt_hold_and_disarms_on_touchdown(self):
+        self.fc.deny_modes.add(LAND)
+        self.fc.landed_state = 2
+        self.fly()
+        self.command("safedown", "1")
+        self.assert_safedown()
+        until(lambda: self.m.safedown.fallback == "ALT_HOLD", timeout=12)
+        self.assertIn("LAND refused", self.m.event)
+        throttle_ch = self.c.backend.rc["throttle"]["chan"]
+        until(lambda: self.fc.overrides.get(throttle_ch, 1500) < 1450)
+        self.assertEqual(self.c.mode_name, "ALT_HOLD")
+        self.assertFalse(self.fc.disarm_requests, "no disarm in the air")
+        self.fc.landed_state = 1
+        until(lambda: self.fc.disarm_requests, timeout=3)
+        self.assertTrue(self.fc.disarm_requests[-1][1])
+        until(lambda: not self.c.armed and not self.fc.overrides)
+        self.assertIn("SAFEDOWN complete: landed", self.m.event)
+
+    def test_acked_mode_that_never_shows_in_a_fresh_heartbeat_is_not_trusted(self):
         self.fc.apply_mode = False
         self.fly()
-        self.command("abort", "1")
-        until(lambda: self.m.phase == "IDLE" and self.m.idle.accepted)
-        began = self.m.idle.started
-        until(lambda: self.m.phase == "IDLE_FAILED" and not self.fc.overrides, timeout=3)
-        self.assertGreaterEqual(perf_counter()-began, Idle.MODE_TIMEOUT_S)
+        self.command("safedown", "1")
+        until(lambda: self.m.phase == "SAFEDOWN_FAILED" and not self.fc.overrides, timeout=5)
         self.assertIn("not confirmed", self.m.event)
+        self.assertGreater(len(self.fc.mode_requests), 3, "retried before giving up")
         self.assertTrue(self.fc.armed and self.c.armed)
 
-    def test_wasp_recovery_keeps_going_through_a_late_alt_hold_heartbeat(self):
+    def test_safedown_keeps_going_through_a_late_alt_hold(self):
         self.fc.apply_mode = False
         self.fly()
-        self.command("abort", "1")
+        self.command("safedown", "1")
         until(lambda: self.fc.mode_requests)
-        requested = self.fc.mode_requests[0][0]
-        until(lambda: self.m.idle.accepted)
-        # ACKed, heartbeat still ACRO: ALT_HOLD climb sticks already, no release.
-        until(lambda: 1500 < self.fc.overrides.get(3, 0) < 1900, timeout=1)
-        self.assertEqual(self.c.mode_name, "ACRO")
-        self.assertFalse(self.m.idle.confirmed)
-        samples = self.watch(requested+.9-perf_counter())
-        self.assertTrue(all(len(x) == 4 and x[1] == x[2] == 1500 for x in samples))
-        self.assertEqual(self.m.phase, "IDLE")
-        self.assertEqual(self.c.mode_name, "ACRO")
+        sleep(.5)
+        self.assertEqual(self.m.safedown.stage, "SWITCHING")
+        self.assertGreater(len(self.fc.mode_requests), 1, "retried")
         self.fc.mode = ALT_HOLD
-        until(lambda: self.c.mode_name == "ALT_HOLD" and self.m.idle.confirmed)
-        self.assertEqual(self.m.phase, "IDLE")
-        self.assert_climbs()
-        self.release_by_pilot()
+        until(lambda: self.c.mode_name == "ALT_HOLD" and self.m.safedown.stage in ("LEVEL", "STOP"))
+        self.assertEqual(self.m.phase, "SAFEDOWN")
+        self.fc.apply_mode = True
+        self.assert_holds()
+        self.assert_lands()
 
-    def test_wasp_recovery_centres_sticks_on_stale_attitude_height_or_heartbeat(self):
+    def test_safedown_centres_sticks_on_stale_attitude_height_or_heartbeat(self):
         for stale in ("attitude", "vfr_on", "heartbeat"):
             with self.subTest(stale=stale):
                 self.fly()
-                self.command("abort", "1")
-                self.assert_recovers()
-                self.assert_climbs()
+                self.command("safedown", "1")
+                self.assert_safedown()
+                self.assert_holds()
                 setattr(self.fc, stale, False)
-                until(lambda: self.fc.overrides == {1: 1500, 2: 1500, 3: 1500, 4: 1500}, timeout=2.5)
                 since = perf_counter()
                 samples = self.watch(1.2)
-                self.assertTrue(all(x == {1: 1500, 2: 1500, 3: 1500, 4: 1500} for x in samples))
-                self.assertEqual((self.m.phase, self.m.idle.stage), ("IDLE", "HOLD"))
+                self.assertTrue(all(x == self.CENTRED for x in samples))
+                self.assertEqual(self.m.phase, "SAFEDOWN")
                 self.assert_transmitting(since)
                 setattr(self.fc, stale, True)
-                self.assert_climbs()
-                self.release_by_pilot()
-                self.fc.armed = False
-                until(lambda: not self.c.armed and not self.m.wasp.used)
+                self.assert_lands()
                 self.fc.mode_requests.clear()
 
     def test_wasp_takeover_on_the_ground_right_after_launch_cancels(self):
@@ -506,9 +524,9 @@ class RecoveryMavlinkTests(WifiFixture):
         self.assertIn("on the ground", self.m.event)
         sleep(.3)
         self.assertFalse(self.fc.mode_requests)
-        self.assertFalse(self.m.idle.active)
+        self.assertFalse(self.m.safedown.active)
 
-    def test_wasp_mode_change_other_than_stabilize_releases_without_recovery(self):
+    def test_wasp_mode_change_other_than_stabilize_releases_without_safedown(self):
         for mode in (LOITER, LAND):
             with self.subTest(mode=mode):
                 self.fly()
@@ -516,17 +534,27 @@ class RecoveryMavlinkTests(WifiFixture):
                 self.fc.armed = False
                 until(lambda: not self.c.armed and not self.m.wasp.used)
 
-    def test_wasp_disarm_during_recovery_releases(self):
+    def test_wasp_disarm_during_safedown_releases(self):
         self.fly()
-        self.command("abort", "1")
-        self.assert_recovers()
-        self.assert_climbs()
+        self.command("safedown", "1")
+        self.assert_safedown()
         self.fc.armed = False
-        until(lambda: not self.c.armed and not self.fc.overrides and not self.m.idle.active)
+        until(lambda: not self.c.armed and not self.fc.overrides and not self.m.safedown.active)
         sleep(.3)
         self.assertFalse(self.fc.overrides)
-        self.assertEqual(len(self.fc.mode_requests), 1)
+        self.assertIn("SAFEDOWN ended: disarmed", self.m.event)
         self.assertIn(self.m.phase, ("PILOT", "WASP_READY"))
+
+    def test_safedown_after_the_pilot_took_over_in_alt_hold(self):
+        self.fly()
+        self.fc.vfr["alt"] += 5  # well clear of the arming height
+        self.fc.mode = ALT_HOLD  # Plan B straight from the launch
+        until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides)
+        self.command("safedown", "1")
+        until(lambda: self.m.phase == "SAFEDOWN")
+        self.assertFalse(self.fc.mode_requests, "already in ALT_HOLD")
+        self.assert_holds()
+        self.assert_lands()
 
 
 class ModeSwitchMavlinkTests(WifiFixture):
@@ -536,9 +564,11 @@ class ModeSwitchMavlinkTests(WifiFixture):
     PWM = dict(ACRO=1165, LOITER=1295, LAND=1425, STABILIZE=1555, POSHOLD=1685, ALT_HOLD=1815)
     fake_radio = {5: PWM["ACRO"]}
 
-    fly = RecoveryMavlinkTests.fly
-    assert_recovers = RecoveryMavlinkTests.assert_recovers
-    assert_climbs = RecoveryMavlinkTests.assert_climbs
+    fly = SafeDownMavlinkTests.fly
+    CENTRED = SafeDownMavlinkTests.CENTRED
+    assert_safedown = SafeDownMavlinkTests.assert_safedown
+    assert_holds = SafeDownMavlinkTests.assert_holds
+    assert_lands = SafeDownMavlinkTests.assert_lands
 
     def setUp(self):
         super().setUp()
@@ -553,45 +583,61 @@ class ModeSwitchMavlinkTests(WifiFixture):
         until(lambda: self.c.backend.pilot_mode_switch() == (list(self.PWM).index(mode), mode))
         return perf_counter()
 
-    def test_switch_to_stabilize_starts_recovery_before_the_heartbeat_shows_it(self):
+    def test_switch_to_stabilize_starts_safedown_before_the_heartbeat_shows_it(self):
         self.fly()
-        self.fc.apply_mode = False  # the heartbeat keeps saying ACRO
         moved = self.switch("STABILIZE")
-        until(lambda: self.m.phase == "IDLE" and self.m.idle.recovery, timeout=.5)
+        until(lambda: self.m.phase == "SAFEDOWN", timeout=.5)
         self.assertLess(perf_counter()-moved, .3)
-        self.assertEqual(self.c.mode_name, "ACRO")
         self.assertIn("STABILIZE", self.m.event)
-        until(lambda: [mode for _t, mode in self.fc.mode_requests] == [ALT_HOLD])
-        self.fc.mode = ALT_HOLD
-        until(lambda: self.c.mode_name == "ALT_HOLD" and self.m.idle.confirmed, timeout=2)
-        self.assert_climbs()
-        # The switch stays in STABILIZE: recovery holds on.
-        sleep(.5)
-        self.assertEqual(self.m.phase, "IDLE")
+        until(lambda: self.c.mode_name == "ALT_HOLD", timeout=2)
+        self.assert_holds()
+        # The switch stays in STABILIZE: SafeDown carries on and lands it.
+        self.assert_lands()
 
-    def test_switch_to_alt_hold_during_recovery_releases_with_the_fc_armed(self):
+    def test_switch_onto_stabilize_after_the_button_carries_on(self):
         self.fly()
-        self.command("abort", "1")
-        self.assert_recovers()
-        self.assert_climbs()
-        sleep(.3)
-        self.assertEqual(self.m.phase, "IDLE")
+        self.command("safedown", "1")
+        self.assert_safedown()
+        self.switch("STABILIZE")
+        self.fc.mode = STABILIZE  # the FC follows the switch
+        sleep(.5)
+        self.assertEqual(self.m.phase, "SAFEDOWN")
+        self.assertIn("SafeDown carries on", self.m.event)
+        until(lambda: self.c.mode_name == "ALT_HOLD")
+        self.assert_lands()
+
+    def test_switch_to_alt_hold_during_safedown_is_plan_b(self):
+        self.fly()
+        self.command("safedown", "1")
+        self.assert_safedown()
+        self.assert_holds()
         self.switch("ALT_HOLD")
         until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides)
-        self.assertIn("moved the mode switch", self.m.event)
-        self.assertFalse(self.m.idle.active)
+        self.assertIn("pilot switched to ALT_HOLD", self.m.event)
+        self.assertFalse(self.m.safedown.active)
         self.assertEqual(self.fc.mode, ALT_HOLD)
         self.assertTrue(self.fc.armed and self.c.armed)
         sleep(.3)
         self.assertFalse(self.fc.overrides)
-        self.assertEqual(len(self.fc.mode_requests), 1)
 
-    def test_switch_to_loiter_in_flight_releases_without_recovery(self):
+    def test_switch_back_onto_stabilize_after_plan_b_lands_it(self):
+        self.fly()
+        self.fc.vfr["alt"] += 5
+        self.switch("ALT_HOLD")
+        self.fc.mode = ALT_HOLD
+        until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides)
+        self.switch("STABILIZE")
+        self.fc.mode = STABILIZE
+        until(lambda: self.m.phase == "SAFEDOWN")
+        until(lambda: self.c.mode_name == "ALT_HOLD")
+        self.assert_lands()
+
+    def test_switch_to_loiter_in_flight_releases_without_safedown(self):
         self.fly()
         self.switch("LOITER")
         until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides, timeout=.5)
         self.assertEqual(self.c.mode_name, "ACRO")
-        self.assertFalse(self.m.idle.active)
+        self.assertFalse(self.m.safedown.active)
         sleep(.3)
         self.assertFalse(self.fc.mode_requests)
         self.assertFalse(self.fc.overrides)

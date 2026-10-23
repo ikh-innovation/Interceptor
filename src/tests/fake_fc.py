@@ -26,6 +26,15 @@ class FakeArduPilot(threading.Thread):
         self.vfr_on = True
         self.ack_delay = 0.0
         self._pending_acks = []
+        # SafeDown knobs: modes this FC refuses, the landed state it reports
+        # (None: no EXTENDED_SYS_STATE), the IMU it reports (None: none), and
+        # LAND touching down and disarming after land_s seconds.
+        self.deny_modes = set()
+        self.landed_state = None
+        self.imu = None
+        self.land_s = 1.0
+        self.disarm_requests = []
+        self._land_t = None
         self.att = dict(roll=0.0, pitch=0.0, rollspeed=0.0, pitchspeed=0.0,
                         yawspeed=0.0, yaw=0.0)
         self.stop = threading.Event()
@@ -70,11 +79,16 @@ class FakeArduPilot(threading.Thread):
                 self._ack_mode(command, mode)
             if self.heartbeat and now - t_hb > self.hb_period:
                 t_hb = now
-                base = 0x80 if self.armed else 0
-                self.m.mav.heartbeat_send(
-                    mavutil.mavlink.MAV_TYPE_QUADROTOR,
-                    mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
-                    base, self.mode, mavutil.mavlink.MAV_STATE_ACTIVE)
+                self._send_heartbeat()
+            if self.mode == 9 and self.armed:
+                self._land_t = self._land_t or now
+                if now - self._land_t >= self.land_s:
+                    # LAND: touchdown, then the FC disarms itself.
+                    self.armed = False
+                    if self.landed_state is not None:
+                        self.landed_state = 1
+            else:
+                self._land_t = None
             if now - t_rc > 0.1:
                 t_rc = now
                 vals = [self.overrides.get(i, self.radio[i]) for i in range(1, 19)]
@@ -86,6 +100,11 @@ class FakeArduPilot(threading.Thread):
                 self.m.mav.vibration_send(int(now * 1e6), self.vibe["x"],
                                           self.vibe["y"], self.vibe["z"],
                                           int(self.vibe["clip"]), 0, 0)
+                if self.landed_state is not None:
+                    self.m.mav.extended_sys_state_send(0, int(self.landed_state))
+                if self.imu is not None:
+                    ax, ay, az = (int(v*1000/9.80665) for v in self.imu)
+                    self.m.mav.scaled_imu_send(int(now * 1000), ax, ay, az, 0, 0, 0, 0, 0, 0)
             if self.attitude and now - t_att > 0.05:
                 t_att = now
                 a = self.att
@@ -109,6 +128,18 @@ class FakeArduPilot(threading.Thread):
                         pid.encode(), self.params[pid],
                         mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
                         len(self.params), 0)
+            elif t == "COMMAND_LONG" and msg.command == mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE:
+                if int(msg.param1) == mavutil.mavlink.MAVLINK_MSG_ID_HEARTBEAT and self.heartbeat:
+                    self._send_heartbeat()
+            elif t == "COMMAND_LONG" and msg.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM:
+                if int(msg.param1) == 0:
+                    # Like ArduCopter: a GCS disarm only once it has landed.
+                    landed = self.landed_state == 1
+                    self.disarm_requests.append((perf_counter(), landed))
+                    if landed:
+                        self.armed = False
+                    self.m.mav.command_ack_send(msg.command, mavutil.mavlink.MAV_RESULT_ACCEPTED if landed
+                                                else mavutil.mavlink.MAV_RESULT_FAILED)
             elif t == "COMMAND_LONG" and msg.command == mavutil.mavlink.MAV_CMD_DO_SET_MODE:
                 self.mode_requests.append((perf_counter(), int(msg.param2)))
                 if self.ack_delay:
@@ -128,9 +159,17 @@ class FakeArduPilot(threading.Thread):
                     elif v != 65535:
                         self.overrides[i] = v
 
+    def _send_heartbeat(self):
+        base = 0x80 if self.armed else 0
+        self.m.mav.heartbeat_send(
+            mavutil.mavlink.MAV_TYPE_QUADROTOR,
+            mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA,
+            base, self.mode, mavutil.mavlink.MAV_STATE_ACTIVE)
+
     def _ack_mode(self, command, mode):
-        self.m.mav.command_ack_send(command, self.mode_ack)
-        if self.apply_mode and self.mode_ack == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+        result = mavutil.mavlink.MAV_RESULT_DENIED if mode in self.deny_modes else self.mode_ack
+        self.m.mav.command_ack_send(command, result)
+        if self.apply_mode and result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
             self.mode = mode
 
     def shutdown(self):

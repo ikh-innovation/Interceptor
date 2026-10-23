@@ -36,7 +36,7 @@ class MJPEGServer:
 
     CONTROL_KEYS = ("hold", "release", "step", "engage", "lvl", "mode", "lock", "auto", "autoen", "autop", "autoreset",
                     "sky", "follow", "cam", "engine", "stabilization", "def", "waspen", "waspp", "mount", "flightmode", "idles", "testmode", "testtarget")
-    ALL_KEYS = CONTROL_KEYS + ("abort",)
+    ALL_KEYS = CONTROL_KEYS + ("abort", "safedown")
     LEASE_S = 2.0
 
     def __init__(self, port: int = 8080, quality: int = 70,

@@ -393,11 +393,10 @@
   body[data-flight-mode="wasp"] .vidwrap .vbox{width:100%;height:100%;max-width:100%;aspect-ratio:auto;flex:1 1 auto}
   body[data-flight-mode="wasp"] .pad,body[data-flight-mode="wasp"] .acts{width:auto;padding:0;border:0;background:none;box-shadow:none;backdrop-filter:none}
   .wasp-panel-title{margin:0 0 10px;font:700 10px/1.2 var(--sans);letter-spacing:.12em;color:var(--faint)}
-  body[data-flight-mode="wasp"] .wasp-profile-stack{gap:6px}
-  .wasp-throttle{margin-top:12px}
-  .wasp-throttle .wasp-panel-title{margin-bottom:8px}
-  #wasp_main_throttle{gap:6px}
-  #wasp_main_throttle button{min-width:0;min-height:34px;padding:8px 2px;border-radius:9px;font-size:12px;letter-spacing:0}
+  /* The steering column fills the height of the launch column next to it:
+     the four buttons spread over it instead of leaving a gap below. */
+  body[data-flight-mode="wasp"] .wasp-pad{display:flex;flex-direction:column;align-self:stretch;min-height:0}
+  body[data-flight-mode="wasp"] .wasp-profile-stack{flex:1 1 auto;justify-content:space-between;gap:10px}
   body[data-flight-mode="wasp"] .wasp-profile-stack button{display:flex;align-items:center;justify-content:space-between;min-height:38px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg3);color:var(--ink);font:500 13px/1.2 var(--sans);letter-spacing:0;text-align:left}
   body[data-flight-mode="wasp"] .wasp-profile-stack button::after{content:"";width:12px;height:12px;flex-shrink:0;border:1.5px solid #adb5bf;border-radius:50%}
   body[data-flight-mode="wasp"] .wasp-profile-stack button.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink);box-shadow:none;font-weight:700}
@@ -415,7 +414,7 @@
   .timer-wheel[aria-disabled="true"]{opacity:.45;pointer-events:none}
   .main-countdown span{font:12px/1 var(--mono);color:var(--dim)}
   body[data-flight-mode="wasp"] .acts .rbtn{width:clamp(58px,16vw,80px);height:clamp(58px,16vw,80px);border-radius:50%;font-size:10px;letter-spacing:.02em}
-  body[data-flight-mode="wasp"] #b_wasp_abort{border:2px solid #ad3030;box-shadow:0 3px 8px rgba(173,48,48,.16)}
+  body[data-flight-mode="wasp"] #b_safedown{line-height:1.15;border:2px solid #ad3030;box-shadow:0 3px 8px rgba(173,48,48,.16)}
   body[data-flight-mode="wasp"] #b_eng{background:var(--acc);color:var(--acc-ink);border:3px solid #fff;box-shadow:0 0 0 1px var(--acc),0 3px 8px rgba(47,102,184,.18)}
   body[data-flight-mode="wasp"] #b_eng.go{background:var(--ok);color:#fff;box-shadow:0 0 0 1px var(--ok)}
   body[data-flight-mode="wasp"] .eng.countdown strong{font-size:24px}
@@ -449,6 +448,7 @@
     body[data-flight-mode="wasp"] .vidwrap .vbox{width:100%;height:100%;max-width:100%;aspect-ratio:auto;flex:1 1 auto}
     body[data-flight-mode="wasp"] .ctl{grid-area:controls;display:flex;flex-direction:column;align-self:center;gap:18px;width:100%;max-height:100%;min-height:0;padding:14px;overflow-y:auto}
     body[data-flight-mode="wasp"] .wasp-pad,body[data-flight-mode="wasp"] .acts{width:100%;flex:0 0 auto}
+    body[data-flight-mode="wasp"] .wasp-pad{flex:1 1 auto}
     body[data-flight-mode="wasp"] .wasp-profile-stack button{min-height:36px}
     body[data-flight-mode="wasp"] .acts .rbtn{width:62px;height:62px}
   }
@@ -472,11 +472,8 @@
     body[data-flight-mode="wasp"] .logo{height:32px;width:46px}
     body[data-flight-mode="wasp"] .ctl{padding:8px;gap:8px;border-radius:14px}
     body[data-flight-mode="wasp"] .wasp-panel-title{font-size:9px;margin-bottom:5px}
-    body[data-flight-mode="wasp"] .wasp-profile-stack{gap:3px}
+    body[data-flight-mode="wasp"] .wasp-profile-stack{gap:5px}
     body[data-flight-mode="wasp"] .wasp-profile-stack button{min-height:23px;padding:4px 8px;font-size:11px;border-radius:7px}
-    body[data-flight-mode="wasp"] .wasp-throttle{margin-top:6px}
-    body[data-flight-mode="wasp"] .wasp-throttle .wasp-panel-title{margin-bottom:4px}
-    body[data-flight-mode="wasp"] #wasp_main_throttle button{min-height:26px;padding:5px 2px;font-size:11px}
     body[data-flight-mode="wasp"] .acts{gap:5px 8px}
     body[data-flight-mode="wasp"] .main-countdown{padding:3px 8px}
     body[data-flight-mode="wasp"] .timer-wheel{--wheel-row:16px}
@@ -487,12 +484,10 @@
   @media (min-width:560px) and (orientation:landscape) and (max-height:360px){
     body[data-flight-mode="wasp"] .ctl{padding:6px;gap:6px}
     body[data-flight-mode="wasp"] .wasp-panel-title{font-size:8px;margin-bottom:4px}
-    body[data-flight-mode="wasp"] .wasp-profile-stack{gap:2px}
+    body[data-flight-mode="wasp"] .wasp-profile-stack{gap:4px}
     body[data-flight-mode="wasp"] .wasp-profile-stack button{height:20px;min-height:20px;padding:2px 6px;font-size:9px}
     body[data-flight-mode="wasp"] .acts{gap:4px 8px}
     body[data-flight-mode="wasp"] .main-countdown{padding:0 8px}
-    body[data-flight-mode="wasp"] .wasp-throttle .wasp-panel-title{font-size:8px;margin-bottom:3px}
-    body[data-flight-mode="wasp"] #wasp_main_throttle button{min-height:22px;padding:4px 2px;font-size:10px}
     body[data-flight-mode="wasp"] .timer-wheel{--wheel-row:12px}
     body[data-flight-mode="wasp"] .timer-wheel button{font-size:11px}
     body[data-flight-mode="wasp"] .timer-wheel button[aria-selected="true"]{font-size:15px}
@@ -557,10 +552,6 @@
         <button data-wasp-profile="responsive" aria-pressed="false">Responsive</button>
         <button data-wasp-profile="extra" aria-pressed="false">Extra</button>
       </div>
-      <div class="wasp-throttle">
-        <div class="wasp-panel-title">Throttle</div>
-        <div class="seg" id="wasp_main_throttle" data-wp="throttle" data-values="0.75,0.85,1" data-labels="75%,85%,100%" role="group" aria-label="WASP throttle"></div>
-      </div>
     </div>
     <div class="acts">
       <div class="wasp-panel-title" data-only="wasp" hidden>Launch controls</div>
@@ -568,10 +559,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
         <span class="timer-label">Timer</span><div class="timer-wheel" id="wasp_launch_main" role="listbox" tabindex="0" aria-label="Launch countdown in seconds" aria-disabled="false"></div><span>s</span>
       </div>
-      <button class="rbtn auto" id="b_wasp_abort" data-only="wasp" hidden style="background:#ad3030;border-color:#ad3030" aria-label="Abort: recover, level and hold height">ABORT</button>
+      <button class="rbtn auto" id="b_safedown" data-only="wasp" hidden style="background:#ad3030;border-color:#ad3030" aria-label="SafeDown: level, stop and land on its own">SAFE<br>DOWN</button>
       <button class="rbtn lock" id="b_lock" aria-label="LOCK"><span id="locktxt">LOCK</span></button>
       <button class="rbtn eng" id="b_eng" aria-label="ENGAGE"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE</span></button>
-      <p class="wasp-save-note" data-only="wasp" hidden>Settings save automatically. Throttle and countdown apply to every response.</p>
+      <p class="wasp-save-note" data-only="wasp" hidden>Settings save automatically. Countdown and launch throttle (PARAMETERS) apply to every response.</p>
     </div>
   </div>
 </div>
@@ -799,7 +790,7 @@
       .catch(function () {}).then(function () { clearTimeout(to); polling = false; });
   }
   function cmd(q, quiet) {
-    if (!MODE_READY && q.indexOf("flightmode=") !== 0 && q.indexOf("abort=") !== 0) return Promise.resolve(null);
+    if (!MODE_READY && q.indexOf("flightmode=") !== 0 && q.indexOf("abort=") !== 0 && q.indexOf("safedown=") !== 0) return Promise.resolve(null);
     return fetch("/cmd?c=" + C + "&" + q, {cache: "no-store"})
       .then(function (r) {
         if (r.status === 409) { if (!quiet) note("another phone has control", true); return null; }
@@ -871,9 +862,9 @@
     var autoStart = !m.wasp_enabled && m.auto_enabled && ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(m.phase) >= 0;
     cmd(autoStart ? "auto=on" : "engage=1");
   });
-  $("b_wasp_abort").addEventListener("pointerdown", function (e) {
+  $("b_safedown").addEventListener("pointerdown", function (e) {
     if (this.disabled) return;
-    e.preventDefault(); cmd("abort=1");
+    e.preventDefault(); cmd("safedown=1");
   });
 
   $("b_lock").addEventListener("pointerdown", function (e) {
@@ -1248,7 +1239,7 @@
     if (pendingMode && j.armed) T("mode_note", "Disarm to change mode.");
     T("flight_mode_tag", wasp ? "WASP" : "SEEKER");
     document.querySelectorAll("[data-only]").forEach(function (el) { el.hidden = el.getAttribute("data-only") !== currentMode; });
-    $("b_wasp_abort").disabled = VIEW;
+    $("b_safedown").disabled = VIEW;
     var ctl = j.control || "free";
     var locked = !!m.locked;
     LOCKHDG = locked && m.lock_hdg !== null && m.lock_hdg !== undefined ? Number(m.lock_hdg) : null;
@@ -1259,7 +1250,8 @@
 
     var arm = !!j.armed;
     S("c_arm", arm ? "ARMED" : "DISARMED", arm ? "on" : "");
-    S("c_mode", j.linked ? (j.fc_mode || "?") : "NO FC", !j.linked ? "bad" : j.fc_mode === (wasp && ph !== "IDLE" ? "ACRO" : "ALT_HOLD") ? "ok" : "warn");
+    var wantModes = wasp && ph === "SAFEDOWN" ? ["ALT_HOLD", "LAND"] : [wasp && ph !== "IDLE" ? "ACRO" : "ALT_HOLD"];
+    S("c_mode", j.linked ? (j.fc_mode || "?") : "NO FC", !j.linked ? "bad" : wantModes.indexOf(j.fc_mode) >= 0 ? "ok" : "warn");
     S("c_hdg", m.heading_deg === null || m.heading_deg === undefined ? "--°" : fmt(m.heading_deg, 0) + "°", "");
     var hadHdg = HDG !== null;
     HDG = (m.heading_deg === null || m.heading_deg === undefined) ? null : Number(m.heading_deg);
@@ -1297,7 +1289,8 @@
     if ((ph === "AUTO_CLIMB" || ph === "AUTO_HOLD") && !VIEW && ctl !== "other") {
       $("b_yl").disabled = false; $("b_yr").disabled = false;
     }
-    var eng = $("b_eng"), done = !!m.engaged || !!m.ai_steering || ph === "WASP_FLIGHT" || ph === "WASP_DONE" || ph === "IDLE" || ph === "IDLE_FAILED";
+    var eng = $("b_eng"), done = !!m.engaged || !!m.ai_steering || ph === "WASP_FLIGHT" || ph === "WASP_DONE" || ph === "IDLE" || ph === "IDLE_FAILED"
+      || ph === "SAFEDOWN" || ph === "SAFEDOWN_FAILED";
     eng.className = "rbtn eng" + (done ? " go" : ph === "PUSH" ? " push" : "");
     var AUTOPH = ["AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN"], inAuto = AUTOPH.indexOf(ph) >= 0;
     var autoRun = !!m.auto_run && ["PUSH", "AI", "STOP"].indexOf(ph) >= 0;
@@ -1317,6 +1310,7 @@
       }
     }
     if (ph === "IDLE" || ph === "IDLE_FAILED") { eng.disabled = true; $("engtxt").textContent = ph === "IDLE" ? "IDLE" : "PILOT"; }
+    if (ph === "SAFEDOWN" || ph === "SAFEDOWN_FAILED") { eng.disabled = true; $("engtxt").textContent = ph === "SAFEDOWN" ? "SAFEDOWN" : "PILOT"; }
     eng.setAttribute("aria-label", wasp ? $("engtxt").textContent : autoMode ? "AUTO ENGAGE" : "ENGAGE");
 
     CANLOCK = ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other";
@@ -1361,16 +1355,21 @@
       var wp = m.wasp_progress || {};
       var wpStage = wp.stage === "COUNTDOWN" ? "COUNTDOWN " + Math.max(1, Math.ceil(Number(wp.launch_countdown_s || 0)))
         : wp.stage === "SEARCH" ? "STRAIGHT" : wp.stage === "STRAIGHT" ? "LAUNCH" : wp.stage === "BLEND" ? "BLENDING" : wp.stage === "GUIDE" ? "GUIDING" : "READY";
-      var flightLabel = "WASP · " + wpStage + " · STAB TO TAKE OVER";
+      var flightLabel = "WASP · " + wpStage + " · SAFEDOWN OR STAB = AUTO LAND";
       bd.textContent = m.gate_why || (ph === "WASP_DONE" ? "PILOT · DISARM TO RESET" : ph === "WASP_FLIGHT" ? flightLabel : ph === "WASP_READY" && wp.stage === "COUNTDOWN" ? "WASP · " + wpStage : "WASP · READY");
       if (testMode) bd.textContent = bd.textContent.replace(/^WASP/, "TEST");
+    }
+    if (ph === "SAFEDOWN" || ph === "SAFEDOWN_FAILED") {
+      bd.style.display = "block"; bd.className = "badge";
+      var rc = m.safedown || {};
+      var rcStage = {SWITCHING: "SWITCHING", LEVEL: "LEVELLING", STOP: "SETTLING", DESCEND: rc.landed ? "TOUCHDOWN" : "LANDING"}[rc.stage] || "LEVELLING";
+      bd.textContent = ph === "SAFEDOWN_FAILED" ? "SAFEDOWN FAILED · THROTTLE MID, SWITCH UP, FLY IT"
+        : "SAFEDOWN · " + rcStage + (rc.fallback ? " · " + rc.fallback : "") + " · SWITCH UP TO FLY";
     }
     if (ph === "IDLE" || ph === "IDLE_FAILED") {
       bd.style.display = "block"; bd.className = "badge";
       var idle = m.idle || {};
-      bd.textContent = wasp && idle.recovery ? "RECOVERY · " + (idle.stage || "LEVEL") + " · CHANGE MODE TO TAKE OVER"
-        : wasp && ph === "IDLE_FAILED" ? "RECOVERY FAILED · PILOT"
-        : ph === "IDLE_FAILED" ? "IDLE FAILED · PILOT" : wasp && idle.active === false ? "IDLE · LAUNCH CANCELLED" : "IDLE · " + (idle.stage || "LEVEL") + " · XY DRIFT";
+      bd.textContent = ph === "IDLE_FAILED" ? "IDLE FAILED · PILOT" : wasp && idle.active === false ? "IDLE · LAUNCH CANCELLED" : "IDLE · " + (idle.stage || "LEVEL") + " · XY DRIFT";
     }
 
     var lv = m.levels || {}, sp = m.speeds || {};

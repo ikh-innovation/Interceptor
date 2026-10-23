@@ -7,7 +7,8 @@ from pathlib import Path
 
 class FlightLogs:
     ACTIVE_PHASES = frozenset(("AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN",
-                              "PUSH", "AI", "STOP", "WASP_FLIGHT", "IDLE"))
+                              "PUSH", "AI", "STOP", "WASP_FLIGHT", "IDLE",
+                              "SAFEDOWN"))
     COLUMNS = ("utc_time", "flight_mode", "flight_id", "flight_elapsed_s",
                "idle_limit_s", "idle_remaining_s", "idle_stage",
                "idle_height_target_m", "idle_heading_target_deg",

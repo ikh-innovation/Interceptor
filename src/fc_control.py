@@ -932,6 +932,7 @@ class ArduPilotAcro(FcBackend):
         self._vfr = None
         self._baro = None
         self._baro_ref = None
+        self._baro_hist = []
         self._vibe = None
         self._landed = None
         self._alt_ref = None
@@ -939,6 +940,10 @@ class ArduPilotAcro(FcBackend):
         self._pilot_pwm = {}
         self._override_t = {}
         self._idle_mode_ack = None
+        self._mode_req = None
+        self._imu = None
+        self._ekf = None
+        self.hover_thrust = None
         self.fltmode_ch = 5
         self.flight_modes = None
         self._mode_switch = None
@@ -983,6 +988,8 @@ class ArduPilotAcro(FcBackend):
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_SCALED_PRESSURE, 10.0)
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_VIBRATION, 10.0)
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE, 5.0)
+        self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_SCALED_IMU, 20.0)
+        self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT, 2.0)
 
         self._stop.clear()
         self._rx = threading.Thread(target=self._rx_loop, daemon=True)
@@ -1135,6 +1142,9 @@ class ArduPilotAcro(FcBackend):
         self.accel_z = (acc / 100.0) if acc else 2.5
         jz = self._param("PSC_JERK_Z")
         self.jerk_z = jz if jz else 5.0
+        hover = self._param("MOT_THST_HOVER")
+        self.hover_thrust = hover if hover and 0 < hover < 1 else None
+        self._param("FLTMODE_GCSBLOCK")
         for _p in ("RC_OVERRIDE_TIME", "ATC_INPUT_TC", "ATC_ACCEL_R_MAX",
                    "ATC_ACCEL_P_MAX", "LOG_BACKEND_TYPE", "LOG_BITMASK",
                    "INS_LOG_BAT_MASK", "FS_GCS_ENABLE"):
@@ -1281,12 +1291,22 @@ class ArduPilotAcro(FcBackend):
             elif t == "SCALED_PRESSURE":
                 with self._lock:
                     self._baro = (perf_counter(), float(msg.press_abs))
+                    self._baro_hist.append(self._baro)
+                    while self._baro_hist[0][0] < self._baro[0] - 1.0:
+                        self._baro_hist.pop(0)
             elif t == "EXTENDED_SYS_STATE":
                 with self._lock:
                     self._landed = (perf_counter(), int(msg.landed_state))
             elif t == "COMMAND_ACK" and msg.command == mavutil.mavlink.MAV_CMD_DO_SET_MODE:
                 with self._lock:
                     self._idle_mode_ack = (perf_counter(), int(msg.result))
+            elif t == "EKF_STATUS_REPORT":
+                with self._lock:
+                    self._ekf = (perf_counter(), int(msg.flags))
+            elif t == "SCALED_IMU":
+                with self._lock:
+                    self._imu = (perf_counter(), msg.xacc*9.80665e-3,
+                                 msg.yacc*9.80665e-3, msg.zacc*9.80665e-3)
             elif t == "VIBRATION":
                 with self._lock:
                     self._vibe = (perf_counter(), float(msg.vibration_x),
@@ -1456,6 +1476,9 @@ class ArduPilotAcro(FcBackend):
         timeout = self.params.get("RC_OVERRIDE_TIME", 0)
         if not 0 < timeout <= 1.0:
             return "WASP needs 0 < RC_OVERRIDE_TIME <= 1 second"
+        block = int(self.params.get("FLTMODE_GCSBLOCK") or 0)
+        if block & (self.GCSBLOCK_STABILIZE | self.GCSBLOCK_ALT_HOLD):
+            return "SafeDown needs FLTMODE_GCSBLOCK to allow STABILIZE and ALT_HOLD"
         if self.blockers:
             return self.blockers[0]
         channels = []
@@ -1544,14 +1567,83 @@ class ArduPilotAcro(FcBackend):
             return "Idle needs distinct RC channels"
         return ""
 
-    def recovery_flight_ready(self, switching=False):
-        # WASP recovery holds the sticks until the pilot changes mode again or
-        # disarms; a late sample must not drop it back to an unknown stick.
+    GCSBLOCK_STABILIZE, GCSBLOCK_ALT_HOLD = 1, 4
+    SAFEDOWN_MODES = ("ACRO", "STABILIZE", "ALT_HOLD", "LAND")
+
+    def safedown_flight_ready(self):
+        # SafeDown keeps the sticks until it lands, the pilot moves the
+        # switch or disarms; safedown.py polices the mode itself, and a late
+        # sample must not drop it back to an unknown stick.
         if not self.linked or not self.armed:
             return "disarmed"
-        if self.mode_name not in (("ACRO", "STABILIZE", "ALT_HOLD") if switching else ("ALT_HOLD",)):
-            return "pilot changed mode"
+        if self.mode_name not in self.SAFEDOWN_MODES:
+            return f"FC in {self.mode_name}"
         return ""
+
+    def request_mode(self, name):
+        number = next((n for n, m in COPTER_MODES.items() if m == name), None)
+        if number is None or not self.linked or not self.armed:
+            return False
+        with self._lock:
+            self._mode_req = (perf_counter(), name)
+        try:
+            self.master.mav.command_long_send(
+                self.master.target_system, self.master.target_component,
+                mavutil.mavlink.MAV_CMD_DO_SET_MODE, 0,
+                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, number, 0, 0, 0, 0, 0)
+            # A heartbeat right away instead of up to 1 s later.
+            self.master.mav.command_long_send(
+                self.master.target_system, self.master.target_component,
+                mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE, 0,
+                mavutil.mavlink.MAVLINK_MSG_ID_HEARTBEAT, 0, 0, 0, 0, 0, 0)
+            return True
+        except Exception:
+            return False
+
+    def mode_ack(self):
+        """(mode, accepted, ack time) of the ACK to the latest mode request."""
+        with self._lock:
+            req, ack = self._mode_req, self._idle_mode_ack
+        if req is None or ack is None or ack[0] < req[0]:
+            return None
+        return req[1], ack[1] == mavutil.mavlink.MAV_RESULT_ACCEPTED, ack[0]
+
+    FORCE_DISARM = 21196
+
+    def request_disarm(self, force=False):
+        # Unforced, ArduCopter refuses it unless its land detector agrees.
+        try:
+            self.master.mav.command_long_send(
+                self.master.target_system, self.master.target_component,
+                mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0, 0,
+                self.FORCE_DISARM if force else 0, 0, 0, 0, 0, 0)
+            return True
+        except Exception:
+            return False
+
+    def body_accel(self, max_age=.3):
+        with self._lock:
+            v = self._imu
+        if v is None or not 0 <= perf_counter() - v[0] <= max_age:
+            return None
+        return v[1:]
+
+    EKF_POS_HORIZ_ABS, EKF_CONST_POS_MODE = 0x10, 0x80
+
+    def position_ok(self, max_age=2.0):
+        """The EKF has a real horizontal position (GPS), not a fixed guess."""
+        with self._lock:
+            e = self._ekf
+        if e is None or perf_counter() - e[0] > max_age:
+            return False
+        return bool(e[1] & self.EKF_POS_HORIZ_ABS) and not e[1] & self.EKF_CONST_POS_MODE
+
+    def landed_state(self, max_age=2.0):
+        with self._lock:
+            ls = self._landed
+        if ls is None or (perf_counter() - ls[0]) > max_age or not ls[1]:
+            return None
+        return ls[1]
 
     def idle_request_alt_hold(self):
         if not self.linked or not self.armed:
@@ -1560,14 +1652,7 @@ class ArduPilotAcro(FcBackend):
             self._idle_mode_ack = None
         if self.mode_name == "ALT_HOLD":
             return True
-        try:
-            self.master.mav.command_long_send(
-                self.master.target_system, self.master.target_component,
-                mavutil.mavlink.MAV_CMD_DO_SET_MODE, 0,
-                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, 2, 0, 0, 0, 0, 0)
-            return True
-        except Exception:
-            return False
+        return self.request_mode("ALT_HOLD")
 
     def idle_pwm(self, yaw_dps, climb_mps):
         if not all(math.isfinite(v) for v in (yaw_dps, climb_mps)):
@@ -1578,8 +1663,13 @@ class ArduPilotAcro(FcBackend):
         return {axis: self._exact_pwm(axis, value) for axis, value in
                 (("roll", 0.0), ("pitch", 0.0), ("yaw", yaw), ("throttle", throttle))}
 
-    def steer_idle_pwm(self, pwm_by_axis, allow_acro=False, recovery=False):
-        if self.recovery_flight_ready(allow_acro) if recovery else self.idle_ready(allow_acro):
+    def steer_idle_pwm(self, pwm_by_axis, allow_acro=False):
+        if self.idle_ready(allow_acro):
+            return self.release()
+        return self._steer_calibrated_pwm(pwm_by_axis)
+
+    def steer_safedown_pwm(self, pwm_by_axis):
+        if self.safedown_flight_ready():
             return self.release()
         return self._steer_calibrated_pwm(pwm_by_axis)
 
@@ -1682,6 +1772,21 @@ class ArduPilotAcro(FcBackend):
         if p is not None and p_ref and p[1] > 0 and (now - p[0]) <= max_age:
             return (44330.0 * (1.0 - (p[1] / p_ref) ** 0.190284), v[2], v[3])
         return (v[1] - (ref or 0.0), v[2], v[3])
+
+    def baro_climb(self, window=.6, max_age=.5):
+        """Climb rate from the barometer alone, independent of the EKF."""
+        with self._lock:
+            hist = list(self._baro_hist)
+        now = perf_counter()
+        if len(hist) < 4 or now - hist[-1][0] > max_age:
+            return None
+        pts = [(t, 44330.0*(1.0-(p/hist[-1][1])**0.190284)) for t, p in hist if t >= hist[-1][0]-window]
+        if len(pts) < 4 or pts[-1][0] - pts[0][0] < window/2:
+            return None
+        n = len(pts)
+        mt, mh = sum(t for t, _ in pts)/n, sum(h for _, h in pts)/n
+        den = sum((t-mt)**2 for t, _ in pts)
+        return sum((t-mt)*(h-mh) for t, h in pts)/den if den > 0 else None
 
     AIRBORNE_MIN_M = 0.7
 
@@ -2761,6 +2866,21 @@ class AcroCommander:
     def idle_request_alt_hold(self):
         return isinstance(self.backend, ArduPilotAcro) and self.backend.idle_request_alt_hold()
 
+    def request_mode(self, name):
+        return isinstance(self.backend, ArduPilotAcro) and self.backend.request_mode(name)
+
+    def lean_pwm(self, roll_deg, pitch_deg):
+        """Roll / pitch sticks for these lean angles in an angle mode
+        (STABILIZE, ALT_HOLD, LAND); positive pitch is nose up."""
+        return dict(roll=self.phys_to_pwm("roll", roll_deg), pitch=self.phys_to_pwm("pitch", pitch_deg))
+
+    def request_disarm(self, force=False):
+        return isinstance(self.backend, ArduPilotAcro) and self.backend.request_disarm(force)
+
+    @property
+    def hover_thrust(self):
+        return getattr(self.backend, "hover_thrust", None)
+
     def _mission_gate(self):
         b = self.backend
         if not self.linked:
@@ -2768,13 +2888,17 @@ class AcroCommander:
         if self.require_armed and not b.armed:
             return False, "disarmed"
         wasp = self.mission is not None and self.mission.wasp.enabled
-        idle = self.mission is not None and self.mission.idle.active
-        if idle:
+        idle = self.mission is not None and (self.mission.idle.active or self.mission.safedown.active)
+        if self.mission is not None and self.mission.safedown.active:
+            if not isinstance(b, ArduPilotAcro):
+                return False, "SafeDown requires ArduPilot MAVLink"
+            why = b.safedown_flight_ready()
+            if why:
+                return False, why
+        elif idle:
             if not isinstance(b, ArduPilotAcro):
                 return False, "Idle requires ArduPilot MAVLink"
-            why = (b.recovery_flight_ready(switching=not self.mission.idle.confirmed)
-                   if self.mission.idle.recovery else
-                   b.idle_ready(allow_acro=not self.mission.idle.confirmed))
+            why = b.idle_ready(allow_acro=not self.mission.idle.confirmed)
             if why:
                 return False, why
         elif wasp:
@@ -2824,15 +2948,26 @@ class AcroCommander:
         idle_why = b.idle_ready(allow_acro=True) if isinstance(b, ArduPilotAcro) else "Idle requires MAVLink"
         idle_ack = b._idle_mode_ack if isinstance(b, ArduPilotAcro) else None
         # The pilot flipping ACRO -> STABILIZE mid-launch hands WASP to its
-        # recovery instead of straight to a stick that may be at the bottom.
+        # SafeDown instead of straight to a stick that may be at the bottom.
         switch = b.pilot_mode_switch() if isinstance(b, ArduPilotAcro) else None
-        takeover = bool(not ok and self.mission.wasp.enabled and self.mission.wasp.started is not None
-                        and isinstance(b, ArduPilotAcro) and b.linked and b.armed
-                        and (b.mode_name == "STABILIZE" or (switch and switch[1] == "STABILIZE")))
-        ctx = dict(gate_ok=ok, gate_why=why, pilot_takeover=takeover,
+        mav = isinstance(b, ArduPilotAcro)
+        stabilize = bool(mav and b.linked and b.armed
+                         and (b.mode_name == "STABILIZE" or (switch and switch[1] == "STABILIZE")))
+        takeover = bool(not ok and stabilize and self.mission.wasp.enabled
+                        and self.mission.wasp.started is not None)
+        safedown_ok = bool(mav and self.mission.wasp.enabled and not b.safedown_flight_ready())
+        ctx = dict(gate_ok=ok, gate_why=why, pilot_takeover=takeover, pilot_stabilize=stabilize,
+                   safedown_ok=safedown_ok,
                    mode_switch=None if switch is None else switch[0],
-                   att=((b.wasp_attitude() if isinstance(b, ArduPilotAcro) else b.attitude())
-                        if ok or takeover else None),
+                   mode_switch_mode=None if switch is None else switch[1],
+                   mode_ack=b.mode_ack() if mav else None,
+                   fc_mode_t=getattr(b, "_heartbeat_t", None) if mav else None,
+                   landed_state=b.landed_state() if mav else None,
+                   accel=b.body_accel() if mav else None,
+                   baro_climb=b.baro_climb() if mav else None,
+                   position_ok=b.position_ok() if mav else False,
+                   att=((b.wasp_attitude() if mav else b.attitude())
+                        if ok or takeover or safedown_ok else None),
                    height=None if h is None else h[0],
                    climb=None if h is None else h[1],
                    ai_cmd=cmd if fresh else None,
@@ -2843,15 +2978,13 @@ class AcroCommander:
                    idle_ok=not idle_why, idle_why=idle_why,
                    idle_mode_denied=bool(self.mission.idle.active and not self.mission.idle.confirmed
                        and idle_ack and idle_ack[0] >= self.mission.idle.started
-                       and idle_ack[1] not in (mavutil.mavlink.MAV_RESULT_ACCEPTED, mavutil.mavlink.MAV_RESULT_IN_PROGRESS)),
-                   idle_mode_accepted=bool(self.mission.idle.active and idle_ack
-                       and idle_ack[0] >= self.mission.idle.started
-                       and idle_ack[1] == mavutil.mavlink.MAV_RESULT_ACCEPTED))
+                       and idle_ack[1] not in (mavutil.mavlink.MAV_RESULT_ACCEPTED, mavutil.mavlink.MAV_RESULT_IN_PROGRESS)))
         out = self.mission.cycle(now, ctx)
         if out:
-            if self.mission.idle.active:
-                written = b.steer_idle_pwm(out, allow_acro=not self.mission.idle.confirmed,
-                                           recovery=self.mission.idle.recovery)
+            if self.mission.safedown.active:
+                written = b.steer_safedown_pwm(out)
+            elif self.mission.idle.active:
+                written = b.steer_idle_pwm(out, allow_acro=not self.mission.idle.confirmed)
             else:
                 written = (b.steer_wasp_pwm(out, in_flight=self.mission.wasp.started is not None)
                            if self.mission.wasp.enabled else b.steer_pwm(out))
@@ -3117,7 +3250,8 @@ class AcroCommander:
         return dict(t_s=round(now-self._t0, 3), phase=m.phase,
                     armed=self.armed, linked=self.linked,
                     wasp_enabled=m.wasp.enabled, auto_run=m.auto_run,
-                    idle_limit_s=m.idle_s, idle_stage=idle["stage"],
+                    idle_limit_s=m.idle_s,
+                    idle_stage=("SAFEDOWN_" + m.safedown.stage) if m.safedown.active else idle["stage"],
                     idle_height_target_m=idle["height_m"],
                     idle_heading_target_deg=idle["heading_deg"],
                     detection_fresh=int(fresh), wasp_stage=w["stage"] if m.wasp.enabled else "",

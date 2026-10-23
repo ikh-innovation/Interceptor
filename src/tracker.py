@@ -666,7 +666,7 @@ class DroneTracker:
             if self.stream is not None:
                 self.stream.publish(preview)
 
-    _LOCK_PHASES = ("PUSH", "AI", "STOP", "WASP_READY", "WASP_FLIGHT", "IDLE")
+    _LOCK_PHASES = ("PUSH", "AI", "STOP", "WASP_READY", "WASP_FLIGHT", "IDLE", "SAFEDOWN")
 
     def _camera_locked(self):
         if self._cam_busy:

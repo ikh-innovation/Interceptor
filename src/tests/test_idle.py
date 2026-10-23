@@ -19,6 +19,12 @@ class IdleMapper(Mapper):
     def idle_request_alt_hold(self):
         return True
 
+    def request_mode(self, name):
+        return True
+
+    def request_disarm(self, force=False):
+        return True
+
     def pilot_pwm(self, axis):
         return 1500
 
@@ -148,16 +154,17 @@ class IdleTests(unittest.TestCase):
         self.assertEqual(m.phase, "WASP_FLIGHT")
         ctx.update(airborne=True)
         m.request_abort(); m.cycle(1000.1, ctx)
-        self.assertEqual(m.phase, "IDLE")
-        self.assertTrue(m.idle.active and m.idle.recovery)
+        self.assertEqual(m.phase, "SAFEDOWN")
+        self.assertTrue(m.safedown.active)
+        self.assertFalse(m.idle.active, "WASP recovers; it never idles")
         ctx["fc_mode"] = "ALT_HOLD"; m.cycle(1000.2, ctx)
-        original = (m.idle.started, m.idle.height, m.idle.heading)
+        started = m.safedown.started
         m.request_abort(); m.cycle(1000.3, ctx)
-        self.assertEqual((m.idle.started, m.idle.height, m.idle.heading), original)
+        self.assertEqual(m.safedown.started, started, "a second ABORT does not restart it")
         self.assertTrue(m.request_engage())
-        ctx.update(gate_ok=False, fc_mode="STABILIZE")
+        ctx.update(gate_ok=False, gate_why="disarmed")
         self.assertEqual(m.cycle(1001, ctx), {})
-        self.assertFalse(m.idle.active)
+        self.assertFalse(m.safedown.active)
 
     def test_wasp_above_ceiling_flies_past_the_idle_setting(self):
         for detected in (False, True):

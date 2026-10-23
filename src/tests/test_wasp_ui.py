@@ -31,6 +31,12 @@ class Mapper:
     def idle_request_alt_hold(self):
         return True
 
+    def request_mode(self, name):
+        return True
+
+    def request_disarm(self, force=False):
+        return True
+
 
 mapper = Mapper()
 settings_tmp = tempfile.TemporaryDirectory(prefix="wasp-ui-settings-")
@@ -47,8 +53,8 @@ lock = threading.Lock()
 def context():
     return dict(gate_ok=mapper.armed and not simulation["gate_why"],
                 att=dict(roll=0, pitch=0, yaw=0) if simulation["attitude"] else None,
-                height=0, climb=0, idle_ok=True, airborne=True,
-                fc_mode="ALT_HOLD" if m.idle.active else "ACRO",
+                height=0, climb=0, idle_ok=True, airborne=True, safedown_ok=mapper.armed,
+                fc_mode="ALT_HOLD" if m.idle.active or m.safedown.active else "ACRO",
                 ai_cmd=None, det_t=None, det_conf=None)
 
 
@@ -114,12 +120,12 @@ async function flightLayout(){
  for(const size of [[320,640],[390,844],[568,320],[667,375],[844,390],[820,1180],[1180,820],[1366,657]]){
   f.width=size[0];f.height=size[1];await sleep(150);
   const buttons=[...q('#wasp_pad .wasp-profile-stack').querySelectorAll('button')], boxes=buttons.map(x=>x.getBoundingClientRect());
-  const abort=q('#b_wasp_abort').getBoundingClientRect(), launch=q('#b_eng').getBoundingClientRect();
+  const abort=q('#b_safedown').getBoundingClientRect(), launch=q('#b_eng').getBoundingClientRect();
   await check('Wasp profiles stack vertically '+size,buttons.every(x=>x.getClientRects().length)&&boxes.every((x,i)=>!i||(x.top>=boxes[i-1].bottom&&Math.abs(x.left-boxes[0].left)<1&&Math.abs(x.width-boxes[0].width)<1)));
-  await check('Wasp has aligned circular Abort and Launch only '+size,Math.abs(abort.width-abort.height)<1&&[...q('.acts').querySelectorAll('.rbtn')].filter(x=>x.getClientRects().length).length===2&&Math.abs(abort.top-launch.top)<1&&Math.abs(abort.width-launch.width)<1);
+  await check('Wasp has aligned circular SafeDown and Launch only '+size,Math.abs(abort.width-abort.height)<1&&[...q('.acts').querySelectorAll('.rbtn')].filter(x=>x.getClientRects().length).length===2&&Math.abs(abort.top-launch.top)<1&&Math.abs(abort.width-launch.width)<1);
   await check('Wasp hides Seeker controls '+size,!visible('#normal_pad')&&!visible('#b_lock')&&!visible('#dial')&&!visible('#hbox')&&!visible('#tape'));
   await check('Wasp controls stay inside viewport '+size,[q('#wasp_pad'),q('.acts'),q('#vbox')].every(x=>{const b=x.getBoundingClientRect();return b.left>=0&&b.right<=size[0]+1&&b.top>=0&&b.bottom<=size[1]+1}));
-  await check('Wasp control labels fit '+size,[...buttons,q('#b_wasp_abort'),q('#b_eng')].every(x=>x.scrollWidth<=x.clientWidth+1));
+  await check('Wasp control labels fit '+size,[...buttons,q('#b_safedown'),q('#b_eng')].every(x=>x.scrollWidth<=x.clientWidth+1));
   const side=size[0]>=700||(size[0]>=560&&size[0]>size[1]);
   const tiles=q('.tiles').getBoundingClientRect(), camera=q('#vbox').getBoundingClientRect(), controls=q('.ctl').getBoundingClientRect();
   await check('Wasp layout matches orientation '+size,side?tiles.bottom<=camera.top&&camera.right<=controls.left:controls.top>=camera.bottom);
@@ -131,8 +137,11 @@ async function flightLayout(){
   await check('Wasp main timer fits its panel '+size,q('.main-countdown').scrollWidth<=q('.main-countdown').clientWidth+1&&visible('#wasp_launch_main'));
   await check('Wasp summary bar is removed '+size,!q('#wasp_summary'));
   await check('Wasp camera uses the full frame '+size,Math.abs(q('#v').getBoundingClientRect().width-camera.width)<3&&Math.abs(q('#v').getBoundingClientRect().height-camera.height)<3);
-  const throttle=q('#wasp_main_throttle').getBoundingClientRect(), extra=q('#wasp_pad [data-wasp-profile="extra"]').getBoundingClientRect();
-  await check('Main throttle row sits below Extra and fits '+size,visible('#wasp_main_throttle')&&throttle.top>=extra.bottom&&throttle.bottom<=size[1]+1&&q('#wasp_main_throttle').scrollWidth<=q('#wasp_main_throttle').clientWidth+1);
+  await check('Throttle is off the main screen (PARAMETERS only) '+size,!q('#wasp_main_throttle')&&!q('#wasp_pad [data-wp="throttle"]'));
+  const pad=q('#wasp_pad').getBoundingClientRect(), gaps=boxes.slice(1).map((x,i)=>x.top-boxes[i].bottom);
+  await check('Steering buttons are evenly spaced '+size,Math.max(...gaps)-Math.min(...gaps)<1.5&&Math.min(...gaps)>=3);
+  await check('Steering buttons fill their column '+size,Math.abs(boxes[3].bottom-pad.bottom)<1.5);
+  if(!side) await check('Steering column matches the launch column '+size,Math.abs(pad.bottom-q('.acts').getBoundingClientRect().bottom)<1.5&&Math.min(...gaps)>=10);
  }
  f.width=390;f.height=844;await sleep(150);
 }
@@ -140,7 +149,7 @@ async function main(){
  await load();
  await check('startup has no chooser or blocking popup',!q('#modechooser')&&!visible('#modechange')&&!q('.app').inert);
  await check('startup is read-only',(await req('/commands')).length===0);
- await check('Seeker keeps Engage and Lock without Auto or Abort',visible('#normal_pad')&&visible('#b_lock')&&visible('#b_eng')&&!q('#b_auto')&&!visible('#b_wasp_abort')&&visible('#dial')&&visible('#hbox')&&visible('#tape')&&!visible('#wasp_pad'));
+ await check('Seeker keeps Engage and Lock without Auto or Abort',visible('#normal_pad')&&visible('#b_lock')&&visible('#b_eng')&&!q('#b_auto')&&!visible('#b_safedown')&&visible('#dial')&&visible('#hbox')&&visible('#tape')&&!visible('#wasp_pad'));
  await check('TensorRT FPS stays green',q('#c_ai_k').textContent==='TensorRT 640'&&q('#c_ai').classList.contains('ok'));
  parameters();
  await check('three Seeker parameter sections in order',[...f.contentDocument.querySelectorAll('.param-title')].filter(x=>x.getClientRects().length).map(x=>x.textContent).join('|')==='1Flight mode|2Detection|3Flight parametersSEEKER');
@@ -166,7 +175,7 @@ async function main(){
  q('#ptab_auto').click();
  await check('Auto tab replaces Manual controls',visible('#pp_auto')&&!visible('#pp_semi'));
  q('[data-autoen="on"]').click();await until(()=>q('#autotag').textContent==='ON');
- await check('Seeker Auto labels the primary action Auto Engage',q('#engtxt').textContent==='AUTO ENGAGE'&&q('#b_eng').getAttribute('aria-label')==='AUTO ENGAGE'&&!visible('#b_wasp_abort')&&!q('#b_auto'));
+ await check('Seeker Auto labels the primary action Auto Engage',q('#engtxt').textContent==='AUTO ENGAGE'&&q('#b_eng').getAttribute('aria-label')==='AUTO ENGAGE'&&!visible('#b_safedown')&&!q('#b_auto'));
  q('[data-ap="height"][data-av="20"]').click();await until(()=>q('[data-ap="height"][data-av="20"]').classList.contains('on'));
  await check('choice applies without a default popup',!q('#defask')&&(await req('/state')).mission.auto_params.height===20);
  q('[data-save="auto:height"]').click();await sleep(150);
@@ -271,13 +280,17 @@ async function main(){
  await check('Extra can be selected while armed and ready',(await req('/state')).mission.wasp_params.rate===120);
  q('#wasp_pad [data-wasp-profile="standard"]').click();await until(()=>q('#wasp_launch_main').value==='4'&&q('#wasp_pad [data-wasp-profile="standard"]').classList.contains('on'));
  await check('switching back restores edited advanced defaults',(await req('/state')).mission.wasp_params.rate===45&&(await req('/state')).mission.wasp_params.blend===0.25);
- await check('Main throttle row offers all three choices',[...q('#wasp_main_throttle').children].map(b=>b.textContent).join(',')==='75%,85%,100%');
- q('#wasp_main_throttle [data-wv="0.85"]').click();await until(()=>q('#pp_wasp [data-wp="throttle"] [data-wv="0.85"]').classList.contains('on'));
+ await req('/set?armed=0&phase=PILOT');parameters();
+ await check('Launch throttle offers all three choices in PARAMETERS',[...q('#pp_wasp [data-wp="throttle"]').children].map(b=>b.textContent).join(',')==='75%,85%,100%');
+ q('#pp_wasp [data-wp="throttle"] [data-wv="0.85"]').click();await until(async()=>(await req('/state')).mission.wasp_params.throttle===.85);
+ q('#sh_speed [data-close]').click();await req('/set?armed=1&phase=WASP_READY');
  for(const profile of ['smooth','responsive','extra','standard']){
   q('#wasp_pad [data-wasp-profile="'+profile+'"]').click();await until(()=>q('#wasp_pad [data-wasp-profile="'+profile+'"]').classList.contains('on'));
-  await check('Throttle and launch countdown stay independent of '+profile,q('#wasp_main_throttle [data-wv="0.85"]').classList.contains('on')&&q('#wasp_launch_main').value==='4'&&(await req('/state')).mission.wasp_params.throttle===.85);
+  await check('Throttle and launch countdown stay independent of '+profile,q('#pp_wasp [data-wp="throttle"] [data-wv="0.85"]').classList.contains('on')&&q('#wasp_launch_main').value==='4'&&(await req('/state')).mission.wasp_params.throttle===.85);
  }
- q('#wasp_main_throttle [data-wv="0.75"]').click();await until(()=>q('#pp_wasp [data-wp="throttle"] [data-wv="0.75"]').classList.contains('on'));
+ await req('/set?armed=0&phase=PILOT');
+ q('#pp_wasp [data-wp="throttle"] [data-wv="0.75"]').click();await until(async()=>(await req('/state')).mission.wasp_params.throttle===.75);
+ await req('/set?armed=1&phase=WASP_READY');
  await check('main timer is a scroll picker without text input',q('#wasp_launch_main').getAttribute('role')==='listbox'&&!q('.main-countdown input'));
  const wheel=q('#wasp_launch_main'), rows=[...wheel.children], index=rows.findIndex(x=>x.getAttribute('data-seconds')==='5');
  wheel.dispatchEvent(new f.contentWindow.WheelEvent('wheel',{deltaY:50,bubbles:true}));wheel.scrollTop=index*rows[0].getBoundingClientRect().height;
@@ -318,9 +331,9 @@ async function main(){
  await check('Test target stays fixed during countdown',JSON.stringify((await req('/state')).mission.test_target)===JSON.stringify(targetBefore));
  await load();
  await check('refresh preserves launch countdown',q('#b_eng').classList.contains('countdown')&&(await req('/commands')).filter(x=>x[0]==='engage').length===1);
- tap('#b_wasp_abort');await until(()=>q('#engtxt').textContent==='LAUNCH WASP'&&!q('#b_eng').classList.contains('countdown'));
+ tap('#b_safedown');await until(()=>q('#engtxt').textContent==='LAUNCH WASP'&&!q('#b_eng').classList.contains('countdown'));
  const cancelled=(await req('/state')).mission;
- await check('Abort cancels the launch countdown without Idle',cancelled.wasp_progress.stage!=='COUNTDOWN'&&['PILOT','WASP_READY'].includes(cancelled.phase)&&cancelled.idle_remaining_s===null);
+ await check('SafeDown cancels the launch countdown',cancelled.wasp_progress.stage!=='COUNTDOWN'&&['PILOT','WASP_READY'].includes(cancelled.phase)&&cancelled.idle_remaining_s===null);
  await req('/set?armed=0&phase=PILOT');await sleep(350);parameters();
  await countdown(3);
  q('#sh_speed [data-close]').click();await req('/set?armed=1&phase=WASP_READY');await until(()=>!q('#b_eng').disabled);
@@ -329,7 +342,7 @@ async function main(){
  await until(()=>q('#engtxt strong')&&q('#engtxt strong').textContent==='1');
  await check('default countdown displays 3, 2, 1',q('#b_eng').disabled);
  await until(()=>q('#engtxt').textContent==='WASP FLYING');
- await check('flight badge tells the pilot how to take over',q('#badge').textContent==='TEST · STRAIGHT · STAB TO TAKE OVER'&&(await req('/state')).mission.idle_remaining_s===null);
+ await check('flight badge tells the pilot how to take over',q('#badge').textContent==='TEST · STRAIGHT · SAFEDOWN OR STAB = AUTO LAND'&&(await req('/state')).mission.idle_remaining_s===null);
  await until(()=>parseFloat(q('#test_target').style.left)>25&&parseFloat(q('#test_target').style.left)<50);
  await check('Test target moves toward the center only after launch',parseFloat(q('#test_target').style.top)<75&&parseFloat(q('#test_target').style.top)>50);
  await load();
@@ -337,26 +350,26 @@ async function main(){
  await until(()=>q('#test_target').style.left==='50%'&&q('#test_target').style.top==='50%');
  await sleep(250);
  await check('Test target stays centered',q('#test_target').style.left==='50%'&&q('#test_target').style.top==='50%');
- await req('/set?armed=1&phase=WASP_FLIGHT&elapsed=2');await until(()=>q('#badge').textContent.includes('STRAIGHT · STAB TO TAKE OVER'));
+ await req('/set?armed=1&phase=WASP_FLIGHT&elapsed=2');await until(()=>q('#badge').textContent.includes('STRAIGHT · SAFEDOWN OR STAB = AUTO LAND'));
  await check('no-detection wait remains active after Straight launch with no time limit',q('#b_eng').disabled&&(await req('/state')).mission.idle_remaining_s===null);
  await req('/set?armed=1&target=1&acquired=1');await until(()=>q('#badge').textContent.includes('BLENDING'));
  await check('late acquisition shows the steering transition',q('#badge').textContent.includes('BLENDING'));
  await req('/set?armed=1&phase=WASP_FLIGHT&elapsed=1.25');await until(()=>q('#badge').textContent.includes('GUIDING'));
- await check('guiding badge shows the STABILIZE takeover hint',q('#badge').textContent==='TEST · GUIDING · STAB TO TAKE OVER');
+ await check('guiding badge shows the STABILIZE takeover hint',q('#badge').textContent==='TEST · GUIDING · SAFEDOWN OR STAB = AUTO LAND');
  await check('each launch attempt sent once',(await req('/commands')).filter(x=>x[0]==='engage').length===2);
  await load();
  await check('armed refresh preserves the active flight',!visible('#modechange')&&!q('.app').inert&&(await req('/state')).mission.phase==='WASP_FLIGHT'&&(await req('/commands')).filter(x=>x[0]==='engage').length===2);
  parameters();await check('camera switching blocked during Wasp flight',q('[data-cam="30"]').disabled&&q('[data-cam="60"]').disabled&&q('[data-cam="21"]').disabled);
  await check('engine switching blocked during Wasp flight',q('[data-engine="640"]').disabled&&q('[data-engine="960"]').disabled);
  await check('Video Stabilization remains switchable during Wasp flight',!q('[data-stabilization="on"]').disabled&&!q('[data-stabilization="off"]').disabled);
- q('#sh_speed [data-close]').click();await check('Abort says it recovers',q('#b_wasp_abort').getAttribute('aria-label')==='Abort: recover, level and hold height');
- tap('#b_wasp_abort');await until(()=>q('#badge').textContent.startsWith('RECOVERY'));
- await check('abort remains available and sends once per tap',(await req('/commands')).filter(x=>x[0]==='abort').length===2&&q('#b_eng').disabled);
- const recovering=(await req('/state')).mission;
- await check('WASP abort in flight starts the ALT_HOLD recovery',recovering.phase==='IDLE'&&recovering.idle.recovery===true&&recovering.idle_remaining_s===null);
- await check('recovery badge tells the pilot to change mode to take over',q('#badge').textContent==='RECOVERY · HOLD · CHANGE MODE TO TAKE OVER'&&q('#engtxt').textContent==='IDLE'&&q('#b_eng').disabled);
- await req('/set?armed=1&phase=IDLE_FAILED&idle=stop');await until(()=>q('#badge').textContent==='RECOVERY FAILED · PILOT');
- await check('failed recovery tells the pilot it has the drone',q('#badge').textContent==='RECOVERY FAILED · PILOT'&&q('#b_eng').disabled);
+ q('#sh_speed [data-close]').click();await check('SafeDown button says what it does',q('#b_safedown').textContent==='SAFEDOWN'&&q('#b_safedown').getAttribute('aria-label')==='SafeDown: level, stop and land on its own');
+ tap('#b_safedown');await until(()=>q('#badge').textContent.startsWith('SAFEDOWN'));
+ await check('SafeDown remains available and sends once per tap',(await req('/commands')).filter(x=>x[0]==='safedown').length===2&&q('#b_eng').disabled);
+ const landing=(await req('/state')).mission;
+ await check('SafeDown in flight starts the automatic descent',landing.phase==='SAFEDOWN'&&landing.safedown.active===true&&landing.idle_remaining_s===null);
+ await check('SafeDown badge shows the stage and Plan B',q('#badge').textContent==='SAFEDOWN · SETTLING · SWITCH UP TO FLY'&&q('#engtxt').textContent==='SAFEDOWN'&&q('#b_eng').disabled);
+ await req('/set?armed=1&phase=SAFEDOWN_FAILED&idle=stop');await until(()=>q('#badge').textContent.startsWith('SAFEDOWN FAILED'));
+ await check('failed SafeDown tells the pilot to fly it',q('#badge').textContent==='SAFEDOWN FAILED · THROTTLE MID, SWITCH UP, FLY IT'&&q('#b_eng').disabled);
  await req('/set?armed=0&phase=PILOT');await sleep(350);parameters();
  q('[data-cam="30"]').click();await until(()=>q('[data-cam="30"]').classList.contains('on'));
  q('[data-cam="21"]').click();await until(()=>q('[data-cam="21"]').classList.contains('on'));
@@ -369,7 +382,7 @@ async function main(){
  q('#sh_speed [data-close]').click();await flightLayout();parameters();
  await switchMode('normal');
  await check('leaving WASP disables Test mode',!(await req('/state')).mission.test_mode&&!visible('#test_target'));
- await check('Abort is hidden in Seeker',!visible('#b_wasp_abort'));
+ await check('Abort is hidden in Seeker',!visible('#b_safedown'));
  await check('returning to Seeker restores flight controls',visible('#normal_pad')&&visible('#b_lock')&&visible('#dial')&&visible('#hbox')&&visible('#tape')&&!visible('#wasp_pad'));
  await check('return to Normal confirms 30 degrees and changes flight parameters',q('#mountstatus').textContent==='30° ✓'&&visible('#normal_params')&&!visible('#pp_wasp'));
  q('[data-sky="on"]').click();q('[data-fol="on"]').click();q('[data-cam="30"]').click();
@@ -438,14 +451,16 @@ class Handler(BaseHTTPRequestHandler):
                         why = phone_command(m, k, v[0], time.perf_counter())
                     if k == "engage" and not why:
                         m.cycle(time.perf_counter(), context())
-                    elif k == "abort":
+                    elif k in ("abort", "safedown"):
                         m.cycle(time.perf_counter(), context())
-                        m.idle.stage = "HOLD"
+                        if m.safedown.active:
+                            m.safedown.stage = "STOP"
                 return self.send(dict(state(), refused=why))
             if u.path == "/set":
                 mapper.armed = q.get("armed", ["0"])[0] == "1"
                 if not mapper.armed or q.get("idle", [""])[0] == "stop":
                     m.idle.stop()
+                    m.safedown.stop()
                     m.wasp.used = False
                     m.engaged = False
                 m.phase = q.get("phase", [m.phase])[0]

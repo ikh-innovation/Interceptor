@@ -126,7 +126,7 @@ class WifiFixture(unittest.TestCase):
         with urlopen(self.url+"/cmd?"+urlencode({"c": "phone", key: value}), timeout=3) as response:
             state = json.load(response)
         self.assertFalse(state.get("refused"), state.get("refused"))
-        if key == "abort":
+        if key in ("abort", "safedown"):
             self.assertIn(state["control"], ("you", "free"))
         else:
             self.assertEqual(state["control"], "you")
@@ -248,13 +248,13 @@ class WifiAutonomyTests(WifiFixture):
         self.assertFalse(self.fc.mode_requests)
         self.assert_transmitting(perf_counter()-1)
         self.assertTrue(self.m.request_engage())
-        # LAND is not a STABILIZE takeover: every channel back, no recovery.
+        # LAND is not a STABILIZE takeover: every channel back, no SafeDown.
         self.fc.mode = 9
         until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides)
-        self.assertFalse(self.m.idle.active)
+        self.assertFalse(self.m.safedown.active)
         self.assertFalse(self.fc.mode_requests)
 
-    def test_wasp_flies_past_idle_setting_offline_until_stabilize_then_recovers(self):
+    def test_wasp_flies_past_idle_setting_offline_until_stabilize_then_safedown_lands_it(self):
         self.wasp_ready(idle_s=2)
         self.command("engage", "1")
         until(lambda: self.m.phase == "WASP_FLIGHT" and self.fc.overrides)
@@ -270,16 +270,17 @@ class WifiAutonomyTests(WifiFixture):
         self.assertEqual(self.c.backend.mode_name, "ACRO")
         self.assert_transmitting(perf_counter()-1)
         self.assertEqual(self.fc.overrides.get(3), 1900)
-        # STABILIZE in flight hands over to the ALT_HOLD recovery, phone or not.
+        # STABILIZE in flight starts SafeDown, phone or not: ALT_HOLD, then
+        # LAND, and the FC's own touchdown disarm.
         self.fc.mode = 0
-        until(lambda: self.m.phase == "IDLE" and self.m.idle.recovery)
-        until(lambda: self.c.mode_name == "ALT_HOLD" and self.m.idle.confirmed)
-        self.assertEqual([mode for _t, mode in self.fc.mode_requests], [2])
-        until(lambda: self.m.idle.stage == "CLIMB" and 1600 < self.fc.overrides.get(3, 0) < 1900)
+        until(lambda: self.m.phase == "SAFEDOWN" and self.m.safedown.active)
+        until(lambda: self.c.mode_name == "ALT_HOLD")
+        self.assertEqual({mode for _t, mode in self.fc.mode_requests}, {2})
         self.assert_transmitting(perf_counter()-1)
-        self.fc.mode = 0
-        until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides)
-        self.assertTrue(self.fc.armed and self.c.armed)
+        until(lambda: self.c.mode_name == "LAND", timeout=12)
+        until(lambda: not self.c.armed and not self.fc.overrides, timeout=4)
+        self.assertIn("SAFEDOWN complete: landed", self.m.event)
+        self.assertIsNone(self.ui)
 
     def test_manual_held_move_expires_when_http_disappears(self):
         self.seeker_ready()

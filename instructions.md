@@ -145,8 +145,8 @@ in the app (Parameters → WASP → Advanced).
 Otherwise leave them out and set the values in the UI.
 
 **After any replacement:** do a props-off bench check. Arm in ACRO, press GO
-(full throttle in 0.1 s), switch to STABILIZE (recovery: FC goes to ALT_HOLD),
-switch to ALT_HOLD (sticks back to the pilot), disarm.
+(full throttle in 0.1 s), switch to the middle (SafeDown: the FC goes to ALT_HOLD,
+then LAND), switch up to ALT_HOLD (Plan B: sticks back to the pilot), disarm.
 
 ## 5. Start manually, then install automatic startup
 
@@ -194,6 +194,8 @@ credentials, and Python environments are intentionally not committed.
 ```bash
 "$WASP_PY" src/tests/test_video_stabilization.py
 "$WASP_PY" src/tests/test_wasp.py
+"$WASP_PY" src/tests/test_safedown.py
+"$WASP_PY" src/tests/test_wasp_mavlink.py
 "$WASP_PY" src/tests/test_camera_modes.py
 "$WASP_PY" src/tests/test_wasp_ui.py
 curl --fail http://127.0.0.1:8080/state | python3 -m json.tool
@@ -209,3 +211,23 @@ systemctl --user start wasp-tracker
 ```
 
 Refresh the phone UI after updating. Verify startup after reboot while disarmed.
+
+### SafeDown in simulation (optional, about 1 hour)
+
+`src/tests/sitl_safedown.py` flies the real app against real ArduCopter SITL with
+the FC parameters from `deploy/fc/`: launch from the tilted 4-leg stand, then
+SafeDown under different masses, CG offsets, wind, gusts, upsets, dives and
+faults. Build SITL once (about 7 minutes on the Jetson):
+
+```bash
+git clone --depth 1 --branch Copter-4.6.2 --recurse-submodules --shallow-submodules \
+  https://github.com/ArduPilot/ardupilot.git ~/ardupilot
+cd ~/ardupilot && python3 ./waf configure --board sitl && python3 ./waf copter
+cd "$PROJECT_ROOT/src/tests"
+"$WASP_PY" sitl_safedown.py --list          # the scenarios
+"$WASP_PY" sitl_safedown.py -k nominal -j 1 # one or a few
+"$WASP_PY" sitl_safedown.py -j 4            # all of them, 4 at a time
+```
+
+It looks for `~/ardupilot/build/sitl/bin/arducopter`, or `WASP_SITL_BIN`. It
+skips if neither exists.
