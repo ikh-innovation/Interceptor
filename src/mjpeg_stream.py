@@ -35,7 +35,8 @@ def _load_page():
 class MJPEGServer:
 
     CONTROL_KEYS = ("hold", "release", "step", "engage", "lvl", "mode", "lock", "auto", "autoen", "autop", "autoreset",
-                    "sky", "follow", "cam", "engine", "stabilization", "def", "waspen", "waspp", "mount", "flightmode", "idles", "testmode", "testtarget")
+                    "sky", "follow", "cam", "engine", "stabilization", "def", "waspen", "waspp", "mount", "flightmode", "idles", "testmode", "testtarget",
+                    "go", "rfd")
     ALL_KEYS = CONTROL_KEYS + ("abort", "safedown")
     LEASE_S = 2.0
 

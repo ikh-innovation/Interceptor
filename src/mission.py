@@ -8,6 +8,7 @@ from time import perf_counter
 from wasp import Wasp, WaspGuidance
 from idle import Idle
 from safedown import Handover, SafeDown
+from rfd_gps import ned_m
 
 SPEEDS = {
     "climb":   {"SLOW": 1.0, "MEDIUM": 3.0, "FAST": 8.0},
@@ -24,10 +25,12 @@ HOLD_KINDS = {"up": ("throttle", +1), "down": ("throttle", -1),
               "yawl": ("yaw", -1), "yawr": ("yaw", +1)}
 
 PHASES = ("PILOT", "HOVER", "CLIMB", "DESCEND", "SCOUT",
-          "AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN", "PUSH", "AI", "STOP",
+          "AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN",
+          "GPS_CLIMB", "GPS_GOTO", "GPS_ALIGN", "PUSH", "AI", "STOP",
           "WASP_READY", "WASP_FLIGHT", "WASP_DONE", "IDLE", "IDLE_FAILED",
           "SAFEDOWN", "SAFEDOWN_FAILED")
 AUTO_PHASES = ("AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN")
+GPS_PHASES = ("GPS_CLIMB", "GPS_GOTO", "GPS_ALIGN")
 
 
 def wrap180(a):
@@ -249,6 +252,13 @@ def _phone_command(m, key, value, now):
         return m.request_step(-1 if value.strip().lower().startswith("l") else 1)
     if key == "engage":
         return m.request_engage()
+    if key == "go":
+        v = value.strip().lower()
+        if v not in ("on", "off", "1", "0", "true", "false"):
+            return "bad GO value"
+        return m.request_go(v in ("1", "on", "true"))
+    if key == "rfd":
+        return m.rfd_status(now)
     if key == "lock":
         v = value.strip().lower()
         if v in ("on", "off", "1", "0", "true", "false"):
@@ -347,6 +357,12 @@ class Mission:
     AUTO_STEER_S = 0.6
     AUTO_LINE_DEG = 30.0
     AUTO_AI = "MAX"
+    GPS_CLIMB_M = 5.0
+    GPS_FRESH_S = 2.0
+    GPS_LOST_S = 3.0
+    GPS_ARRIVE_M = 12.0
+    GPS_LEAN_MAX = 15.0
+    GPS_LEAN_RAMP_S = 0.6
 
     AUTO_SETTINGS = (
         ("height",   ("AUTO_HEIGHT_M",),               (5.0, 10.0, 15.0, 20.0)),
@@ -389,6 +405,14 @@ class Mission:
         self._req_engage = False
         self._req_abort = False
         self._req_auto = None
+        self._req_go = None
+        self.gps_pending = False
+        self.gps_run = False
+        self.gps_dist_m = None
+        self.rfd = None
+        self._gps_lost_t = None
+        self._gps_vis_lost_t = None
+        self._gps_ready_t = None
         self.auto_enabled = False
         self.wasp = Wasp()
         self.test_mode = False
@@ -430,8 +454,10 @@ class Mission:
         self.refusal = ""
         self._thr = Ramp(self.THR_RAMP_S)
         self._yaw = Ramp(self.YAW_RAMP_S)
+        self._pitch = Ramp(self.GPS_LEAN_RAMP_S)
         self._thr_on = False
         self._yaw_on = False
+        self._pitch_on = False
         self._step = None
         self._push = None
         self._push_t = None
@@ -461,7 +487,7 @@ class Mission:
             if self.phase in ("AUTO_CLIMB", "AUTO_HOLD") and HOLD_KINDS[kind][0] == "yaw":
                 pass
             elif self.phase in ("PUSH", "AI", "STOP", "IDLE", "IDLE_FAILED",
-                                "SAFEDOWN", "SAFEDOWN_FAILED") + AUTO_PHASES:
+                                "SAFEDOWN", "SAFEDOWN_FAILED") + AUTO_PHASES + GPS_PHASES:
                 return f"no manual moves during {self.phase}"
             if self.phase == "PILOT":
                 return "the pilot has it (not armed / not ALT_HOLD)"
@@ -514,6 +540,66 @@ class Mission:
                 return f"ENGAGE only from HOVER, SCOUT or AUTO, not {self.phase}"
             self._req_engage = True
         return ""
+
+    def request_go(self, on=True):
+        with self._lock:
+            if self.wasp.enabled:
+                return "GO is the Seeker path: turn WASP off"
+            if not on:
+                self.gps_pending = False
+                if self.phase in GPS_PHASES:
+                    self._req_go = False
+                return ""
+            if self.phase in GPS_PHASES:
+                return ""
+            if self.engaged:
+                return "already engaged: pilot STAB -> ALT_HOLD for a new try"
+            if self.phase not in ("PILOT", "HOVER", "CLIMB", "DESCEND", "SCOUT"):
+                return f"GO only while hovering, not during {self.phase}"
+            fix = self._rfd_now(perf_counter())
+            if fix is None or not fix.get("fresh"):
+                return "no fresh RFD GPS: press CHECK"
+            backend = getattr(self.mapper, "backend", None)
+            if backend is not None:
+                if not getattr(backend, "armed", False):
+                    return "arm in ALT_HOLD before GO"
+                mode = getattr(backend, "mode_name", "") or "?"
+                if mode != "ALT_HOLD":
+                    return f"FC in {mode}, not ALT_HOLD"
+                if hasattr(backend, "position_ok") and not backend.position_ok():
+                    return "flight controller has no GPS position"
+            self.gps_pending = True
+            self._req_go = True
+        return ""
+
+    def rfd_status(self, now=None):
+        now = perf_counter() if now is None else now
+        fix = self._rfd_now(now)
+        if fix is None:
+            err = getattr(self.rfd, "error", "") if self.rfd is not None else ""
+            return "no RFD GPS" + (f": {err}" if err else "")
+        if not fix.get("fresh"):
+            return f"RFD stale {fix.get('age_s', 0.0):.1f} s"
+        return (f"RFD {fix['lat']:.5f}, {fix['lon']:.5f}, "
+                f"{fix['alt_m']:.0f} m {fix['frame']}")
+
+    def _rfd_now(self, now):
+        src = self.rfd
+        if src is None:
+            return None
+        if isinstance(src, dict):
+            fix = dict(src)
+        elif hasattr(src, "snapshot"):
+            fix = src.snapshot(now)
+            if fix is None:
+                return None
+        else:
+            return None
+        if "age_s" not in fix and "t" in fix:
+            fix["age_s"] = max(0.0, now - fix["t"])
+        if "fresh" not in fix:
+            fix["fresh"] = fix.get("age_s", 0.0) <= self.GPS_FRESH_S
+        return fix
 
     def set_auto_enabled(self, on):
         with self._lock:
@@ -713,15 +799,19 @@ class Mission:
         if not ok:
             return f"AUTO {key}: one of {', '.join(str(c) for c in choices)}"
         with self._lock:
-            if self.phase in AUTO_PHASES or (self.auto_run and self.phase in ("PUSH", "AI", "STOP")):
+            if self._auto_settings_locked():
                 return "AUTO is flying: change its settings after the run"
             for a in attrs:
                 setattr(self, a, v)
         return ""
 
+    def _auto_settings_locked(self):
+        return (self.phase in AUTO_PHASES + GPS_PHASES
+                or ((self.auto_run or self.gps_run) and self.phase in ("PUSH", "AI", "STOP")))
+
     def reset_auto_params(self):
         with self._lock:
-            if self.phase in AUTO_PHASES or (self.auto_run and self.phase in ("PUSH", "AI", "STOP")):
+            if self._auto_settings_locked():
                 return "AUTO is flying: change its settings after the run"
             for _k, attrs, _c in self.AUTO_SETTINGS:
                 for a in attrs:
@@ -732,7 +822,9 @@ class Mission:
         return self.ai_override or self.level["ai"]
 
     def line_deg(self):
-        return self.AUTO_LINE_DEG if (self.auto_run and self.AUTO_LINE_DEG) else self.push_deg()
+        if (self.auto_run or self.gps_run) and self.AUTO_LINE_DEG:
+            return self.AUTO_LINE_DEG
+        return self.push_deg()
 
     def request_auto(self, on):
         with self._lock:
@@ -801,7 +893,14 @@ class Mission:
         self._unlock()
         self._thr.reset(0.0)
         self._yaw.reset(0.0)
+        self._pitch.reset(0.0)
         self._thr_on = self._yaw_on = False
+        self._pitch_on = False
+        self._gps_lost_t = None
+        self._gps_vis_lost_t = None
+        self._gps_ready_t = None
+        self.gps_dist_m = None
+        self.gps_run = False
         self._step = None
         self._push = None
         self._push_t = None
@@ -847,6 +946,7 @@ class Mission:
             abort, self._req_abort = self._req_abort, False
             lock_req, self._req_lock = self._req_lock, None
             auto_req, self._req_auto = self._req_auto, None
+            go_req, self._req_go = self._req_go, None
 
         stabilize = bool(ctx.get("pilot_stabilize"))
         self._stabilize_edge = stabilize and not self._pilot_stabilize
@@ -892,6 +992,7 @@ class Mission:
                 self._note("reset: ENGAGE ready again once back in ALT_HOLD", now)
             self._set_phase("PILOT", now, ctx.get("gate_why", ""))
             self._reset_motion()
+            self.gps_pending = False
             with self._lock:
                 self._hold = None
             return {}
@@ -906,6 +1007,14 @@ class Mission:
             self._reset_motion()
             return {}
 
+        if self.phase in GPS_PHASES:
+            if go_req is False:
+                self.gps_pending = False
+                if self.idle_supported:
+                    return self._start_idle(now, ctx, "GO off")
+                self._note("GO off: soft stop, then the pilot's sticks", now)
+                return self._start_stop(now)
+            return self._gps_cycle(now, ctx)
         if self.phase in ("HOVER", "CLIMB", "DESCEND", "SCOUT") + AUTO_PHASES:
             if engage:
                 self._unlock("ENGAGE: the AI takes the yaw", now)
@@ -919,6 +1028,8 @@ class Mission:
                 return self._start_stop(now)
             return self._auto_cycle(now, ctx, hold, step)
         if self.phase in ("HOVER", "CLIMB", "DESCEND", "SCOUT"):
+            if go_req is True:
+                return self._start_gps(now, ctx)
             if auto_req == "on":
                 out = self._start_auto(now, ctx)
                 if out is not None:
@@ -1463,6 +1574,186 @@ class Mission:
         self._last_out = out
         return out
 
+    def _rfd_public(self, now):
+        fix = self._rfd_now(now)
+        if not fix:
+            return None
+        return dict(lat=round(fix["lat"], 7), lon=round(fix["lon"], 7),
+                    alt_m=round(fix["alt_m"], 2), frame=fix["frame"],
+                    age_s=round(float(fix.get("age_s", 0.0)), 2),
+                    fresh=bool(fix.get("fresh")))
+
+    def _start_gps(self, now, ctx):
+        fix = self._rfd_now(now)
+        gpos = ctx.get("gpos")
+        att, height = ctx.get("att"), ctx.get("height")
+        if fix is None or not fix.get("fresh"):
+            self.gps_pending = False
+            self._refuse("no fresh RFD GPS", now)
+            return {}
+        if att is None:
+            self.gps_pending = False
+            self._refuse("no attitude: no GO", now)
+            return {}
+        if height is None:
+            self.gps_pending = False
+            self._refuse("height unknown: no GO", now)
+            return {}
+        if not gpos or gpos.get("lat") is None or gpos.get("lon") is None:
+            self.gps_pending = False
+            self._refuse("flight controller position unknown", now)
+            return {}
+        self._unlock()
+        self._step = None
+        if not self._thr_on:
+            self._thr.reset(self._pilot_value("throttle"))
+            self._thr_on = True
+        if not self._yaw_on:
+            self._yaw.reset(self._pilot_value("yaw"))
+            self._yaw_on = True
+        if not self._pitch_on:
+            self._pitch.reset(self._pilot_value("pitch"))
+            self._pitch_on = True
+        self._gps_lost_t = None
+        self._gps_vis_lost_t = None
+        self._gps_ready_t = None
+        self.gps_pending = False
+        self.gps_run = True
+        self.ai_override = None if self.AUTO_AI == "SAME" else self.AUTO_AI
+        top = min(self.GPS_CLIMB_M, self.ceiling_m - 1.0)
+        up = height < top - 0.4
+        self._note(f"GO: {'up to %.0f m, then ' % top if up else ''}"
+                   f"the RFD point {fix['lat']:.5f}, {fix['lon']:.5f}", now)
+        self._set_phase("GPS_CLIMB" if up else "GPS_GOTO", now, "GO")
+        return self._gps_cycle(now, ctx)
+
+    def _gps_target_height(self, fix, gpos):
+        climb = min(self.GPS_CLIMB_M, self.ceiling_m - 1.0)
+        if fix is None:
+            return climb
+        if fix.get("frame") == "REL":
+            return max(climb, min(self.ceiling_m - 1.0, float(fix["alt_m"])))
+        if gpos and gpos.get("alt_m") is not None and gpos.get("rel_m") is not None:
+            rel = float(gpos["rel_m"]) + (float(fix["alt_m"]) - float(gpos["alt_m"]))
+            return max(climb, min(self.ceiling_m - 1.0, rel))
+        return climb
+
+    def _on_aim(self, ctx):
+        cmd = ctx.get("ai_cmd") or {}
+        az = float(cmd.get("az_deg", 0.0))
+        err_el = float(cmd.get("el_cam_deg", 0.0)) - self.auto_aim_el()
+        return abs(az) <= self.AUTO_AZ_OK and -self.AUTO_EL_LOW <= err_el <= self.AUTO_EL_OK
+
+    def _gps_cycle(self, now, ctx):
+        fix = self._rfd_now(now)
+        gpos, att = ctx.get("gpos"), ctx.get("att")
+        height, climb = ctx.get("height"), ctx.get("climb")
+        fresh = (fix is not None and fix.get("fresh") and att is not None
+                 and gpos is not None and gpos.get("lat") is not None)
+        if not fresh:
+            if self._gps_lost_t is None:
+                self._gps_lost_t = now
+            elif now - self._gps_lost_t >= self.GPS_LOST_S:
+                self.gps_pending = False
+                if self.idle_supported:
+                    return self._start_idle(now, ctx, "RFD or position lost")
+                self._note("RFD or position lost: soft stop", now)
+                return self._start_stop(now)
+            return self._gps_output(now, 0.0, 0.0, 0.0)
+        self._gps_lost_t = None
+        north, east = ned_m(gpos["lat"], gpos["lon"], fix["lat"], fix["lon"])
+        dist = math.hypot(north, east)
+        self.gps_dist_m = dist
+        bearing = math.degrees(math.atan2(east, north)) % 360.0
+        yaw_deg = math.degrees(att.get("yaw", 0.0)) % 360.0
+        yaw_err = wrap180(bearing - yaw_deg)
+        want_yaw = max(-self.AUTO_YAW_MAX, min(self.AUTO_YAW_MAX, self.AUTO_YAW_KP * yaw_err))
+        if self.phase == "GPS_ALIGN":
+            return self._gps_align(now, ctx, height, climb)
+        if self.phase == "GPS_CLIMB":
+            top = min(self.GPS_CLIMB_M, self.ceiling_m - 1.0)
+            if height is None:
+                want_thr = 0.0
+            else:
+                want_thr = max(0.0, min(self.AUTO_CLIMB_MPS, self.AUTO_HEIGHT_KP * (top - height)))
+                if height >= top - 0.3:
+                    want_thr = 0.0
+                    self._note(f"GO: at {height:.1f} m, flying to the RFD point ({dist:.0f} m)", now)
+                    self._set_phase("GPS_GOTO", now, "height reached")
+            return self._gps_output(now, want_thr, want_yaw, 0.0)
+        tgt_h = self._gps_target_height(fix, gpos)
+        if height is None:
+            want_thr = 0.0
+        else:
+            err = tgt_h - height
+            want_thr = max(-self.AUTO_DESCENT_MPS, min(self.AUTO_CLIMB_MPS, self.AUTO_HEIGHT_KP * err))
+            if abs(err) < 0.3:
+                want_thr = 0.0
+            if want_thr < 0.0 and height <= self.AUTO_FLOOR_M:
+                want_thr = 0.0
+        arrived = dist <= self.GPS_ARRIVE_M
+        want_pitch = 0.0 if arrived else -min(self.GPS_LEAN_MAX, 8.0 + dist * 0.15)
+        if arrived and self._confirmed(now, ctx) and self._on_aim(ctx):
+            self._gps_ready_t = None
+            self._gps_vis_lost_t = None
+            self._auto_align_t = now
+            self._note("GO: target on the lower mark, lining it up", now)
+            self._set_phase("GPS_ALIGN", now, "visual")
+            return self._gps_align(now, ctx, height, climb)
+        if arrived and self._confirmed(now, ctx):
+            cmd = ctx.get("ai_cmd") or {}
+            az = float(cmd.get("az_deg", 0.0))
+            want_yaw = max(-self.AUTO_YAW_MAX, min(self.AUTO_YAW_MAX, self.AUTO_YAW_KP * az))
+            want_pitch = 0.0
+        return self._gps_output(now, want_thr, want_yaw, want_pitch)
+
+    def _gps_align(self, now, ctx, height, climb):
+        cmd = ctx.get("ai_cmd")
+        if not self._confirmed(now, ctx):
+            if self._gps_vis_lost_t is None:
+                self._gps_vis_lost_t = now
+            elif now - self._gps_vis_lost_t >= self.GPS_LOST_S:
+                self._gps_vis_lost_t = None
+                self._gps_ready_t = None
+                self._note("target lost while lining up: back to the GPS point", now)
+                self._set_phase("GPS_GOTO", now, "visual lost")
+            return self._gps_output(now, 0.0, 0.0, 0.0)
+        self._gps_vis_lost_t = None
+        az = float(cmd.get("az_deg", 0.0))
+        err_el = float(cmd.get("el_cam_deg", 0.0)) - self.auto_aim_el()
+        ff = float(cmd.get("los_az_dps", 0.0) or 0.0)
+        want_yaw = max(-self.AUTO_YAW_MAX, min(self.AUTO_YAW_MAX, ff + self.AUTO_YAW_KP * az))
+        want_thr = max(-self.AUTO_DESCENT_MPS, min(self.AUTO_ALIGN_CLIMB_MPS, self.AUTO_EL_KP * err_el))
+        if want_thr < 0.0 and (height is None or height <= self.AUTO_FLOOR_M):
+            want_thr = 0.0
+        aligned = abs(az) <= self.AUTO_AZ_OK and -self.AUTO_EL_LOW <= err_el <= self.AUTO_EL_OK
+        if not aligned:
+            self._gps_ready_t = None
+        elif self._gps_ready_t is None:
+            self._gps_ready_t = now
+        if aligned and self._gps_ready_t is not None and now - self._gps_ready_t >= self.AUTO_READY_S:
+            self._note(f"GO: on the mark: lean {self.line_deg():.0f} deg, then AI {self.ai_level_now()}", now)
+            out = self._start_push(now, ctx)
+            self._steer_after = now + self.AUTO_STEER_S
+            return out
+        return self._gps_output(now, want_thr, want_yaw, 0.0)
+
+    def _gps_output(self, now, want_thr, want_yaw, want_pitch):
+        thr_v, yaw_v = self._thr.value(now), self._yaw.value(now)
+        d_thr = self.AUTO_THR_ACCEL * self._dt
+        d_yaw = self.AUTO_YAW_ACCEL * self._dt
+        self._thr.reset(thr_v + max(-d_thr, min(d_thr, want_thr - thr_v)))
+        self._yaw.reset(yaw_v + max(-d_yaw, min(d_yaw, want_yaw - yaw_v)))
+        self._pitch.set(want_pitch, now, self.GPS_LEAN_RAMP_S)
+        out = {
+            "roll": self.mapper.phys_to_pwm("roll", 0.0),
+            "pitch": self.mapper.phys_to_pwm("pitch", self._pitch.value(now)),
+            "yaw": self.mapper.phys_to_pwm("yaw", self._yaw.value(now)),
+            "throttle": self.mapper.phys_to_pwm("throttle", self._thr.value(now)),
+        }
+        self._last_out = out
+        return out
+
     def _start_push(self, now, ctx):
         if self._run_t is None:
             self._run_t = now
@@ -1684,6 +1975,9 @@ class Mission:
             wasp_progress=self.wasp.progress(now),
             camera_mount_deg=self.camera_mount_deg,
             auto_run=bool(self.auto_run),
+            gps_run=bool(self.gps_run),
+            gps_dist_m=None if self.gps_dist_m is None else round(self.gps_dist_m, 1),
+            rfd=self._rfd_public(now),
             auto_params=self.auto_params(),
             auto_defaults=dict(self.auto_defaults),
             level_defaults=dict(self.level_defaults),

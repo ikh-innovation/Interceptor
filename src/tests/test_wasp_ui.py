@@ -123,7 +123,7 @@ async function flightLayout(){
   const abort=q('#b_safedown').getBoundingClientRect(), launch=q('#b_eng').getBoundingClientRect();
   await check('Wasp profiles stack vertically '+size,buttons.every(x=>x.getClientRects().length)&&boxes.every((x,i)=>!i||(x.top>=boxes[i-1].bottom&&Math.abs(x.left-boxes[0].left)<1&&Math.abs(x.width-boxes[0].width)<1)));
   await check('Wasp has aligned circular SafeDown and Launch only '+size,Math.abs(abort.width-abort.height)<1&&[...q('.acts').querySelectorAll('.rbtn')].filter(x=>x.getClientRects().length).length===2&&Math.abs(abort.top-launch.top)<1&&Math.abs(abort.width-launch.width)<1);
-  await check('Wasp hides Seeker controls '+size,!visible('#normal_pad')&&!visible('#b_lock')&&!visible('#dial')&&!visible('#hbox')&&!visible('#tape'));
+  await check('Wasp hides Seeker controls '+size,!visible('#normal_pad')&&!visible('#b_rfd')&&!visible('#b_go')&&!visible('#dial')&&!visible('#hbox')&&!visible('#tape'));
   await check('Wasp controls stay inside viewport '+size,[q('#wasp_pad'),q('.acts'),q('#vbox')].every(x=>{const b=x.getBoundingClientRect();return b.left>=0&&b.right<=size[0]+1&&b.top>=0&&b.bottom<=size[1]+1}));
   await check('Wasp control labels fit '+size,[...buttons,q('#b_safedown'),q('#b_eng')].every(x=>x.scrollWidth<=x.clientWidth+1));
   const side=size[0]>=700||(size[0]>=560&&size[0]>size[1]);
@@ -149,7 +149,7 @@ async function main(){
  await load();
  await check('startup has no chooser or blocking popup',!q('#modechooser')&&!visible('#modechange')&&!q('.app').inert);
  await check('startup is read-only',(await req('/commands')).length===0);
- await check('Seeker keeps Engage and Lock without Auto or Abort',visible('#normal_pad')&&visible('#b_lock')&&visible('#b_eng')&&!q('#b_auto')&&!visible('#b_safedown')&&visible('#dial')&&visible('#hbox')&&visible('#tape')&&!visible('#wasp_pad'));
+ await check('Seeker shows CHECK and GO, with the heading bar locked off',visible('#normal_pad')&&visible('#b_rfd')&&visible('#b_go')&&!visible('#b_eng')&&!q('#b_auto')&&!visible('#b_safedown')&&visible('#dial')&&q('#dial').classList.contains('off')&&visible('#hbox')&&visible('#tape')&&!visible('#wasp_pad')&&q('#gotxt').textContent==='GO');
  await check('TensorRT FPS stays green',q('#c_ai_k').textContent==='TensorRT 640'&&q('#c_ai').classList.contains('ok'));
  parameters();
  await check('three Seeker parameter sections in order',[...f.contentDocument.querySelectorAll('.param-title')].filter(x=>x.getClientRects().length).map(x=>x.textContent).join('|')==='1Flight mode|2Detection|3Flight parametersSEEKER');
@@ -172,15 +172,12 @@ async function main(){
  await switchMode('normal');
  await check('normal confirmation sets 30 degrees',(await req('/state')).mission.camera_mount_deg===30&&q('#mountstatus').textContent==='30° ✓');
  await layout('normal');
- q('#ptab_auto').click();
- await check('Auto tab replaces Manual controls',visible('#pp_auto')&&!visible('#pp_semi'));
- q('[data-autoen="on"]').click();await until(()=>q('#autotag').textContent==='ON');
- await check('Seeker Auto labels the primary action Auto Engage',q('#engtxt').textContent==='AUTO ENGAGE'&&q('#b_eng').getAttribute('aria-label')==='AUTO ENGAGE'&&!visible('#b_safedown')&&!q('#b_auto'));
+ await check('Seeker go-to settings sit on the flight page',visible('#pp_semi')&&!q('#ptab_auto')&&q('#gotxt').textContent==='GO'&&!visible('#b_eng')&&!visible('#b_safedown')&&!q('#b_auto'));
  q('[data-ap="height"][data-av="20"]').click();await until(()=>q('[data-ap="height"][data-av="20"]').classList.contains('on'));
  await check('choice applies without a default popup',!q('#defask')&&(await req('/state')).mission.auto_params.height===20);
  q('[data-save="auto:height"]').click();await sleep(150);
  await check('explicit save sends the correct default command',(await req('/commands')).some(x=>x[0]==='def'&&x[1]==='auto:height'));
- q('#ptab_semi').click();q('.seg[data-g="vert"] [data-lv="FAST"]').click();await until(()=>q('.seg[data-g="vert"] [data-lv="FAST"]').classList.contains('on'));
+ q('.seg[data-g="vert"] [data-lv="FAST"]').click();await until(()=>q('.seg[data-g="vert"] [data-lv="FAST"]').classList.contains('on'));
  await check('Manual speed changes apply',(await req('/state')).mission.levels.vert==='FAST');
  await check('no camera prompt in Seeker',!visible('#mount_flash'));
  await req('/cmd?c=test&flightmode=wasp');
@@ -297,7 +294,7 @@ async function main(){
  await until(async()=>q('#wasp_launch_main').value==='5'&&(await req('/state')).mission.wasp_params.launch_s===5);
  await check('rolling the main timer saves the countdown',(await req('/state')).mission.wasp_params.launch_s===5);
  await countdown(4);
- await check('Wasp aim and launch controls remain correct',q('#aim').style.top==='50%'&&!visible('#arc')&&q('#b_up').disabled&&!q('#b_eng').disabled);
+ await check('Wasp aim and launch controls remain correct',q('#aim').style.top==='50%'&&!visible('#arc')&&!visible('#b_go')&&!q('#b_eng').disabled);
  await req('/set?armed=1&target=0');await until(()=>q('#c_det').textContent==='NO');
  await check('launch is available without an initial detection',!q('#b_eng').disabled);
  await req('/set?armed=1&attitude=0');await until(()=>q('#b_eng').disabled);
@@ -383,7 +380,7 @@ async function main(){
  await switchMode('normal');
  await check('leaving WASP disables Test mode',!(await req('/state')).mission.test_mode&&!visible('#test_target'));
  await check('Abort is hidden in Seeker',!visible('#b_safedown'));
- await check('returning to Seeker restores flight controls',visible('#normal_pad')&&visible('#b_lock')&&visible('#dial')&&visible('#hbox')&&visible('#tape')&&!visible('#wasp_pad'));
+ await check('returning to Seeker restores flight controls',visible('#normal_pad')&&visible('#b_rfd')&&visible('#b_go')&&!visible('#b_eng')&&visible('#dial')&&q('#dial').classList.contains('off')&&visible('#hbox')&&visible('#tape')&&!visible('#wasp_pad'));
  await check('return to Normal confirms 30 degrees and changes flight parameters',q('#mountstatus').textContent==='30° ✓'&&visible('#normal_params')&&!visible('#pp_wasp'));
  q('[data-sky="on"]').click();q('[data-fol="on"]').click();q('[data-cam="30"]').click();
  await until(async()=>{const s=await req('/state');return s.sky_gate&&s.follower&&s.cam_fps===30});

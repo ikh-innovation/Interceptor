@@ -320,7 +320,7 @@ class DeskSim:
                     return "bad CAMERA value"
                 if cam not in CAM_CROP:
                     return "CAMERA: 21, 30 or 60"
-                if self.m.phase in ("PUSH", "AI", "STOP") + M.AUTO_PHASES:
+                if self.m.phase in ("PUSH", "AI", "STOP") + M.AUTO_PHASES + M.GPS_PHASES:
                     return f"not during {self.m.phase}: the picture is dark a moment while it switches"
                 if cam != self.cam:
                     self._set_cam(cam)

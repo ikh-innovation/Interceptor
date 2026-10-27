@@ -7,6 +7,7 @@ from pathlib import Path
 
 class FlightLogs:
     ACTIVE_PHASES = frozenset(("AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN",
+                              "GPS_CLIMB", "GPS_GOTO", "GPS_ALIGN",
                               "PUSH", "AI", "STOP", "WASP_FLIGHT", "IDLE",
                               "SAFEDOWN"))
     COLUMNS = ("utc_time", "flight_mode", "flight_id", "flight_elapsed_s",
@@ -31,6 +32,7 @@ class FlightLogs:
     def _start(self, now, state, metadata):
         kind = ("wasp" if state["wasp_enabled"] else
                 "auto" if state["auto_run"] or state["phase"].startswith("AUTO_")
+                else "gps" if state.get("gps_run") or state["phase"].startswith("GPS_")
                 else "semi_auto")
         while True:
             self.counter += 1

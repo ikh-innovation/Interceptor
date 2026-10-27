@@ -96,6 +96,9 @@
 
   .ctl{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;padding:0 4px 0 0}
   .pad{display:grid;grid-template-columns:repeat(3,clamp(64px,19vw,84px));gap:7px}
+  #normal_pad{display:flex;flex-direction:column;justify-content:flex-end;width:min(168px,44vw);grid-template-columns:none}
+  .rfd-read{font:600 11px/1.35 var(--mono);color:var(--ink);background:#fff;border:1px solid var(--line);
+            border-radius:12px;padding:8px 10px;min-height:52px;white-space:pre-line}
   .pad .mid{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
             font:11.5px/1.35 var(--mono);color:var(--dim);white-space:pre-line}
   .wasp-pad{display:block;width:clamp(180px,58vw,250px)}
@@ -213,6 +216,7 @@
   #sh_speed .pcard{padding:12px;margin-bottom:12px;background:var(--bg3);border-radius:12px}
   #sh_speed .pcard:last-child{margin-bottom:0}
   #sh_speed .pcard > .sec{font:700 11px/1 var(--sans);letter-spacing:.07em;margin-bottom:14px}
+  #sh_speed #autoparams .seg.wide{grid-auto-flow:row;grid-template-columns:repeat(2,minmax(0,1fr))}
   #sh_speed .unsaved{width:26px;height:24px;padding:0;border:0;border-radius:6px;background:var(--bg3);color:var(--acc);font:700 15px/1 var(--sans)}
   #sh_speed .unsaved.on{display:inline-flex;align-items:center;justify-content:center}
   #sh_speed .reset{margin:12px 0 0;min-height:40px;padding:10px;font-size:12px;letter-spacing:0}
@@ -534,15 +538,7 @@
 
   <div class="ctl">
     <div class="pad" id="normal_pad">
-      <div></div>
-      <button class="btn" id="b_up" data-hold="up">▲<small>CLIMB</small></button>
-      <div></div>
-      <button class="btn" id="b_yl" data-hold="yawl" data-tap="l">⟲<small>LEFT</small></button>
-      <div class="mid" id="padmid">--</div>
-      <button class="btn" id="b_yr" data-hold="yawr" data-tap="r">⟳<small>RIGHT</small></button>
-      <div></div>
-      <button class="btn" id="b_dn" data-hold="down">▼<small>DESCEND</small></button>
-      <div></div>
+      <div class="rfd-read" id="rfd_read">RFD —</div>
     </div>
     <div class="pad wasp-pad" id="wasp_pad" hidden>
       <div class="wasp-panel-title">Steering response</div>
@@ -560,8 +556,9 @@
         <span class="timer-label">Timer</span><div class="timer-wheel" id="wasp_launch_main" role="listbox" tabindex="0" aria-label="Launch countdown in seconds" aria-disabled="false"></div><span>s</span>
       </div>
       <button class="rbtn auto" id="b_safedown" data-only="wasp" hidden style="background:#ad3030;border-color:#ad3030" aria-label="SafeDown: level, stop and land on its own">SAFE<br>DOWN</button>
-      <button class="rbtn lock" id="b_lock" aria-label="LOCK"><span id="locktxt">LOCK</span></button>
-      <button class="rbtn eng" id="b_eng" aria-label="ENGAGE"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE</span></button>
+      <button class="rbtn lock" id="b_rfd" data-only="normal" aria-label="CHECK RFD GPS">CHECK</button>
+      <button class="rbtn eng" id="b_go" data-only="normal" aria-label="GO"><span id="gotxt">GO</span></button>
+      <button class="rbtn eng" id="b_eng" data-only="wasp" hidden aria-label="ENGAGE"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE</span></button>
       <p class="wasp-save-note" data-only="wasp" hidden>Settings save automatically. Countdown and launch throttle (PARAMETERS) apply to every response.</p>
     </div>
   </div>
@@ -608,22 +605,16 @@
     <section class="param-block" id="flight_params" aria-labelledby="flight_params_title">
       <h4 class="param-title" id="flight_params_title"><span class="num">3</span>Flight parameters<span class="tag" id="flight_mode_tag">SEEKER</span></h4>
       <div id="normal_params" data-only="normal">
-        <div class="flight-tabs" role="group" aria-label="Seeker flight parameters">
-          <button id="ptab_semi" data-acc="semi" aria-expanded="true" aria-controls="pp_semi">Manual</button>
-          <button id="ptab_auto" data-acc="auto" aria-expanded="false" aria-controls="pp_auto">Auto <span id="autotag">OFF</span></button>
-        </div>
-        <div class="ppane on" id="pp_semi" role="region" aria-labelledby="ptab_semi">
+        <div class="ppane on" id="pp_semi" role="region">
           <div class="parameter-grid">
             <div class="grp"><div class="gh"><div class="lbl">Climb / descent</div><button class="unsaved" data-save="lvl:vert" aria-label="Save climb and descent default" title="Save default">↧</button></div><div class="seg" data-g="vert"></div></div>
             <div class="grp"><div class="gh"><div class="lbl">Turn speed</div><button class="unsaved" data-save="lvl:yaw" aria-label="Save turn speed default" title="Save default">↧</button></div><div class="seg" data-g="yaw"></div></div>
             <div class="grp"><div class="gh"><div class="lbl">Forward lean</div><button class="unsaved" data-save="lvl:push" aria-label="Save forward lean default" title="Save default">↧</button></div><div class="seg" data-g="push"></div></div>
             <div class="grp"><div class="gh"><div class="lbl">AI speed</div><button class="unsaved" data-save="lvl:ai" aria-label="Save AI speed default" title="Save default">↧</button></div><div class="seg" data-g="ai"></div></div>
           </div>
-        </div>
-        <div class="ppane" id="pp_auto" role="region" aria-labelledby="ptab_auto">
-          <div class="grp"><div class="lbl">Auto</div><div class="seg" id="autoseg"><button data-autoen="on">ON</button><button data-autoen="off">OFF</button></div></div>
+          <p class="test-help">Arm in ALT_HOLD, then GO. It climbs 5 m and flies to the live RFD point. When the target sits on the lower mark, it leans and the AI takes over. CHECK shows whether the Jetson is hearing the RFD.</p>
           <div id="autoparams"></div>
-          <button class="reset" id="autoreset">Reset Auto</button>
+          <button class="reset" id="autoreset">Reset go-to</button>
         </div>
       </div>
       <div id="pp_wasp" data-only="wasp">
@@ -677,7 +668,7 @@
   <button class="no" id="ask_no">NO</button>
 </div></div>
 <div class="cover" id="cover"><b>CONNECTION LOST</b>
-  <p>Wi-Fi loss: Seeker / Wasp continues within its flight limits. Use the transmitter mode switch to take control. Held movement buttons expire after 0.3 s.</p></div>
+  <p>Wi-Fi loss: Seeker / Wasp continues within its flight limits. Use the transmitter mode switch to take control.</p></div>
 
 <script>
 (function () {
@@ -796,7 +787,10 @@
         if (r.status === 409) { if (!quiet) note("another phone has control", true); return null; }
         return r.ok ? r.json() : null;
       }).then(function (j) {
-        if (j) { lastOk = Date.now(); if (j.refused && !quiet) note("✗ " + j.refused, true); paint(j); }
+        if (j) { lastOk = Date.now(); if (j.refused && !quiet) {
+          var heard = j.refused.indexOf("RFD ") === 0 && j.refused.indexOf("stale") < 0;
+          note((heard ? "" : "✗ ") + j.refused, true);
+        } paint(j); }
         return j;
       }).catch(function () { return null; });
   }
@@ -845,7 +839,6 @@
     });
     holds[kind] = end;
   }
-  ["b_up", "b_dn", "b_yl", "b_yr"].forEach(function (id) { holdButton($(id)); });
   function releaseAll() { for (var k in holds) holds[k]("lost"); }
   document.addEventListener("visibilitychange", function () { if (document.hidden) releaseAll(); });
   window.addEventListener("blur", releaseAll);
@@ -867,12 +860,16 @@
     e.preventDefault(); cmd("safedown=1");
   });
 
-  $("b_lock").addEventListener("pointerdown", function (e) {
-    var el = $("b_lock");
-    if (el.disabled) return;
+  $("b_rfd").addEventListener("pointerdown", function (e) {
+    if (this.disabled) return;
     e.preventDefault();
-    var on = !(LAST && LAST.mission && LAST.mission.locked);
-    cmd("lock=" + (on ? "on" : "off"));
+    cmd("rfd=1");
+  });
+  $("b_go").addEventListener("pointerdown", function (e) {
+    if (this.disabled) return;
+    e.preventDefault();
+    var ph = (LAST && LAST.mission && LAST.mission.phase) || "";
+    cmd(ph.indexOf("GPS_") === 0 ? "go=off" : "go=on");
   });
 
   var dial = $("dial"), drag = null;
@@ -987,6 +984,7 @@
       g.querySelector(".lbl").textContent = p.t;
       g.querySelector(".unsaved").setAttribute("aria-label", "Save " + p.t.toLowerCase() + " default");
       g.querySelector(".unsaved").setAttribute("data-save", "auto:" + p.k);
+      if (p.c.length >= 4) g.querySelector(".seg").classList.add("wide");
       p.c.forEach(function (v) {
         var b = document.createElement("button");
         b.setAttribute("data-ap", p.k); b.setAttribute("data-av", String(v));
@@ -1214,10 +1212,9 @@
     placeControls();
     var waspPad = $("wasp_pad"), normalPad = $("normal_pad"), belt = document.querySelector(".belt");
     if (waspPad) waspPad.hidden = !wasp;
-    if (normalPad) normalPad.style.display = wasp ? "none" : "grid";
+    if (normalPad) normalPad.style.display = wasp ? "none" : "flex";
     if (belt) belt.style.display = wasp ? "none" : "";
     $("tape").hidden = wasp;
-    $("b_lock").style.display = wasp ? "none" : "";
     var testMode = wasp && !!m.test_mode;
     $("test_prompt").hidden = !testMode || !!m.test_target;
     $("test_target").hidden = !testMode || !m.test_target;
@@ -1285,10 +1282,6 @@
     });
 
     var manual = ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other";
-    ["b_up", "b_dn", "b_yl", "b_yr"].forEach(function (id) { $(id).disabled = !manual; });
-    if ((ph === "AUTO_CLIMB" || ph === "AUTO_HOLD") && !VIEW && ctl !== "other") {
-      $("b_yl").disabled = false; $("b_yr").disabled = false;
-    }
     var eng = $("b_eng"), done = !!m.engaged || !!m.ai_steering || ph === "WASP_FLIGHT" || ph === "WASP_DONE" || ph === "IDLE" || ph === "IDLE_FAILED"
       || ph === "SAFEDOWN" || ph === "SAFEDOWN_FAILED";
     eng.className = "rbtn eng" + (done ? " go" : ph === "PUSH" ? " push" : "");
@@ -1311,15 +1304,26 @@
     }
     if (ph === "IDLE" || ph === "IDLE_FAILED") { eng.disabled = true; $("engtxt").textContent = ph === "IDLE" ? "IDLE" : "PILOT"; }
     if (ph === "SAFEDOWN" || ph === "SAFEDOWN_FAILED") { eng.disabled = true; $("engtxt").textContent = ph === "SAFEDOWN" ? "SAFEDOWN" : "PILOT"; }
-    eng.setAttribute("aria-label", wasp ? $("engtxt").textContent : autoMode ? "AUTO ENGAGE" : "ENGAGE");
+    eng.setAttribute("aria-label", wasp ? $("engtxt").textContent : "ENGAGE");
+    var gpsPh = ph.indexOf("GPS_") === 0;
+    var go = $("b_go");
+    var goLive = ["HOVER", "CLIMB", "DESCEND", "SCOUT", "GPS_CLIMB", "GPS_GOTO", "GPS_ALIGN"].indexOf(ph) >= 0
+      && !VIEW && ctl !== "other" && !done;
+    go.disabled = !goLive;
+    go.className = "rbtn eng" + (gpsPh ? " push" : "");
+    $("gotxt").textContent = gpsPh ? "STOP" : "GO";
+    go.setAttribute("aria-label", gpsPh ? "STOP" : "GO");
+    $("b_rfd").disabled = VIEW || ctl === "other";
+    var rf = m.rfd;
+    T("rfd_read", !rf ? "RFD —" : rf.fresh
+      ? Number(rf.lat).toFixed(5) + "\n" + Number(rf.lon).toFixed(5) + "\n" + Number(rf.alt_m).toFixed(0) + " m " + rf.frame
+        + (m.gps_dist_m == null ? "" : "\n" + fmt(m.gps_dist_m, 0) + " m")
+      : "RFD stale");
 
-    CANLOCK = ["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other";
-    dial.classList.toggle("off", !CANLOCK);
-    if (!CANLOCK) { if (drag) dialEnd(false); if ($("ask").classList.contains("on")) closeAsk(); }
-    var lk = $("b_lock");
-    lk.className = "rbtn lock" + (locked ? " on" : "");
-    lk.disabled = !(["HOVER", "CLIMB", "DESCEND", "SCOUT"].indexOf(ph) >= 0 && !VIEW && ctl !== "other");
-    $("locktxt").innerHTML = locked ? "LOCK<small>" + ("00" + Math.round(Number(m.lock_hdg)) % 360).slice(-3) + "°</small>" : "LOCK";
+    CANLOCK = false;
+    dial.classList.toggle("off", true);
+    if (drag) dialEnd(false);
+    if ($("ask").classList.contains("on")) closeAsk();
 
     TILT = (j.tilt_deg !== undefined && j.tilt_deg !== null) ? j.tilt_deg : TILT;
     var push = (m.speeds && m.speeds.push) || 20;
@@ -1339,13 +1343,18 @@
       var dy = el - aimEl, good = (dx_s * dx_s) / (AIM_RX * AIM_RX) + (dy_s * dy_s) / (AIM_RY * AIM_RY) <= 1;
       aim.classList.toggle("good", good); $("arc").classList.toggle("good", good);
       bd.style.display = "block"; bd.className = "badge" + (good ? " good" : "");
-      bd.textContent = good ? ((ph === "HOVER" || ph === "SCOUT") ? "ON TARGET ✓  ENGAGE" : "TARGET CENTRED ✓") :
+      bd.textContent = good ? (ph.indexOf("GPS_") === 0 ? "ON THE MARK" : (ph === "HOVER" || ph === "SCOUT") ? "ON TARGET ✓" : "TARGET CENTRED ✓") :
         (Math.abs(dx_s) > AIM_RX * 0.7 ? (az > 0 ? "⟳ right " : "⟲ left ") + fmt(Math.abs(az), 0) + "°  " : "") +
         (Math.abs(dy_s) > AIM_RY * 0.7 ? (dy > 0 ? "▲ higher " : "▼ lower ") + fmt(Math.abs(dy), 0) + "°" : "");
     } else {
       tg.style.display = "none"; aim.classList.remove("good"); $("arc").classList.remove("good");
-      bd.style.display = (ph === "HOVER" || ph === "SCOUT" || ph === "AUTO_CLIMB" || ph === "AUTO_HOLD") ? "block" : "none"; bd.className = "badge";
+      bd.style.display = (ph === "HOVER" || ph === "SCOUT" || ph.indexOf("GPS_") === 0 || ph === "AUTO_CLIMB" || ph === "AUTO_HOLD") ? "block" : "none"; bd.className = "badge";
       bd.textContent = "no target";
+    }
+    if (!wasp && ph.indexOf("GPS_") === 0 && !bd.classList.contains("good")) {
+      bd.style.display = "block"; bd.className = "badge";
+      var gpsLabel = ph === "GPS_CLIMB" ? "CLIMB" : ph === "GPS_ALIGN" ? "LINE UP" : "GO TO";
+      bd.textContent = "GPS · " + gpsLabel + (m.gps_dist_m == null ? "" : " · " + fmt(m.gps_dist_m, 0) + " m");
     }
     if (!wasp && ph === "PILOT" && m.gate_why) {
       bd.style.display = "block"; bd.className = "badge"; bd.textContent = m.gate_why;
@@ -1373,14 +1382,13 @@
     }
 
     var lv = m.levels || {}, sp = m.speeds || {};
-    T("padmid", (sp.climb !== undefined ? "↑" + sp.climb + " ↓" + sp.descent + " m/s" : "--") + "\n" +
-      (sp.yaw !== undefined ? "⟳ " + sp.yaw + "°/s" : ""));
     var val = {vert: function (L) { return {SLOW: "1 / 0.5", MEDIUM: "3 / 1.5", FAST: "8 / 2.5"}[L] + " m/s"; },
                yaw: function (L) { return {SLOW: "10°/s · 2°", MEDIUM: "20°/s · 5°", FAST: "45°/s · 10°"}[L]; },
                push: function (L) { return {SLOW: "20°", MEDIUM: "30°", FAST: "40°"}[L]; },
                ai: function (L) { return {SLOW: "≈11 m/s", MEDIUM: "≈15 m/s", FAST: "≈16 m/s", MAX: "≈21 m/s"}[L]; }};
     VAL = val;
-    var ap = m.auto_params || {}, flying = inAuto || autoRun;
+    var ap = m.auto_params || {}, flying = inAuto || autoRun || ph.indexOf("GPS_") === 0
+      || (!!m.gps_run && ["PUSH", "AI", "STOP"].indexOf(ph) >= 0);
     var ad = m.auto_defaults || {}, ld = m.level_defaults || {};
     document.querySelectorAll("[data-ap]").forEach(function (x) {
       var k = x.getAttribute("data-ap"), v = x.getAttribute("data-av");
@@ -1400,7 +1408,6 @@
         && Number(j.engine_default) !== Number(j.engine);
       x.classList.toggle("on", off);
     });
-    var tag = $("autotag"); tag.textContent = m.auto_enabled ? "ON" : "OFF"; tag.className = "tag" + (m.auto_enabled ? " on" : "");
     document.querySelectorAll("[data-autoen]").forEach(function (x) {
       x.classList.toggle("on", m.auto_enabled !== undefined && (x.getAttribute("data-autoen") === "on") === !!m.auto_enabled);
       x.disabled = wasp && x.getAttribute("data-autoen") === "on";

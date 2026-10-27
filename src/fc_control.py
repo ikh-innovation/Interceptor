@@ -943,6 +943,7 @@ class ArduPilotAcro(FcBackend):
         self._mode_req = None
         self._imu = None
         self._ekf = None
+        self._gpos = None
         self.hover_thrust = None
         self.fltmode_ch = 5
         self.flight_modes = None
@@ -990,6 +991,7 @@ class ArduPilotAcro(FcBackend):
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE, 5.0)
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_SCALED_IMU, 20.0)
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT, 2.0)
+        self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT, 5.0)
 
         self._stop.clear()
         self._rx = threading.Thread(target=self._rx_loop, daemon=True)
@@ -1303,6 +1305,10 @@ class ArduPilotAcro(FcBackend):
             elif t == "EKF_STATUS_REPORT":
                 with self._lock:
                     self._ekf = (perf_counter(), int(msg.flags))
+            elif t == "GLOBAL_POSITION_INT":
+                with self._lock:
+                    self._gpos = (perf_counter(), msg.lat / 1e7, msg.lon / 1e7,
+                                  msg.alt / 1000.0, msg.relative_alt / 1000.0)
             elif t == "SCALED_IMU":
                 with self._lock:
                     self._imu = (perf_counter(), msg.xacc*9.80665e-3,
@@ -1637,6 +1643,15 @@ class ArduPilotAcro(FcBackend):
         if e is None or perf_counter() - e[0] > max_age:
             return False
         return bool(e[1] & self.EKF_POS_HORIZ_ABS) and not e[1] & self.EKF_CONST_POS_MODE
+
+    def global_position(self, max_age=1.0):
+        """lat/lon degrees, alt and relative_alt metres, from GLOBAL_POSITION_INT."""
+        with self._lock:
+            g = self._gpos
+        if g is None or perf_counter() - g[0] > max_age:
+            return None
+        return dict(lat=g[1], lon=g[2], alt_m=g[3], rel_m=g[4],
+                    age_s=perf_counter() - g[0])
 
     def landed_state(self, max_age=2.0):
         with self._lock:
@@ -2799,6 +2814,8 @@ class AcroCommander:
         _lv = _mission_mod.load_levels(self.mission)
         _mission_mod.load_idle_settings(self.mission)
         _mission_mod.load_flight_settings(self.mission)
+        import rfd_gps
+        self.mission.rfd = rfd_gps.start_from_env()
 
 
 
@@ -2919,10 +2936,13 @@ class AcroCommander:
                     return False, why
         elif self.mission is not None and (abs(self.mission.camera_mount_deg - 30) > 0.1
                 or abs(math.degrees(getattr(self.law, "cam_tilt", math.pi/6)) - 30) > 0.1):
-            return False, "restore and confirm the 30 degree camera for AUTO / SEMI-AUTO"
+            return False, "restore and confirm the 30 degree camera for SEEKER"
         elif b.mode_name != "ALT_HOLD":
             return False, f"FC in {b.mode_name}, not ALT_HOLD"
-        if not wasp and not idle and self.mission_require_airborne and hasattr(b, "airborne"):
+        gps = (self.mission is not None and (
+            getattr(self.mission, "gps_pending", False)
+            or self.mission.phase in ("GPS_CLIMB", "GPS_GOTO", "GPS_ALIGN")))
+        if not wasp and not idle and not gps and self.mission_require_airborne and hasattr(b, "airborne"):
             air, how = b.airborne()
             if not air:
                 return False, f"on the ground ({how})"
@@ -2966,6 +2986,7 @@ class AcroCommander:
                    accel=b.body_accel() if mav else None,
                    baro_climb=b.baro_climb() if mav else None,
                    position_ok=b.position_ok() if mav else False,
+                   gpos=b.global_position() if mav and hasattr(b, "global_position") else None,
                    att=((b.wasp_attitude() if mav else b.attitude())
                         if ok or takeover or safedown_ok else None),
                    height=None if h is None else h[0],
@@ -3250,6 +3271,7 @@ class AcroCommander:
         return dict(t_s=round(now-self._t0, 3), phase=m.phase,
                     armed=self.armed, linked=self.linked,
                     wasp_enabled=m.wasp.enabled, auto_run=m.auto_run,
+                    gps_run=m.gps_run,
                     idle_limit_s=m.idle_s,
                     idle_stage=("SAFEDOWN_" + m.safedown.stage) if m.safedown.active else idle["stage"],
                     idle_height_target_m=idle["height_m"],
