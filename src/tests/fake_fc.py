@@ -35,6 +35,16 @@ class FakeArduPilot(threading.Thread):
         self.land_s = 1.0
         self.disarm_requests = []
         self._land_t = None
+        # GPS: an EKF with a real position and a home on the stand; RTL flies
+        # home and lands there, disarming after rtl_s seconds.
+        self.gps = True
+        self.home = (37.9838, 23.7275)
+        self.position = (37.9840, 23.7278)
+        self.rtl_s = 1.5
+        # No compass: a GPS fix on the ground, but the EKF has a position only
+        # once it flies (ekf_position False until then).
+        self.ekf_position = True
+        self.set_home_requests = []
         self.att = dict(roll=0.0, pitch=0.0, rollspeed=0.0, pitchspeed=0.0,
                         yawspeed=0.0, yaw=0.0)
         self.stop = threading.Event()
@@ -80,9 +90,9 @@ class FakeArduPilot(threading.Thread):
             if self.heartbeat and now - t_hb > self.hb_period:
                 t_hb = now
                 self._send_heartbeat()
-            if self.mode == 9 and self.armed:
+            if self.mode in (9, 6) and self.armed:
                 self._land_t = self._land_t or now
-                if now - self._land_t >= self.land_s:
+                if now - self._land_t >= (self.land_s if self.mode == 9 else self.rtl_s):
                     # LAND: touchdown, then the FC disarms itself.
                     self.armed = False
                     if self.landed_state is not None:
@@ -102,6 +112,17 @@ class FakeArduPilot(threading.Thread):
                                           int(self.vibe["clip"]), 0, 0)
                 if self.landed_state is not None:
                     self.m.mav.extended_sys_state_send(0, int(self.landed_state))
+                self.m.mav.ekf_status_report_send(0x37 if self.gps and self.ekf_position else 0xa7, 0, 0, 0, 0, 0)
+                if self.gps:
+                    self.m.mav.gps_raw_int_send(int(now*1e6), 3, int(self.position[0]*1e7), int(self.position[1]*1e7),
+                                                int(self.vfr["alt"]*1000), 100, 100, 0, 0, 10)
+                if self.gps:
+                    lat, lon = self.home if self.mode == 6 and self._land_t else self.position
+                    self.m.mav.global_position_int_send(int(now*1000), int(lat*1e7), int(lon*1e7),
+                                                        int(self.vfr["alt"]*1000), int(self.vfr["alt"]*1000),
+                                                        0, 0, 0, 0)
+                    self.m.mav.home_position_send(int(self.home[0]*1e7), int(self.home[1]*1e7), 0,
+                                                  0, 0, 0, [1, 0, 0, 0], 0, 0, 0)
                 if self.imu is not None:
                     ax, ay, az = (int(v*1000/9.80665) for v in self.imu)
                     self.m.mav.scaled_imu_send(int(now * 1000), ax, ay, az, 0, 0, 0, 0, 0, 0)
@@ -128,6 +149,10 @@ class FakeArduPilot(threading.Thread):
                         pid.encode(), self.params[pid],
                         mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
                         len(self.params), 0)
+            elif t == "COMMAND_INT" and msg.command == mavutil.mavlink.MAV_CMD_DO_SET_HOME:
+                self.set_home_requests.append((msg.x*1e-7, msg.y*1e-7, msg.z))
+                self.home = (msg.x*1e-7, msg.y*1e-7)
+                self.m.mav.command_ack_send(msg.command, mavutil.mavlink.MAV_RESULT_ACCEPTED)
             elif t == "COMMAND_LONG" and msg.command == mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE:
                 if int(msg.param1) == mavutil.mavlink.MAVLINK_MSG_ID_HEARTBEAT and self.heartbeat:
                     self._send_heartbeat()

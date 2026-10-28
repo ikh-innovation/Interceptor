@@ -145,8 +145,11 @@ in the app (Parameters → WASP → Advanced).
 Otherwise leave them out and set the values in the UI.
 
 **After any replacement:** do a props-off bench check. Arm in ACRO, press GO
-(full throttle in 0.1 s), switch to the middle (SafeDown: the FC goes to ALT_HOLD,
-then LAND), switch up to ALT_HOLD (Plan B: sticks back to the pilot), disarm.
+(full throttle in 0.1 s), switch up (SafeDown: the FC goes to ALT_HOLD, then RTL
+with a GPS position, else LAND), disarm, re-arm, GO, switch to the middle (catch:
+STABILIZE, sticks back to the pilot after 1–3 s), disarm. GO needs a GPS position:
+power up flat outdoors, then put it on the stand. The GPS module must have a compass
+(`COMPASS_ENABLE 1`, `EK3_SRC1_POSXY 3`, `EK3_SRC1_VELXY 3`), calibrated.
 
 ## 5. Start manually, then install automatic startup
 

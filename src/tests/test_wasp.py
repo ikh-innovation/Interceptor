@@ -46,6 +46,10 @@ def backend():
     b._heartbeat_t = now
     b._att_hist = [(now-.04, 0, 0, 0, 0, 0, 0), (now, 0, 0, 0, 0, 0, 0)]
     b._attitude_t = now
+    # GPS: a real position and a home on the stand, which SafeDown needs.
+    b._ekf = (now, b.EKF_POS_HORIZ_ABS)
+    b._home = (now, 37.9838, 23.7275)
+    b._gps = (now, 3, 10, 37.9838, 23.7275, 100.0)
     b.sent = []
     b._send_override = lambda chans: b.sent.append(chans) or True
     return b
@@ -859,19 +863,17 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.m.cycle(201, self.ctx), {})
         self.assertIn("SAFEDOWN complete: landed", self.m.event)
 
-    def test_stabilize_takeover_in_flight_starts_the_same_safedown(self):
+    def test_switch_up_in_flight_starts_the_same_safedown(self):
         self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)
         self.launch()
-        self.ctx.update(gate_ok=False, pilot_takeover=True, pilot_stabilize=True, fc_mode="STABILIZE", height=4)
-        self.assertEqual(self.m.cycle(101, self.ctx), self.mapper.wasp_pwm((0, 0, 0), 1))
+        # The switch up: the FC itself goes to ALT_HOLD, sticks centre at once.
+        self.ctx.update(gate_ok=False, pilot_takeover=True, pilot_safedown=True, fc_mode="ALT_HOLD", height=4)
+        self.assertIn("idle", self.m.cycle(101, self.ctx))
         self.assertEqual(self.m.phase, "SAFEDOWN")
-        self.assertEqual(self.m.safedown.source_mode, "STABILIZE")
-        self.assertEqual(self.mapper.alt_hold_requests, 1)
-        self.assertIn("STABILIZE", self.m.event)
-        # The commander's SafeDown gate accepts STABILIZE while switching.
+        self.assertEqual(self.m.safedown.source_mode, "ALT_HOLD")
+        self.assertEqual(self.mapper.alt_hold_requests, 0, "already in ALT_HOLD")
+        self.assertIn("ALT_HOLD", self.m.event)
         self.ctx.update(gate_ok=True, pilot_takeover=False)
-        self.assertEqual(self.m.cycle(101.1, self.ctx), self.mapper.wasp_pwm((0, 0, 0), 1))
-        self.ctx.update(fc_mode="ALT_HOLD")
         self.assertIn("idle", self.m.cycle(101.2, self.ctx))
         # The FC goes to a mode SafeDown did not ask for: every channel back.
         self.ctx.update(fc_mode="LOITER")
@@ -883,7 +885,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.m.phase, "WASP_DONE")
         self.assertEqual(self.m.cycle(105, self.ctx), {})
         self.assertIsNone(self.m.wasp.started)
-        self.assertEqual(self.mapper.alt_hold_requests, 1)
+        self.assertEqual(self.mapper.alt_hold_requests, 0)
 
     def test_trigger_on_the_ground_in_the_first_half_second_cancels(self):
         for trigger in ("safedown", "stabilize"):
@@ -941,7 +943,8 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.m.phase, "WASP_DONE")
 
     def test_safedown_ends_on_plan_b_switch_fc_mode_or_disarm(self):
-        for end in ("LOITER", "ACRO", "disarm", "switch up", "switch down"):
+        # The switch to the middle catches first: see test_safedown.Catch.
+        for end in ("LOITER", "ACRO", "disarm", "switch down"):
             with self.subTest(end=end):
                 self.setUp()
                 self.recover(mode_switch=0, mode_switch_mode="ACRO")
@@ -951,9 +954,9 @@ class LifecycleTests(unittest.TestCase):
                 if end == "disarm":
                     self.mapper.armed = False
                     self.ctx.update(gate_ok=False, gate_why="disarmed")
-                elif end == "switch up":
-                    # Even onto ALT_HOLD, where the FC mode does not change.
-                    self.ctx.update(mode_switch=5, mode_switch_mode="ALT_HOLD")
+                elif end == "switch middle":
+                    # STABILIZE: the pilot's own flight.
+                    self.ctx.update(mode_switch=2, mode_switch_mode="STABILIZE")
                 elif end == "switch down":
                     self.ctx.update(mode_switch=1, mode_switch_mode="ACRO")
                 else:
@@ -967,15 +970,15 @@ class LifecycleTests(unittest.TestCase):
                 self.assertEqual(self.m.phase, "PILOT" if end == "disarm" else "WASP_DONE")
                 self.assertEqual(self.mapper.alt_hold_requests, 1)
 
-    def test_safedown_rides_a_late_heartbeat_and_the_switch_onto_stabilize(self):
+    def test_safedown_rides_a_late_heartbeat_and_the_switch_up(self):
         self.recover(mode_switch=0, mode_switch_mode="ACRO")
         self.ack("ALT_HOLD")
         for _ in range(3):  # ACKed, the heartbeat still shows ACRO
             self.assertIn("idle", self.m.cycle(101.6, self.ctx))
-        self.ctx.update(fc_mode="STABILIZE", mode_switch=2, mode_switch_mode="STABILIZE")
-        self.assertNotIn("idle", self.m.cycle(101.62, self.ctx), "the app holds the STABILIZE throttle")
+        self.ctx.update(fc_mode="ALT_HOLD", mode_switch=5, mode_switch_mode="ALT_HOLD")
+        self.assertIn("idle", self.m.cycle(101.62, self.ctx))
         self.assertEqual(self.m.phase, "SAFEDOWN")
-        self.assertEqual(self.mapper.mode_requests[-1], "ALT_HOLD")
+        self.assertIn("SafeDown carries on", self.m.event)
         self.ctx["fc_mode"] = "LOITER"
         self.assertEqual(self.m.cycle(101.7, self.ctx), {})
         self.assertFalse(self.m.safedown.active)
@@ -1007,6 +1010,37 @@ class LifecycleTests(unittest.TestCase):
 
 
 class BackendTests(unittest.TestCase):
+    def test_no_launch_without_a_gps_position_and_a_home(self):
+        b = backend()
+        self.assertEqual(b.wasp_ready(), "")
+        b._ekf = (perf_counter(), b.EKF_POS_HORIZ_ABS | b.EKF_CONST_POS_MODE)
+        self.assertIn("waiting for GPS", b.wasp_ready())
+        b._ekf = (perf_counter(), b.EKF_POS_HORIZ_ABS)
+        b._gps = (perf_counter(), 2, 10, 37.9838, 23.7275, 100.0)
+        self.assertIn("GPS fix", b.wasp_ready())
+        b._gps = (perf_counter(), 3, 4, 37.9838, 23.7275, 100.0)
+        self.assertIn("GPS fix", b.wasp_ready(), "too few satellites")
+        b._gps = (perf_counter(), 3, 10, 37.9838, 23.7275, 100.0)
+        b._home = (perf_counter(), 37.9838, 23.7275)
+        b._gpos = (perf_counter(), 37.9838 + 100/6371000*180/math.pi, 23.7275, 100.0)
+        self.assertAlmostEqual(b.home_distance(), 100, delta=.5)
+        # GO keeps the GPS spot; home is moved there before the return.
+        b._gps = (perf_counter(), 3, 10, 37.9840, 23.7280, 101.0)
+        b.master = type("M", (), {"target_system": 1, "target_component": 1})()
+        sent = []
+        b.master.mav = type("V", (), {"command_int_send": lambda _s, *a: sent.append(a)})()
+        self.assertTrue(b.mark_launch())
+        self.assertEqual(b.launch_point(), (37.9840, 23.7280))
+        self.assertTrue(b.set_home_to_launch())
+        self.assertEqual(sent[0][10:12], (379840000, 237280000))
+        b._home = (perf_counter(), 37.9840, 23.7280)
+        sent.clear()
+        self.assertTrue(b.set_home_to_launch())
+        self.assertFalse(sent, "home already is the launch point")
+        with patch.object(type(b), "SAFEDOWN_NEEDS_GPS", False):
+            b._gps = None
+            self.assertEqual(b.wasp_ready(), "")
+
     def test_throttle_mapping_does_not_change_existing_acro_behaviour(self):
         b = backend()
         out = b.wasp_pwm((0, 0, 0), 1)

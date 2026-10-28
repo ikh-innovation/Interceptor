@@ -80,7 +80,7 @@ class FC:
         ctx = dict(gate_ok=self.mapper.armed, gate_why="" if self.mapper.armed else "disarmed",
                    att=self.att, height=self.height, climb=self.climb, accel=self.accel,
                    fc_mode=self.heartbeat, mode_ack=self.ack, landed_state=self.landed_state,
-                   airborne=True, idle_ok=True, pilot_takeover=False, pilot_stabilize=False,
+                   airborne=True, idle_ok=True, pilot_takeover=False, pilot_safedown=False,
                    safedown_ok=self.mapper.armed, ai_cmd=None, det_t=None, det_conf=None)
         ctx.update(extra)
         return ctx
@@ -147,7 +147,7 @@ class ShapeOfSafeDown(SafeDownFlight):
     def test_abort_levels_stops_then_lands_and_ends_when_land_disarms(self):
         self.abort()
         self.assertEqual(self.mapper.requests, ["ALT_HOLD"])
-        self.assertIn("level, stop, then LAND", self.m.event)
+        self.assertIn("level, stop, then fly home and land", self.m.event)
         # Before the ACK: ACRO, launch throttle, levelling rates (level: none).
         self.assertEqual(self.out, dict(kind="manual", rates=(0.0, 0.0, 0.0), throttle=1.0))
         self.assertTrue(self.run_for(.1, lambda: self.out["kind"] == "alt"))
@@ -166,15 +166,25 @@ class ShapeOfSafeDown(SafeDownFlight):
         self.assertEqual(self.m.phase, "PILOT")
         self.assertFalse(self.m.wasp.used, "disarmed: ready for the next launch once armed")
 
-    def test_pilot_stabilize_in_flight_runs_the_same_safedown(self):
+    def test_pilot_switch_up_in_flight_runs_the_same_safedown(self):
+        self.launch()
+        # The switch up puts the FC in ALT_HOLD itself: centred ALT_HOLD sticks
+        # at once, never the launch throttle (which ALT_HOLD reads as a climb).
+        self.fc.mode = self.fc.heartbeat = "ALT_HOLD"
+        self.tick(gate_ok=False, pilot_takeover=True, pilot_safedown=True)
+        self.assertEqual(self.m.phase, "SAFEDOWN")
+        self.assertIn("pilot switched to ALT_HOLD", self.m.event)
+        self.assertEqual(self.out, dict(kind="alt", yaw=0.0, climb=0.0))
+        self.assert_land_and_disarm()
+
+    def test_the_pilots_stabilize_is_his_own_flight(self):
         self.launch()
         self.fc.mode = self.fc.heartbeat = "STABILIZE"
-        self.tick(gate_ok=False, pilot_takeover=True, pilot_stabilize=True)
-        self.assertEqual(self.m.phase, "SAFEDOWN")
-        self.assertIn("pilot switched to STABILIZE", self.m.event)
-        # STABILIZE levels by itself: centred sticks, launch throttle until ALT_HOLD.
-        self.assertEqual(self.out, dict(kind="manual", rates=(0.0, 0.0, 0.0), throttle=1.0))
-        self.assert_land_and_disarm()
+        self.tick(gate_ok=False, gate_why="pilot switched to STABILIZE")
+        self.tick(gate_ok=False, gate_why="pilot switched to STABILIZE")
+        self.assertFalse(self.r.active)
+        self.assertEqual(self.out, {})
+        self.assertEqual(self.m.phase, "WASP_DONE")
 
     def test_levelling_waits_for_level_steady_and_drag_to_fade(self):
         self.abort()
@@ -504,6 +514,160 @@ class AirBrake(SafeDownFlight):
         self.assertNotIn("lean", self.out)
 
 
+class GpsReturn(SafeDownFlight):
+    GPS = dict(position_ok=True, home_ok=True, home_m=120.0)
+
+    def test_level_then_rtl_without_waiting_for_the_stop(self):
+        self.launch()
+        self.m.request_abort()
+        self.tick(**self.GPS)
+        self.assertTrue(self.run_for(1, lambda: self.r.stage == "RETURN", **self.GPS))
+        self.assertLess(self.now - self.r.started, 1.0, "no 2-8 s stop wait with GPS")
+        self.assertIn("RTL, flying back to the launch point (120 m)", self.m.event)
+        self.assertTrue(self.run_for(1, lambda: self.fc.mode == "RTL", **self.GPS))
+        self.run_for(.3, **self.GPS)
+        self.assertEqual(self.out, dict(kind="alt", yaw=0.0, climb=0.0))
+        self.assertEqual(self.mapper.requests, ["ALT_HOLD", "RTL"])
+        self.assertEqual(self.m.snapshot(self.now)["safedown"]["home_m"], 120)
+        self.mapper.armed = False
+        self.tick(**self.GPS)
+        self.assertIn("SAFEDOWN complete: landed", self.m.event)
+
+    def test_a_fast_climb_is_braked_before_the_return(self):
+        self.launch()
+        self.fc.climb = 25.0
+        self.m.request_abort()
+        self.tick(**self.GPS)
+        self.assertEqual(self.r.stage, "ARREST")
+        self.run_for(.5, **self.GPS)
+        self.assertNotIn("RTL", self.mapper.requests)
+        self.fc.climb = 0.5
+        self.assertTrue(self.run_for(2, lambda: self.fc.mode == "RTL", **self.GPS))
+
+    def test_rtl_refused_lands_here(self):
+        self.fc.refuse.add("RTL")
+        self.abort()
+        self.assertTrue(self.run_for(3, lambda: "RTL refused" in self.m.event, **self.GPS))
+        self.assertTrue(self.run_for(10, lambda: self.fc.mode == "LAND", **self.GPS))
+        self.assertNotEqual(self.r.stage, "RETURN")
+
+    def test_losing_the_gps_on_the_way_home_lands_here(self):
+        self.abort()
+        self.assertTrue(self.run_for(2, lambda: self.fc.mode == "RTL", **self.GPS))
+        self.run_for(SafeDown.POSITION_LOST_S - .2, position_ok=False, home_ok=True)
+        self.assertEqual(self.r.stage, "RETURN", "a short dropout is ridden out")
+        self.run_for(.5, **self.GPS)
+        self.run_for(SafeDown.POSITION_LOST_S + .3, position_ok=False, home_ok=True)
+        self.assertIn("GPS position lost", self.m.event)
+        self.assertTrue(self.run_for(1, lambda: self.fc.mode == "LAND", position_ok=False))
+
+    def test_a_failsafe_land_on_the_way_home_is_accepted(self):
+        self.abort()
+        self.assertTrue(self.run_for(2, lambda: self.fc.mode == "RTL", **self.GPS))
+        self.fc.set_mode("LAND", self.now)
+        self.fc.heartbeat = "LAND"
+        self.tick(**self.GPS)
+        self.assertEqual(self.r.stage, "DESCEND")
+        self.run_for(1, **self.GPS)
+        self.assertEqual(self.mapper.requests[-1], "RTL", "no fight with the FC's LAND")
+
+    def test_a_position_found_on_the_way_down_still_flies_it_home(self):
+        self.abort()
+        # No compass: no position yet, so it stops and starts down in LAND.
+        self.assertTrue(self.run_for(10, lambda: self.fc.mode == "LAND", position_ok=False, home_ok=True))
+        self.fc.height = 30.0
+        self.tick(**self.GPS)
+        self.assertEqual(self.r.stage, "RETURN")
+        self.assertIn("GPS position found on the way down", self.m.event)
+        self.assertTrue(self.run_for(1, lambda: self.fc.mode == "RTL", **self.GPS))
+
+    def test_too_low_to_turn_back(self):
+        self.abort()
+        self.assertTrue(self.run_for(10, lambda: self.fc.mode == "LAND", position_ok=False, home_ok=True))
+        self.fc.height = 3.0
+        self.run_for(1, **self.GPS)
+        self.assertEqual(self.r.stage, "DESCEND")
+
+    def test_no_home_no_return(self):
+        self.abort()
+        self.run_for(4, position_ok=True, home_ok=False)
+        self.assertNotIn("RTL", self.mapper.requests)
+        self.assertTrue(self.run_for(8, lambda: self.fc.mode == "LAND", position_ok=True, home_ok=False))
+
+
+class Catch(SafeDownFlight):
+    def stab(self, **extra):
+        self.fc.mode = self.fc.heartbeat = "STABILIZE"
+        return self.tick(gate_ok=False, catch_takeover=True, pilot_catch=True, **extra)
+
+    def test_stabilize_steadies_it_then_hands_it_to_the_pilot(self):
+        self.launch()
+        self.stab()
+        self.assertEqual((self.m.phase, self.r.stage), ("SAFEDOWN", "CATCH"))
+        self.assertIn("CATCH: pilot switched to STABILIZE", self.m.event)
+        self.assertEqual(self.out["kind"], "manual")
+        self.assertEqual(self.out["rates"], (0.0, 0.0, 0.0), "STABILIZE levels it: centred sticks")
+        began = self.now
+        self.assertTrue(self.run_for(4, lambda: not self.r.active, pilot_catch=True))
+        self.assertAlmostEqual(self.now - began, SafeDown.CATCH_MIN_S, delta=.1)
+        self.assertIn("CATCH done: caught: level and steady", self.m.event)
+        self.assertEqual(self.mapper.requests, [], "never a mode change")
+        self.tick(gate_ok=False, pilot_catch=True)
+        self.assertEqual(self.out, {})
+        self.assertEqual(self.m.phase, "WASP_DONE")
+
+    def test_a_tumbling_or_climbing_drone_is_held_up_to_the_limit(self):
+        self.launch()
+        self.fc.climb = 12.0
+        self.stab()
+        self.assertLess(self.out["throttle"], .3, "full range: little thrust against a climb")
+        began = self.now
+        self.assertTrue(self.run_for(5, lambda: not self.r.active, pilot_catch=True))
+        self.assertAlmostEqual(self.now - began, SafeDown.CATCH_MAX_S, delta=.1)
+        self.assertIn(f"caught for {SafeDown.CATCH_MAX_S:g} s", self.m.event)
+
+    def test_a_dive_gets_the_thrust_and_it_leans_against_the_drag(self):
+        self.mapper.lean_pwm = lambda roll, pitch: dict(lean=(roll, pitch))
+        self.launch()
+        self.fc.climb = -15.0
+        self.fc.accel = (-3.0, 0.0, -9.8)
+        self.stab()
+        self.run_for(.5, pilot_catch=True, position_ok=True)
+        self.assertGreater(self.out["throttle"], .7)
+        self.assertGreater(self.out["lean"][1], 0, "air brake in STABILIZE, GPS or not")
+
+    def test_switch_up_from_a_catch_goes_on_to_the_return(self):
+        self.launch()
+        self.stab(mode_switch=2, mode_switch_mode="STABILIZE")
+        self.fc.set_mode("ALT_HOLD", self.now)
+        self.fc.heartbeat = "ALT_HOLD"
+        self.tick(mode_switch=5, mode_switch_mode="ALT_HOLD")
+        self.assertFalse(self.r.catch)
+        self.assertIn("fly home and land", self.m.event)
+        self.assert_land_and_disarm()
+
+    def test_switch_to_stabilize_during_safedown_becomes_a_catch(self):
+        self.launch()
+        self.m.request_abort()
+        self.tick(mode_switch=0, mode_switch_mode="ACRO")
+        self.run_for(.5, mode_switch=0, mode_switch_mode="ACRO")
+        self.fc.set_mode("STABILIZE", self.now)
+        self.fc.heartbeat = "STABILIZE"
+        self.tick(mode_switch=2, mode_switch_mode="STABILIZE")
+        self.assertTrue(self.r.catch)
+        self.assertIn("CATCH: pilot switched to STABILIZE", self.m.event)
+        self.assertTrue(self.run_for(4, lambda: not self.r.active, mode_switch=2, mode_switch_mode="STABILIZE"))
+        self.assertIn("CATCH done", self.m.event)
+
+    def test_any_other_mode_ends_the_catch(self):
+        self.launch()
+        self.stab()
+        self.fc.mode = self.fc.heartbeat = "LOITER"
+        self.tick(pilot_catch=False)
+        self.assertFalse(self.r.active)
+        self.assertEqual(self.out, {})
+
+
 class Fallbacks(SafeDownFlight):
     def test_alt_hold_refused_flies_stabilize_holding_height_and_still_lands(self):
         self.fc.refuse.add("ALT_HOLD")
@@ -544,7 +708,7 @@ class Fallbacks(SafeDownFlight):
         self.assertIn("SAFEDOWN FAILED", self.m.event)
         self.assertFalse(self.r.active)
         # No restart loop while the pilot's switch stays where it is.
-        self.run_for(1, pilot_stabilize=True)
+        self.run_for(1, pilot_safedown=True)
         self.assertEqual(self.m.phase, "SAFEDOWN_FAILED")
 
     def test_land_refused_descends_in_alt_hold_then_disarms_on_touchdown(self):
@@ -620,35 +784,31 @@ class PilotSwitch(SafeDownFlight):
         self.run_for(.5, mode_switch=band, mode_switch_mode="ACRO")
         self.assertEqual(self.m.phase, "SAFEDOWN")
 
-    def test_switch_onto_stabilize_carries_on_and_reasks_the_fc(self):
+    def test_switch_up_after_the_button_carries_on(self):
         self.start()
-        asked = len(self.mapper.requests)
-        self.fc.set_mode("STABILIZE", self.now)
-        self.fc.heartbeat = "STABILIZE"
-        self.tick(mode_switch=2, mode_switch_mode="STABILIZE")
+        self.fc.set_mode("ALT_HOLD", self.now)
+        self.fc.heartbeat = "ALT_HOLD"
+        self.tick(mode_switch=5, mode_switch_mode="ALT_HOLD")
         self.assertEqual(self.m.phase, "SAFEDOWN")
         self.assertIn("SafeDown carries on", self.m.event)
-        self.run_for(.2, mode_switch=2, mode_switch_mode="STABILIZE")
-        self.assertEqual(self.mapper.requests[asked:asked+1], ["ALT_HOLD"])
-        self.assertEqual(self.fc.mode, "ALT_HOLD")
-        self.run_for(.1, mode_switch=2, mode_switch_mode="STABILIZE")
+        self.run_for(.2, mode_switch=5, mode_switch_mode="ALT_HOLD")
         self.assertEqual(self.out["kind"], "alt")
         self.assertIsNone(self.r.fallback)
 
-    def test_switch_onto_stabilize_while_landing_reasks_for_land(self):
+    def test_switch_up_while_landing_reasks_for_land(self):
         self.start()
         self.assertTrue(self.run_for(4, lambda: self.fc.mode == "LAND", mode_switch=0,
                                      mode_switch_mode="ACRO"))
-        self.fc.set_mode("STABILIZE", self.now)
-        self.fc.heartbeat = "STABILIZE"
-        self.tick(mode_switch=2, mode_switch_mode="STABILIZE")
-        self.assertEqual(self.out["kind"], "manual", "the app holds the throttle meanwhile")
-        self.run_for(.2, mode_switch=2, mode_switch_mode="STABILIZE")
+        self.fc.set_mode("ALT_HOLD", self.now)
+        self.fc.heartbeat = "ALT_HOLD"
+        self.tick(mode_switch=5, mode_switch_mode="ALT_HOLD")
+        self.run_for(.2, mode_switch=5, mode_switch_mode="ALT_HOLD")
         self.assertEqual(self.mapper.requests[-1], "LAND")
         self.assertEqual(self.fc.mode, "LAND")
 
     def test_any_other_switch_position_is_plan_b(self):
-        for band, mode in ((5, "ALT_HOLD"), (0, "ACRO")):
+        # STABILIZE catches first (Catch tests); ACRO is the pilot at once.
+        for band, mode in ((0, "ACRO"),):
             with self.subTest(mode=mode):
                 self.setUp()
                 self.start(band=3)
@@ -709,10 +869,10 @@ class PilotSwitch(SafeDownFlight):
 class TriggersAfterHandover(SafeDownFlight):
     def handed_over(self):
         self.launch()
-        self.fc.mode = self.fc.heartbeat = "ALT_HOLD"
-        # Pilot flipped straight to ALT_HOLD: Plan B, every channel back.
-        self.tick(gate_ok=False, gate_why="pilot switched to ALT_HOLD")
-        self.tick(gate_ok=False, gate_why="pilot switched to ALT_HOLD")
+        self.fc.mode = self.fc.heartbeat = "STABILIZE"
+        # Pilot flipped to STABILIZE: his own flight, every channel back.
+        self.tick(gate_ok=False, gate_why="pilot switched to STABILIZE")
+        self.tick(gate_ok=False, gate_why="pilot switched to STABILIZE")
         self.assertEqual(self.m.phase, "WASP_DONE")
         self.assertEqual(self.out, {})
 
@@ -721,15 +881,15 @@ class TriggersAfterHandover(SafeDownFlight):
         self.m.request_abort()
         self.tick(gate_ok=False)
         self.assertEqual(self.m.phase, "SAFEDOWN")
-        self.assertIn(self.r.stage, ("LEVEL", "STOP"), "already in ALT_HOLD")
-        self.assertEqual(self.mapper.requests, [])
+        self.assertEqual(self.mapper.requests, ["ALT_HOLD"])
         self.assert_land_and_disarm()
 
-    def test_switch_onto_stabilize_after_a_handover_lands_it(self):
+    def test_switch_up_after_a_handover_starts_it_again(self):
         self.handed_over()
-        self.tick(gate_ok=False, pilot_stabilize=True)
+        self.fc.mode = self.fc.heartbeat = "ALT_HOLD"
+        self.tick(gate_ok=False, pilot_safedown=True)
         self.assertEqual(self.m.phase, "SAFEDOWN")
-        self.assertIn("pilot switched to STABILIZE", self.m.event)
+        self.assertIn("pilot switched to ALT_HOLD", self.m.event)
 
     def test_safedown_during_the_countdown_cancels_it(self):
         self.m.wasp.params["launch_s"] = 3.0
@@ -747,7 +907,7 @@ class TriggersAfterHandover(SafeDownFlight):
         self.handed_over()
         self.m.request_abort()
         self.tick(gate_ok=False, airborne=False)
-        self.tick(gate_ok=False, airborne=False, pilot_stabilize=True)
+        self.tick(gate_ok=False, airborne=False, pilot_safedown=True)
         self.assertEqual(self.m.phase, "WASP_DONE")
         self.assertFalse(self.r.active)
 

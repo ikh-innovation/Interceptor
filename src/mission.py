@@ -404,7 +404,8 @@ class Mission:
         self.flight_path = flight_path
         self.idle = Idle()
         self.safedown = SafeDown()
-        self._pilot_stabilize = self._stabilize_edge = False
+        self._pilot_safedown = self._safedown_edge = False
+        self._pilot_catch = self._catch_edge = False
         self.idle_supported = callable(getattr(mapper, "idle_pwm", None))
         self._run_t = None
         self._wasp_last_out = {}
@@ -848,9 +849,12 @@ class Mission:
             lock_req, self._req_lock = self._req_lock, None
             auto_req, self._req_auto = self._req_auto, None
 
-        stabilize = bool(ctx.get("pilot_stabilize"))
-        self._stabilize_edge = stabilize and not self._pilot_stabilize
-        self._pilot_stabilize = stabilize
+        switch_up = bool(ctx.get("pilot_safedown"))
+        self._safedown_edge = switch_up and not self._pilot_safedown
+        self._pilot_safedown = switch_up
+        middle = bool(ctx.get("pilot_catch"))
+        self._catch_edge = middle and not self._pilot_catch
+        self._pilot_catch = middle
         if abort:
             self._stop_test_target(now)
         if self.safedown.active:
@@ -939,13 +943,15 @@ class Mission:
         if not getattr(self.mapper, "armed", False):
             w.used = False
         # After a launch, and after a handover to the pilot, SAFEDOWN and a flip
-        # onto STABILIZE both land it on its own while it is in the air.
+        # up to ALT_HOLD both bring it home on their own while it is in the air.
         in_air = (w.started is None and w.used and getattr(self.mapper, "armed", False)
                   and ctx.get("safedown_ok") and ctx.get("airborne"))
         if abort and ((w.started is not None and ctx.get("gate_ok")) or in_air):
             return self._start_safedown(now, ctx, "SAFEDOWN button")
-        if self._stabilize_edge and in_air:
-            return self._start_safedown(now, ctx, "pilot switched to STABILIZE")
+        if self._safedown_edge and in_air:
+            return self._start_safedown(now, ctx, f"pilot switched to {SafeDown.SWITCH_MODE}")
+        if (w.started is not None and ctx.get("catch_takeover")) or (self._catch_edge and in_air):
+            return self._start_safedown(now, ctx, f"pilot switched to {SafeDown.CATCH_MODE}", catch=True)
         if abort:
             if w.started is not None:
                 w.used = True
@@ -956,7 +962,7 @@ class Mission:
             self._note("WASP SAFEDOWN: not in the air, every channel returned to the pilot", now)
             return {}
         if w.started is not None and ctx.get("pilot_takeover"):
-            return self._start_safedown(now, ctx, "pilot switched to STABILIZE")
+            return self._start_safedown(now, ctx, f"pilot switched to {SafeDown.SWITCH_MODE}")
         if not ctx.get("gate_ok"):
             self._stop_test_target(now)
             if self.phase not in ("PILOT", "WASP_DONE"):
@@ -991,6 +997,10 @@ class Mission:
             if now < w.launch_t:
                 return {}
             w.begin(now, target_acquired=False)
+            # The GPS spot at GO is where SafeDown flies back to.
+            mark = getattr(self.mapper, "mark_launch", None)
+            if callable(mark) and not mark():
+                self._note("WASP launched without a GPS fix: SafeDown can only land where it is", now)
             self._wasp_last_out = {}
             with self._lock:
                 if self.test_mode and self.test_target is not None:
@@ -1026,8 +1036,8 @@ class Mission:
 
     SAFEDOWN_GROUND_S = 0.5
 
-    def _start_safedown(self, now, ctx, reason):
-        # The SAFEDOWN button or the pilot's switch onto STABILIZE: level, stop and
+    def _start_safedown(self, now, ctx, reason, catch=False):
+        # The SAFEDOWN button or the pilot's switch up to ALT_HOLD: level, stop and
         # land on its own (safedown.py).
         hold = self.wasp.params["throttle"]
         on_ground = (ctx.get("airborne") is False and self.wasp.started is not None
@@ -1046,8 +1056,9 @@ class Mission:
         self.engaged = True
         with self._lock:
             self._hold = None
-        self.safedown.begin(now, ctx, reason, hold)
-        self._note(f"SAFEDOWN: {reason}; level, stop, then LAND on its own", now)
+        self.safedown.begin(now, ctx, reason, hold, catch=catch)
+        self._note(f"CATCH: {reason}; level and steady, then the pilot flies it" if catch else
+                   f"SAFEDOWN: {reason}; level, stop, then fly home and land", now)
         self._set_phase("SAFEDOWN", now)
         # This cycle's gate is still the launch's (often closed by the very
         # mode change that started it): fly straight away.
@@ -1066,10 +1077,20 @@ class Mission:
         r = self.safedown
         if r.switch_moved(ctx.get("mode_switch")):
             selected = ctx.get("mode_switch_mode")
-            if selected == "STABILIZE":
-                # The switch's SafeDown position: carry on, whoever started it.
-                r.reassert()
-                self._note("SAFEDOWN: pilot switch on STABILIZE, SafeDown carries on", now)
+            if selected == SafeDown.SWITCH_MODE:
+                # The switch's SafeDown position: carry on, whoever started it,
+                # or go on from a catch to the whole return.
+                if r.catch:
+                    r.to_safedown(now)
+                    r.reason = f"pilot switched to {selected}"
+                    self._note(f"SAFEDOWN: pilot switched to {selected}; level, stop, then fly home and land", now)
+                else:
+                    r.reassert()
+                    self._note(f"SAFEDOWN: pilot switch on {selected}, SafeDown carries on", now)
+            elif selected == SafeDown.CATCH_MODE and not r.catch:
+                # The pilot wants it, in STABILIZE: steady it first, then his.
+                r.begin(now, ctx, f"pilot switched to {selected}", self.wasp.params["throttle"], catch=True)
+                self._note(f"CATCH: pilot switched to {selected}; level and steady, then the pilot flies it", now)
             else:
                 # Plan B: any other position is the pilot taking over, even
                 # ALT_HOLD, which the FC may already be in.
@@ -1078,7 +1099,7 @@ class Mission:
                          "every channel to the pilot")
         if not ctx.get("gate_ok"):
             why = ctx.get("gate_why") or "gate"
-            if why == "disarmed" and r.stage == "DESCEND":
+            if why == "disarmed" and r.stage in ("DESCEND", "RETURN"):
                 return self._end_safedown(now, "SAFEDOWN complete: landed, FC disarmed")
             return self._end_safedown(now, f"SAFEDOWN ended: {why}; every channel to the pilot")
         return self._safedown_output(now, ctx)
@@ -1088,7 +1109,8 @@ class Mission:
         try:
             out = r.output(self.mapper, now, ctx)
         except Handover as exc:
-            return self._end_safedown(now, f"SAFEDOWN ended: {exc}; every channel to the pilot")
+            return self._end_safedown(now, f"{'CATCH done' if r.catch else 'SAFEDOWN ended'}: {exc}; "
+                                           "every channel to the pilot")
         except (ValueError, KeyError, TypeError, OverflowError) as exc:
             self._stop_test_target(now)
             r.stop()

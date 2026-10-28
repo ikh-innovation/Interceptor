@@ -22,8 +22,9 @@ WASP setup reason in the UI.
 | `RC1..RC4_MIN/MAX/TRIM/DZ`, `RCMAP_*` | calibrated, 4 different channels within 1–8 | RC3 1100/1500/1900 | The app maps 0–100 % throttle onto RC3_MIN..RC3_MAX. |
 | `SYSID_MYGCS` | the Jetson's system ID | 255 | Overrides from any other system ID are ignored. |
 | Flight mode | **ACRO**, armed | n/a | GO is refused in any other mode or while disarmed. |
-| `FLTMODE_GCSBLOCK` | bits 0 and 2 **clear** | 0 | SafeDown switches the FC to STABILIZE and ALT_HOLD over MAVLink. LAND can't be blocked. |
-| `FLTMODE_CH` / `FLTMODE1..6` | ch6: low ACRO, middle STABILIZE, high ALT_HOLD | 6 / 1,0,0,0,0,2 | The middle position is the pilot's SafeDown button. The app reads the switch at connect. |
+| `FLTMODE_GCSBLOCK` | bits 0 and 2 **clear** | 0 | SafeDown switches the FC to STABILIZE and ALT_HOLD over MAVLink, then to RTL or LAND. |
+| `FLTMODE_CH` / `FLTMODE1..6` | ch6: low ACRO, middle STABILIZE, high ALT_HOLD | 6 / 1,0,0,0,0,2 | Low = WASP launch. High = SafeDown (fly back to the GO spot and land). Middle = catch, then the pilot flies in STABILIZE. The app reads the switch at connect. |
+| GPS and compass | 3D fix with 6+ satellites, EKF using GPS | `COMPASS_ENABLE 1`, `EK3_SRC1_POSXY 3`, `EK3_SRC1_VELXY 3` | GO is refused until the FC has a GPS position: SafeDown needs it to fly home. Power up flat (the EKF does not lock GPS on the tilted stand), then put it on the stand. `WASP_REQUIRE_GPS=0` turns the gate off for bench work. |
 
 ## 2. Recommended by the app's checklist (not blocking)
 
@@ -113,15 +114,25 @@ tells you how hard the drone can accelerate.
 
 ## 6. SafeDown: settings it uses
 
+SafeDown levels and stops the drone itself (in STABILIZE, then ALT_HOLD), then
+hands it to the FC's own **RTL**. At GO the app saves the GPS spot and makes it
+the FC's home (`DO_SET_HOME`), so RTL flies back to the stand, not to where it
+was armed. With no GPS position, or below 5 m, it lands where it is (LAND).
+
 | Parameter | Now | What it does in SafeDown |
 | --- | --- | --- |
+| `RTL_ALT` | 1500 | Climbs to at least 15 m before flying home. Raise it if there are trees or buildings on the way. |
+| `RTL_SPEED` | 0 | 0 = `WPNAV_SPEED` (2000 = 20 m/s). Fast; 1000 (10 m/s) is gentler and still quick. |
+| `RTL_LOIT_TIME` | 5000 | Hovers 5 s over the GO spot before it descends. |
+| `RTL_ALT_FINAL` | 0 | Lands and disarms at home. |
+| `FS_EKF_ACTION` | 1 (LAND) | If the EKF fails the FC lands on its own; SafeDown then never tries RTL again. |
 | `LAND_SPEED` | 50 | Descent in the last `LAND_ALT_LOW` (10 m), cm/s. |
 | `LAND_SPEED_HIGH` / `WPNAV_SPEED_DN` | 0 / 250 | Above 10 m LAND comes down at 2.5 m/s (2.8 m/s measured in SITL). Set `LAND_SPEED_HIGH` lower for a gentler but longer descent. |
 | `PILOT_ACCEL_Z` | 500 | ALT_HOLD stops a climb or sink at only 5 m/s². That is why SafeDown first stops fast climbs and dives itself, in STABILIZE. |
 | `MOT_THST_HOVER` | 0.125 | The app's STABILIZE throttle starts from it, then learns the real hover from the IMU. |
 | (none: the IMU) | | Air brake: without GPS the app leans the drone against the accelerometer's drag reading (at most 12°) so it stops relative to the air even when the EKF's "level" is off. It can't cancel the wind itself. |
 | `DISARM_DELAY`, land detector | 10 s | LAND disarms on touchdown by itself. |
-| `EK3_SRC1_POSXY`, `EK3_SRC1_VELXY` | 0, 0 | **No GPS in the EKF.** SafeDown levels the drone and stops it vertically, but can't hold position: it drifts with the wind. After a hard launch or a tumble the EKF's attitude and vertical speed can also be wrong (seen in SITL), which SafeDown checks against the barometer. To use the fitted GPS: `COMPASS_ENABLE = 1` and a compass calibration first (now 0: without a heading the EKF can't fuse GPS at all, even with a fix), then `EK3_SRC1_POSXY = 3` and `EK3_SRC1_VELXY = 3`. With a GPS position the app's air brake steps aside and LAND holds position itself. |
+| `COMPASS_ENABLE`, `EK3_SRC1_POSXY`, `EK3_SRC1_VELXY` | 1, 3, 3 | **Required.** Without a heading the EKF can't fuse GPS at all, even with a fix, so the GPS module must have a compass and it must be calibrated. With a GPS position the app's air brake steps aside and RTL or LAND hold position themselves. If GPS is lost on the way home it lands where it is. |
 
 ## 7. How WASP uses these settings
 
@@ -131,10 +142,12 @@ tells you how hard the drone can accelerate.
 3. **Hold.** WASP keeps the sticks until SafeDown, a mode change or a disarm.
    There is no time limit. Short telemetry gaps keep the launch throttle with zero
    steering.
-4. **SafeDown.** The pilot's switch to the middle, or the phone's SAFEDOWN button,
-   lands it on its own: level, stop, then LAND. See `pilot-instructions-el.md`.
-5. **Plan B.** The pilot sets the throttle stick to mid, then switches **up** to
-   ALT_HOLD. All channels return to the transmitter at once.
+4. **SafeDown.** The pilot's switch **up** (ALT_HOLD), or the phone's SAFEDOWN
+   button: level, stop, then RTL to the GO spot and land there. See
+   `pilot-instructions-el.md`.
+5. **Plan B (catch).** The pilot sets the throttle stick to mid, then switches to
+   the **middle** (STABILIZE). The app levels and steadies it for 1–3 s, then all
+   channels return to the transmitter. Switch up again to send it home.
 6. **Next launch.** Disarm before the next GO; WASP stays off until then.
 
 Pure ACRO with `ACRO_TRAINER = 0` doesn't level itself. Don't hand-fly it unless

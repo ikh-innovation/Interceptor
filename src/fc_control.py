@@ -9,12 +9,20 @@ from pathlib import Path
 from time import perf_counter, sleep
 from wasp import WaspGuidance, interpolate_rotation
 from flight_logging import FlightLogs
+from safedown import SafeDown
 
 try:
     from pymavlink import mavutil
 except ImportError:
     mavutil = None
 
+
+
+def _metres(a, b):
+    """Ground distance between two (lat, lon) points, flat-earth."""
+    dn = math.radians(b[0] - a[0])*6371000.0
+    de = math.radians(b[1] - a[1])*6371000.0*math.cos(math.radians(a[0]))
+    return math.hypot(dn, de)
 
 
 def _clamp(v, lo, hi):
@@ -943,6 +951,7 @@ class ArduPilotAcro(FcBackend):
         self._mode_req = None
         self._imu = None
         self._ekf = None
+        self._home = self._gpos = self._gps = self._launch = None
         self.hover_thrust = None
         self.fltmode_ch = 5
         self.flight_modes = None
@@ -990,6 +999,9 @@ class ArduPilotAcro(FcBackend):
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE, 5.0)
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_SCALED_IMU, 20.0)
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT, 2.0)
+        self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT, 4.0)
+        self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_HOME_POSITION, 0.5)
+        self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_GPS_RAW_INT, 2.0)
 
         self._stop.clear()
         self._rx = threading.Thread(target=self._rx_loop, daemon=True)
@@ -1300,6 +1312,16 @@ class ArduPilotAcro(FcBackend):
             elif t == "COMMAND_ACK" and msg.command == mavutil.mavlink.MAV_CMD_DO_SET_MODE:
                 with self._lock:
                     self._idle_mode_ack = (perf_counter(), int(msg.result))
+            elif t == "HOME_POSITION":
+                with self._lock:
+                    self._home = (perf_counter(), msg.latitude*1e-7, msg.longitude*1e-7)
+            elif t == "GLOBAL_POSITION_INT":
+                with self._lock:
+                    self._gpos = (perf_counter(), msg.lat*1e-7, msg.lon*1e-7, msg.alt*1e-3)
+            elif t == "GPS_RAW_INT":
+                with self._lock:
+                    self._gps = (perf_counter(), int(msg.fix_type), int(msg.satellites_visible),
+                                 msg.lat*1e-7, msg.lon*1e-7, msg.alt*1e-3)
             elif t == "EKF_STATUS_REPORT":
                 with self._lock:
                     self._ekf = (perf_counter(), int(msg.flags))
@@ -1459,6 +1481,10 @@ class ArduPilotAcro(FcBackend):
             return why
         if self.wasp_attitude() is None:
             return "no fresh attitude for WASP"
+        if self.SAFEDOWN_NEEDS_GPS and not self.gps_fix_ok():
+            return "waiting for a GPS fix: SafeDown flies back to the launch point"
+        if self.SAFEDOWN_NEEDS_GPS and not self.position_ok():
+            return "waiting for GPS: SafeDown needs a position to bring it home (compass calibrated?)"
         return ""
 
     def wasp_setup_error(self):
@@ -1568,7 +1594,7 @@ class ArduPilotAcro(FcBackend):
         return ""
 
     GCSBLOCK_STABILIZE, GCSBLOCK_ALT_HOLD = 1, 4
-    SAFEDOWN_MODES = ("ACRO", "STABILIZE", "ALT_HOLD", "LAND")
+    SAFEDOWN_MODES = ("ACRO", "STABILIZE", "ALT_HOLD", "LAND", "RTL")
 
     def safedown_flight_ready(self):
         # SafeDown keeps the sticks until it lands, the pilot moves the
@@ -1637,6 +1663,65 @@ class ArduPilotAcro(FcBackend):
         if e is None or perf_counter() - e[0] > max_age:
             return False
         return bool(e[1] & self.EKF_POS_HORIZ_ABS) and not e[1] & self.EKF_CONST_POS_MODE
+
+    SAFEDOWN_NEEDS_GPS = os.environ.get("WASP_REQUIRE_GPS", "1") != "0"
+
+    def home(self):
+        """(lat, lon) of the FC's home: where it was armed, on the stand."""
+        with self._lock:
+            h = self._home
+        if h is None or (abs(h[1]) < 1e-9 and abs(h[2]) < 1e-9):
+            return None
+        return h[1:]
+
+    GPS_MIN_SATS = 6
+
+    def gps_fix_ok(self, max_age=2.0):
+        """A 3D GPS fix: the receiver's own, with or without the EKF using it."""
+        with self._lock:
+            g = self._gps
+        return bool(g and perf_counter() - g[0] <= max_age and g[1] >= 3 and g[2] >= self.GPS_MIN_SATS)
+
+    def mark_launch(self):
+        """Keep where the drone is at GO: the GPS spot SafeDown flies back to."""
+        with self._lock:
+            g, p = self._gps, self._gpos
+        if not self.gps_fix_ok():
+            self._launch = None
+            return False
+        # The EKF's altitude (barometric) beats the receiver's own.
+        alt = p[3] if p and perf_counter() - p[0] <= 2.0 else g[5]
+        self._launch = (g[3], g[4], alt)
+        return True
+
+    def launch_point(self):
+        return None if self._launch is None else self._launch[:2]
+
+    def set_home_to_launch(self):
+        """Make the FC's home the GPS spot kept at GO, so RTL lands there."""
+        if self._launch is None:
+            return False
+        home = self.home()
+        if home is not None and _metres(home, self._launch[:2]) < 1.0:
+            return True
+        lat, lon, alt = self._launch
+        try:
+            self.master.mav.command_int_send(
+                self.master.target_system, self.master.target_component,
+                mavutil.mavlink.MAV_FRAME_GLOBAL, mavutil.mavlink.MAV_CMD_DO_SET_HOME, 0, 0,
+                0, 0, 0, 0, int(round(lat*1e7)), int(round(lon*1e7)), float(alt))
+            return True
+        except Exception:
+            return False
+
+    def home_distance(self, max_age=2.0):
+        """Metres from the launch point (else home), or None without a fresh GPS position."""
+        home = self.launch_point() or self.home()
+        with self._lock:
+            g = self._gpos
+        if home is None or g is None or perf_counter() - g[0] > max_age or not self.position_ok():
+            return None
+        return _metres(home, g[1:3])
 
     def landed_state(self, max_age=2.0):
         with self._lock:
@@ -2877,6 +2962,12 @@ class AcroCommander:
     def request_disarm(self, force=False):
         return isinstance(self.backend, ArduPilotAcro) and self.backend.request_disarm(force)
 
+    def mark_launch(self):
+        return isinstance(self.backend, ArduPilotAcro) and self.backend.mark_launch()
+
+    def set_home_to_launch(self):
+        return isinstance(self.backend, ArduPilotAcro) and self.backend.set_home_to_launch()
+
     @property
     def hover_thrust(self):
         return getattr(self.backend, "hover_thrust", None)
@@ -2947,16 +3038,26 @@ class AcroCommander:
         fresh = (now - ai_t) <= self.target_timeout and off is not None
         idle_why = b.idle_ready(allow_acro=True) if isinstance(b, ArduPilotAcro) else "Idle requires MAVLink"
         idle_ack = b._idle_mode_ack if isinstance(b, ArduPilotAcro) else None
-        # The pilot flipping ACRO -> STABILIZE mid-launch hands WASP to its
-        # SafeDown instead of straight to a stick that may be at the bottom.
+        # The pilot flipping the switch up to ALT_HOLD mid-launch hands WASP
+        # to SafeDown; any other position (STABILIZE) is the pilot flying.
         switch = b.pilot_mode_switch() if isinstance(b, ArduPilotAcro) else None
         mav = isinstance(b, ArduPilotAcro)
-        stabilize = bool(mav and b.linked and b.armed
-                         and (b.mode_name == "STABILIZE" or (switch and switch[1] == "STABILIZE")))
-        takeover = bool(not ok and stabilize and self.mission.wasp.enabled
+        want = SafeDown.SWITCH_MODE
+        pilot_safedown = bool(mav and b.linked and b.armed
+                              and (b.mode_name == want or (switch and switch[1] == want)))
+        takeover = bool(not ok and pilot_safedown and self.mission.wasp.enabled
                         and self.mission.wasp.started is not None)
+        # STABILIZE: the catch, then the pilot's own flight.  Read from the
+        # switch: SafeDown's own fallbacks put the FC in STABILIZE too.
+        pilot_catch = bool(mav and b.linked and b.armed and (
+            (switch and switch[1] == SafeDown.CATCH_MODE)
+            or (switch is None and b.mode_name == SafeDown.CATCH_MODE
+                and not self.mission.safedown.active)))
+        catch_takeover = bool(not ok and pilot_catch and self.mission.wasp.enabled
+                              and self.mission.wasp.started is not None)
         safedown_ok = bool(mav and self.mission.wasp.enabled and not b.safedown_flight_ready())
-        ctx = dict(gate_ok=ok, gate_why=why, pilot_takeover=takeover, pilot_stabilize=stabilize,
+        ctx = dict(gate_ok=ok, gate_why=why, pilot_takeover=takeover, pilot_safedown=pilot_safedown,
+                   pilot_catch=pilot_catch, catch_takeover=catch_takeover,
                    safedown_ok=safedown_ok,
                    mode_switch=None if switch is None else switch[0],
                    mode_switch_mode=None if switch is None else switch[1],
@@ -2966,6 +3067,8 @@ class AcroCommander:
                    accel=b.body_accel() if mav else None,
                    baro_climb=b.baro_climb() if mav else None,
                    position_ok=b.position_ok() if mav else False,
+                   home_ok=bool(mav and (b.launch_point() is not None or b.home() is not None)),
+                   home_m=b.home_distance() if mav else None,
                    att=((b.wasp_attitude() if mav else b.attitude())
                         if ok or takeover or safedown_ok else None),
                    height=None if h is None else h[0],

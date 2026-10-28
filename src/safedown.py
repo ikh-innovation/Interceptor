@@ -9,7 +9,7 @@ class Handover(Exception):
 
 
 class SafeDown:
-    """SafeDown: the phone's SAFEDOWN button or the pilot's switch to STABILIZE.
+    """SafeDown: the phone's SAFEDOWN button or the pilot's switch up to ALT_HOLD.
 
     The FC does the flying wherever it can, so a Jetson that stops sending
     still leaves a safe mode behind it:
@@ -26,8 +26,12 @@ class SafeDown:
     STOP       Level and steady; the launch speed bleeds off in the drag.  The
                accelerometer's horizontal force is that drag, so it is small
                once the drone has (nearly) stopped relative to the air.
-    DESCEND    LAND: the FC descends at LAND_SPEED, keeps level and the
-               heading, and disarms on touchdown, all without the Jetson.
+    RETURN     With a GPS position and a home: RTL.  The FC brakes, flies back
+               to where it was armed on the stand (RTL_ALT at least), lands
+               there and disarms, all without the Jetson.
+    DESCEND    No GPS, or RTL refused or lost: LAND where it is.  The FC
+               descends at LAND_SPEED, keeps level and the heading, and
+               disarms on touchdown, all without the Jetson.
 
     Without GPS the FC's idea of level drifts after a hard launch or a
     tumble, and a drone that believes it is level slides off sideways.  The
@@ -38,6 +42,11 @@ class SafeDown:
     The FC's height hold trusts the EKF.  A tumble can wreck its vertical
     velocity while the barometer still reads true; when the two disagree the
     app flies STABILIZE on the barometer's climb rate until they agree again.
+
+    CATCH (the pilot's switch to STABILIZE) is the first part on its own: in
+    STABILIZE, with no mode changes, the app levels it, stops the climb or
+    dive and leans against the drag for at most CATCH_MAX_S, then every
+    channel goes to the pilot, still in STABILIZE.
 
     Fallbacks keep it autonomous when the FC refuses a mode.  LAND refused:
     the descent is flown with the ALT_HOLD throttle stick.  ALT_HOLD refused
@@ -87,6 +96,17 @@ class SafeDown:
     CLIMB_KP = 2.0
     CLIMB_KI = 2.0
     ON_GROUND = 1
+    SWITCH_MODE = "ALT_HOLD"   # the pilot's switch position that means SafeDown
+    CATCH_MODE = "STABILIZE"   # the one that means: steady it, then it is mine
+    CATCH_MIN_S = 1.0
+    CATCH_MAX_S = 3.0
+    CATCH_STEADY_S = 0.5
+    CATCH_LEVEL_DEG = 8.0
+    CATCH_CLIMB_MPS = 1.5
+    CATCH_HEARTBEAT_LAG_S = 1.5
+    RETURN_CLIMB_MPS = 2.0     # vertical speed RTL may start from
+    POSITION_LOST_S = 2.0
+    RETURN_MIN_H = 5.0        # a position found on the way down still flies it home above this
 
     def __init__(self):
         self.started = None
@@ -96,8 +116,10 @@ class SafeDown:
     def active(self):
         return self.started is not None
 
-    def begin(self, now, ctx, reason, hold_throttle):
+    def begin(self, now, ctx, reason, hold_throttle, catch=False):
         self.started = self._t = now
+        self.catch = catch
+        self._steady_t = None
         self.reason = reason
         self.hold_throttle = hold_throttle
         self.source_mode = ctx.get("fc_mode")
@@ -128,16 +150,21 @@ class SafeDown:
         self._drag = None
         self._brake_i = [0.0, 0.0]
         self.brake = (0.0, 0.0)
+        self.home_m = None
+        self._no_return = False
+        self._lost_t = None
         self.notes = []
 
     def stop(self):
         self.started = None
+        self.catch = False
         self.stage = "OFF"
         self.fallback = None
         self.reason = ""
         self.landed = False
         self.ekf_bad = False
         self.brake = (0.0, 0.0)
+        self.home_m = None
         self.notes = []
 
     def _note(self, text):
@@ -261,7 +288,7 @@ class SafeDown:
                 hi = mid
         return (lo+hi)/2
 
-    def _manual_throttle(self, mapper, ctx, climb_target, dt):
+    def _manual_throttle(self, mapper, ctx, climb_target, dt, full=False):
         """Throttle stick fraction holding `climb_target` in ACRO / STABILIZE.
 
         The FC's hover throttle may be wrong for this payload, so the hover
@@ -278,7 +305,8 @@ class SafeDown:
         if self._fresh(ctx):
             error = climb_target - ctx["climb"]
             self._thr_i = max(-G, min(G, self._thr_i + self.CLIMB_KI*error*dt))
-            lo, hi = (-G, 3*G) if self.stage == "ARREST" else (-4.0, 4.0)
+            full = full or self.stage == "ARREST"
+            lo, hi = (-G, 3*G) if full else (-4.0, 4.0)
             accel = max(lo, min(hi, self.CLIMB_KP*error + self._thr_i))
             tilt = self._tilt(ctx["att"])
             # Past 60 degrees thrust pushes it sideways or down: keep just
@@ -287,7 +315,7 @@ class SafeDown:
             self._thrust = self._hover*(1 + accel/G)/lift if tilt < math.radians(75) else .1
         elif self._thrust is None:
             self._thrust = self._hover
-        self._thrust = max(.02 if self.stage == "ARREST" else .05, min(.95, self._thrust))
+        self._thrust = max(.02 if full else .05, min(.95, self._thrust))
         return self.stabilize_stick(self._thrust, curve)
 
     def _climb(self, target, dt):
@@ -301,10 +329,13 @@ class SafeDown:
             return "STABILIZE"
         if self.fallback:
             return self.fallback
-        return "LAND" if self.stage == "DESCEND" else "ALT_HOLD"
+        return self._preferred()
 
     def _preferred(self):
-        return "LAND" if self.stage == "DESCEND" else "ALT_HOLD"
+        return {"DESCEND": "LAND", "RETURN": "RTL"}.get(self.stage, "ALT_HOLD")
+
+    def _can_return(self, ctx):
+        return bool(ctx.get("position_ok") and ctx.get("home_ok")) and not self._no_return
 
     def _check_vertical(self, now, ctx):
         """ctx with the climb rate SafeDown can trust: the EKF's, or the
@@ -349,13 +380,17 @@ class SafeDown:
         ctx = self._check_vertical(now, ctx)
         fresh = self._fresh(ctx)
         self._filter_accel(ctx, dt)
+        if self.catch:
+            return self._catch(mapper, now, ctx, fresh, dt)
         mode = self._effective_mode(ctx)
+        self.home_m = ctx.get("home_m")
         if mode == "LAND" and self.stage != "DESCEND":
             # A failsafe LAND (radio, battery, EKF) is where SafeDown is
             # heading anyway.
             self._note("FC switched to LAND itself: descending")
-            self.stage, self.fallback = "DESCEND", None
-        if mode not in ("ACRO", "STABILIZE", "ALT_HOLD", "LAND"):
+            # The FC's own failsafe: never fight it with an RTL.
+            self.stage, self.fallback, self._no_return = "DESCEND", None, True
+        if mode not in ("ACRO", "STABILIZE", "ALT_HOLD", "LAND", "RTL"):
             raise Handover(f"FC in {mode}")
         if mode == "ACRO" and self._left_acro:
             raise Handover("FC back in ACRO")
@@ -366,12 +401,52 @@ class SafeDown:
             self.stage = "LEVEL"
         if self.stage in ("LEVEL", "STOP") and mode != "ACRO":
             self._level_and_stop(mapper, now, ctx, fresh)
+        if self.stage == "RETURN":
+            self._watch_position(now, ctx)
+        elif (self.stage == "DESCEND" and self.fallback is None and not self.landed and fresh
+              and self._can_return(ctx) and ctx["height"] > self.RETURN_MIN_H):
+            # No compass: the EKF found its heading only on the way down.
+            self._start_return(mapper, ctx, "GPS position found on the way down: RTL")
         self._pursue_target(mapper, now, ctx, mode)
         mode = self._effective_mode(ctx)
-        if self.stage == "DESCEND":
+        if self.stage in ("DESCEND", "RETURN"):
             self._watch_touchdown(mapper, now, ctx)
         self._last_mode = mode
         return self._sticks(mapper, ctx, mode, dt)
+
+    def _catch(self, mapper, now, ctx, fresh, dt):
+        # The pilot's STABILIZE, never a mode request: steady it, then his.
+        mode = ctx.get("fc_mode")
+        if mode not in ("STABILIZE", "ACRO"):
+            # The switch moved it to STABILIZE; the 1 Hz heartbeat may still
+            # show the mode before for a moment.
+            if mode != self.source_mode or now - self.started > self.CATCH_HEARTBEAT_LAG_S:
+                raise Handover(f"FC in {mode}")
+            mode = "STABILIZE"
+        self.stage = "CATCH"
+        held = now - self.started
+        steady = (fresh and math.degrees(self._tilt(ctx["att"])) <= self.CATCH_LEVEL_DEG
+                  and abs(ctx["climb"]) <= self.CATCH_CLIMB_MPS)
+        self._steady_t = (self._steady_t or now) if steady else None
+        if ((held >= self.CATCH_MIN_S and self._steady_t is not None
+             and now - self._steady_t >= self.CATCH_STEADY_S) or held >= self.CATCH_MAX_S):
+            raise Handover("caught: level and steady, the pilot flies it in STABILIZE"
+                           if steady else f"caught for {self.CATCH_MAX_S:g} s, the pilot flies it in STABILIZE")
+        rates = self._acro_level_rates(ctx.get("att")) if mode == "ACRO" else (0.0, 0.0, 0.0)
+        self._climb_cmd = 0.0
+        if fresh and abs(ctx["climb"]) > 2*self.CATCH_CLIMB_MPS:
+            # Wound up on a 30 m/s launch climb, the integrator turns it
+            # into a sink just as the pilot takes it.
+            self._thr_i = 0.0
+        out = mapper.wasp_pwm(rates, self._manual_throttle(mapper, ctx, 0.0, dt, full=True))
+        brake = self._air_brake(mapper, ctx, mode, dt) if mode == "STABILIZE" else None
+        self.brake = brake or (0.0, 0.0)
+        return dict(out, **mapper.lean_pwm(*brake)) if brake else out
+
+    def to_safedown(self, now):
+        """The pilot's switch went on up from a catch: the whole SafeDown."""
+        self.catch, self.stage, self._req_mode = False, "SWITCHING", None
+        self._want_t = now
 
     def _arrest(self, now, ctx, fresh):
         if (self.stage == "SWITCHING" and self._arrest_t is None and fresh
@@ -409,6 +484,11 @@ class SafeDown:
         if got is not False:
             return
         why = "refused" if self._denied(ctx, target) else "not confirmed"
+        if target == "RTL":
+            # No way home: stop and land where it is, as without GPS.
+            self._note(f"RTL {why}: stopping, then LAND here")
+            self._no_return, self.stage, self._req_mode = True, "STOP", None
+            return
         if self.stage == "ARREST":
             self._note(f"STABILIZE {why}: straight to ALT_HOLD")
             self.stage, self._req_mode = "SWITCHING", None
@@ -441,6 +521,12 @@ class SafeDown:
             self._settle_t = self._settle_t or now
         else:
             self._settle_t = None
+        if (self.stage == "STOP" and fresh and self._can_return(ctx)
+                and abs(ctx["climb"]) <= self.RETURN_CLIMB_MPS and self.fallback is None):
+            # Level and no longer shooting up or down: RTL brakes the
+            # horizontal speed itself and flies home.
+            self._start_return(mapper, ctx, "level: RTL")
+            return
         held = now - self._stop_t
         settled = self._settle_t is not None and now - self._settle_t >= self.SETTLE_S
         if (settled and held >= self.MIN_STOP_S) or held >= self.MAX_STOP_S:
@@ -452,6 +538,26 @@ class SafeDown:
             else:
                 self.fallback = None
                 self._req_mode = None
+
+    def _start_return(self, mapper, ctx, why):
+        # Home becomes the GPS spot kept at GO, so RTL lands exactly there.
+        set_home = getattr(mapper, "set_home_to_launch", None)
+        if callable(set_home):
+            set_home()
+        self._note(f"{why}, flying back to the launch point"
+                   + (f" ({ctx['home_m']:.0f} m)" if ctx.get("home_m") is not None else ""))
+        self.stage, self._req_mode = "RETURN", None
+
+    def _watch_position(self, now, ctx):
+        # The FC's EKF failsafe lands on its own when the position goes; this
+        # does the same if the GPS fades without tripping it.
+        if ctx.get("position_ok"):
+            self._lost_t = None
+            return
+        self._lost_t = self._lost_t or now
+        if now - self._lost_t >= self.POSITION_LOST_S:
+            self._note("GPS position lost: LAND here")
+            self._no_return, self.stage, self._req_mode = True, "DESCEND", None
 
     def _watch_touchdown(self, mapper, now, ctx):
         state = ctx.get("landed_state")
@@ -510,8 +616,8 @@ class SafeDown:
         att = ctx.get("att")
         # With a GPS position the FC holds it itself, and LAND would take our
         # sticks as a request to move.
-        if (ctx.get("position_ok") or mode not in ("STABILIZE", "ALT_HOLD", "LAND")
-                or self.stage not in ("LEVEL", "STOP", "DESCEND")
+        if ((ctx.get("position_ok") and mode != "STABILIZE") or mode not in ("STABILIZE", "ALT_HOLD", "LAND")
+                or self.stage not in ("LEVEL", "STOP", "DESCEND", "CATCH")
                 or self.landed or self._drag is None or att is None
                 or math.degrees(self._tilt(att)) > 2*self.ARREST_LEVEL_DEG
                 or not callable(getattr(mapper, "lean_pwm", None))):
@@ -572,12 +678,13 @@ class SafeDown:
         return True
 
     def reassert(self):
-        # The pilot moved the switch onto STABILIZE: the FC is (or will be)
-        # in STABILIZE, so ask for the current goal again from there.
+        # The pilot moved the switch onto SafeDown's position: the FC is (or
+        # will be) in that mode, so ask for the current goal again from there.
         self._acked = None
         self._req_mode = None
 
     def snapshot(self):
-        return dict(active=self.active, stage=self.stage, ekf_bad=self.ekf_bad,
+        return dict(active=self.active, stage=self.stage, ekf_bad=self.ekf_bad, catch=self.catch,
                     brake_deg=[round(v, 1) for v in self.brake],
-                    fallback=self.fallback, landed=self.landed, reason=self.reason)
+                    fallback=self.fallback, landed=self.landed, reason=self.reason,
+                    home_m=None if self.home_m is None else round(self.home_m))

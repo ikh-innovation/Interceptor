@@ -5,7 +5,7 @@ import unittest
 from pymavlink import mavutil
 from test_wifi_autonomy import WifiFixture, until  # sets sys.path
 
-ALT_HOLD, STABILIZE, ACRO, LOITER, LAND = 2, 0, 1, 5, 9
+ALT_HOLD, STABILIZE, ACRO, LOITER, RTL, LAND = 2, 0, 1, 5, 6, 9
 
 
 class SafeDownMavlinkTests(WifiFixture):
@@ -141,9 +141,9 @@ class SafeDownMavlinkTests(WifiFixture):
         self.assertFalse(self.m.idle.active)
         self.assertFalse(self.fc.mode_requests)
         self.assertNotIn("Idle time limit", self.m.event)
-        self.fc.mode = STABILIZE
+        self.fc.mode = ALT_HOLD  # the pilot's switch up
         self.assert_safedown()
-        self.assertIn("STABILIZE", self.m.event)
+        self.assertIn("ALT_HOLD", self.m.event)
         # Above the ceiling already: centred ALT_HOLD sticks hold it there,
         # never a climb, and then it lands.
         self.assert_holds()
@@ -180,7 +180,7 @@ class SafeDownMavlinkTests(WifiFixture):
                 self.assertFalse(self.fc.mode_requests)
                 self.assertFalse(self.m.idle.active)
                 self.assertIsNone(self.m._run_t)
-                self.fc.mode = STABILIZE
+                self.fc.mode = ALT_HOLD  # the pilot's switch up
                 self.assert_safedown()
                 if tilt:
                     # Not level yet: ALT_HOLD with centred sticks, no LAND.
@@ -327,8 +327,8 @@ class SafeDownMavlinkTests(WifiFixture):
         until(lambda: self.m.phase == "SAFEDOWN" and self.m.safedown.active)
         self.assertIsNone(self.m.wasp.started)
         self.assertIsNone(self.m.snapshot(perf_counter())["idle_remaining_s"])
-        until(lambda: self.fc.mode_requests and self.c.mode_name == "ALT_HOLD")
-        self.assertEqual({mode for _t, mode in self.fc.mode_requests}, {ALT_HOLD})
+        until(lambda: self.c.mode_name == "ALT_HOLD")
+        self.assertLessEqual({mode for _t, mode in self.fc.mode_requests}, {ALT_HOLD})
         self.assertEqual(self.m.phase, "SAFEDOWN")
         self.assertTrue(self.fc.overrides)
 
@@ -407,14 +407,14 @@ class SafeDownMavlinkTests(WifiFixture):
         self.assert_lands()
         self.assertFalse(self.fc.disarm_requests, "LAND disarms by itself")
 
-    def test_wasp_stabilize_takeover_in_flight_runs_the_same_safedown(self):
-        self.fc.ack_delay = .5
+    def test_wasp_switch_up_in_flight_runs_the_same_safedown(self):
         self.fly(after=1)
-        self.fc.mode = STABILIZE
+        self.fc.mode = ALT_HOLD
         until(lambda: self.m.phase == "SAFEDOWN")
-        self.assertEqual(self.m.safedown.source_mode, "STABILIZE")
-        self.assertIn("STABILIZE", self.m.event)
-        self.assert_level_at_launch_throttle_until_ack(1900)
+        self.assertEqual(self.m.safedown.source_mode, "ALT_HOLD")
+        self.assertIn("ALT_HOLD", self.m.event)
+        # ALT_HOLD reads the launch throttle as a climb: centred at once.
+        until(lambda: self.fc.overrides == self.CENTRED, timeout=.3)
         self.assert_safedown()
         self.assert_holds()
         self.assert_lands()
@@ -519,14 +519,14 @@ class SafeDownMavlinkTests(WifiFixture):
         self.command("engage", "1")
         until(lambda: self.m.phase == "WASP_FLIGHT" and self.fc.overrides)
         self.assertFalse(self.c.backend.airborne()[0])
-        self.fc.mode = STABILIZE
+        self.fc.mode = ALT_HOLD
         until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides)
         self.assertIn("on the ground", self.m.event)
         sleep(.3)
         self.assertFalse(self.fc.mode_requests)
         self.assertFalse(self.m.safedown.active)
 
-    def test_wasp_mode_change_other_than_stabilize_releases_without_safedown(self):
+    def test_wasp_mode_change_other_than_alt_hold_releases_without_safedown(self):
         for mode in (LOITER, LAND):
             with self.subTest(mode=mode):
                 self.fly()
@@ -545,16 +545,81 @@ class SafeDownMavlinkTests(WifiFixture):
         self.assertIn("SAFEDOWN ended: disarmed", self.m.event)
         self.assertIn(self.m.phase, ("PILOT", "WASP_READY"))
 
-    def test_safedown_after_the_pilot_took_over_in_alt_hold(self):
+    def test_safedown_after_the_pilot_took_over_in_stabilize(self):
         self.fly()
         self.fc.vfr["alt"] += 5  # well clear of the arming height
-        self.fc.mode = ALT_HOLD  # Plan B straight from the launch
-        until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides)
+        self.fc.mode = STABILIZE  # the pilot's own flight, after the catch
+        until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides, timeout=5)
         self.command("safedown", "1")
         until(lambda: self.m.phase == "SAFEDOWN")
-        self.assertFalse(self.fc.mode_requests, "already in ALT_HOLD")
         self.assert_holds()
         self.assert_lands()
+
+
+class GpsReturnMavlinkTests(WifiFixture):
+    fake_gps = True
+    fly = SafeDownMavlinkTests.fly
+    CENTRED = SafeDownMavlinkTests.CENTRED
+
+    def assert_returns_and_lands(self):
+        until(lambda: self.c.mode_name == "RTL", timeout=4)
+        self.assertEqual(self.m.safedown.stage, "RETURN")
+        self.assertIn("RTL, flying back to the launch point", self.m.event)
+        self.assertIsNotNone(self.m.snapshot(perf_counter())["safedown"]["home_m"])
+        until(lambda: self.fc.overrides == self.CENTRED)
+        until(lambda: not self.fc.armed and not self.c.armed and not self.m.safedown.active, timeout=5)
+        self.assertIn("SAFEDOWN complete: landed", self.m.event)
+        self.assertNotIn(LAND, [m for _t, m in self.fc.mode_requests], "home, not here")
+
+    def test_no_go_without_a_gps_position(self):
+        self.wasp_ready(idle_s=1)
+        self.fc.gps = False
+        until(lambda: "waiting for GPS" in (self.c._mission_gate()[1] or ""), timeout=4)
+        self.m.request_engage()
+        sleep(.5)
+        self.assertIsNone(self.m.wasp.started, "no launch without a way home")
+        self.assertFalse(self.fc.overrides)
+        self.fc.gps = True
+        until(lambda: self.m.phase == "WASP_READY", timeout=4)
+
+    def test_safedown_button_flies_home_by_rtl_and_lands_there(self):
+        self.fly()
+        self.command("safedown", "1")
+        self.assert_returns_and_lands()
+
+    def test_switch_up_flies_home_too(self):
+        self.fly()
+        self.fc.mode = ALT_HOLD
+        until(lambda: self.m.phase == "SAFEDOWN")
+        self.assertEqual(self.m.safedown.reason, "pilot switched to ALT_HOLD")
+        self.assert_returns_and_lands()
+
+    def test_rtl_refused_lands_here(self):
+        self.fc.deny_modes.add(RTL)
+        self.fly()
+        self.command("safedown", "1")
+        until(lambda: self.c.mode_name == "LAND", timeout=12)
+        self.assertIn(RTL, [m for _t, m in self.fc.mode_requests], "RTL was asked for first")
+        until(lambda: "SAFEDOWN complete: landed" in self.m.event, timeout=5)
+
+    def test_losing_the_gps_on_the_way_home_lands_here(self):
+        self.fc.rtl_s = 60
+        self.fly()
+        self.command("safedown", "1")
+        until(lambda: self.c.mode_name == "RTL", timeout=4)
+        self.fc.gps = False
+        until(lambda: self.c.mode_name == "LAND", timeout=5)
+        self.assertIn("GPS position lost", self.m.event)
+
+    def test_the_pilots_stabilize_takes_it_back_on_the_way(self):
+        self.fc.rtl_s = 60
+        self.fly()
+        self.command("safedown", "1")
+        until(lambda: self.c.mode_name == "RTL", timeout=4)
+        self.fc.radio[5] = 1100  # the pilot moves the mode switch
+        self.fc.mode = STABILIZE
+        until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides, timeout=5)
+        self.assertIn("SAFEDOWN ended", self.m.event)
 
 
 class ModeSwitchMavlinkTests(WifiFixture):
@@ -583,53 +648,63 @@ class ModeSwitchMavlinkTests(WifiFixture):
         until(lambda: self.c.backend.pilot_mode_switch() == (list(self.PWM).index(mode), mode))
         return perf_counter()
 
-    def test_switch_to_stabilize_starts_safedown_before_the_heartbeat_shows_it(self):
+    def test_switch_up_starts_safedown_before_the_heartbeat_shows_it(self):
         self.fly()
-        moved = self.switch("STABILIZE")
+        moved = self.switch("ALT_HOLD")
         until(lambda: self.m.phase == "SAFEDOWN", timeout=.5)
         self.assertLess(perf_counter()-moved, .3)
-        self.assertIn("STABILIZE", self.m.event)
+        self.assertIn("ALT_HOLD", self.m.event)
         until(lambda: self.c.mode_name == "ALT_HOLD", timeout=2)
         self.assert_holds()
-        # The switch stays in STABILIZE: SafeDown carries on and lands it.
+        # The switch stays up: SafeDown carries on and lands it.
         self.assert_lands()
 
-    def test_switch_onto_stabilize_after_the_button_carries_on(self):
+    def test_switch_to_stabilize_in_flight_catches_then_hands_over(self):
+        self.fly()
+        self.switch("STABILIZE")
+        self.fc.mode = STABILIZE
+        until(lambda: self.m.phase == "SAFEDOWN" and self.m.safedown.catch, timeout=.5)
+        self.assertTrue(self.fc.overrides, "the app steadies it first")
+        until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides, timeout=5)
+        self.assertIn("CATCH done", self.m.event)
+        self.assertFalse(self.fc.mode_requests, "no mode changes in a catch")
+        self.assertTrue(self.fc.armed and self.c.armed)
+
+    def test_switch_up_after_the_button_carries_on(self):
         self.fly()
         self.command("safedown", "1")
         self.assert_safedown()
-        self.switch("STABILIZE")
-        self.fc.mode = STABILIZE  # the FC follows the switch
+        self.switch("ALT_HOLD")
+        self.fc.mode = ALT_HOLD  # the FC follows the switch
         sleep(.5)
         self.assertEqual(self.m.phase, "SAFEDOWN")
         self.assertIn("SafeDown carries on", self.m.event)
-        until(lambda: self.c.mode_name == "ALT_HOLD")
         self.assert_lands()
 
-    def test_switch_to_alt_hold_during_safedown_is_plan_b(self):
+    def test_switch_to_stabilize_during_safedown_catches_then_is_the_pilots(self):
         self.fly()
         self.command("safedown", "1")
         self.assert_safedown()
         self.assert_holds()
-        self.switch("ALT_HOLD")
-        until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides)
-        self.assertIn("pilot switched to ALT_HOLD", self.m.event)
+        self.switch("STABILIZE")
+        self.fc.mode = STABILIZE
+        until(lambda: self.m.safedown.catch, timeout=1)
+        until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides, timeout=5)
+        self.assertIn("CATCH done", self.m.event)
         self.assertFalse(self.m.safedown.active)
-        self.assertEqual(self.fc.mode, ALT_HOLD)
         self.assertTrue(self.fc.armed and self.c.armed)
         sleep(.3)
         self.assertFalse(self.fc.overrides)
 
-    def test_switch_back_onto_stabilize_after_plan_b_lands_it(self):
+    def test_switch_back_up_after_the_pilots_stabilize_lands_it(self):
         self.fly()
         self.fc.vfr["alt"] += 5
-        self.switch("ALT_HOLD")
-        self.fc.mode = ALT_HOLD
-        until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides)
         self.switch("STABILIZE")
         self.fc.mode = STABILIZE
+        until(lambda: self.m.phase == "WASP_DONE" and not self.fc.overrides, timeout=5)
+        self.switch("ALT_HOLD")
+        self.fc.mode = ALT_HOLD
         until(lambda: self.m.phase == "SAFEDOWN")
-        until(lambda: self.c.mode_name == "ALT_HOLD")
         self.assert_lands()
 
     def test_switch_to_loiter_in_flight_releases_without_safedown(self):

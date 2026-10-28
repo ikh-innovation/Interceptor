@@ -20,7 +20,7 @@ from urllib.request import urlopen
 from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from fc_control import AcroCommander, InterceptLaw
+from fc_control import AcroCommander, ArduPilotAcro, InterceptLaw
 from fake_fc import FakeArduPilot
 from mission import phone_command
 from mjpeg_stream import MJPEGServer
@@ -39,12 +39,19 @@ class WifiFixture(unittest.TestCase):
     # Per-class fake FC parameters / radio channels, applied before connect().
     fake_params = {}
     fake_radio = {}
+    # GPS: off by default, so SafeDown lands where it is and GO needs no GPS;
+    # the GPS return has its own tests.
+    fake_gps = False
 
     def setUp(self):
+        self._gps = patch.object(ArduPilotAcro, "SAFEDOWN_NEEDS_GPS", self.fake_gps)
+        self._gps.start()
+        self.addCleanup(self._gps.stop)
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
         self.fc = FakeArduPilot(port, armed=False, mode=0)
+        self.fc.gps = self.fake_gps
         self.fc.params.update(ACRO_RP_EXPO=0, ACRO_Y_EXPO=0, RC_OVERRIDE_TIME=1,
                               PILOT_SPEED_DN=250, PILOT_ACCEL_Z=500, PSC_JERK_Z=5,
                               ATC_INPUT_TC=.2, ATC_ACCEL_R_MAX=100000, ATC_ACCEL_P_MAX=100000,
@@ -270,12 +277,12 @@ class WifiAutonomyTests(WifiFixture):
         self.assertEqual(self.c.backend.mode_name, "ACRO")
         self.assert_transmitting(perf_counter()-1)
         self.assertEqual(self.fc.overrides.get(3), 1900)
-        # STABILIZE in flight starts SafeDown, phone or not: ALT_HOLD, then
-        # LAND, and the FC's own touchdown disarm.
-        self.fc.mode = 0
+        # The switch up in flight starts SafeDown, phone or not: ALT_HOLD,
+        # then LAND (no GPS here), and the FC's own touchdown disarm.
+        self.fc.mode = 2
         until(lambda: self.m.phase == "SAFEDOWN" and self.m.safedown.active)
         until(lambda: self.c.mode_name == "ALT_HOLD")
-        self.assertEqual({mode for _t, mode in self.fc.mode_requests}, {2})
+        self.assertLessEqual({mode for _t, mode in self.fc.mode_requests}, {2})
         self.assert_transmitting(perf_counter()-1)
         until(lambda: self.c.mode_name == "LAND", timeout=12)
         until(lambda: not self.c.armed and not self.fc.overrides, timeout=4)

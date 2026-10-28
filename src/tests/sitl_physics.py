@@ -126,13 +126,44 @@ class Quad:
                        + [rel((0.0, 0.0, -0.035)), rel((0.09, 0.0, 0.0)), rel((-0.09, 0.0, 0.0))])
         self.rotor_r = rel((0.0, 0.0, 0.0))
         self.hover_n = cfg.mass_kg*G
-        sp, sr, sy = (math.radians(cfg.stand_pitch_deg), math.radians(cfg.stand_roll_deg),
+        self.tilt_to = None
+        self._set_stand(cfg.stand_pitch_deg)
+        self.reset()
+
+    def _set_stand(self, pitch_deg):
+        cfg = self.cfg
+        self.stand_pitch = pitch_deg
+        sp, sr, sy = (math.radians(pitch_deg), math.radians(cfg.stand_roll_deg),
                       math.radians(cfg.stand_yaw_deg))
         self.stand_q = _euler_to_quat(sr, -sp, sy)
         self.stand_R = _quat_to_dcm(self.stand_q)
         self.stand_up = _mv(self.stand_R, (0.0, 0.0, -1.0))
         self.stand_o = (0.0, 0.0, -cfg.stand_height_m)
-        self.reset()
+
+    def _seat(self):
+        # Geometric centre above the stand top so the leg tips just touch it,
+        # loaded by the weight's share of a leg-spring compression.
+        cfg = self.cfg
+        lift = 0.07 - cfg.mass_kg*G/(4*cfg.leg_k)
+        gc = tuple(self.stand_o[i] + lift*self.stand_up[i] for i in range(3))
+        cgw = _mv(self.stand_R, cfg.cg_offset_m)
+        self.q = self.stand_q
+        self.p = tuple(gc[i]+cgw[i] for i in range(3))
+
+    def _tilting(self, dt):
+        """Someone tilting the drone in its cradle to a new stand angle: the
+        pose is prescribed, the gyro sees the turn, the IMU sees 1 g."""
+        target, rate = self.tilt_to
+        step = max(-rate*dt, min(rate*dt, target - self.stand_pitch))
+        self._set_stand(self.stand_pitch + step)
+        self._seat()
+        self.v = (0.0, 0.0, 0.0)
+        self.w = (0.0, -math.radians(step/dt) if dt else 0.0, 0.0)
+        self.spec = _mtv(self.stand_R, (0.0, 0.0, -G))
+        self.t += dt
+        self.on_stand, self.legs_stand = True, 4
+        if abs(target - self.stand_pitch) < 1e-6:
+            self.tilt_to, self.w = None, (0.0, 0.0, 0.0)
 
     def reset(self):
         cfg = self.cfg
@@ -205,6 +236,8 @@ class Quad:
         return True
 
     def step(self, pwm, dt):
+        if self.tilt_to is not None:
+            return self._tilting(dt)
         cfg = self.cfg
         m = cfg.mass_kg
         R = _quat_to_dcm(self.q)
@@ -366,6 +399,9 @@ class Quad:
             self.torque_until = self.t + float(kw.get("duration", 0.1))
         elif name == "motor_scale":
             self.motor_scale[int(kw["motor"])-1] = float(kw["scale"])
+        elif name == "stand_tilt":
+            # Re-seat on the stand at a new angle, turning at deg_s.
+            self.tilt_to = (float(kw["deg"]), float(kw.get("deg_s", 15.0)))
         elif name == "reset":
             self.reset()
         else:

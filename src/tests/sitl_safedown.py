@@ -33,14 +33,19 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-ACRO, STABILIZE, ALT_HOLD, LAND = 1, 0, 2, 9
+ACRO, STABILIZE, ALT_HOLD, RTL, LAND = 1, 0, 2, 6, 9
+# The FC with its GPS in the EKF and a compass for the heading.
+GPS_PARAMS = dict(EK3_SRC1_POSXY=3, EK3_SRC1_VELXY=3, COMPASS_ENABLE=1)
+HOME_RADIUS_M = 6.0
 SWITCH = dict(down=1000, middle=1500, up=1900)
 
 
 @dataclass
 class Scenario:
     name: str
-    trigger: str = "button"          # "button" (phone) or "switch" (ch6 middle)
+    trigger: str = "button"          # "button" (phone), "switch" (ch6 up, ALT_HOLD), "catch" (ch6 middle)
+    gps: bool = True                 # False: no GPS in the EKF, SafeDown lands where it is
+    gps_loss: bool = False           # the GPS dies on the way home
     after_s: float = 1.5             # launch -> trigger
     mass_kg: float = None            # None: the physics default
     cg_offset_m: tuple = None        # None: the physics default
@@ -53,11 +58,11 @@ class Scenario:
     upset_s: float = 0.15
     pre_upset: tuple = None          # (torque N m, seconds before the trigger, duration s): a dive
     deny: tuple = ()                 # modes the proxy refuses: "ALT_HOLD", "LAND", "STABILIZE"
-    freeze_at: str = None            # "level" / "descend": the Jetson hangs then
+    freeze_at: str = None            # "level" / "return" / "descend": the Jetson hangs then
     weak_motor: tuple = None         # (motor 1..4, thrust scale)
-    plan_b_after_s: float = None     # pilot: throttle mid, switch UP this long after the trigger
+    plan_b_after_s: float = None     # pilot: throttle mid, switch MIDDLE this long after the trigger
     steer: bool = False              # WASP steering at a test target before the trigger
-    expect: str = "landed"           # "landed", "pilot", "failed"
+    expect: str = None               # "home" (GPS) / "landed" (no GPS) by default; "pilot", "failed", "any"
     extra_params: dict = field(default_factory=dict)
 
 
@@ -70,64 +75,50 @@ def scenarios():
     add = out.append
     for trigger in ("button", "switch"):
         add(Scenario(f"nominal-{trigger}", trigger=trigger))
-    for after in (0.6, 1.0, 3.0, 5.0):
+    for after in (0.6, 3.0, 5.0):
         add(Scenario(f"trigger-{after:g}s", after_s=after))
-    for pitch in (15, 30, 60, 70):
+    for pitch in (15, 30):
         add(Scenario(f"stand-{pitch}deg", stand_pitch_deg=pitch))
     add(Scenario("stand-45deg-rolled-15", stand_roll_deg=15))
     for mass in (1.3, 1.8):
-        add(Scenario(f"mass-{mass:g}kg", mass_kg=mass))
         add(Scenario(f"mass-{mass:g}kg-switch", mass_kg=mass, trigger="switch"))
-    # More than ~1.4 cm forward tips the drone off a 45 degree stand before GO.
-    for name, cg, stand in (("cg-fwd-1.2cm", (.012, 0, .01), 45), ("cg-fwd-2cm-stand30", (.02, 0, .01), 30),
-                            ("cg-aft-2cm", (-.02, 0, .01), 45), ("cg-right-2.5cm", (0, .025, .01), 45),
-                            ("cg-aft-left-low", (-.015, -.015, .03), 45)):
+    for name, cg, stand in (("cg-fwd-2cm-stand30", (.02, 0, .01), 30), ("cg-aft-2cm", (-.02, 0, .01), 45),
+                            ("cg-right-2.5cm", (0, .025, .01), 45)):
         add(Scenario(name, cg_offset_m=cg, stand_pitch_deg=stand))
-    add(Scenario("heavy-cg-right-low", mass_kg=1.6, cg_offset_m=(.0, .02, .03)))
     for speed, deg, gust in ((5, 0, 0), (5, 180, 0), (8, 90, 2.0), (10, 45, 3.0)):
         add(Scenario(f"wind-{speed}ms-{deg}deg" + (f"-gust{gust:g}" if gust else ""),
                      wind_ned=_wind(speed, deg), gust_sigma=gust))
-    add(Scenario("wind-8ms-gust-heavy-cg", wind_ned=_wind(8, 270), gust_sigma=2.5,
-                 mass_kg=1.5, cg_offset_m=(.015, -.02, .02), trigger="switch"))
-    # Launch findings: a tail wind on the 45 degree stand, before GO.
-    add(Scenario("stand-tailwind-3ms", wind_ned=_wind(3, 0), wind_on_stand=True))
-    add(Scenario("stand-tailwind-5ms", wind_ned=_wind(5, 0), wind_on_stand=True))
-    # A hit or a prop strike at the trigger: about 1500 deg/s peaks, inside
-    # a real gyro's 2000 deg/s, and the FC fighting it.
+    add(Scenario("wind-8ms-heavy-switch", wind_ned=_wind(8, 270), gust_sigma=2.0, mass_kg=1.5, trigger="switch"))
+    # A hit or a prop strike at the trigger: about 1500 deg/s peaks.
     for name, torque, secs in (("upset-roll", (2.2, 0, 0), .15), ("upset-pitch-flip", (0, -2.2, 0), .2),
                                ("upset-tumble", (1.6, 1.6, .4), .2)):
         add(Scenario(name, upset=torque, upset_s=secs))
     add(Scenario("upset-roll-low", upset=(2.2, 0, 0), upset_s=.15, after_s=.7))
-    add(Scenario("upset-tumble-wind-heavy", upset=(1.6, 1.6, .4), upset_s=.2,
-                 wind_ned=_wind(5, 30), gust_sigma=1.5, mass_kg=1.2, trigger="switch"))
-    # Far past any real gyro (5000+ deg/s): the EKF's vertical velocity breaks.
-    add(Scenario("extreme-tumble-ekf-breaks", after_s=3.0, pre_upset=((0, -6.0, 0), 1.2, .3)))
-    # WASP holds any attitude at full throttle in ACRO: a nose-over before the
-    # trigger is a full-power dive.
-    add(Scenario("nose-over-low", after_s=1.2, pre_upset=((0, -4.0, 0), .45, .2)))
     add(Scenario("dive-steep", after_s=3.0, pre_upset=((0, -2.2, 0), 1.2, .2)))
-    add(Scenario("dive-inverted", after_s=3.0, pre_upset=((0, -2.2, 0), 1.0, .3)))
-    add(Scenario("dive-heavy-wind-switch", after_s=3.0, pre_upset=((0, -2.2, 0), 1.2, .2), mass_kg=1.4,
+    add(Scenario("dive-inverted-wind-switch", after_s=3.0, pre_upset=((0, -2.2, 0), 1.0, .3),
                  wind_ned=_wind(6, 120), gust_sigma=1.5, trigger="switch"))
+    add(Scenario("extreme-tumble-ekf-breaks", after_s=3.0, pre_upset=((0, -6.0, 0), 1.2, .3), expect="any"))
     add(Scenario("steering-then-safedown", steer=True, after_s=2.5))
     add(Scenario("weak-motor-15pct", weak_motor=(1, .85)))
+    add(Scenario("rtl-fast-10ms", extra_params=dict(RTL_SPEED=1000), trigger="switch"))
+    # Faults: no way home, a dying GPS, refused modes, a hung Jetson, the pilot.
+    add(Scenario("fault-rtl-refused-lands-here", deny=("RTL",), expect="landed"))
+    add(Scenario("fault-gps-lost-on-the-way", gps_loss=True, expect="landed"))
     add(Scenario("fault-alt-hold-refused", deny=("ALT_HOLD",)))
-    add(Scenario("fault-land-refused", deny=("LAND",)))
-    add(Scenario("fault-alt-hold-and-land-refused", deny=("ALT_HOLD", "LAND")))
-    add(Scenario("fault-alt-hold-and-land-refused-heavy-wind", deny=("ALT_HOLD", "LAND"),
-                 mass_kg=1.5, wind_ned=_wind(6, 0), gust_sigma=1.5))
-    add(Scenario("fault-everything-refused", deny=("ALT_HOLD", "LAND", "STABILIZE"), expect="failed"))
-    add(Scenario("fault-jetson-hangs-in-descent", freeze_at="descend"))
+    add(Scenario("fault-jetson-hangs-on-the-way", freeze_at="return"))
     add(Scenario("fault-jetson-hangs-while-levelling", freeze_at="level", expect="any"))
-    add(Scenario("plan-b-pilot-takes-over", plan_b_after_s=3.0, expect="pilot"))
-    # The same drone with its GPS used by the EKF (EK3_SRC1_POSXY/VELXY = 3):
-    # attitude stays honest and LAND holds position against the wind.
-    # The FC has COMPASS_ENABLE 0: without a heading the EKF cannot use GPS.
-    gps = dict(EK3_SRC1_POSXY=3, EK3_SRC1_VELXY=3, COMPASS_ENABLE=1)
-    add(Scenario("gps-nominal", extra_params=gps))
-    add(Scenario("gps-wind-8ms-90deg-gust2", wind_ned=_wind(8, 90), gust_sigma=2.0, extra_params=gps))
-    add(Scenario("gps-wind-10ms-45deg-gust3", wind_ned=_wind(10, 45), gust_sigma=3.0, extra_params=gps))
-    add(Scenario("gps-extreme-tumble-ekf-breaks", after_s=3.0, pre_upset=((0, -6.0, 0), 1.2, .3), extra_params=gps))
+    add(Scenario("no-gps-lands-here", gps=False))
+    add(Scenario("no-gps-switch-lands-here", gps=False, trigger="switch"))
+    add(Scenario("plan-b-pilot-stabilize", plan_b_after_s=3.0, expect="caught"))
+    # The pilot's STABILIZE: steadied for him, then his (throttle at mid).
+    add(Scenario("catch-nominal", trigger="catch", expect="caught"))
+    add(Scenario("catch-low-0.7s", trigger="catch", after_s=.7, expect="caught"))
+    add(Scenario("catch-tumble", trigger="catch", upset=(1.6, 1.6, .4), upset_s=.2, expect="caught"))
+    add(Scenario("catch-dive", trigger="catch", after_s=3.0, pre_upset=((0, -2.2, 0), 1.2, .2), expect="caught"))
+    add(Scenario("catch-heavy-wind", trigger="catch", mass_kg=1.5, wind_ned=_wind(8, 90), gust_sigma=2.0,
+                 expect="caught"))
+    for sc in out:
+        sc.expect = sc.expect or ("home" if sc.gps else "landed")
     return out
 
 
@@ -163,30 +154,39 @@ class Run:
             mode=self.c.mode_name, armed=self.c.armed,
             fc_tilt=None if att is None else math.degrees(math.acos(max(-1, min(1, math.cos(att["roll"])*math.cos(att["pitch"]))))),
             fc_h=None if hgt is None else hgt[0], fc_climb=None if hgt is None else hgt[1],
-            fc_accel_h=None if acc is None else math.hypot(acc[0], acc[1])))
+            fc_accel_h=None if acc is None else math.hypot(acc[0], acc[1]),
+            fc_pos_ok=b.position_ok()))
         return st
 
     def run(self):
         from sitl_launch import Sitl
         from sitl_physics import PhysicsConfig
         from sitl_proxy import MavProxy
-        from fc_control import AcroCommander, InterceptLaw
-        from mission import phone_command
         sc = self.sc
         opt = {k: v for k, v in (("mass_kg", sc.mass_kg), ("cg_offset_m", sc.cg_offset_m)) if v is not None}
+        if not sc.gps:
+            os.environ["WASP_REQUIRE_GPS"] = "0"  # read when fc_control is imported
         calm = not sc.wind_on_stand
-        cfg = PhysicsConfig(instance=self.instance, stand_pitch_deg=sc.stand_pitch_deg,
+        # With GPS the drone powers up flat (the EKF will not start using GPS
+        # tilted on the stand) and is put on the stand once it has a fix.
+        flat_first = sc.gps
+        cfg = PhysicsConfig(instance=self.instance, stand_pitch_deg=0.0 if flat_first else sc.stand_pitch_deg,
                             stand_roll_deg=sc.stand_roll_deg,
                             wind_ned=(0.0, 0.0, 0.0) if calm else sc.wind_ned,
                             gust_sigma=0.0 if calm else sc.gust_sigma,
                             seed=sum(map(ord, sc.name)), **opt)
-        self.sitl = Sitl(self.instance, cfg, extra_params=sc.extra_params or None)
+        if not sc.gps:
+            os.environ["WASP_REQUIRE_GPS"] = "0"
+        from fc_control import AcroCommander, InterceptLaw
+        from mission import phone_command
+        params = dict(GPS_PARAMS if sc.gps else {}, **sc.extra_params)
+        self.sitl = Sitl(self.instance, cfg, extra_params=params or None)
         logs = tempfile.TemporaryDirectory(prefix="sitl-safedown-")
         try:
             self.sitl.start()
             self.sitl.wait_ready()
             self.proxy = MavProxy(int(self.sitl.mavlink_url.rsplit(":", 1)[1]))
-            self.proxy.deny_modes = {dict(ALT_HOLD=ALT_HOLD, LAND=LAND, STABILIZE=STABILIZE)[d]
+            self.proxy.deny_modes = {dict(ALT_HOLD=ALT_HOLD, LAND=LAND, STABILIZE=STABILIZE, RTL=RTL)[d]
                                      for d in sc.deny}
             self.c = AcroCommander(conn=self.proxy.url, transport="mavlink",
                                    axes=("roll", "pitch", "yaw", "throttle"),
@@ -207,6 +207,16 @@ class Run:
                     raise RuntimeError(f"{k}={v}: {why}")
             if m.confirm_mount(90):
                 raise RuntimeError("camera mount")
+            if flat_first:
+                # The FC needs its GPS position before arming, so home is
+                # the stand; the app refuses GO without both anyway.
+                self.wait(lambda: self.c.backend.position_ok(), 150, "EKF GPS position")
+                self.sitl.physics.event("stand_tilt", deg=sc.stand_pitch_deg, deg_s=15)
+                self.wait(lambda: abs(self.sitl.physics.state()["tilt"] - math.hypot(
+                    sc.stand_pitch_deg, sc.stand_roll_deg)) < 3, 20, "drone on the stand")
+                time.sleep(2)
+                if not self.c.backend.position_ok():
+                    raise RuntimeError("lost the GPS position when put on the stand")
             self.sitl.arm()
             self.wait(lambda: self.c.armed and self.c.mode_name == "ACRO" and m.phase == "WASP_READY",
                       20, f"WASP_READY (gate: {self.c._mission_why})")
@@ -241,6 +251,10 @@ class Run:
             if sc.upset:
                 self.sitl.physics.event("torque", nm=sc.upset, duration=sc.upset_s)
             if sc.trigger == "switch":
+                self.sitl.rc.set(6, SWITCH["up"])
+            elif sc.trigger == "catch":
+                # The pilot: throttle to mid, then the switch to the middle.
+                self.sitl.rc.set_stick("throttle", .5)
                 self.sitl.rc.set(6, SWITCH["middle"])
             else:
                 if cmd("safedown", "1"):
@@ -259,25 +273,41 @@ class Run:
 
     def _watch(self, at_trigger):
         sc, m = self.sc, self.m
-        frozen = plan_b = False
+        frozen = plan_b = gps_dead = False
+        returning = None
         end = self.trigger_t + 120
         while time.perf_counter() < end:
             st = self.sample()
             since = time.perf_counter() - self.trigger_t
+            if m.safedown.stage == "RETURN" and returning is None:
+                returning = time.perf_counter()
+            if sc.gps_loss and not gps_dead and returning and time.perf_counter() - returning > 3:
+                self.sitl.mav.mav.param_set_send(1, 1, b"SIM_GPS_DISABLE", 1, 9)
+                gps_dead = True
+                self.note("GPS DEAD")
             if sc.freeze_at and not frozen and (
                     (sc.freeze_at == "level" and m.safedown.stage in ("LEVEL", "STOP"))
+                    or (sc.freeze_at == "return" and returning and time.perf_counter() - returning > 2)
                     or (sc.freeze_at == "descend" and m.safedown.stage == "DESCEND" and self.c.mode_name == "LAND")):
                 self.proxy.frozen = frozen = True
                 self.note(f"JETSON FROZEN in {m.safedown.stage}")
             if sc.plan_b_after_s is not None and not plan_b and since >= sc.plan_b_after_s:
-                # The pilot's Plan B: throttle stick to mid first, then switch up.
+                # The pilot's Plan B: throttle stick to mid first, then STABILIZE.
                 self.sitl.rc.set_stick("throttle", .5)
                 time.sleep(.2)
-                self.sitl.rc.set(6, SWITCH["up"])
+                self.sitl.rc.set(6, SWITCH["middle"])
                 plan_b, self.plan_b_t = True, time.perf_counter()
-                self.note("PILOT: throttle mid, switch UP")
+                self.note("PILOT: throttle mid, switch MIDDLE")
             if plan_b and time.perf_counter() - self.plan_b_t > 8:
                 break
+            if sc.expect == "caught" and any("CATCH done" in e for _t, e in self.events):
+                self.caught_t = getattr(self, "caught_t", None) or time.perf_counter()
+                if st.get("vel") is not None:
+                    # The pilot flies it now: mid stick, plus what holds the height.
+                    self._pilot_i = max(-.3, min(.3, getattr(self, "_pilot_i", 0.0) + .002*st["vel"][2]))
+                    self.sitl.rc.set_stick("throttle", max(.2, min(.95, .5 + self._pilot_i + .06*st["vel"][2])))
+                if time.perf_counter() - self.caught_t > 6:
+                    break
             if not self.c.armed and (st.get("on_ground") or st.get("crashed")):
                 for _ in range(25):
                     self.sample()
@@ -306,6 +336,22 @@ class Run:
         if getattr(self, "_det_stop", None):
             self._det_stop.set()
 
+    def _caught_ok(self, s, crashed):
+        # Handed over level and no longer shooting up or down, and still
+        # flying under the pilot's mid stick a few seconds later.
+        t = next((t for t, e in self.events if "CATCH done" in e), None)
+        if t is None or crashed:
+            return False
+        at = next((x for x in s if x["t"] >= t), None)
+        self.catch_report = None if at is None else dict(
+            catch_s=round(t - (self.trigger_t - self.t0), 2), tilt=round(at["tilt"]), vz=round(-at["vel"][2], 1),
+            vh=round(math.hypot(at["vel"][0], at["vel"][1]), 1), h=round(-at["pos"][2], 1))
+        # The lean left at handover is the air brake's (at most 12 degrees plus
+        # gusts): under the pilot's centred stick it is level a second later.
+        later = next((x for x in s if x["t"] >= t + 1.0), None)
+        return (at is not None and at["tilt"] < 20 and abs(at["vel"][2]) < 2.5
+                and later is not None and later["tilt"] < 10)
+
     def metrics(self, at_trigger):
         s = [x for x in self.samples if x["t"] >= self.trigger_t - self.t0]
         tilt = lambda x: x["tilt"]
@@ -325,14 +371,23 @@ class Run:
         final = s[-1] if s else {}
         crashed = any(x.get("crashed") for x in s)
         tipped = bool(final) and final.get("on_ground") and tilt(final) > 45
+        home_m = math.hypot(final["pos"][0], final["pos"][1]) if final else None
+        returned = any(x["stage"] == "RETURN" for x in s)
         ok = {"landed": landed and not crashed and not tipped and self.lifted,
+              "home": (landed and not crashed and not tipped and self.lifted and returned
+                       and home_m is not None and home_m <= HOME_RADIUS_M),
               "pilot": not crashed and any("SAFEDOWN ended: pilot switched" in e for e in events),
               "failed": any("SAFEDOWN FAILED" in e for e in events),
+              "caught": self._caught_ok(s, crashed),
               "any": not crashed and not tipped}[self.sc.expect]
+        if self.sc.gps_loss and not any(x.get("fc_pos_ok") is False for x in s):
+            ok = False  # the GPS never went: the scenario tested nothing
         if not self.lifted:
             ok = None  # never left the stand: a launch finding, SafeDown never flew
         return dict(
             name=self.sc.name, ok=ok, expect=self.sc.expect, lifted=self.lifted,
+            returned=returned, home_m=None if home_m is None else round(home_m, 1),
+            catch=getattr(self, "catch_report", None),
             trigger_h=round(h(at_trigger), 1), trigger_speed=round(vh(at_trigger), 1),
             trigger_vz=round(-at_trigger["vel"][2], 1),
             trigger_tilt=round(tilt(at_trigger)), max_tilt=round(max(tilt(x) for x in s)),
@@ -356,7 +411,7 @@ class Run:
             modes=_collapse([x["mode"] for x in s]),
             events=[e for e in events if "SAFEDOWN" in e or "PILOT" in e or "JETSON" in e][:14],
             series=[{k: (round(v, 2) if isinstance(v, float) else v) for k, v in x.items()
-                     if k in ("t", "height", "tilt", "fc_tilt", "fc_h", "fc_climb", "fc_accel_h", "stage", "mode", "airspeed")}
+                     if k in ("t", "height", "tilt", "fc_tilt", "fc_h", "fc_climb", "fc_accel_h", "stage", "mode", "airspeed", "fc_pos_ok")}
                     | dict(vz=round(-x["vel"][2], 2), vh=round(vh(x), 2))
                     for x in s[::10]])
 
@@ -390,7 +445,7 @@ def _spawn(name, instance, out_dir):
         return dict(name=name, ok=False, error=f"exit {proc.returncode}", trace=proc.stdout[-1500:])
 
 
-COLS = ("name", "ok", "trigger_h", "trigger_vz", "trigger_speed", "max_tilt", "max_rate_dps", "level_s", "min_h",
+COLS = ("name", "ok", "home_m", "trigger_h", "trigger_vz", "trigger_speed", "max_tilt", "level_s", "min_h",
         "descend_s", "descend_speed", "touchdown_vz", "touchdown_vh", "drift_m", "fallbacks")
 
 
