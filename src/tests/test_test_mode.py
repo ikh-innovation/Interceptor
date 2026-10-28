@@ -15,6 +15,7 @@ class TestTargetTests(unittest.TestCase):
         self.mapper = Mapper()
         self.m = Mission(self.mapper)
         self.assertEqual(self.m.set_wasp_enabled(True), "")
+        self.m.wasp.params["launch_s"] = 3.0  # exercise the countdown path
         self.assertEqual(self.m.confirm_mount(90), "")
 
     def test_fixed_box_size_edges_and_disable(self):

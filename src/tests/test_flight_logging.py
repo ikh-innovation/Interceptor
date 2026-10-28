@@ -77,6 +77,7 @@ class FlightLoggingTests(unittest.TestCase):
         if kind == "wasp":
             self.b.armed = False
             self.assertEqual(m.set_wasp_enabled(True, selection=True), "")
+            m.wasp.params["launch_s"] = 3.0  # exercise the countdown path
             self.assertEqual(m.confirm_mount(90), "")
             self.b.mode_name = self.ctx["fc_mode"] = "ACRO"
             self.b.armed = True

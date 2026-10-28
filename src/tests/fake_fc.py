@@ -45,6 +45,11 @@ class FakeArduPilot(threading.Thread):
         # once it flies (ekf_position False until then).
         self.ekf_position = True
         self.set_home_requests = []
+        # The arm switch on RC5 (ARMDISARM_AIRMODE) and a compass; the app arms
+        # through the switch's function. arm_refuse: a pre-arm check fails.
+        self.compass = True
+        self.arm_refuse = False
+        self.arm_requests = []
         self.att = dict(roll=0.0, pitch=0.0, rollspeed=0.0, pitchspeed=0.0,
                         yawspeed=0.0, yaw=0.0)
         self.stop = threading.Event()
@@ -75,6 +80,9 @@ class FakeArduPilot(threading.Thread):
             "RC3_REVERSED": 0.0,
             "RC6_MIN": 1000.0, "RC6_MAX": 2000.0, "RC6_TRIM": 1500.0,
             "RC6_REVERSED": 0.0,
+            "RC5_OPTION": 154.0,
+            **{f"RC{ch}_OPTION": 0.0 for ch in range(6, 13)},
+            "COMPASS_ENABLE": 1.0,
         }
 
     def run(self):
@@ -123,6 +131,8 @@ class FakeArduPilot(threading.Thread):
                                                         0, 0, 0, 0)
                     self.m.mav.home_position_send(int(self.home[0]*1e7), int(self.home[1]*1e7), 0,
                                                   0, 0, 0, [1, 0, 0, 0], 0, 0, 0)
+                mag = 0x04 if self.compass else 0
+                self.m.mav.sys_status_send(0x20 | mag, 0x20 | mag, 0x20 | mag, 0, 12000, -1, -1, 0, 0, 0, 0, 0, 0)
                 if self.imu is not None:
                     ax, ay, az = (int(v*1000/9.80665) for v in self.imu)
                     self.m.mav.scaled_imu_send(int(now * 1000), ax, ay, az, 0, 0, 0, 0, 0, 0)
@@ -165,6 +175,13 @@ class FakeArduPilot(threading.Thread):
                         self.armed = False
                     self.m.mav.command_ack_send(msg.command, mavutil.mavlink.MAV_RESULT_ACCEPTED if landed
                                                 else mavutil.mavlink.MAV_RESULT_FAILED)
+            elif t == "COMMAND_LONG" and msg.command == mavutil.mavlink.MAV_CMD_DO_AUX_FUNCTION:
+                self.arm_requests.append((perf_counter(), int(msg.param1), int(msg.param2)))
+                ok = int(msg.param1) == int(self.params["RC5_OPTION"]) and int(msg.param2) == 2 and not self.arm_refuse
+                if ok:
+                    self.armed = True
+                self.m.mav.command_ack_send(msg.command, mavutil.mavlink.MAV_RESULT_ACCEPTED if ok
+                                            else mavutil.mavlink.MAV_RESULT_FAILED)
             elif t == "COMMAND_LONG" and msg.command == mavutil.mavlink.MAV_CMD_DO_SET_MODE:
                 self.mode_requests.append((perf_counter(), int(msg.param2)))
                 if self.ack_delay:

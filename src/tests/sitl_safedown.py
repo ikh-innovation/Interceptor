@@ -43,7 +43,10 @@ SWITCH = dict(down=1000, middle=1500, up=1900)
 @dataclass
 class Scenario:
     name: str
-    trigger: str = "button"          # "button" (phone), "switch" (ch6 up, ALT_HOLD), "catch" (ch6 middle)
+    trigger: str = "button"          # "button" (phone), "switch" (ch6 up, ALT_HOLD), "catch" (ch6 middle),
+                                     # "fence": none, the drone flies out of the geofence
+    arm_by_app: bool = False         # the phone's ARM (the arm switch's function over MAVLink)
+    fence_m: float = None            # a geofence square this wide around the stand
     gps: bool = True                 # False: no GPS in the EKF, SafeDown lands where it is
     gps_loss: bool = False           # the GPS dies on the way home
     after_s: float = 1.5             # launch -> trigger
@@ -111,6 +114,10 @@ def scenarios():
     add(Scenario("no-gps-switch-lands-here", gps=False, trigger="switch"))
     add(Scenario("plan-b-pilot-stabilize", plan_b_after_s=3.0, expect="caught"))
     # The pilot's STABILIZE: steadied for him, then his (throttle at mid).
+    add(Scenario("arm-by-app-nominal", arm_by_app=True))
+    add(Scenario("geofence-60m-straight", arm_by_app=True, fence_m=60, trigger="fence", after_s=.1))
+    add(Scenario("geofence-100m-wind-5ms", arm_by_app=True, fence_m=100, trigger="fence", after_s=.1,
+                 wind_ned=_wind(5, 0)))
     add(Scenario("catch-nominal", trigger="catch", expect="caught"))
     add(Scenario("catch-low-0.7s", trigger="catch", after_s=.7, expect="caught"))
     add(Scenario("catch-tumble", trigger="catch", upset=(1.6, 1.6, .4), upset_s=.2, expect="caught"))
@@ -195,7 +202,7 @@ class Run:
             with contextlib.redirect_stdout(io.StringIO()), patch("mission._read_json", return_value={}):
                 self.c.connect()
             self.m = m = self.c.mission
-            for attr in ("idle_path", "wasp_path", "auto_path", "levels_path", "flight_path"):
+            for attr in ("idle_path", "wasp_path", "auto_path", "levels_path", "flight_path", "fence_path"):
                 setattr(m, attr, str(Path(logs.name)/f"{attr}.json"))
             m.log = lambda text: self.note(text)
             self.t0 = time.perf_counter()
@@ -217,7 +224,25 @@ class Run:
                 time.sleep(2)
                 if not self.c.backend.position_ok():
                     raise RuntimeError("lost the GPS position when put on the stand")
-            self.sitl.arm()
+            if sc.fence_m:
+                lat, lon = self.c.backend.position()
+                dlat, dlon = sc.fence_m/2/111320, sc.fence_m/2/(111320*math.cos(math.radians(lat)))
+                why = cmd("fence", "set:" + json.dumps([[lat-dlat, lon-dlon], [lat+dlat, lon-dlon],
+                                                        [lat+dlat, lon+dlon], [lat-dlat, lon+dlon]]))
+                if why:
+                    raise RuntimeError(f"geofence: {why}")
+            if sc.arm_by_app:
+                self.wait(lambda: not self.c.mission_state()["wasp_arm_why"], 20,
+                          f"ARM ready ({self.c.mission_state()['wasp_arm_why']})")
+                if sc.fence_m:
+                    self.wait(lambda: m._fence_state[0] is True, 10,
+                              f"inside the fence (state {m._fence_state}, position {self.c.backend.position()})")
+                why = cmd("arm", "1")
+                if why:
+                    raise RuntimeError(f"ARM refused: {why}")
+                self.note("ARM from the app")
+            else:
+                self.sitl.arm()
             self.wait(lambda: self.c.armed and self.c.mode_name == "ACRO" and m.phase == "WASP_READY",
                       20, f"WASP_READY (gate: {self.c._mission_why})")
             # ArduCopter holds the motors for 2 s after arming; GO comes later.
@@ -256,6 +281,14 @@ class Run:
                 # The pilot: throttle to mid, then the switch to the middle.
                 self.sitl.rc.set_stick("throttle", .5)
                 self.sitl.rc.set(6, SWITCH["middle"])
+            elif sc.trigger == "fence":
+                # Nobody does anything: crossing the fence starts SafeDown.
+                self.wait(lambda: m.safedown.active, 15, "SafeDown at the geofence")
+                if "GEOFENCE" not in m.safedown.reason:
+                    raise RuntimeError(f"SafeDown, but not the fence: {m.safedown.reason}")
+                at_trigger = dict(self.sample())
+                self.lifted = any(x.get("left_stand") for x in self.samples)
+                self.note(f"FENCE: {m.safedown.reason}")
             else:
                 if cmd("safedown", "1"):
                     raise RuntimeError("SAFEDOWN refused")

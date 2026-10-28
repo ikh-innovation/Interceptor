@@ -622,6 +622,71 @@ class GpsReturnMavlinkTests(WifiFixture):
         self.assertIn("SAFEDOWN ended", self.m.event)
 
 
+class ArmMavlinkTests(WifiFixture):
+    """The phone's ARM: the app arms the FC through the arm switch's function."""
+    fake_gps = True
+
+    def ready_disarmed(self):
+        self.command("flightmode", "wasp")
+        self.command("mount", "90")
+        self.fc.mode, self.fc.armed = ACRO, False
+        until(lambda: self.c.mode_name == "ACRO" and not self.c.armed)
+        until(lambda: self.c.mission_state()["wasp_arm_why"] == "", timeout=4)
+
+    def test_arm_then_launch_wasp_after_two_seconds(self):
+        self.ready_disarmed()
+        st = self.c.mission_state()
+        self.assertTrue(st["compass_ok"] and st["gps"]["ok"] and st["position"])
+        self.command("arm", "1")
+        until(lambda: self.c.armed, timeout=3)
+        self.assertEqual([(f, pos) for _t, f, pos in self.fc.arm_requests], [(154, 2)],
+                         "the arm switch's own function, switch HIGH")
+        until(lambda: self.m.phase == "WASP_READY")
+        with urlopen_cmd(self, "engage") as refused:
+            self.assertIn("after 2.5 s", refused)
+        until(lambda: (self.c.mission_state()["armed_s"] or 0) > 2.55, timeout=4)
+        self.command("engage", "1")
+        until(lambda: self.m.phase == "WASP_FLIGHT" and len(self.fc.overrides) == 4, timeout=2)
+
+    def test_arm_refused_in_another_mode_and_by_the_fc(self):
+        self.command("flightmode", "wasp")
+        self.command("mount", "90")
+        self.fc.mode, self.fc.armed = STABILIZE, False
+        until(lambda: self.c.mode_name == "STABILIZE" and not self.c.armed)
+        with urlopen_cmd(self, "arm") as refused:
+            self.assertIn("ACRO", refused)
+        self.assertFalse(self.fc.arm_requests)
+        self.fc.mode, self.fc.arm_refuse = ACRO, True
+        until(lambda: self.c.mission_state()["wasp_arm_why"] == "", timeout=4)
+        self.command("arm", "1")
+        until(lambda: "ARM refused by the FC" in self.m.refusal or "ARM refused" in self.m.event, timeout=4)
+        self.assertFalse(self.c.armed)
+
+    def test_no_compass_shows_in_the_state(self):
+        self.fc.compass = False
+        until(lambda: self.c.mission_state()["compass_ok"] is False, timeout=4)
+        self.fc.compass = True
+        until(lambda: self.c.mission_state()["compass_ok"], timeout=4)
+
+
+class urlopen_cmd:
+    """A command the app refuses: the refusal text."""
+    def __init__(self, test, key, value="1"):
+        self.test, self.key, self.value = test, key, value
+
+    def __enter__(self):
+        import json
+        from urllib.parse import urlencode
+        from urllib.request import urlopen
+        with urlopen(self.test.url+"/cmd?"+urlencode({"c": "phone", self.key: self.value}), timeout=3) as r:
+            st = json.load(r)
+        self.test.assertTrue(st.get("refused"), f"{self.key} was not refused")
+        return st["refused"]
+
+    def __exit__(self, *_exc):
+        return False
+
+
 class ModeSwitchMavlinkTests(WifiFixture):
     # FLTMODE_CH 5: position 0 ACRO, 1 LOITER, 2 LAND, 3 STABILIZE, 4 POSHOLD, 5 ALT_HOLD.
     fake_params = dict(FLTMODE_CH=5, FLTMODE1=ACRO, FLTMODE2=LOITER, FLTMODE3=LAND,

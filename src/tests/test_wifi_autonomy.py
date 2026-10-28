@@ -176,6 +176,8 @@ class WifiFixture(unittest.TestCase):
         self.fc.mode = 1
         self.fc.armed = True
         until(lambda: self.m.phase == "WASP_READY")
+        # LAUNCH WASP only once the FC's arming delay is over, as on the phone.
+        until(lambda: (self.c.backend.armed_s() or 0) > self.m.ARM_SETTLE_S + .05, timeout=5)
 
 
 class WifiAutonomyTests(WifiFixture):

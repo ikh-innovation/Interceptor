@@ -952,6 +952,9 @@ class ArduPilotAcro(FcBackend):
         self._imu = None
         self._ekf = None
         self._home = self._gpos = self._gps = self._launch = None
+        self._sensors = None
+        self._armed_t = None
+        self._arm_ack = None
         self.hover_thrust = None
         self.fltmode_ch = 5
         self.flight_modes = None
@@ -1002,6 +1005,7 @@ class ArduPilotAcro(FcBackend):
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT, 4.0)
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_HOME_POSITION, 0.5)
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_GPS_RAW_INT, 2.0)
+        self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_SYS_STATUS, 1.0)
 
         self._stop.clear()
         self._rx = threading.Thread(target=self._rx_loop, daemon=True)
@@ -1037,6 +1041,10 @@ class ArduPilotAcro(FcBackend):
             self._alt_ref = self._vfr[1]
         if self.armed and self._was_armed is False and self._baro is not None:
             self._baro_ref = self._baro[1]
+        if self.armed and not self._was_armed:
+            self._armed_t = self._heartbeat_t
+        elif not self.armed:
+            self._armed_t = None
         self._was_armed = self.armed
 
     def in_rate_mode(self):
@@ -1160,6 +1168,9 @@ class ArduPilotAcro(FcBackend):
         for _p in ("RC_OVERRIDE_TIME", "ATC_INPUT_TC", "ATC_ACCEL_R_MAX",
                    "ATC_ACCEL_P_MAX", "LOG_BACKEND_TYPE", "LOG_BITMASK",
                    "INS_LOG_BAT_MASK", "FS_GCS_ENABLE"):
+            self._param(_p)
+        # The arm switch (the app arms through its function) and the compass.
+        for _p in [f"RC{ch}_OPTION" for ch in range(5, 13)] + ["COMPASS_ENABLE"]:
             self._param(_p)
 
         for axis in self.axes:
@@ -1312,6 +1323,15 @@ class ArduPilotAcro(FcBackend):
             elif t == "COMMAND_ACK" and msg.command == mavutil.mavlink.MAV_CMD_DO_SET_MODE:
                 with self._lock:
                     self._idle_mode_ack = (perf_counter(), int(msg.result))
+            elif t == "COMMAND_ACK" and msg.command in (mavutil.mavlink.MAV_CMD_DO_AUX_FUNCTION,
+                                                        mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM):
+                with self._lock:
+                    self._arm_ack = (perf_counter(), int(msg.result))
+            elif t == "SYS_STATUS":
+                with self._lock:
+                    self._sensors = (perf_counter(), int(msg.onboard_control_sensors_present),
+                                     int(msg.onboard_control_sensors_enabled),
+                                     int(msg.onboard_control_sensors_health))
             elif t == "HOME_POSITION":
                 with self._lock:
                     self._home = (perf_counter(), msg.latitude*1e-7, msg.longitude*1e-7)
@@ -1474,6 +1494,19 @@ class ArduPilotAcro(FcBackend):
     def wasp_ready(self):
         if not self.armed or self.mode_name != "ACRO":
             return "WASP needs ARMED + ACRO"
+        return self._wasp_checks()
+
+    def wasp_arm_ready(self):
+        """Why the app can't arm for a WASP launch now, or ""."""
+        if not self.linked:
+            return "no FC link"
+        if self.armed:
+            return "already armed"
+        if self.mode_name != "ACRO":
+            return f"FC in {self.mode_name}: mode switch DOWN (ACRO) to arm"
+        return self._wasp_checks()
+
+    def _wasp_checks(self):
         if perf_counter() - getattr(self, "_heartbeat_t", -1e9) > 1.5:
             return "no fresh FC heartbeat"
         why = self.wasp_setup_error()
@@ -1635,6 +1668,73 @@ class ArduPilotAcro(FcBackend):
         return req[1], ack[1] == mavutil.mavlink.MAV_RESULT_ACCEPTED, ack[0]
 
     FORCE_DISARM = 21196
+    AUX_POS_HIGH = 2
+
+    def request_arm(self):
+        """Arm from the Jetson: the arm switch's own function, so the FC arms
+        exactly as the pilot's switch does (airmode included), throttle at zero."""
+        ch = self.arm_switch_chan()
+        option = int(self.params[f"RC{ch}_OPTION"]) if ch else 0
+        with self._lock:
+            self._arm_ack = None
+        try:
+            if option:
+                self.master.mav.command_long_send(
+                    self.master.target_system, self.master.target_component,
+                    mavutil.mavlink.MAV_CMD_DO_AUX_FUNCTION, 0, option, self.AUX_POS_HIGH, 0, 0, 0, 0, 0)
+            else:
+                self.master.mav.command_long_send(
+                    self.master.target_system, self.master.target_component,
+                    mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0, 1, 0, 0, 0, 0, 0, 0)
+            return True
+        except Exception:
+            return False
+
+    ARM_SWITCH_OPTIONS = (153, 154, 165)
+
+    def arm_switch_chan(self):
+        """The RC channel with the arm / disarm switch, or None."""
+        for ch in range(5, 13):
+            if int(self.params.get(f"RC{ch}_OPTION") or 0) in self.ARM_SWITCH_OPTIONS:
+                return ch
+        return None
+
+    def arm_ack(self):
+        """(accepted, time) of the ACK to the last arm request, or None."""
+        with self._lock:
+            ack = self._arm_ack
+        if ack is None:
+            return None
+        return ack[1] == mavutil.mavlink.MAV_RESULT_ACCEPTED, ack[0]
+
+    def armed_s(self):
+        """Seconds since the FC armed, or None while disarmed."""
+        t = self._armed_t
+        return None if t is None or not self.armed else perf_counter() - t
+
+    MAG_SENSOR = 0x04
+
+    def compass_ok(self, max_age=3.0):
+        """A compass the FC has, uses and calls healthy."""
+        with self._lock:
+            s = self._sensors
+        if s is None or perf_counter() - s[0] > max_age or not self.params.get("COMPASS_ENABLE", 1):
+            return False
+        return all(v & self.MAG_SENSOR for v in s[1:])
+
+    def gps_status(self, max_age=2.0):
+        with self._lock:
+            g = self._gps
+        fresh = bool(g and perf_counter() - g[0] <= max_age)
+        return dict(fix=g[1] if fresh else 0, sats=g[2] if fresh else 0, ok=self.gps_fix_ok(max_age))
+
+    def position(self, max_age=2.0):
+        """(lat, lon) the EKF has from GPS, or None."""
+        with self._lock:
+            g = self._gpos
+        if g is None or perf_counter() - g[0] > max_age or not self.position_ok():
+            return None
+        return g[1], g[2]
 
     def request_disarm(self, force=False):
         # Unforced, ArduCopter refuses it unless its land detector agrees.
@@ -2879,7 +2979,7 @@ class AcroCommander:
             jerk_z=getattr(b, "jerk_z", 5.0) or 5.0,
             log=lambda m: None, idle_path=_mission_mod.IDLE_FILE, wasp_path=_mission_mod.WASP_FILE,
             auto_path=_mission_mod.AUTO_FILE, levels_path=_mission_mod.LEVELS_FILE,
-            flight_path=_mission_mod.FLIGHT_FILE)
+            flight_path=_mission_mod.FLIGHT_FILE, fence_path=_mission_mod.FENCE_FILE)
         _saved = _mission_mod.load_auto_params(self.mission)
         _lv = _mission_mod.load_levels(self.mission)
         _mission_mod.load_idle_settings(self.mission)
@@ -2964,6 +3064,14 @@ class AcroCommander:
 
     def mark_launch(self):
         return isinstance(self.backend, ArduPilotAcro) and self.backend.mark_launch()
+
+    def request_arm(self):
+        return isinstance(self.backend, ArduPilotAcro) and self.backend.request_arm()
+
+    def wasp_arm_ready(self):
+        if not isinstance(self.backend, ArduPilotAcro):
+            return "WASP requires ArduPilot MAVLink"
+        return self.backend.wasp_arm_ready()
 
     def set_home_to_launch(self):
         return isinstance(self.backend, ArduPilotAcro) and self.backend.set_home_to_launch()
@@ -3069,6 +3177,9 @@ class AcroCommander:
                    position_ok=b.position_ok() if mav else False,
                    home_ok=bool(mav and (b.launch_point() is not None or b.home() is not None)),
                    home_m=b.home_distance() if mav else None,
+                   position=b.position() if mav else None,
+                   armed_s=b.armed_s() if mav else None,
+                   arm_ack=b.arm_ack() if mav else None,
                    att=((b.wasp_attitude() if mav else b.attitude())
                         if ok or takeover or safedown_ok else None),
                    height=None if h is None else h[0],
@@ -3146,6 +3257,17 @@ class AcroCommander:
                                     else "WASP requires ArduPilot MAVLink")
             st["wasp_attitude_fresh"] = bool(isinstance(b, ArduPilotAcro)
                                             and b.wasp_attitude() is not None)
+            mav = isinstance(b, ArduPilotAcro)
+            st["wasp_arm_why"] = b.wasp_arm_ready() if mav else "WASP requires ArduPilot MAVLink"
+            armed_s = b.armed_s() if mav else None
+            st["armed_s"] = None if armed_s is None else round(armed_s, 2)
+            st["gps"] = b.gps_status() if mav else dict(fix=0, sats=0, ok=False)
+            st["compass_ok"] = bool(mav and b.compass_ok())
+            st["position_ok"] = bool(mav and b.position_ok())
+            pos = b.position() if mav else None
+            st["position"] = None if pos is None else [round(pos[0], 7), round(pos[1], 7)]
+            lp = (b.launch_point() or b.home()) if mav else None
+            st["home"] = None if lp is None else [round(lp[0], 7), round(lp[1], 7)]
         h = b.height() if b is not None and hasattr(b, "height") else None
         st["height_m"] = None if h is None else round(h[0], 2)
         st["climb_mps"] = None if h is None else round(h[1], 2)

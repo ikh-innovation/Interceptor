@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sitl_physics import PhysicsConfig, PhysicsProcess  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
-FC_PARAMS = ROOT/"deploy"/"fc"/"TBS_LUCID_H7_2026-10-22.param"
+FC_PARAMS = ROOT/"deploy"/"fc"/"TBS_LUCID_H7_2026-10-28.param"
 HOME = "37.9838,23.7275,100,0"
 
 # Hardware the simulator does not have: ports, OSD, LEDs, CAN, sensor ids,

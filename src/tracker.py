@@ -38,6 +38,14 @@ def shrink_to(img, w, h):
     return img
 
 
+
+# Phone commands the mission answers (mission.phone_command); every other key
+# the HTTP server accepts is the tracker's own (detection, camera).
+MISSION_KEYS = ("hold", "release", "step", "engage", "abort", "safedown", "arm", "fence", "lvl",
+                "lock", "auto", "autoen", "waspen", "waspp", "mount", "flightmode",
+                "autop", "autoreset", "def", "idles", "testmode", "testtarget")
+TRACKER_KEYS = ("mode", "sens", "sky", "follow", "cam", "engine", "stabilization")
+
 class SkyDetector:
     V_MIN  = 150
     S_MAX  = 60
@@ -1436,8 +1444,7 @@ class DroneTracker:
             return self.set_stabilization(value)
         elif key == "def" and str(value).startswith("det:"):
             return self._save_detection_default(str(value)[4:].strip().lower())
-        elif key in ("hold", "release", "step", "engage", "abort", "lvl", "lock", "auto", "autoen", "waspen", "waspp", "mount", "flightmode",
-                     "autop", "autoreset", "def", "idles", "testmode", "testtarget"):
+        elif key in MISSION_KEYS:
             return self._mission_command(key, str(value))
         else:
             raise ValueError("unknown command")

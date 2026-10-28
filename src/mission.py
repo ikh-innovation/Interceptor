@@ -8,6 +8,7 @@ from time import perf_counter
 from wasp import Wasp, WaspGuidance
 from idle import Idle
 from safedown import Handover, SafeDown
+from geofence import Geofence, parse_points
 
 SPEEDS = {
     "climb":   {"SLOW": 1.0, "MEDIUM": 3.0, "FAST": 8.0},
@@ -93,6 +94,7 @@ DETECT_FILE = os.path.join(CONF_DIR, "detection.json")
 IDLE_FILE = os.path.join(CONF_DIR, "idle.json")
 WASP_FILE = os.path.join(CONF_DIR, "wasp.json")
 FLIGHT_FILE = os.path.join(CONF_DIR, "flight.json")
+FENCE_FILE = os.path.join(CONF_DIR, "geofence.json")
 DETECT_SAVED = {"follow": bool, "cam": int, "sky": bool, "engine": int}
 SAVED_COMMANDS = ("autop", "autoreset", "autoen", "waspen", "flightmode", "mount", "lvl")
 
@@ -294,6 +296,10 @@ def _phone_command(m, key, value, now):
         return m.set_test_target(value)
     if key in ("abort", "safedown"):
         return m.request_abort()
+    if key == "arm":
+        return m.request_arm()
+    if key == "fence":
+        return m.set_fence(value)
     if key == "lvl":
         group, _, level = value.partition(":")
         return m.set_level(group.strip().lower(), level.strip().upper())
@@ -365,7 +371,7 @@ class Mission:
 
     def __init__(self, mapper, min_conf=0.20, ceiling_m=30.0,
                  accel_z=5.0, jerk_z=5.0, log=(lambda *_args, **_kwargs: None), idle_path=None,
-                 wasp_path=None, auto_path=None, levels_path=None, flight_path=None):
+                 wasp_path=None, auto_path=None, levels_path=None, flight_path=None, fence_path=None):
         self.mapper = mapper
         self.min_conf = float(min_conf)
         self.ceiling_m = float(ceiling_m)
@@ -403,6 +409,14 @@ class Mission:
         self.levels_path = levels_path
         self.flight_path = flight_path
         self.idle = Idle()
+        self.fence = Geofence()
+        self.fence_path = fence_path
+        if fence_path:
+            self.fence.load(_read_json(fence_path))
+        self._fence_state = (None, None)
+        self._position = None
+        self._req_arm = False
+        self._arm_t = None
         self.safedown = SafeDown()
         self._pilot_safedown = self._safedown_edge = False
         self._pilot_catch = self._catch_edge = False
@@ -506,7 +520,10 @@ class Mission:
                 if self.test_mode and self.test_target is None:
                     return "place a test target on the image before launch"
                 if self.wasp.launch_t is not None or self._req_engage:
-                    return "WASP launch is already counting down"
+                    return "WASP is already launching"
+                armed_s = getattr(self, "_armed_s", None)
+                if armed_s is not None and armed_s < self.ARM_SETTLE_S:
+                    return f"armed {armed_s:.1f} s ago: LAUNCH WASP after {self.ARM_SETTLE_S:g} s"
                 self._req_engage = True
                 return ""
             if self.engaged:
@@ -514,6 +531,63 @@ class Mission:
             if self.phase not in ("HOVER", "SCOUT") + AUTO_PHASES:
                 return f"ENGAGE only from HOVER, SCOUT or AUTO, not {self.phase}"
             self._req_engage = True
+        return ""
+
+    # ArduCopter holds the motors at idle for 2 s after arming: a launch
+    # before that would jump to full throttle on the stand later.
+    ARM_SETTLE_S = 2.5
+    ARM_ACK_S = 3.0
+
+    def request_arm(self):
+        with self._lock:
+            if not self.wasp.enabled:
+                return "ARM is for WASP: select WASP in PARAMETERS"
+            if getattr(self.mapper, "armed", False):
+                return "already armed"
+            if self.phase not in ("PILOT", "WASP_DONE", "WASP_READY"):
+                return f"no ARM during {self.phase}"
+            if not self.wasp.camera_confirmed or self.camera_mount_deg != 90.0:
+                return "confirm the fixed 90 degree camera before ARM"
+            if self.test_mode and self.test_target is None:
+                return "place a test target on the image before ARM"
+            if self.fence.enabled and not self.fence.armed:
+                return "geofence is on but has no area: draw it or turn it off"
+            # The fence as it is now: it may have been saved since the last cycle.
+            inside = self.fence.check(self._position)[0]
+            if self.fence.armed and inside is not True:
+                return ("outside the geofence: move the drone or the fence" if inside is False
+                        else "geofence needs a GPS position")
+            why = self.mapper.wasp_arm_ready() if callable(getattr(self.mapper, "wasp_arm_ready", None)) \
+                else "ARM needs ArduPilot MAVLink"
+            if why:
+                return why
+            if self._req_arm:
+                return "arming"
+            self._req_arm = True
+        return ""
+
+    def set_fence(self, value):
+        value = str(value).strip()
+        with self._lock:
+            if self.wasp.started is not None or self.safedown.active:
+                return "change the geofence on the ground"
+            if value in ("on", "off"):
+                # The phone saves or clears a fence; on / off stay for scripts.
+                if value == "on" and len(self.fence.points) < 3:
+                    return "draw the geofence first"
+                self.fence.enabled = value == "on"
+            elif value == "clear":
+                self.fence.points, self.fence.enabled = [], False
+            elif value.startswith("set:"):
+                try:
+                    self.fence.points = parse_points(json.loads(value[4:]))
+                except (ValueError, TypeError) as exc:
+                    return str(exc) if str(exc).startswith("geofence") else "geofence: bad points"
+                self.fence.enabled = True
+            else:
+                return "geofence: on, off, clear or set:[[lat,lon],...]"
+            if self.fence_path and not _write_json(self.fence_path, self.fence.to_json()):
+                return "could not save the geofence on the Jetson"
         return ""
 
     def set_auto_enabled(self, on):
@@ -848,6 +922,12 @@ class Mission:
             abort, self._req_abort = self._req_abort, False
             lock_req, self._req_lock = self._req_lock, None
             auto_req, self._req_auto = self._req_auto, None
+            arm_req, self._req_arm = self._req_arm, False
+        self._armed_s = ctx.get("armed_s")
+        self._position = ctx.get("position")
+        self._fence_state = self.fence.check(self._position) if self.fence.points else (None, None)
+        if arm_req:
+            self._arm(now, ctx)
 
         switch_up = bool(ctx.get("pilot_safedown"))
         self._safedown_edge = switch_up and not self._pilot_safedown
@@ -938,10 +1018,39 @@ class Mission:
             return self._stop_cycle(now)
         return {}
 
+    def _arm(self, now, ctx):
+        if getattr(self.mapper, "armed", False):
+            return
+        if self.mapper.request_arm():
+            self._arm_t = now
+            self._note("ARM: arming the FC (the arm switch's function); LAUNCH WASP in "
+                       f"{self.ARM_SETTLE_S:g} s", now)
+        else:
+            self._refuse("ARM: the FC link refused the command", now)
+
+    def _watch_arm(self, now, ctx):
+        # The FC's answer to the app's arm request.
+        if self._arm_t is None:
+            return
+        if getattr(self.mapper, "armed", False):
+            self._arm_t = None
+            return
+        ack = ctx.get("arm_ack")
+        if ack is not None and not ack[0] and ack[1] >= self._arm_t - .05:
+            self._arm_t = None
+            self._refuse("ARM refused by the FC: throttle stick down? see MESSAGES", now)
+        elif now - self._arm_t > self.ARM_ACK_S:
+            self._arm_t = None
+            self._refuse("ARM: the FC did not arm (pre-arm check?); see MESSAGES", now)
+
     def _wasp_cycle(self, now, ctx, engage, abort):
         w = self.wasp
+        self._watch_arm(now, ctx)
         if not getattr(self.mapper, "armed", False):
             w.used = False
+        if w.started is not None and self.fence.armed and self._fence_state[0] is False:
+            # Out of the fence in a WASP flight: home, whatever it was doing.
+            return self._start_safedown(now, ctx, f"GEOFENCE: {self._fence_state[1]:.0f} m outside")
         # After a launch, and after a handover to the pilot, SAFEDOWN and a flip
         # up to ALT_HOLD both bring it home on their own while it is in the air.
         in_air = (w.started is None and w.used and getattr(self.mapper, "armed", False)
@@ -959,7 +1068,13 @@ class Mission:
             w.launch_t = None
             self._run_t = None
             self._set_phase("WASP_DONE" if w.used else "PILOT", now)
-            self._note("WASP SAFEDOWN: not in the air, every channel returned to the pilot", now)
+            if getattr(self.mapper, "armed", False) and not ctx.get("airborne") \
+                    and callable(getattr(self.mapper, "request_disarm", None)):
+                # Armed on the stand, not launched: SAFEDOWN cancels it.
+                self.mapper.request_disarm()
+                self._note("WASP SAFEDOWN on the ground: launch cancelled, disarming", now)
+            else:
+                self._note("WASP SAFEDOWN: not in the air, every channel returned to the pilot", now)
             return {}
         if w.started is not None and ctx.get("pilot_takeover"):
             return self._start_safedown(now, ctx, f"pilot switched to {SafeDown.SWITCH_MODE}")
@@ -993,7 +1108,8 @@ class Mission:
                 return {}
             if w.launch_t is None:
                 w.launch_t = now + w.params["launch_s"]
-                self._note(f"WASP launch countdown started: {w.params['launch_s']:g}s", now)
+                if w.params["launch_s"]:
+                    self._note(f"WASP launch countdown started: {w.params['launch_s']:g}s", now)
             if now < w.launch_t:
                 return {}
             w.begin(now, target_acquired=False)
@@ -1704,6 +1820,11 @@ class Mission:
             safedown=self.safedown.snapshot(),
             idle_remaining_s=None if self._run_t is None else round(max(0.0, self.idle_s-(now-self._run_t)), 2),
             wasp_progress=self.wasp.progress(now),
+            arm_settle_s=self.ARM_SETTLE_S,
+            arming=self._arm_t is not None,
+            fence=dict(self.fence.to_json(), armed=self.fence.armed,
+                       inside=self._fence_state[0],
+                       edge_m=None if self._fence_state[1] is None else round(self._fence_state[1], 1)),
             camera_mount_deg=self.camera_mount_deg,
             auto_run=bool(self.auto_run),
             auto_params=self.auto_params(),

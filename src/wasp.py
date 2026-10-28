@@ -139,7 +139,7 @@ class Wasp:
         self.enabled = False
         self.camera_confirmed = False
         self.params = dict(throttle=1.0, ramp=0.1, straight=0.5, blend=0.5,
-                           rate=60.0, gain=2.0, lead=0.08, camera_roll=0.0, launch_s=3.0,
+                           rate=60.0, gain=2.0, lead=0.08, camera_roll=0.0, launch_s=0.0,
                            centre_timer=3.0)
         profile_defaults = {key: value for key, value in self.params.items() if key not in self.SHARED_KEYS}
         self.profiles = {name: dict(profile_defaults, **settings)
@@ -186,6 +186,8 @@ class Wasp:
         shared = saved.get("shared", {})
         shared = shared if isinstance(shared, dict) else {}
         for key in self.SHARED_KEYS:
+            if key == "launch_s":
+                continue  # no launch timer any more: ARM, then LAUNCH WASP goes at once
             try:
                 value = float(shared.get(key, legacy.get(key, self.params[key])))
             except (TypeError, ValueError):

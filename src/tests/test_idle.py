@@ -121,6 +121,7 @@ class IdleTests(unittest.TestCase):
         mp = IdleMapper(); m = Mission(mp, log=lambda *_: None)
         if wasp:
             self.assertFalse(m.set_wasp_enabled(True)); self.assertFalse(m.confirm_mount(90))
+            m.wasp.params["launch_s"] = 3.0  # exercise the countdown path
         else:
             self.assertFalse(m.confirm_mount(30))
         mp.armed = True

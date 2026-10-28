@@ -196,6 +196,16 @@ class Mapper:
         self.disarms += 1
         return True
 
+    arm_why = ""
+    arms = 0
+
+    def wasp_arm_ready(self):
+        return self.arm_why
+
+    def request_arm(self):
+        self.arms += 1
+        return True
+
 
 class LifecycleTests(unittest.TestCase):
     def setUp(self):
@@ -205,7 +215,9 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.m.confirm_mount(90), "")
         # The lifecycle timings below were written for a 1 s straight launch at
         # full throttle from the first cycle; the shipped defaults have their own test.
-        self.m.wasp.params.update(ramp=0.0, straight=1.0)
+        # ... and a 3 s countdown: the timer is gone from the UI (ARM, then
+        # LAUNCH WASP goes at once) but the countdown path is still exercised.
+        self.m.wasp.params.update(ramp=0.0, straight=1.0, launch_s=3.0)
         for settings in self.m.wasp.profiles.values():
             settings["straight"] = 1.0
         self.mapper.armed = True
@@ -360,7 +372,8 @@ class LifecycleTests(unittest.TestCase):
             wasp = Wasp()
             wasp.load_defaults(dict(selected=name, profiles=legacy))
             self.assertEqual(wasp.params["throttle"], throttle)
-            self.assertEqual(wasp.params["launch_s"], legacy[name]["launch_s"])
+            # A saved launch timer from before is dropped: no timer any more.
+            self.assertEqual(wasp.params["launch_s"], 0.0)
             self.assertTrue(all(not any(key in settings for key in Wasp.SHARED_KEYS)
                                 for settings in wasp.profiles.values()))
 
@@ -538,7 +551,7 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(restored.wasp.active_profile, "extra")
             for index, profile in enumerate(Wasp.STEERING_PROFILES):
                 self.assertEqual(restored.set_wasp_param("profile", profile), "")
-                self.assertEqual(restored.wasp.params["launch_s"], 5.25)
+                self.assertEqual(restored.wasp.params["launch_s"], 0.0)  # the timer is not kept
                 self.assertEqual(restored.wasp.params["throttle"], .85)
                 self.assertEqual(restored.wasp.params["centre_timer"], 1.5+index)
                 self.assertEqual(restored.wasp.params["rate"], 45)
@@ -548,7 +561,7 @@ class LifecycleTests(unittest.TestCase):
                 self.assertTrue(restored.set_wasp_param("rate", 120))
             self.assertEqual(restored.wasp.params, before)
             saved = json.loads(Path(path).read_text())
-            self.assertEqual(saved["shared"], dict(launch_s=5.25, throttle=.85, ramp=0.0))
+            self.assertEqual(saved["shared"], dict(launch_s=0.0, throttle=.85, ramp=0.0))
             self.assertTrue(all(not any(key in settings for key in Wasp.SHARED_KEYS)
                                 for settings in saved["profiles"].values()))
 
@@ -1163,6 +1176,165 @@ class BackendTests(unittest.TestCase):
         c.mission.camera_mount_deg = 90
         self.assertFalse(c._mission_gate()[0])
 
+
+
+# A ~200 m square around (37.98, 23.72) and points inside / outside it.
+SQUARE = [[37.979, 23.719], [37.981, 23.719], [37.981, 23.721], [37.979, 23.721]]
+INSIDE, OUTSIDE = (37.980, 23.720), (37.9825, 23.720)
+
+
+class GeofenceTests(unittest.TestCase):
+    def test_inside_outside_and_distance_to_the_edge(self):
+        from geofence import Geofence, parse_points
+        f = Geofence()
+        f.points, f.enabled = parse_points(SQUARE), True
+        inside, edge = f.check(INSIDE)
+        self.assertTrue(inside)
+        self.assertAlmostEqual(edge, 87.8, delta=1.5)   # 0.001 deg of longitude at 38 N
+        inside, edge = f.check(OUTSIDE)
+        self.assertFalse(inside)
+        self.assertAlmostEqual(edge, 167, delta=2)       # 0.0015 deg of latitude
+        self.assertEqual(f.check(None), (None, None))
+
+    def test_bad_polygons_are_refused(self):
+        from geofence import parse_points
+        for bad in ([], [[37.98, 23.72]] * 2, [[37.98, 23.72], [37.98, 23.72001], [37.98001, 23.72]],
+                    [[91, 0], [0, 0], [0, 1]], "x", [["a", 1], [0, 0], [1, 1]]):
+            with self.assertRaises(ValueError):
+                parse_points(bad)
+        # A closed ring (first == last) is accepted.
+        self.assertEqual(len(parse_points(SQUARE + [SQUARE[0]])), 4)
+
+
+class ArmAndFenceTests(unittest.TestCase):
+    def setUp(self):
+        self.mapper = Mapper()
+        self.mapper.armed = False
+        self.m = Mission(self.mapper, log=lambda *_: None)
+        self.assertEqual(self.m.set_wasp_enabled(True), "")
+        self.assertEqual(self.m.confirm_mount(90), "")
+        self.ctx = dict(gate_ok=False, gate_why="disarmed", att=ATT, height=0, climb=0, ai_cmd=None,
+                        det_t=None, det_conf=None, fc_mode="ACRO", airborne=False, idle_ok=True,
+                        pilot_takeover=False, position=INSIDE, armed_s=None)
+
+    def arm(self, now=50):
+        self.m.cycle(now - .1, self.ctx)  # the app's loop has seen the GPS position
+        self.assertEqual(self.m.request_arm(), "")
+        self.m.cycle(now, self.ctx)
+        self.assertEqual(self.mapper.arms, 1)
+        self.mapper.armed = True
+        self.ctx.update(gate_ok=True, gate_why="", armed_s=0.0)
+        self.m.cycle(now + .02, self.ctx)
+        self.assertEqual(self.m.phase, "WASP_READY")
+
+    def test_arm_then_launch_after_two_seconds_at_once(self):
+        self.arm()
+        self.ctx["armed_s"] = 1.2
+        self.m.cycle(51.2, self.ctx)
+        self.assertIn("after 2.5 s", self.m.request_engage())
+        self.ctx["armed_s"] = 2.55
+        self.m.cycle(52.55, self.ctx)
+        self.assertEqual(self.m.request_engage(), "")
+        # No timer: the cycle that sees LAUNCH WASP launches.
+        self.assertTrue(self.m.cycle(52.6, self.ctx))
+        self.assertEqual(self.m.phase, "WASP_FLIGHT")
+
+    def test_arm_is_refused_until_ready(self):
+        self.mapper.arm_why = "FC in STABILIZE: mode switch DOWN (ACRO) to arm"
+        self.assertIn("ACRO", self.m.request_arm())
+        self.mapper.arm_why = ""
+        self.m.wasp.camera_confirmed = False
+        self.assertIn("90 degree", self.m.request_arm())
+        self.m.wasp.camera_confirmed = True
+        self.mapper.armed = True
+        self.assertEqual(self.m.request_arm(), "already armed")
+        self.mapper.armed = False
+        self.assertEqual(self.m.set_wasp_enabled(False), "")
+        self.assertIn("WASP", self.m.request_arm())
+        self.assertEqual(self.mapper.arms, 0)
+
+    def test_fence_must_be_drawn_and_the_drone_inside_to_arm(self):
+        self.assertEqual(self.m.set_fence("on"), "draw the geofence first")
+        self.assertIn("3 to", self.m.set_fence("set:[[37.98,23.72]]"))
+        self.assertEqual(self.m.set_fence("set:" + json.dumps(SQUARE)), "")
+        self.assertTrue(self.m.fence.armed)
+        self.ctx["position"] = OUTSIDE
+        self.m.cycle(50, self.ctx)
+        self.assertIn("outside the geofence", self.m.request_arm())
+        self.ctx["position"] = None
+        self.m.cycle(50.1, self.ctx)
+        self.assertIn("GPS position", self.m.request_arm())
+        self.ctx["position"] = INSIDE
+        self.m.cycle(50.2, self.ctx)
+        self.assertEqual(self.m.snapshot(50.2)["fence"]["inside"], True)
+        self.assertEqual(self.m.request_arm(), "")
+        self.assertEqual(self.m.set_fence("off"), "")
+        self.assertFalse(self.m.fence.armed)
+
+    def test_arm_right_after_saving_a_fence_sees_it(self):
+        self.m.cycle(50, self.ctx)
+        self.assertEqual(self.m.set_fence("set:" + json.dumps(SQUARE)), "")
+        self.assertEqual(self.m.request_arm(), "")  # no cycle in between
+
+    def test_leaving_the_fence_in_flight_starts_safedown_home(self):
+        self.assertEqual(self.m.set_fence("set:" + json.dumps(SQUARE)), "")
+        self.arm()
+        self.ctx.update(armed_s=3.0, airborne=True)
+        self.m.cycle(53, self.ctx)
+        self.assertEqual(self.m.request_engage(), "")
+        self.assertTrue(self.m.cycle(53.02, self.ctx))
+        self.assertEqual(self.m.phase, "WASP_FLIGHT")
+        self.assertIn("change the geofence on the ground", self.m.set_fence("off"))
+        self.m.cycle(54, self.ctx)
+        self.assertEqual(self.m.phase, "WASP_FLIGHT")
+        self.ctx["position"] = OUTSIDE
+        self.m.cycle(55, self.ctx)
+        self.assertEqual(self.m.phase, "SAFEDOWN")
+        self.assertTrue(self.m.safedown.active)
+        self.assertFalse(self.m.safedown.catch)
+        self.assertIn("GEOFENCE", self.m.safedown.reason)
+
+    def test_fence_off_never_triggers(self):
+        self.assertEqual(self.m.set_fence("set:" + json.dumps(SQUARE)), "")
+        self.assertEqual(self.m.set_fence("off"), "")
+        self.arm()
+        self.ctx.update(armed_s=3.0, airborne=True)
+        self.m.cycle(53, self.ctx)
+        self.m.request_engage()
+        self.m.cycle(53.02, self.ctx)
+        self.ctx["position"] = OUTSIDE
+        self.m.cycle(55, self.ctx)
+        self.assertEqual(self.m.phase, "WASP_FLIGHT")
+
+    def test_safedown_on_the_stand_disarms(self):
+        self.arm()
+        self.assertEqual(self.m.request_abort(), "")
+        self.m.cycle(51, self.ctx)
+        self.assertEqual(self.mapper.disarms, 1)
+        self.assertNotEqual(self.m.phase, "WASP_FLIGHT")
+
+    def test_fence_is_saved_and_restored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp)/"geofence.json")
+            m = Mission(Mapper(), log=lambda *_: None, fence_path=path)
+            self.assertEqual(m.set_fence("set:" + json.dumps(SQUARE)), "")
+            again = Mission(Mapper(), log=lambda *_: None, fence_path=path)
+            self.assertTrue(again.fence.armed)
+            self.assertEqual(len(again.fence.points), 4)
+            self.assertEqual(again.set_fence("clear"), "")
+            self.assertFalse(Mission(Mapper(), log=lambda *_: None, fence_path=path).fence.points)
+
+
+class PhoneRoutingTests(unittest.TestCase):
+    def test_every_phone_command_reaches_its_handler(self):
+        # The SAFEDOWN button was refused as "unknown command" once: the HTTP
+        # server took it, but the tracker did not route it to the mission.
+        import tracker
+        from mjpeg_stream import MJPEGServer
+        unrouted = [k for k in MJPEGServer.ALL_KEYS if k not in tracker.MISSION_KEYS + tracker.TRACKER_KEYS]
+        self.assertEqual(unrouted, [])
+        for key in ("safedown", "arm", "fence"):
+            self.assertIn(key, tracker.MISSION_KEYS)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

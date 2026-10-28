@@ -25,6 +25,7 @@
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;
     user-select:none;-webkit-touch-callout:none}
   [hidden]{display:none!important}
+  html,body,button,.app{touch-action:manipulation}
   body[data-flight-mode="wasp"]{--acc:#2f66b8;--acc-ink:#fff}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);overflow:hidden;
     font:15px/1.3 var(--sans)}
@@ -98,12 +99,6 @@
   .pad{display:grid;grid-template-columns:repeat(3,clamp(64px,19vw,84px));gap:7px}
   .pad .mid{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
             font:11.5px/1.35 var(--mono);color:var(--dim);white-space:pre-line}
-  .wasp-pad{display:block;width:clamp(180px,58vw,250px)}
-  .wasp-profile-stack{display:flex;flex-direction:column;gap:8px;width:100%}
-  .wasp-profile-stack button{width:100%;min-height:42px;padding:8px 12px;border:1px solid rgba(255,255,255,.18);border-radius:10px;background:var(--ctl);color:#fff;font:700 13px/1 var(--sans);letter-spacing:.04em;transition:background .15s,box-shadow .15s}
-  .wasp-profile-stack button.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink);box-shadow:0 0 0 3px rgba(255,122,0,.18)}
-  .wasp-profile-stack button:disabled{cursor:default;opacity:.65}
-  .wasp-profile-stack button.on:disabled{opacity:1}
   body[data-flight-mode="wasp"] .badge{top:12px}
   body[data-flight-mode="wasp"] .vbox{height:100%}
   .eng.countdown:disabled{opacity:1;background:var(--acc);color:var(--acc-ink);box-shadow:0 0 0 2px var(--acc)}
@@ -182,44 +177,44 @@
   .seg button.isdef::after{content:"DEFAULT";display:block;font:normal 9.5px/1 var(--sans);letter-spacing:.08em;
                             color:var(--faint);margin-top:5px}
   .seg button.on.isdef::after{color:var(--acc-ink)}
-  #sh_speed, #modechange{--acc:#1f3b63;--acc-ink:#ffffff}
-  #sh_speed .param-block{margin:0 0 14px;padding:16px;background:var(--bg2);border:1px solid var(--line);border-radius:16px}
-  #sh_speed .param-title{display:flex;align-items:center;gap:9px;margin:0 0 16px;font:700 15px/1.2 var(--sans);letter-spacing:.02em}
-  #sh_speed .param-title .num{display:flex;align-items:center;justify-content:center;width:25px;height:25px;border-radius:8px;background:var(--acc);color:#fff;font:700 12px/1 var(--mono)}
-  #sh_speed .param-title .tag{margin-left:auto}
-  #sh_speed .seg{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px}
-  #sh_speed .seg button{min-width:0;min-height:44px;padding:12px 3px;font-size:13px;letter-spacing:0;white-space:nowrap}
-  #sh_speed .seg button i{font-size:10px;letter-spacing:-.2px}
-  #sh_speed .seg button.isdef::after{display:none}
-  #sh_speed .grp{margin:0 0 16px;min-width:0}
-  #sh_speed .grp:last-child{margin-bottom:0}
-  #sh_speed .lbl{font:500 13px/1.25 var(--sans);letter-spacing:0;color:var(--dim)}
-  #sh_speed .gh{margin-bottom:7px;min-height:24px}
-  #sh_speed .gh .lbl{font-weight:500}
-  #sh_speed .detection-row{display:grid;grid-template-columns:96px minmax(0,1fr);align-items:center;gap:12px;margin-bottom:12px}
-  #sh_speed .detection-row:last-child{margin-bottom:0}
-  #sh_speed .detection-label{display:flex;align-items:center;justify-content:space-between;gap:4px;min-width:0}
-  #sh_speed .detection-label .lbl{margin:0}
-  #sh_speed .parameter-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
-  #sh_speed .parameter-grid > .grp{margin:0}
-  #sh_speed .idle-input{display:flex;align-items:center;gap:10px;min-width:0}
-  #sh_speed .idle-input input{width:100%;min-width:0;min-height:44px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg3);color:var(--ink);font:700 16px var(--mono);user-select:text;-webkit-user-select:text}
-  #sh_speed .idle-input input:focus{outline:2px solid var(--acc);outline-offset:2px}
-  #sh_speed .idle-input span{color:var(--dim);font:13px var(--mono)}
-  #sh_speed .flight-tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:16px;padding:4px;background:var(--bg3);border-radius:12px}
-  #sh_speed .flight-tabs button{min-height:40px;border:0;border-radius:9px;background:none;color:var(--dim);font:700 13px/1 var(--sans)}
-  #sh_speed .flight-tabs button[aria-expanded="true"]{background:var(--acc);color:#fff}
-  #sh_speed .ppane{padding:0}
-  #sh_speed .pcard{padding:12px;margin-bottom:12px;background:var(--bg3);border-radius:12px}
-  #sh_speed .pcard:last-child{margin-bottom:0}
-  #sh_speed .pcard > .sec{font:700 11px/1 var(--sans);letter-spacing:.07em;margin-bottom:14px}
-  #sh_speed .unsaved{width:26px;height:24px;padding:0;border:0;border-radius:6px;background:var(--bg3);color:var(--acc);font:700 15px/1 var(--sans)}
-  #sh_speed .unsaved.on{display:inline-flex;align-items:center;justify-content:center}
-  #sh_speed .reset{margin:12px 0 0;min-height:40px;padding:10px;font-size:12px;letter-spacing:0}
-  #sh_speed .mode-seg button{min-height:64px;font-size:14px}
-  #sh_speed .mode-seg button i{font:700 10px/1 var(--sans);letter-spacing:.08em;margin-top:8px}
-  #sh_speed .mount-chip{display:block;margin:10px 0 0 auto;padding:5px 8px;border:0;border-radius:7px;background:var(--bg3);color:var(--dim);font:500 11px/1 var(--sans)}
-  #sh_speed .mount-chip.warn{color:#8a5900;background:#fff6dc}
+  #sh_speed, #modechange, .pop{--acc:#1f3b63;--acc-ink:#ffffff}
+  :is(#sh_speed,.pop) .param-block{margin:0 0 14px;padding:16px;background:var(--bg2);border:1px solid var(--line);border-radius:16px}
+  :is(#sh_speed,.pop) .param-title{display:flex;align-items:center;gap:9px;margin:0 0 16px;font:700 15px/1.2 var(--sans);letter-spacing:.02em}
+  :is(#sh_speed,.pop) .param-title .num{display:flex;align-items:center;justify-content:center;width:25px;height:25px;border-radius:8px;background:var(--acc);color:#fff;font:700 12px/1 var(--mono)}
+  :is(#sh_speed,.pop) .param-title .tag{margin-left:auto}
+  :is(#sh_speed,.pop) .seg{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px}
+  :is(#sh_speed,.pop) .seg button{min-width:0;min-height:44px;padding:12px 3px;font-size:13px;letter-spacing:0;white-space:nowrap}
+  :is(#sh_speed,.pop) .seg button i{font-size:10px;letter-spacing:-.2px}
+  :is(#sh_speed,.pop) .seg button.isdef::after{display:none}
+  :is(#sh_speed,.pop) .grp{margin:0 0 16px;min-width:0}
+  :is(#sh_speed,.pop) .grp:last-child{margin-bottom:0}
+  :is(#sh_speed,.pop) .lbl{font:500 13px/1.25 var(--sans);letter-spacing:0;color:var(--dim)}
+  :is(#sh_speed,.pop) .gh{margin-bottom:7px;min-height:24px}
+  :is(#sh_speed,.pop) .gh .lbl{font-weight:500}
+  :is(#sh_speed,.pop) .detection-row{display:grid;grid-template-columns:96px minmax(0,1fr);align-items:center;gap:12px;margin-bottom:12px}
+  :is(#sh_speed,.pop) .detection-row:last-child{margin-bottom:0}
+  :is(#sh_speed,.pop) .detection-label{display:flex;align-items:center;justify-content:space-between;gap:4px;min-width:0}
+  :is(#sh_speed,.pop) .detection-label .lbl{margin:0}
+  :is(#sh_speed,.pop) .parameter-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+  :is(#sh_speed,.pop) .parameter-grid > .grp{margin:0}
+  :is(#sh_speed,.pop) .idle-input{display:flex;align-items:center;gap:10px;min-width:0}
+  :is(#sh_speed,.pop) .idle-input input{width:100%;min-width:0;min-height:44px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg3);color:var(--ink);font:700 16px var(--mono);user-select:text;-webkit-user-select:text}
+  :is(#sh_speed,.pop) .idle-input input:focus{outline:2px solid var(--acc);outline-offset:2px}
+  :is(#sh_speed,.pop) .idle-input span{color:var(--dim);font:13px var(--mono)}
+  :is(#sh_speed,.pop) .flight-tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:16px;padding:4px;background:var(--bg3);border-radius:12px}
+  :is(#sh_speed,.pop) .flight-tabs button{min-height:40px;border:0;border-radius:9px;background:none;color:var(--dim);font:700 13px/1 var(--sans)}
+  :is(#sh_speed,.pop) .flight-tabs button[aria-expanded="true"]{background:var(--acc);color:#fff}
+  :is(#sh_speed,.pop) .ppane{padding:0}
+  :is(#sh_speed,.pop) .pcard{padding:12px;margin-bottom:12px;background:var(--bg3);border-radius:12px}
+  :is(#sh_speed,.pop) .pcard:last-child{margin-bottom:0}
+  :is(#sh_speed,.pop) .pcard > .sec{font:700 11px/1 var(--sans);letter-spacing:.07em;margin-bottom:14px}
+  :is(#sh_speed,.pop) .unsaved{width:26px;height:24px;padding:0;border:0;border-radius:6px;background:var(--bg3);color:var(--acc);font:700 15px/1 var(--sans)}
+  :is(#sh_speed,.pop) .unsaved.on{display:inline-flex;align-items:center;justify-content:center}
+  :is(#sh_speed,.pop) .reset{margin:12px 0 0;min-height:40px;padding:10px;font-size:12px;letter-spacing:0}
+  :is(#sh_speed,.pop) .mode-seg button{min-height:64px;font-size:14px}
+  :is(#sh_speed,.pop) .mode-seg button i{font:700 10px/1 var(--sans);letter-spacing:.08em;margin-top:8px}
+  :is(#sh_speed,.pop) .mount-chip{display:block;margin:10px 0 0 auto;padding:5px 8px;border:0;border-radius:7px;background:var(--bg3);color:var(--dim);font:500 11px/1 var(--sans)}
+  :is(#sh_speed,.pop) .mount-chip.warn{color:#8a5900;background:#fff6dc}
   #waspfcstatus{margin:0 0 14px;color:var(--bad);font:500 12px/1.3 var(--sans)}
   .profile-matrix{width:100%;margin-top:12px;border-collapse:collapse;table-layout:fixed;font:500 11px/1.3 var(--mono);text-align:center}
   .profile-matrix caption{text-align:left;margin-bottom:7px;font:500 12px/1.3 var(--sans);color:var(--dim)}
@@ -228,8 +223,8 @@
   .profile-matrix th:first-child{width:28%;text-align:left}
   .profile-matrix .selected{background:#edf3fc;color:var(--acc);font-weight:700}
   @media(max-width:360px){.profile-matrix{font-size:10px}.profile-matrix th{font-size:9px}.profile-matrix th,.profile-matrix td{padding:5px 2px}}
-  #sh_speed #wasp_profiles{grid-auto-flow:row;grid-template-columns:repeat(2,minmax(0,1fr))}
-  #sh_speed [data-wp="rate"] button{font-size:11px;padding-left:1px;padding-right:1px}
+  :is(#sh_speed,.pop) #wasp_profiles{grid-auto-flow:row;grid-template-columns:repeat(2,minmax(0,1fr))}
+  :is(#sh_speed,.pop) [data-wp="rate"] button{font-size:11px;padding-left:1px;padding-right:1px}
   #wasp_advanced{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
   #wasp_advanced summary{min-height:36px;color:var(--dim);font:500 13px/1.4 var(--sans);cursor:pointer}
   #wasp_advanced .parameter-grid{margin-top:12px}
@@ -250,11 +245,11 @@
   #modechange button:disabled{opacity:.4}
   #mode_note:empty{display:none}
   @media(min-width:620px){
-    #sh_speed .parameter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    :is(#sh_speed,.pop) .parameter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
     #pp_wasp .parameter-grid{grid-auto-flow:row dense}
     #pp_wasp .no-det{grid-column:2}
   }
-  @media(max-width:360px){#sh_speed.sheet{padding-left:12px;padding-right:12px}#sh_speed .param-block{padding:12px}#sh_speed .seg button{font-size:12px}#sh_speed .detection-row{grid-template-columns:82px minmax(0,1fr);gap:8px}}
+  @media(max-width:360px){#sh_speed.sheet{padding-left:12px;padding-right:12px}:is(#sh_speed,.pop) .param-block{padding:12px}:is(#sh_speed,.pop) .seg button{font-size:12px}:is(#sh_speed,.pop) .detection-row{grid-template-columns:82px minmax(0,1fr);gap:8px}}
   .acc{margin:0 0 10px}
   .acch{position:relative;display:flex;align-items:center;gap:12px;width:100%;min-width:0;padding:14px 12px;border-radius:16px;
         border:1px solid #cdd3da;background:#e2e6eb;color:var(--ink);text-align:left;box-shadow:0 1px 2px rgba(16,19,23,.06)}
@@ -377,10 +372,7 @@
     .vbox .btn:disabled{opacity:1;background:#3b4148;color:rgba(255,255,255,.38)}
     .vbox .btn:disabled small{color:rgba(255,255,255,.3)}
     .vbox .rbtn:disabled{opacity:.6}
-    .wasp-pad{width:calc(var(--K) * 2.7)}
-    .wasp-profile-stack{gap:calc(var(--K) * .1)}
-    .wasp-profile-stack button{min-height:calc(var(--K) * .55);font-size:clamp(11px,calc(var(--K) * .17),15px)}
-    .eng.countdown strong{font-size:calc(var(--K) * .4)}
+          .eng.countdown strong{font-size:calc(var(--K) * .4)}
   }
   @media (min-width:700px) and (orientation:portrait){ .vidwrap{justify-content:flex-start} }
   @media (min-width:700px) and (max-width:1000px){
@@ -389,36 +381,6 @@
     .logo{height:40px;width:58px}
     .toast{left:50%;right:auto;transform:translateX(-50%);max-width:42%;bottom:calc(var(--K) * .4)}
   }
-  body[data-flight-mode="wasp"] .ctl{position:static;grid-area:controls;display:grid;grid-template-columns:minmax(0,1fr) minmax(128px,.85fr);gap:18px;align-items:start;width:min(100%,760px);margin:0 auto;padding:16px;background:var(--bg2);border:1px solid var(--line);border-radius:20px;box-shadow:0 5px 18px rgba(16,19,23,.08);pointer-events:auto}
-  body[data-flight-mode="wasp"] .vidwrap .vbox{width:100%;height:100%;max-width:100%;aspect-ratio:auto;flex:1 1 auto}
-  body[data-flight-mode="wasp"] .pad,body[data-flight-mode="wasp"] .acts{width:auto;padding:0;border:0;background:none;box-shadow:none;backdrop-filter:none}
-  .wasp-panel-title{margin:0 0 10px;font:700 10px/1.2 var(--sans);letter-spacing:.12em;color:var(--faint)}
-  /* The steering column fills the height of the launch column next to it:
-     the four buttons spread over it instead of leaving a gap below. */
-  body[data-flight-mode="wasp"] .wasp-pad{display:flex;flex-direction:column;align-self:stretch;min-height:0}
-  body[data-flight-mode="wasp"] .wasp-profile-stack{flex:1 1 auto;justify-content:space-between;gap:10px}
-  body[data-flight-mode="wasp"] .wasp-profile-stack button{display:flex;align-items:center;justify-content:space-between;min-height:38px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg3);color:var(--ink);font:500 13px/1.2 var(--sans);letter-spacing:0;text-align:left}
-  body[data-flight-mode="wasp"] .wasp-profile-stack button::after{content:"";width:12px;height:12px;flex-shrink:0;border:1.5px solid #adb5bf;border-radius:50%}
-  body[data-flight-mode="wasp"] .wasp-profile-stack button.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink);box-shadow:none;font-weight:700}
-  body[data-flight-mode="wasp"] .wasp-profile-stack button.on::after{background:var(--acc);border:3px solid #fff;box-shadow:0 0 0 1px var(--acc)}
-  body[data-flight-mode="wasp"] .acts{display:grid;grid-template-columns:1fr 1fr;gap:12px 10px;justify-items:center;align-content:start}
-  body[data-flight-mode="wasp"] .acts .wasp-panel-title{grid-column:1/-1;justify-self:start;margin:0}
-  .main-countdown{grid-column:1/-1;width:100%;padding:10px 8px;display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:12px;background:var(--bg3)}
-  .main-countdown svg{width:22px;height:22px;flex-shrink:0;color:var(--acc)}
-  .main-countdown .timer-label{flex:1;min-width:0;font:500 11px/1.2 var(--sans);color:var(--dim)}
-  .timer-wheel{--wheel-row:22px;position:relative;flex:0 0 46px;height:calc(var(--wheel-row) * 3);padding:var(--wheel-row) 0;overflow-y:auto;scroll-snap-type:y mandatory;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:none;border-radius:8px;background:#edf3fc;mask-image:linear-gradient(transparent,#fff 30%,#fff 70%,transparent)}
-  .timer-wheel::-webkit-scrollbar{display:none}
-  .timer-wheel button{display:block;width:100%;height:var(--wheel-row);padding:0;border:0;background:none;color:var(--dim);font:700 16px/1 var(--mono);scroll-snap-align:center;opacity:.6}
-  .timer-wheel button[aria-selected="true"]{color:var(--acc);opacity:1;font-size:20px}
-  .timer-wheel:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
-  .timer-wheel[aria-disabled="true"]{opacity:.45;pointer-events:none}
-  .main-countdown span{font:12px/1 var(--mono);color:var(--dim)}
-  body[data-flight-mode="wasp"] .acts .rbtn{width:clamp(58px,16vw,80px);height:clamp(58px,16vw,80px);border-radius:50%;font-size:10px;letter-spacing:.02em}
-  body[data-flight-mode="wasp"] #b_safedown{line-height:1.15;border:2px solid #ad3030;box-shadow:0 3px 8px rgba(173,48,48,.16)}
-  body[data-flight-mode="wasp"] #b_eng{background:var(--acc);color:var(--acc-ink);border:3px solid #fff;box-shadow:0 0 0 1px var(--acc),0 3px 8px rgba(47,102,184,.18)}
-  body[data-flight-mode="wasp"] #b_eng.go{background:var(--ok);color:#fff;box-shadow:0 0 0 1px var(--ok)}
-  body[data-flight-mode="wasp"] .eng.countdown strong{font-size:24px}
-  .wasp-save-note{grid-column:1/-1;align-self:end;margin:0;font:11px/1.35 var(--sans);color:var(--dim)}
   .test-help{margin:10px 0 0;color:var(--dim);font:12px/1.4 var(--sans)}
   .mount-flash{position:absolute;left:50%;top:48px;transform:translateX(-50%);width:calc(100% - 32px);max-width:300px;padding:10px 14px;
        border:2px solid var(--warn);border-radius:12px;background:rgba(43,30,0,.9);color:#fff;text-align:center;font:500 13px/1.35 var(--sans);
@@ -431,71 +393,126 @@
   .test-prompt{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:calc(100% - 32px);max-width:300px;padding:16px;border:1px solid #81a8e0;border-radius:12px;background:rgba(20,43,76,.9);color:#fff;text-align:center;font:500 14px/1.4 var(--sans);pointer-events:none}
   .test-target{position:absolute;width:10%;height:10%;transform:translate(-50%,-50%);border:2px solid #2f66b8;box-shadow:0 0 0 1px rgba(255,255,255,.8);background:rgba(47,102,184,.08);pointer-events:none}
   .vbox.test-picking{cursor:crosshair}
-  @media(max-width:370px){body[data-flight-mode="wasp"] .ctl{padding:12px;gap:12px}.main-countdown{padding:10px 8px;gap:6px}.main-countdown .timer-label{font-size:10px}.main-countdown svg{width:18px}.timer-wheel{flex-basis:40px}}
+
+  /* ---- WASP: three tiles, the video, four settings buttons, SAFEDOWN and ARM / LAUNCH */
+  body[data-flight-mode="wasp"] .ctl{display:none}
+  body[data-flight-mode="wasp"] .tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+  body[data-flight-mode="wasp"] .tile .k{letter-spacing:.04em}
+  .wasp-ui{flex:0 0 auto;display:flex;flex-direction:column;gap:10px;min-width:0}
+  .wtools{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+  /* Portrait: the video as wide as the screen, the four settings buttons fill
+     the space down to SAFEDOWN and ARM. */
+  @media (orientation:portrait) and (max-width:699px){
+    body[data-flight-mode="wasp"] .vidwrap{flex:0 0 auto;height:min(calc((100vw - 24px) / (var(--ar, 4 / 3))), 50vh)}
+    body[data-flight-mode="wasp"] .wasp-ui{flex:1 1 auto;min-height:0}
+    body[data-flight-mode="wasp"] .wtools{flex:1 1 auto;min-height:0;max-height:330px;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:minmax(0,1fr);gap:10px;margin-top:auto}
+    body[data-flight-mode="wasp"] .tool{min-height:0;flex-direction:row;gap:10px;font-size:13px}
+    body[data-flight-mode="wasp"] .tool .ico{width:44px;height:44px;border-radius:13px}
+    body[data-flight-mode="wasp"] .tool svg{width:26px;height:26px}
+  }
+  @media (orientation:portrait) and (max-width:699px) and (max-height:600px){
+    body[data-flight-mode="wasp"] .wtools{grid-template-columns:repeat(4,minmax(0,1fr));flex:0 0 auto}
+    body[data-flight-mode="wasp"] .tool{flex-direction:column;gap:4px;min-height:58px;font-size:10.5px}
+    body[data-flight-mode="wasp"] .tool .ico{width:30px;height:30px}
+    body[data-flight-mode="wasp"] .tool svg{width:20px;height:20px}
+  }
+  .tool{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-width:0;
+        min-height:clamp(64px,9vh,78px);padding:8px 4px;border:1px solid var(--line);border-radius:16px;background:var(--bg2);
+        color:var(--ink);font:700 11.5px/1.1 var(--sans);letter-spacing:.02em;box-shadow:0 1px 3px rgba(16,19,23,.08)}
+  .tool .ico{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:11px;background:#e8eef8;color:var(--acc)}
+  .tool svg,.pop .pico svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .tool .tl{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tool .chip{position:absolute;top:5px;right:5px;padding:2px 5px;border-radius:999px;background:var(--bg3);color:var(--faint);
+              font:700 8.5px/1.1 var(--sans);font-style:normal;letter-spacing:.06em}
+  .tool .chip.on{background:var(--ok);color:#fff}
+  .tool .chip.bad{background:var(--bad);color:#fff}
+  .tool:disabled{opacity:.5}
+  .actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .big{position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+       min-width:0;min-height:clamp(66px,10vh,86px);padding:8px 10px;border:0;border-radius:20px;color:#fff;
+       touch-action:manipulation;transition:background .2s,box-shadow .2s,transform .06s}
+  .big b{font:700 clamp(15px,4.6vw,19px)/1 var(--sans);letter-spacing:.1em;white-space:nowrap}
+  .big small{max-width:100%;font:500 11px/1.2 var(--sans);opacity:.92;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .big:active:not(:disabled){transform:scale(.98)}
+  #b_safedown,#b_safedown:disabled{background:#c62828;opacity:1;box-shadow:0 4px 14px rgba(198,40,40,.32)}
+  #b_arm{background:#30353c;box-shadow:0 4px 14px rgba(16,19,23,.22)}
+  #b_arm.arming,#b_arm.arming:disabled{background:#e07b00;box-shadow:0 0 0 3px rgba(224,123,0,.25),0 4px 14px rgba(224,123,0,.3)}
+  #b_arm.arming b{font-variant-numeric:tabular-nums}
+  #b_arm.launch{background:#2f66b8;box-shadow:0 0 0 3px rgba(47,102,184,.25),0 4px 14px rgba(47,102,184,.35)}
+  #b_arm.flying{background:var(--ok)}
+  #b_arm:disabled{background:#a7aeb6;box-shadow:none;opacity:1}
+  #b_arm.flying:disabled{background:var(--ok)}
+  #b_arm .prog{position:absolute;left:0;bottom:0;height:5px;width:0;background:#fff;opacity:.75;transition:width .2s linear}
+
+  .pop{position:fixed;inset:0;z-index:9;display:none;align-items:flex-end;justify-content:center;background:rgba(16,19,23,.5);
+       padding:calc(10px + env(safe-area-inset-top)) 10px calc(10px + env(safe-area-inset-bottom));--acc:#1f3b63;--acc-ink:#ffffff}
+  .pop.open{display:flex}
+  .pop .card{display:flex;flex-direction:column;width:100%;max-width:640px;max-height:100%;background:var(--bg);border-radius:22px;
+             box-shadow:0 18px 50px rgba(16,19,23,.4);overflow:hidden}
+  .pop h3{flex:0 0 auto;display:flex;align-items:center;gap:10px;margin:0;padding:12px 12px 12px 14px;background:var(--bg2);border-bottom:1px solid var(--line);
+          font:700 16px/1.2 var(--sans);letter-spacing:.04em;color:var(--ink)}
+  .pop .pico{display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:12px;background:#e8eef8;color:#2f66b8}
+  .pop .pt{flex:1;min-width:0}
+  .pop h3 button{width:46px;height:46px;border-radius:13px;border:1px solid var(--line);background:var(--bg2);color:var(--ink);font-size:22px;line-height:1}
+  .pmsg{display:none;padding:9px 14px;background:#fde8e8;color:var(--bad);font:600 13px/1.35 var(--sans);border-bottom:1px solid #f3c4c4}
+  .pmsg.on{display:block}
+  .pop .pbody{flex:1 1 auto;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;padding:12px}
+  :is(#sh_speed,.pop) .pbody > .param-block{margin:0;padding:4px 2px;border:0;background:none}
+  :is(#sh_speed,.pop) .pbody .param-title{display:none}
+  @media (min-width:560px){.pop{align-items:center}}
+
+  .fence-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .fence-dummy{margin:0 0 10px;padding:10px 12px;border-radius:12px;background:#fff3d6;border:2px solid var(--warn);color:#5c3d00;font:500 12.5px/1.35 var(--sans)}
+  .fence-dummy b{display:block;font:700 13px/1.2 var(--sans);letter-spacing:.06em;color:#8a5900;margin-bottom:3px}
+  .tool .chip.warn{background:var(--warn);color:#2b1d00}
+  .fence-status{flex:1;min-width:0;font:500 12.5px/1.3 var(--sans);color:var(--dim)}
+  .fence-status.ok{color:var(--ok)}.fence-status.bad{color:var(--bad);font-weight:700}.fence-status.warn{color:#8a5900}
+  .fmap{position:relative;width:100%;aspect-ratio:1/1;max-height:52vh;border-radius:14px;overflow:hidden;background:#1d2228;touch-action:none}
+  .fmap canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .fmap-zoom{position:absolute;right:8px;top:8px;display:flex;flex-direction:column;gap:6px}
+  .fmap-zoom button{width:40px;height:40px;border:0;border-radius:11px;background:rgba(255,255,255,.92);color:var(--ink);font:700 20px/1 var(--sans);box-shadow:0 2px 6px rgba(0,0,0,.3)}
+  .fmap-note{position:absolute;left:8px;top:8px;right:56px;font:500 11px/1.3 var(--sans);color:#fff;text-shadow:0 1px 2px rgba(16,19,23,.9);pointer-events:none}
+  .fmap-scale{position:absolute;left:8px;bottom:8px;padding:2px 6px;border-radius:6px;background:rgba(0,0,0,.55);color:#fff;font:11px/1.3 var(--mono);pointer-events:none}
+  .fence-tools{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) minmax(0,1fr);gap:8px;margin-top:10px}
+  .fbtn{min-height:44px;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:var(--bg2);color:var(--ink);font:700 13px/1 var(--sans)}
+  .fbtn:disabled{opacity:.45}
+  .fence-circle{display:grid;grid-template-columns:minmax(0,1fr) 110px auto;align-items:center;gap:8px;margin-top:12px}
+  .fence-circle label{font:500 13px/1.25 var(--sans);color:var(--dim)}
+  .fence-points{margin-top:12px}
+  .fence-points summary{min-height:36px;color:var(--dim);font:500 13px/1.4 var(--sans);cursor:pointer}
+  .fence-points textarea{width:100%;min-height:96px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg3);color:var(--ink);
+                         font:13px/1.4 var(--mono);user-select:text;-webkit-user-select:text;resize:vertical;margin:6px 0 8px}
+  .fence-save{display:block;width:100%;margin-top:14px;min-height:52px;border:0;border-radius:14px;background:#2f66b8;color:#fff;font:700 15px/1 var(--sans);letter-spacing:.06em}
+  .fence-save:disabled{background:#a7aeb6}
+
   @media (min-width:700px), (min-width:560px) and (orientation:landscape){
-    body[data-flight-mode="wasp"] .app{display:grid;grid-template-columns:minmax(0,1fr) clamp(176px,23vw,232px);grid-template-rows:auto minmax(0,1fr);grid-template-areas:"header header" "vid controls";gap:12px;padding-left:12px;padding-right:12px}
+    body[data-flight-mode="wasp"] .app{display:grid;grid-template-columns:minmax(0,1fr) clamp(250px,30vw,340px);grid-template-rows:auto minmax(0,1fr);
+      grid-template-areas:"header header" "vid side";gap:12px;padding-left:12px;padding-right:12px}
     body[data-flight-mode="wasp"] .top{display:grid;grid-area:header;grid-template-columns:auto auto minmax(0,1fr) auto;grid-template-areas:"bur brand tiles logo";gap:8px;min-width:0}
     body[data-flight-mode="wasp"] .burger{grid-area:bur}
     body[data-flight-mode="wasp"] .brand{grid-area:brand;margin-left:0;font-size:15px;letter-spacing:.14em}
-    body[data-flight-mode="wasp"] .brand span{display:inline;font-size:10px}
     body[data-flight-mode="wasp"] .logo{grid-area:logo}
-    body[data-flight-mode="wasp"] .tiles{grid-area:tiles;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));grid-template-rows:auto;align-self:center;height:50px;gap:0;overflow:hidden;background:var(--bg2);border:1px solid var(--line);border-radius:12px}
-    body[data-flight-mode="wasp"] .tile{display:flex;flex-direction:column;justify-content:center;min-width:0;padding:6px 8px;border:0;border-left:1px solid var(--line);border-radius:0;background:none}
+    body[data-flight-mode="wasp"] .tiles{grid-area:tiles;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-self:center;height:50px;gap:0;overflow:hidden;background:var(--bg2);border:1px solid var(--line);border-radius:12px}
+    body[data-flight-mode="wasp"] .tile{display:flex;flex-direction:column;justify-content:center;min-width:0;padding:6px 10px;border:0;border-left:1px solid var(--line);border-radius:0;background:none}
     body[data-flight-mode="wasp"] .tile:first-child{border-left:0}
-    body[data-flight-mode="wasp"] .tile .k{font-size:10px;letter-spacing:.03em}
-    body[data-flight-mode="wasp"] .tile .v{font-size:clamp(11px,1vw,14px);gap:4px;margin-top:5px}
-    body[data-flight-mode="wasp"] .vidwrap{grid-area:vid;align-self:center;min-width:0;height:var(--wasp-panel-height,440px);max-height:100%;justify-content:center}
-    body[data-flight-mode="wasp"] .vidwrap .vbox{width:100%;height:100%;max-width:100%;aspect-ratio:auto;flex:1 1 auto}
-    body[data-flight-mode="wasp"] .ctl{grid-area:controls;display:flex;flex-direction:column;align-self:center;gap:18px;width:100%;max-height:100%;min-height:0;padding:14px;overflow-y:auto}
-    body[data-flight-mode="wasp"] .wasp-pad,body[data-flight-mode="wasp"] .acts{width:100%;flex:0 0 auto}
-    body[data-flight-mode="wasp"] .wasp-pad{flex:1 1 auto}
-    body[data-flight-mode="wasp"] .wasp-profile-stack button{min-height:36px}
-    body[data-flight-mode="wasp"] .acts .rbtn{width:62px;height:62px}
-  }
-  @media (min-width:700px) and (max-width:1000px), (min-width:560px) and (max-width:699px) and (orientation:landscape){
-    body[data-flight-mode="wasp"] .brand{width:76px;font-size:13px;letter-spacing:.14em}
-    body[data-flight-mode="wasp"] .brand span{display:block;margin:5px 0 0;font-size:8px;letter-spacing:.06em}
-  }
-  @media (min-width:560px) and (max-width:699px) and (orientation:landscape){
-    body[data-flight-mode="wasp"] .app{grid-template-columns:minmax(0,1fr) 176px}
-    body[data-flight-mode="wasp"] .brand{width:70px;font-size:12px}
-    body[data-flight-mode="wasp"] .logo{width:40px}
-    body[data-flight-mode="wasp"] .tiles{height:40px}
-    body[data-flight-mode="wasp"] .tile{padding:5px 4px}
-    body[data-flight-mode="wasp"] .tile .k{font-size:9px}
-    body[data-flight-mode="wasp"] .tile .v{font-size:9px;gap:2px;margin-top:4px}
-    body[data-flight-mode="wasp"] .tile .v::before{flex-basis:4px;height:4px}
+    body[data-flight-mode="wasp"] .vidwrap{grid-area:vid;min-width:0;min-height:0;justify-content:center}
+    body[data-flight-mode="wasp"] .wasp-ui{grid-area:side;justify-content:space-between;min-height:0;overflow-y:auto}
+    body[data-flight-mode="wasp"] .wtools{flex:1 1 auto;min-height:0;grid-template-columns:1fr 1fr;grid-auto-rows:minmax(0,1fr);max-height:300px}
+    body[data-flight-mode="wasp"] .tool{min-height:0}
+    body[data-flight-mode="wasp"] .big b{font-size:clamp(13px,1.5vw,18px);letter-spacing:.05em}
   }
   @media (min-width:560px) and (orientation:landscape) and (max-height:500px){
     body[data-flight-mode="wasp"] .app{gap:8px;padding-top:6px;padding-bottom:8px}
     body[data-flight-mode="wasp"] .burger{width:34px;height:34px}
     body[data-flight-mode="wasp"] .logo{height:32px;width:46px}
-    body[data-flight-mode="wasp"] .ctl{padding:8px;gap:8px;border-radius:14px}
-    body[data-flight-mode="wasp"] .wasp-panel-title{font-size:9px;margin-bottom:5px}
-    body[data-flight-mode="wasp"] .wasp-profile-stack{gap:5px}
-    body[data-flight-mode="wasp"] .wasp-profile-stack button{min-height:23px;padding:4px 8px;font-size:11px;border-radius:7px}
-    body[data-flight-mode="wasp"] .acts{gap:5px 8px}
-    body[data-flight-mode="wasp"] .main-countdown{padding:3px 8px}
-    body[data-flight-mode="wasp"] .timer-wheel{--wheel-row:16px}
-    body[data-flight-mode="wasp"] .acts .rbtn{width:46px;height:46px;font-size:9px}
-    body[data-flight-mode="wasp"] .eng.countdown strong{font-size:18px;margin-top:1px}
-    body[data-flight-mode="wasp"] .wasp-save-note{display:none}
-  }
-  @media (min-width:560px) and (orientation:landscape) and (max-height:360px){
-    body[data-flight-mode="wasp"] .ctl{padding:6px;gap:6px}
-    body[data-flight-mode="wasp"] .wasp-panel-title{font-size:8px;margin-bottom:4px}
-    body[data-flight-mode="wasp"] .wasp-profile-stack{gap:4px}
-    body[data-flight-mode="wasp"] .wasp-profile-stack button{height:20px;min-height:20px;padding:2px 6px;font-size:9px}
-    body[data-flight-mode="wasp"] .acts{gap:4px 8px}
-    body[data-flight-mode="wasp"] .main-countdown{padding:0 8px}
-    body[data-flight-mode="wasp"] .timer-wheel{--wheel-row:12px}
-    body[data-flight-mode="wasp"] .timer-wheel button{font-size:11px}
-    body[data-flight-mode="wasp"] .timer-wheel button[aria-selected="true"]{font-size:15px}
-    body[data-flight-mode="wasp"] .acts .rbtn{width:40px;height:40px;font-size:8px}
-    body[data-flight-mode="wasp"] .eng.countdown #engtxt{font-size:7px}
-    body[data-flight-mode="wasp"] .eng.countdown strong{font-size:15px;margin-top:1px}
+    body[data-flight-mode="wasp"] .tiles{height:40px}
     body[data-flight-mode="wasp"] .tile .k{font-size:9px}
-    body[data-flight-mode="wasp"] .tile .v{font-size:9px;gap:2px}
+    body[data-flight-mode="wasp"] .tile .v{font-size:10px;margin-top:3px}
+    .tool{min-height:50px;gap:3px;padding:5px 3px;font-size:10px;border-radius:12px}
+    .tool .ico{width:26px;height:26px;border-radius:8px}
+    .tool svg{width:17px;height:17px}
+    .big{min-height:56px;border-radius:16px}
+    .big b{font-size:14px}
   }
 </style></head>
 <body><div class="app">
@@ -508,11 +525,12 @@
 
   <div class="tiles">
     <div class="tile"><span class="k">FC mode</span><span class="v" id="c_mode">--</span></div>
-    <div class="tile"><span class="k">Armed</span><span class="v" id="c_arm">--</span></div>
-    <div class="tile"><span class="k">Heading</span><span class="v" id="c_hdg">--</span></div>
-    <div class="tile"><span class="k">Target</span><span class="v" id="c_det">--</span></div>
-    <div class="tile"><span class="k">Vibration</span><span class="v" id="c_vib">--</span></div>
+    <div class="tile" data-only="normal"><span class="k">Armed</span><span class="v" id="c_arm">--</span></div>
+    <div class="tile" data-only="normal"><span class="k">Heading</span><span class="v" id="c_hdg">--</span></div>
+    <div class="tile" data-only="normal"><span class="k">Target</span><span class="v" id="c_det">--</span></div>
+    <div class="tile" data-only="normal"><span class="k">Vibration</span><span class="v" id="c_vib">--</span></div>
     <div class="tile"><span class="k" id="c_ai_k">Detector</span><span class="v" id="c_ai">--</span></div>
+    <div class="tile" data-only="wasp" hidden><span class="k">GPS/Compass</span><span class="v" id="c_gps">--</span></div>
   </div>
 
   <div class="vidwrap"><div class="vbox" id="vbox">
@@ -532,6 +550,20 @@
     <div class="hbox" id="hbox"><b id="alt">-- m</b><span id="vs">&nbsp;</span></div>
   </div></div>
 
+
+  <div class="wasp-ui" id="wasp_ui" data-only="wasp" hidden>
+    <div class="wtools" role="group" aria-label="WASP settings">
+      <button class="tool" id="tool_det" data-pop="pop_det"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="12" r="3.2"/><path d="M12 7.2v1.6M12 15.2v1.6M7.2 12h1.6M15.2 12h1.6"/></svg></span><span class="tl">Detection</span></button>
+      <button class="tool" id="tool_flight" data-pop="pop_flight"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h9M18 7h1M5 12h3M12 12h7M5 17h11M20 17h-1"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="17" r="2"/></svg></span><span class="tl">Flight</span></button>
+      <button class="tool" id="tool_test" data-pop="pop_test"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6.5L4.8 18.4A1.7 1.7 0 0 0 6.3 21h11.4a1.7 1.7 0 0 0 1.5-2.6L14 9.5V3"/><path d="M7.5 15h9"/></svg></span><span class="tl">Test mode</span><i class="chip" id="chip_test">OFF</i></button>
+      <button class="tool" id="tool_fence" data-pop="pop_fence"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5 9.5 4l6 3 4.5-1.5v12L15.5 19l-6-3L4 18.5z"/><path d="M12 9.2a2.3 2.3 0 0 1 2.3 2.3c0 1.8-2.3 4-2.3 4s-2.3-2.2-2.3-4A2.3 2.3 0 0 1 12 9.2z"/></svg></span><span class="tl">Geofence</span><i class="chip" id="chip_fence">NONE</i></button>
+    </div>
+    <div class="actions">
+      <button class="big" id="b_safedown" aria-label="SafeDown: level, fly back to the launch point and land"><b>SAFEDOWN</b><small id="sdsub">level · fly home · land</small></button>
+      <button class="big arm" id="b_arm" data-action="arm" aria-label="ARM"><b id="armtxt">ARM</b><small id="armsub">&nbsp;</small><i class="prog" id="armprog"></i></button>
+    </div>
+  </div>
+
   <div class="ctl">
     <div class="pad" id="normal_pad">
       <div></div>
@@ -544,25 +576,9 @@
       <button class="btn" id="b_dn" data-hold="down">▼<small>DESCEND</small></button>
       <div></div>
     </div>
-    <div class="pad wasp-pad" id="wasp_pad" hidden>
-      <div class="wasp-panel-title">Steering response</div>
-      <div class="wasp-profile-stack" role="group" aria-label="Steering response">
-        <button data-wasp-profile="smooth" aria-pressed="false">Smooth</button>
-        <button data-wasp-profile="standard" aria-pressed="false">Standard</button>
-        <button data-wasp-profile="responsive" aria-pressed="false">Responsive</button>
-        <button data-wasp-profile="extra" aria-pressed="false">Extra</button>
-      </div>
-    </div>
     <div class="acts">
-      <div class="wasp-panel-title" data-only="wasp" hidden>Launch controls</div>
-      <div class="main-countdown" data-only="wasp" hidden>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-        <span class="timer-label">Timer</span><div class="timer-wheel" id="wasp_launch_main" role="listbox" tabindex="0" aria-label="Launch countdown in seconds" aria-disabled="false"></div><span>s</span>
-      </div>
-      <button class="rbtn auto" id="b_safedown" data-only="wasp" hidden style="background:#ad3030;border-color:#ad3030" aria-label="SafeDown: level, fly back to the launch point and land">SAFE<br>DOWN</button>
       <button class="rbtn lock" id="b_lock" aria-label="LOCK"><span id="locktxt">LOCK</span></button>
       <button class="rbtn eng" id="b_eng" aria-label="ENGAGE"><div class="fill" id="engfill"></div><span id="engtxt">ENGAGE</span></button>
-      <p class="wasp-save-note" data-only="wasp" hidden>Settings save automatically. Countdown and launch throttle (PARAMETERS) apply to every response.</p>
     </div>
   </div>
 </div>
@@ -653,10 +669,53 @@
       <h4 class="param-title" id="test_mode_title"><span class="num">4</span>Test mode</h4>
       <div class="grp"><label class="lbl" for="test_centre_timer">Centre timer</label><div class="idle-input"><input id="test_centre_timer" type="number" min="0" max="60" step="any" value="3" inputmode="decimal" aria-label="Test target centre timer in seconds"><span>s</span></div></div>
       <div class="seg" role="group" aria-label="Test mode"><button data-testmode="off" aria-pressed="true">OFF</button><button data-testmode="on" aria-pressed="false">ON</button></div>
-      <p class="test-help">Tap a target on the image. After the launch countdown, it moves smoothly to the center over the Centre timer, then stays centered until Abort. Uses your steering settings instead of model detections. Saved automatically for this response. Default: 3 s.</p>
+      <p class="test-help">Tap a target on the image. After LAUNCH WASP, it moves smoothly to the center over the Centre timer, then stays centered until Abort. Uses your steering settings instead of model detections. Saved automatically for this response. Default: 3 s.</p>
     </section>
   </div>
 </div>
+<div class="pop" id="pop_det" role="dialog" aria-modal="true" aria-labelledby="pop_det_t"><div class="card">
+  <h3><span class="pico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="12" r="3.2"/><path d="M12 7.2v1.6M12 15.2v1.6M7.2 12h1.6M15.2 12h1.6"/></svg></span><span class="pt" id="pop_det_t">Detection settings</span><button data-popclose aria-label="close">&#x2715;</button></h3>
+  <div class="pmsg" role="alert"></div>
+  <div class="pbody"></div>
+</div></div>
+<div class="pop" id="pop_flight" role="dialog" aria-modal="true" aria-labelledby="pop_flight_t"><div class="card">
+  <h3><span class="pico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h9M18 7h1M5 12h3M12 12h7M5 17h11M20 17h-1"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="17" r="2"/></svg></span><span class="pt" id="pop_flight_t">Flight parameters</span><button data-popclose aria-label="close">&#x2715;</button></h3>
+  <div class="pmsg" role="alert"></div>
+  <div class="pbody"></div>
+</div></div>
+<div class="pop" id="pop_test" role="dialog" aria-modal="true" aria-labelledby="pop_test_t"><div class="card">
+  <h3><span class="pico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6.5L4.8 18.4A1.7 1.7 0 0 0 6.3 21h11.4a1.7 1.7 0 0 0 1.5-2.6L14 9.5V3"/><path d="M7.5 15h9"/></svg></span><span class="pt" id="pop_test_t">Test mode</span><button data-popclose aria-label="close">&#x2715;</button></h3>
+  <div class="pmsg" role="alert"></div>
+  <div class="pbody"></div>
+</div></div>
+<div class="pop" id="pop_fence" role="dialog" aria-modal="true" aria-labelledby="pop_fence_t"><div class="card">
+  <h3><span class="pico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5 9.5 4l6 3 4.5-1.5v12L15.5 19l-6-3L4 18.5z"/><path d="M12 9.2a2.3 2.3 0 0 1 2.3 2.3c0 1.8-2.3 4-2.3 4s-2.3-2.2-2.3-4A2.3 2.3 0 0 1 12 9.2z"/></svg></span><span class="pt" id="pop_fence_t">Geofence</span><button data-popclose aria-label="close">&#x2715;</button></h3>
+  <div class="pmsg" role="alert"></div>
+  <div class="pbody">
+    <section class="param-block" id="fence_params" aria-label="Geofence">
+      <div class="fence-dummy" id="fence_dummy" role="alert" hidden><b>PREVIEW ONLY · NOT WORKING</b><span id="fence_dummy_txt">No GPS / compass from the FC: the geofence cannot see the drone and does not protect it.</span></div>
+      <div class="fence-head"><div class="fence-status" id="fence_status" role="status">--</div></div>
+      <div class="fmap" id="fmap"><canvas id="fmapc" aria-label="Map: drag to move, or draw the fence"></canvas>
+        <div class="fmap-zoom"><button id="fm_zin" aria-label="zoom in">+</button><button id="fm_zout" aria-label="zoom out">&minus;</button><button id="fm_here" aria-label="centre on the drone">&#9678;</button></div>
+        <div class="fmap-note" id="fmap_note"></div>
+        <div class="fmap-scale" id="fmap_scale"></div>
+      </div>
+      <div class="fence-tools">
+        <div class="seg" id="fm_mode" role="group" aria-label="Map mode"><button data-fm="move" aria-pressed="true">Move</button><button data-fm="draw" aria-pressed="false">Draw</button></div>
+        <button class="fbtn" id="fm_undo">Undo</button><button class="fbtn" id="fm_clear">Clear</button>
+      </div>
+      <div class="fence-circle"><label for="fm_radius" id="fm_radius_l">Circle around the drone</label>
+        <div class="idle-input"><input id="fm_radius" type="number" min="20" max="5000" step="10" value="150" inputmode="numeric"><span>m</span></div>
+        <button class="fbtn" id="fm_circle">Make</button></div>
+      <details class="fence-points"><summary>Type the points</summary>
+        <p class="test-help">One point per line: latitude, longitude (decimal degrees). At least 3.</p>
+        <textarea id="fm_points" rows="5" spellcheck="false" placeholder="37.97912, 23.71654&#10;37.98055, 23.71812&#10;37.97930, 23.72011"></textarea>
+        <button class="fbtn" id="fm_usepts">Use these points</button></details>
+      <button class="fence-save" id="fm_save">Save geofence</button>
+      <p class="test-help">A saved geofence is always on. In a WASP flight, leaving it starts SAFEDOWN at once: it levels, flies back to the GO spot and lands. ARM is refused while the drone is outside it or has no GPS position. Draw: drag a finger around the area, or tap the corners. Without GPS the map still works: Make puts the circle at the map centre.</p>
+    </section>
+</div>
+</div></div>
 <div class="sheet sub" id="sh_log">
   <h3><span>MESSAGES<small>FROM THE JETSON</small></span><button data-close aria-label="close">&#x2715;</button></h3>
   <div class="body" id="logbody"><div class="log" id="log"></div></div>
@@ -761,17 +820,39 @@
     var tiles = document.querySelector(".tiles"), top = document.querySelector(".top");
     if (wasp && waspLayoutQuery.matches) {
       if (tiles.parentNode !== top) top.insertBefore(tiles, top.querySelector(".logo"));
-      syncWaspPanelHeight();
     } else if (tiles.parentNode !== app) {
       app.insertBefore(tiles, video);
     }
+    placeSections(wasp);
   }
-  function syncWaspPanelHeight() {
-    if (LAST && LAST.mission && LAST.mission.wasp_enabled && waspLayoutQuery.matches) {
-      document.documentElement.style.setProperty("--wasp-panel-height", document.querySelector(".ctl").getBoundingClientRect().height + "px");
-    }
+  // WASP keeps its settings in four popups; Seeker in the PARAMETERS sheet.
+  var SECTIONS = [["detection_params", "pop_det"], ["flight_params", "pop_flight"], ["test_mode_params", "pop_test"]];
+  function placeSections(wasp) {
+    var sheet = $("sh_speed").querySelector(".body");
+    SECTIONS.forEach(function (x) {
+      var el = $(x[0]), into = wasp ? $(x[1]).querySelector(".pbody") : sheet;
+      if (el.parentNode !== into) into.appendChild(el);
+    });
   }
-  if (window.ResizeObserver) new ResizeObserver(syncWaspPanelHeight).observe(document.querySelector(".ctl"));
+  function openPop(id) {
+    releaseAll();
+    document.querySelectorAll(".pop.open").forEach(function (p) { p.classList.remove("open"); });
+    $(id).classList.add("open");
+    if (id === "pop_fence") fenceOpened();
+    if (LAST && LAST.mission) syncAlign(LAST.mission);
+  }
+  function closePops() {
+    document.querySelectorAll(".pop.open").forEach(function (p) { p.classList.remove("open"); });
+    if (LAST && LAST.mission) syncAlign(LAST.mission);
+  }
+  document.querySelectorAll("[data-pop]").forEach(function (b) {
+    b.onclick = function () { openPop(b.getAttribute("data-pop")); };
+  });
+  document.querySelectorAll("[data-popclose]").forEach(function (b) { b.onclick = closePops; });
+  document.querySelectorAll(".pop").forEach(function (p) {
+    p.addEventListener("pointerdown", function (e) { if (e.target === p) closePops(); });
+  });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") closePops(); });
   placeControls();
   if (controlsQuery.addEventListener) controlsQuery.addEventListener("change", placeControls); else controlsQuery.addListener(placeControls);
   if (waspLayoutQuery.addEventListener) waspLayoutQuery.addEventListener("change", placeControls); else waspLayoutQuery.addListener(placeControls);
@@ -805,6 +886,11 @@
     if (!bad) return;
     NOTE = {s: s, until: Date.now() + 4000};
     T("toast", s); $("toast").classList.add("on");
+    // An open popup covers the video and its toast: say it in the popup.
+    document.querySelectorAll(".pop.open .pmsg").forEach(function (x) {
+      x.textContent = s; x.classList.add("on");
+      clearTimeout(x._t); x._t = setTimeout(function () { x.classList.remove("on"); }, 5000);
+    });
     clearTimeout(noteT);
     noteT = setTimeout(function () { $("toast").classList.remove("on"); NOTE = null; }, 4000);
   }
@@ -851,6 +937,18 @@
   window.addEventListener("blur", releaseAll);
   window.addEventListener("pagehide", releaseAll);
   document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+  // No zoom on the phone: double tap, double click or pinch (iOS ignores the viewport's user-scalable).
+  var lastTouch = 0;
+  document.addEventListener("touchend", function (e) {
+    var now = Date.now();
+    if (now - lastTouch < 350 && !e.target.closest("input,textarea")) e.preventDefault();
+    lastTouch = now;
+  }, {passive: false});
+  document.addEventListener("dblclick", function (e) { e.preventDefault(); }, {passive: false});
+  ["gesturestart", "gesturechange"].forEach(function (n) {
+    document.addEventListener(n, function (e) { e.preventDefault(); }, {passive: false});
+  });
+  document.addEventListener("touchmove", function (e) { if (e.touches.length > 1 && !e.target.closest("#fmapc")) e.preventDefault(); }, {passive: false});
 
   $("b_eng").addEventListener("pointerdown", function (e) {
     var el = $("b_eng");
@@ -865,6 +963,12 @@
   $("b_safedown").addEventListener("pointerdown", function (e) {
     if (this.disabled) return;
     e.preventDefault(); cmd("safedown=1");
+  });
+  $("b_arm").addEventListener("pointerdown", function (e) {
+    var el = $("b_arm"), action = el.getAttribute("data-action");
+    if (el.disabled || !action) return;
+    e.preventDefault();
+    cmd(action === "launch" ? "engage=1" : "arm=1");
   });
 
   $("b_lock").addEventListener("pointerdown", function (e) {
@@ -923,7 +1027,8 @@
   var BLANK = "data:image/gif;base64,R0lGODlhAQABAAAAACw=", alignLive = false, alignRoll = null;
   var NOSE_SIDE = {0: "bottom", 90: "right", 180: "top", 270: "left"};
   function syncAlign(m) {
-    var live = $("sh_speed").classList.contains("open") && $("wasp_advanced").open && !!m.wasp_enabled;
+    var live = ($("sh_speed").classList.contains("open") || $("pop_flight").classList.contains("open"))
+      && $("wasp_advanced").open && !!m.wasp_enabled;
     if (live !== alignLive) {
       alignLive = live;
       $("align_img").src = live ? "/stream.mjpg?view=align" : BLANK;
@@ -1075,6 +1180,7 @@
       cmd("testmode=" + (on ? "on" : "off")).then(function (j) {
         if (on && j && !j.refused && j.mission && j.mission.test_mode) {
           document.querySelectorAll(".sheet.open").forEach(function (sheet) { sheet.classList.remove("open"); });
+          closePops();
         }
       });
     };
@@ -1139,62 +1245,6 @@
   $("test_centre_timer").addEventListener("keydown", function (e) {
     if (e.key === "Enter") { e.preventDefault(); this.blur(); }
   });
-  var launchWheel = $("wasp_launch_main"), wheelUser = false, wheelSaving = false, wheelTimer = null, wheelHeight = 0;
-  function setLaunchWheel(value) {
-    value = String(value);
-    if (!launchWheel.querySelector('[data-seconds="' + value + '"]')) {
-      var values = Array.from({length:61}, function (_, i) { return i; });
-      if (values.indexOf(Number(value)) < 0) values.push(Number(value));
-      values.sort(function (a, b) { return a - b; });
-      launchWheel.innerHTML = "";
-      values.forEach(function (seconds, i) {
-        var b = document.createElement("button");
-        b.type = "button"; b.id = "launch_seconds_" + i; b.textContent = seconds;
-        b.setAttribute("role", "option"); b.setAttribute("data-seconds", seconds); b.tabIndex = -1;
-        b.onclick = function () { if (!launchWheel.disabled) saveWheel(seconds); };
-        launchWheel.appendChild(b);
-      });
-    }
-    var rows = Array.from(launchWheel.children), selected = rows.findIndex(function (b) { return b.getAttribute("data-seconds") === value; });
-    var height = rows[0].getBoundingClientRect().height;
-    if (launchWheel.value !== value || wheelHeight !== height) {
-      launchWheel.value = value; wheelHeight = height;
-      rows.forEach(function (b, i) { b.setAttribute("aria-selected", String(i === selected)); });
-      launchWheel.setAttribute("aria-activedescendant", rows[selected].id);
-      launchWheel.scrollTop = selected * height;
-    }
-  }
-  function saveWheel(value) {
-    clearTimeout(wheelTimer); wheelUser = false;
-    if (launchWheel.disabled) return;
-    wheelSaving = true; setLaunchWheel(value);
-    cmd("waspp=launch_s:" + encodeURIComponent(value)).then(function () {
-      wheelSaving = false;
-      if (LAST && LAST.mission && LAST.mission.wasp_params) setLaunchWheel(LAST.mission.wasp_params.launch_s);
-    });
-  }
-  function wheelStart() { if (!launchWheel.disabled) wheelUser = true; }
-  launchWheel.addEventListener("pointerdown", wheelStart);
-  launchWheel.addEventListener("wheel", wheelStart, {passive:true});
-  function settleWheel() {
-    if (!wheelUser || launchWheel.disabled) return;
-    clearTimeout(wheelTimer);
-    wheelTimer = setTimeout(function () {
-      var rows = launchWheel.children, height = rows[0].getBoundingClientRect().height;
-      var index = Math.max(0, Math.min(rows.length - 1, Math.round(launchWheel.scrollTop / height)));
-      saveWheel(Number(rows[index].getAttribute("data-seconds")));
-    }, 180);
-  }
-  launchWheel.addEventListener("scroll", settleWheel, {passive:true});
-  launchWheel.addEventListener("pointerup", settleWheel);
-  launchWheel.addEventListener("keydown", function (e) {
-    if (launchWheel.disabled) return;
-    if (["ArrowUp", "ArrowDown", "Home", "End"].indexOf(e.key) < 0) return;
-    e.preventDefault();
-    var next = e.key === "Home" ? 0 : e.key === "End" ? 60 : Math.max(0, Math.min(60, Number(launchWheel.value) + (e.key === "ArrowUp" ? -1 : 1)));
-    saveWheel(next);
-  });
-  setLaunchWheel(3);
 
   function fmt(x, d) { return (x === null || x === undefined) ? "--" : Number(x).toFixed(d); }
   function paint(j) {
@@ -1212,8 +1262,8 @@
     var currentMode = wasp ? "wasp" : "normal";
     document.body.setAttribute("data-flight-mode", currentMode);
     placeControls();
-    var waspPad = $("wasp_pad"), normalPad = $("normal_pad"), belt = document.querySelector(".belt");
-    if (waspPad) waspPad.hidden = !wasp;
+    var normalPad = $("normal_pad"), belt = document.querySelector(".belt");
+    if (!wasp) closePops();
     if (normalPad) normalPad.style.display = wasp ? "none" : "grid";
     if (belt) belt.style.display = wasp ? "none" : "";
     $("tape").hidden = wasp;
@@ -1265,7 +1315,7 @@
     S("c_det", fresh ? "YES · " + fmt(conf, 2) : "NO", fresh ? (conf >= (m.min_conf || 0.2) ? "ok" : "warn") : "");
     var trt = testMode || j.detector === "TensorRT", fps_ = j.fps || 0;
     T("c_ai_k", testMode ? "Test target" : (j.detector || "Detector") + (j.engine ? " " + j.engine : "") + (j.lat_ms ? " · " + j.lat_ms + " ms" : ""));
-    S("c_ai", j.cam_busy ? "camera…" : fmt(fps_, 0) + " fps" + (Number(j.cam_fps) === 60 ? " · cam 60" : Number(j.cam_fps) === 21 ? " · cam 8 MP" : ""),
+    S("c_ai", j.cam_busy ? "camera…" : fmt(fps_, 0) + " fps" + (wasp ? "" : Number(j.cam_fps) === 60 ? " · cam 60" : Number(j.cam_fps) === 21 ? " · cam 8 MP" : ""),
       !trt ? "bad" : fps_ >= 20 ? "ok" : "warn");
     $("idle_seconds").disabled = arm || VIEW || ctl === "other";
     if (document.activeElement !== $("idle_seconds") && m.idle_s !== undefined) $("idle_seconds").value = m.idle_s;
@@ -1273,11 +1323,6 @@
     var waspSettingsLocked = !waspEditable || VIEW || ctl === "other";
     $("test_centre_timer").disabled = waspSettingsLocked;
     if (document.activeElement !== $("test_centre_timer") && m.wasp_params) $("test_centre_timer").value = m.wasp_params.centre_timer;
-    launchWheel.disabled = waspSettingsLocked;
-    launchWheel.setAttribute("aria-disabled", String(waspSettingsLocked));
-    launchWheel.tabIndex = waspSettingsLocked ? -1 : 0;
-    if (waspSettingsLocked) { clearTimeout(wheelTimer); wheelUser = false; }
-    if (!wheelUser && !wheelSaving && m.wasp_params) setLaunchWheel(m.wasp_params.launch_s);
     document.querySelectorAll("[data-testmode]").forEach(function (b) {
       var on = (b.getAttribute("data-testmode") === "on") === testMode;
       b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on));
@@ -1309,6 +1354,7 @@
         $("engtxt").textContent = ph === "WASP_FLIGHT" ? "WASP FLYING" : ph === "WASP_DONE" ? "DONE · DISARM" : "LAUNCH WASP";
       }
     }
+    if (wasp) paintWasp(j, m, ph, testMode, ctl);
     if (ph === "IDLE" || ph === "IDLE_FAILED") { eng.disabled = true; $("engtxt").textContent = ph === "IDLE" ? "IDLE" : "PILOT"; }
     if (ph === "SAFEDOWN" || ph === "SAFEDOWN_FAILED") { eng.disabled = true; $("engtxt").textContent = ph === "SAFEDOWN" ? "SAFEDOWN" : "PILOT"; }
     eng.setAttribute("aria-label", wasp ? $("engtxt").textContent : autoMode ? "AUTO ENGAGE" : "ENGAGE");
@@ -1356,7 +1402,7 @@
       var wpStage = wp.stage === "COUNTDOWN" ? "COUNTDOWN " + Math.max(1, Math.ceil(Number(wp.launch_countdown_s || 0)))
         : wp.stage === "SEARCH" ? "STRAIGHT" : wp.stage === "STRAIGHT" ? "LAUNCH" : wp.stage === "BLEND" ? "BLENDING" : wp.stage === "GUIDE" ? "GUIDING" : "READY";
       var flightLabel = "WASP · " + wpStage + " · SAFEDOWN OR SWITCH UP = RETURN";
-      bd.textContent = m.gate_why || (ph === "WASP_DONE" ? "PILOT · DISARM TO RESET" : ph === "WASP_FLIGHT" ? flightLabel : ph === "WASP_READY" && wp.stage === "COUNTDOWN" ? "WASP · " + wpStage : "WASP · READY");
+      bd.textContent = (m.gate_why === "disarmed" ? "WASP · DISARMED · ARM WHEN READY" : m.gate_why) || (ph === "WASP_DONE" ? "PILOT · DISARM TO RESET" : ph === "WASP_FLIGHT" ? flightLabel : ph === "WASP_READY" && wp.stage === "COUNTDOWN" ? "WASP · " + wpStage : "WASP · READY");
       if (testMode) bd.textContent = bd.textContent.replace(/^WASP/, "TEST");
     }
     if (ph === "SAFEDOWN" || ph === "SAFEDOWN_FAILED") {
@@ -1500,6 +1546,328 @@
     });
     if (j.console_seq !== undefined && j.console_seq > consoleSeq) pullConsole();
   }
+
+  function short(why) {
+    if (!why) return "";
+    if (/GPS/.test(why)) return "waiting for GPS";
+    if (/camera|90/.test(why)) return "confirm camera 90°";
+    if (/ACRO/.test(why)) return "mode switch DOWN (ACRO)";
+    if (/attitude/.test(why)) return "waiting for attitude";
+    if (/heartbeat|FC link/.test(why)) return "no FC link";
+    if (/geofence/.test(why)) return why.replace(/^geofence:?\s*/i, "fence: ");
+    return why.length > 34 ? why.slice(0, 33) + "…" : why;
+  }
+  // The spool-up countdown runs smoothly between the 4 Hz state polls.
+  var ARMCD = null;
+  setInterval(function () {
+    if (!ARMCD) return;
+    var as = performance.now() / 1000 - ARMCD.t0;
+    if (as >= ARMCD.settle) return;
+    T("armtxt", "LAUNCH IN " + Math.max(0.1, ARMCD.settle - as).toFixed(1));
+    $("armprog").style.width = Math.round(as / ARMCD.settle * 100) + "%";
+  }, 50);
+  function paintWasp(j, m, ph, testMode, ctl) {
+    var gps = m.gps || {}, comp = !!m.compass_ok, gpsOk = !!gps.ok;
+    S("c_gps", (gpsOk ? "YES" : "NO") + " / " + (comp ? "YES" : "NO"),
+      gpsOk && comp ? "ok" : gpsOk || comp ? "warn" : "bad");
+    $("c_gps").title = "GPS fix " + (gps.fix || 0) + ", " + (gps.sats || 0) + " satellites; compass " + (comp ? "healthy" : "missing");
+    var f = m.fence || {}, chip = $("chip_fence"), live = fenceLive(m);
+    // ON only when it really works: a fence, GPS, compass and a position.
+    chip.textContent = !f.armed ? "NONE" : f.inside === false ? "OUT" : live ? "ON" : "NO GPS";
+    chip.className = "chip" + (!f.armed ? "" : f.inside === false ? " bad" : live ? " on" : " warn");
+    $("chip_test").textContent = testMode ? "ON" : "OFF";
+    $("chip_test").className = "chip" + (testMode ? " on" : "");
+    paintFence(m);
+
+    var b = $("b_arm"), armed = !!j.armed, as = m.armed_s, settle = m.arm_settle_s || 2;
+    var busy = VIEW || ctl === "other", label = "ARM", sub = "", cls = "big arm", action = "", prog = 0;
+    var wp = m.wasp_progress || {};
+    if (ph === "SAFEDOWN" || ph === "SAFEDOWN_FAILED") { label = "SAFEDOWN"; sub = "the pilot's switch: MIDDLE"; }
+    else if (ph === "WASP_FLIGHT") { label = "WASP FLYING"; sub = "SAFEDOWN = fly home"; cls += " flying"; }
+    else if (ph === "WASP_DONE") { label = "DONE"; sub = "disarm to reset"; }
+    else if (!armed) {
+      var why = m.arming ? "" : (m.wasp_arm_why || (testMode && !m.test_target ? "place a test target" : "")
+        || (f.armed && f.inside === false ? "geofence: drone outside" : "")
+        || (f.armed && f.inside !== true ? "geofence: no GPS position" : ""));
+      label = m.arming ? "ARMING…" : "ARM"; sub = m.arming ? "" : (short(why) || "the app arms the drone");
+      action = why || m.arming ? "" : "arm";
+    } else if (ph === "WASP_READY" && as !== null && as !== undefined && as < settle) {
+      ARMCD = {t0: performance.now() / 1000 - as, settle: settle};
+      label = "LAUNCH IN " + Math.max(0.1, settle - as).toFixed(1); sub = "armed · motors spooling"; cls += " arming"; prog = as / settle;
+    } else if (ph === "WASP_READY") {
+      label = "LAUNCH WASP"; cls += " launch";
+      if (wp.stage === "COUNTDOWN") { sub = "launching"; }
+      else if (m.gate_why) { sub = short(m.gate_why); }
+      else if (testMode && !m.test_target) { sub = "place a test target"; }
+      else { sub = "tap to launch"; action = "launch"; }
+    } else { label = "ARMED"; sub = short(m.gate_why) || "mode switch DOWN (ACRO)"; }
+    if (cls.indexOf("arming") < 0) ARMCD = null;
+    b.className = cls;
+    b.setAttribute("data-action", action);
+    b.disabled = !action || busy;
+    T("armtxt", label); T("armsub", sub || "\u00a0");
+    b.setAttribute("aria-label", label + (sub ? ": " + sub : ""));
+    $("armprog").style.width = Math.round(Math.max(0, Math.min(1, prog)) * 100) + "%";
+    T("sdsub", ph === "WASP_FLIGHT" ? "level · fly home · land" : armed && ph === "WASP_READY" ? "cancel · disarm"
+      : ph === "SAFEDOWN" ? "flying home" : "level · fly home · land");
+    document.querySelectorAll(".tool").forEach(function (t) { t.disabled = busy; });
+  }
+
+  // ---- Geofence map: Web Mercator, satellite tiles when the phone has internet,
+  // a metre grid always. DRAFT is the polygon being edited, saved with Save.
+  var FM = {lat: null, lon: null, z: 17, mode: "move", draft: null, saved: "", stroke: null, drag: null,
+            tiles: {}, failed: 0, loaded: 0, user: false, pinch: null};
+  var TILE_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/";
+  var fmc = $("fmapc"), fctx = fmc.getContext("2d");
+  function wx(lon, z) { return (lon + 180) / 360 * 256 * Math.pow(2, z); }
+  function wy(lat, z) {
+    var r = lat * Math.PI / 180;
+    return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * 256 * Math.pow(2, z);
+  }
+  function wlon(x, z) { return x / (256 * Math.pow(2, z)) * 360 - 180; }
+  function wlat(y, z) { var n = Math.PI - 2 * Math.PI * y / (256 * Math.pow(2, z)); return 180 / Math.PI * Math.atan(Math.sinh(n)); }
+  function fmSize() { return [fmc.clientWidth || 320, fmc.clientHeight || 320]; }
+  function toPx(p) {
+    var wh = fmSize();
+    return [wx(p[1], FM.z) - wx(FM.lon, FM.z) + wh[0] / 2, wy(p[0], FM.z) - wy(FM.lat, FM.z) + wh[1] / 2];
+  }
+  function toLL(x, y) {
+    var wh = fmSize();
+    return [wlat(wy(FM.lat, FM.z) + y - wh[1] / 2, FM.z), wlon(wx(FM.lon, FM.z) + x - wh[0] / 2, FM.z)];
+  }
+  function mPerPx() { return Math.cos(FM.lat * Math.PI / 180) * 2 * Math.PI * 6378137 / (256 * Math.pow(2, FM.z)); }
+  function savedPoints(m) { return ((m && m.fence) || {}).points || []; }
+  function fenceOpened() {
+    var m = (LAST && LAST.mission) || {};
+    FM.draft = savedPoints(m).map(function (p) { return [p[0], p[1]]; });
+    FM.saved = JSON.stringify(FM.draft);
+    FM.user = false;
+    setFmMode("move");
+    // Fit once the popup has its size.
+    requestAnimationFrame(function () { centreMap((LAST && LAST.mission) || m, true); drawMap(); });
+    $("fm_points").value = FM.draft.map(function (p) { return p[0].toFixed(6) + ", " + p[1].toFixed(6); }).join("\n");
+    requestAnimationFrame(drawMap);
+  }
+  function centreMap(m, fit) {
+    var pos = m.position || m.home, pts = FM.draft || [];
+    if (fit && pts.length >= 3) {
+      var la = pts.map(function (p) { return p[0]; }), lo = pts.map(function (p) { return p[1]; });
+      FM.lat = (Math.min.apply(null, la) + Math.max.apply(null, la)) / 2;
+      FM.lon = (Math.min.apply(null, lo) + Math.max.apply(null, lo)) / 2;
+      var wh = fmSize(), span = Math.max(1e-6, Math.max(wx(Math.max.apply(null, lo), 0) - wx(Math.min.apply(null, lo), 0),
+        wy(Math.min.apply(null, la), 0) - wy(Math.max.apply(null, la), 0)));
+      FM.z = Math.max(3, Math.min(19, Math.floor(Math.log2(Math.min(wh[0], wh[1]) * .8 / span))));
+    } else if (pos) { FM.lat = pos[0]; FM.lon = pos[1]; if (FM.z < 15) FM.z = 17; }
+    else if (FM.lat === null) { FM.lat = 37.9838; FM.lon = 23.7275; FM.z = 15; }
+  }
+  function setFmMode(mode) {
+    FM.mode = mode;
+    document.querySelectorAll("[data-fm]").forEach(function (b) {
+      var on = b.getAttribute("data-fm") === mode; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on));
+    });
+    T("fmap_note", mode === "draw" ? "Draw: drag a finger around the area, or tap the corners" : "");
+  }
+  document.querySelectorAll("[data-fm]").forEach(function (b) { b.onclick = function () { setFmMode(b.getAttribute("data-fm")); }; });
+  function zoom(d) { FM.z = Math.max(3, Math.min(19, FM.z + d)); FM.user = true; drawMap(); }
+  $("fm_zin").onclick = function () { zoom(1); };
+  $("fm_zout").onclick = function () { zoom(-1); };
+  $("fm_here").onclick = function () {
+    var m = (LAST && LAST.mission) || {};
+    FM.user = false;
+    if (m.position || m.home) centreMap(m, false);
+    else if ((FM.draft || []).length >= 3 || savedPoints(m).length >= 3) {
+      if (!(FM.draft || []).length) FM.draft = savedPoints(m).map(function (p) { return [p[0], p[1]]; });
+      centreMap(m, true);
+    } else note("Centre: no GPS position and no geofence yet", true);
+    drawMap();
+  };
+  $("fm_undo").onclick = function () { if (FM.draft && FM.draft.length) { FM.draft.pop(); drawMap(); } };
+  $("fm_clear").onclick = function () { FM.draft = []; drawMap(); };
+  $("fm_circle").onclick = function () {
+    var m = (LAST && LAST.mission) || {}, c = m.position || (FM.lat !== null ? [FM.lat, FM.lon] : null), r = Number($("fm_radius").value);
+    if (!c) { note("Circle: no map yet", true); return; }
+    if (!isFinite(r) || r < 20 || r > 5000) { note("Circle: 20 to 5000 m", true); return; }
+    FM.draft = [];
+    for (var i = 0; i < 24; i++) {
+      var a = i / 24 * 2 * Math.PI;
+      FM.draft.push([c[0] + r * Math.cos(a) / 111320, c[1] + r * Math.sin(a) / (111320 * Math.cos(c[0] * Math.PI / 180))]);
+    }
+    centreMap(m, true); drawMap();
+  };
+  $("fm_usepts").onclick = function () {
+    var pts = [], bad = false;
+    $("fm_points").value.split(/\n|;/).forEach(function (line) {
+      line = line.trim(); if (!line) return;
+      var v = line.split(/[\s,]+/).filter(Boolean).map(Number);
+      if (v.length !== 2 || !isFinite(v[0]) || !isFinite(v[1]) || Math.abs(v[0]) > 90 || Math.abs(v[1]) > 180) bad = true;
+      else pts.push(v);
+    });
+    if (bad || pts.length < 3) { note("Points: at least 3 lines of latitude, longitude", true); return; }
+    FM.draft = pts; centreMap((LAST && LAST.mission) || {}, true); drawMap();
+  };
+  $("fm_save").onclick = function () {
+    var pts = FM.draft || [];
+    var q = pts.length ? "fence=set:" + encodeURIComponent(JSON.stringify(pts.map(function (p) {
+      return [Math.round(p[0] * 1e7) / 1e7, Math.round(p[1] * 1e7) / 1e7]; }))) : "fence=clear";
+    cmd(q).then(function (j) {
+      if (j && !j.refused) { FM.saved = JSON.stringify(savedPoints(j.mission)); FM.draft = JSON.parse(FM.saved); drawMap(); paintFence(j.mission); }
+    });
+  };
+  function simplify(pts, eps) {
+    if (pts.length < 3) return pts;
+    var a = pts[0], b = pts[pts.length - 1], dmax = 0, idx = 0;
+    for (var i = 1; i < pts.length - 1; i++) {
+      var p = pts[i], dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1;
+      var d = Math.abs(dy * p[0] - dx * p[1] + b[0] * a[1] - b[1] * a[0]) / L;
+      if (d > dmax) { dmax = d; idx = i; }
+    }
+    if (dmax <= eps) return [a, b];
+    return simplify(pts.slice(0, idx + 1), eps).slice(0, -1).concat(simplify(pts.slice(idx), eps));
+  }
+  function evXY(e) { var r = fmc.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+  var fmPointers = {};
+  fmc.addEventListener("pointerdown", function (e) {
+    e.preventDefault(); try { fmc.setPointerCapture(e.pointerId); } catch (x) {}
+    fmPointers[e.pointerId] = evXY(e);
+    var ids = Object.keys(fmPointers);
+    if (ids.length === 2) {
+      var p0 = fmPointers[ids[0]], p1 = fmPointers[ids[1]];
+      FM.pinch = {d: Math.hypot(p0[0] - p1[0], p0[1] - p1[1]), z: FM.z}; FM.stroke = null; FM.drag = null; return;
+    }
+    var xy = evXY(e);
+    if (FM.mode === "draw") FM.stroke = [xy];
+    else FM.drag = {x: xy[0], y: xy[1], lat: FM.lat, lon: FM.lon};
+  });
+  fmc.addEventListener("pointermove", function (e) {
+    if (!(e.pointerId in fmPointers)) return;
+    var xy = evXY(e); fmPointers[e.pointerId] = xy;
+    var ids = Object.keys(fmPointers);
+    if (FM.pinch && ids.length === 2) {
+      var p0 = fmPointers[ids[0]], p1 = fmPointers[ids[1]], d = Math.hypot(p0[0] - p1[0], p0[1] - p1[1]);
+      var z = Math.max(3, Math.min(19, Math.round(FM.pinch.z + Math.log2(d / Math.max(1, FM.pinch.d)))));
+      if (z !== FM.z) { FM.z = z; FM.user = true; drawMap(); }
+      return;
+    }
+    if (FM.stroke) {
+      var last = FM.stroke[FM.stroke.length - 1];
+      if (Math.hypot(xy[0] - last[0], xy[1] - last[1]) > 6) { FM.stroke.push(xy); drawMap(); }
+    } else if (FM.drag) {
+      var wh = fmSize();
+      FM.lon = wlon(wx(FM.drag.lon, FM.z) - (xy[0] - FM.drag.x), FM.z);
+      FM.lat = wlat(wy(FM.drag.lat, FM.z) - (xy[1] - FM.drag.y), FM.z);
+      FM.user = true; drawMap();
+    }
+  });
+  function fmEnd(e) {
+    delete fmPointers[e.pointerId];
+    if (FM.pinch) { if (!Object.keys(fmPointers).length) FM.pinch = null; return; }
+    if (FM.stroke) {
+      var st = FM.stroke; FM.stroke = null;
+      FM.draft = FM.draft || [];
+      var len = 0; for (var i = 1; i < st.length; i++) len += Math.hypot(st[i][0] - st[i - 1][0], st[i][1] - st[i - 1][1]);
+      var pts = len < 12 ? [st[0]] : simplify(st, 4);
+      if (len >= 12 && FM.draft.length === 0 && pts.length > 2) {
+        var a = pts[0], b = pts[pts.length - 1];
+        if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 30) pts.pop();  // a closed loop
+      }
+      pts.forEach(function (p) { if (FM.draft.length < 200) FM.draft.push(toLL(p[0], p[1])); });
+      drawMap();
+    }
+    FM.drag = null;
+  }
+  fmc.addEventListener("pointerup", fmEnd);
+  fmc.addEventListener("pointercancel", fmEnd);
+  fmc.addEventListener("wheel", function (e) { e.preventDefault(); zoom(e.deltaY < 0 ? 1 : -1); }, {passive: false});
+  function tile(z, x, y) {
+    var n = Math.pow(2, z), key = z + "/" + y + "/" + ((x % n) + n) % n, t = FM.tiles[key];
+    if (!t) {
+      t = FM.tiles[key] = new Image();
+      t.onload = function () { FM.loaded++; drawMap(); };
+      t.onerror = function () { t.bad = true; FM.failed++; drawMap(); };
+      t.src = TILE_URL + key;
+    }
+    return t.complete && !t.bad && t.naturalWidth ? t : null;
+  }
+  function drawMap() {
+    if (!$("pop_fence").classList.contains("open") || FM.lat === null) return;
+    var dpr = window.devicePixelRatio || 1, wh = fmSize(), w = wh[0], h = wh[1], c = fctx;
+    if (fmc.width !== Math.round(w * dpr) || fmc.height !== Math.round(h * dpr)) { fmc.width = Math.round(w * dpr); fmc.height = Math.round(h * dpr); }
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.fillStyle = "#1d2228"; c.fillRect(0, 0, w, h);
+    var fe = $("fmap"); fe.dataset.lat = FM.lat.toFixed(6); fe.dataset.lon = FM.lon.toFixed(6); fe.dataset.z = FM.z;
+    var cx = wx(FM.lon, FM.z) - w / 2, cy = wy(FM.lat, FM.z) - h / 2;
+    for (var tx = Math.floor(cx / 256); tx <= Math.floor((cx + w) / 256); tx++)
+      for (var ty = Math.floor(cy / 256); ty <= Math.floor((cy + h) / 256); ty++) {
+        if (ty < 0 || ty >= Math.pow(2, FM.z)) continue;
+        var im = tile(FM.z, tx, ty);
+        if (im) c.drawImage(im, tx * 256 - cx, ty * 256 - cy, 256, 256);
+      }
+    // Metre grid and scale: works offline.
+    var mpp = mPerPx(), steps = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000], step = steps[steps.length - 1];
+    for (var i = 0; i < steps.length; i++) if (steps[i] / mpp >= 60) { step = steps[i]; break; }
+    var gp = step / mpp, ox = ((-cx % gp) + gp) % gp, oy = ((-cy % gp) + gp) % gp;
+    c.strokeStyle = FM.loaded ? "rgba(255,255,255,.18)" : "rgba(255,255,255,.12)"; c.lineWidth = 1; c.beginPath();
+    for (var gx = ox; gx < w; gx += gp) { c.moveTo(gx, 0); c.lineTo(gx, h); }
+    for (var gy = oy; gy < h; gy += gp) { c.moveTo(0, gy); c.lineTo(w, gy); }
+    c.stroke();
+    T("fmap_scale", "grid " + (step >= 1000 ? step / 1000 + " km" : step + " m") + (FM.loaded ? "" : FM.failed ? " · offline: no map" : ""));
+    var m = (LAST && LAST.mission) || {};
+    function poly(pts, stroke, fill, dash) {
+      if (!pts || pts.length < 2) return;
+      c.beginPath(); pts.forEach(function (p, k) { var q = toPx(p); if (k) c.lineTo(q[0], q[1]); else c.moveTo(q[0], q[1]); });
+      if (pts.length >= 3) c.closePath();
+      if (fill && pts.length >= 3) { c.fillStyle = fill; c.fill(); }
+      c.setLineDash(dash || []); c.strokeStyle = stroke; c.lineWidth = 2.5; c.stroke(); c.setLineDash([]);
+    }
+    var saved = savedPoints(m), dirty = JSON.stringify(FM.draft || []) !== FM.saved;
+    if (dirty) poly(saved, "rgba(255,255,255,.6)", null, [6, 5]);
+    poly(FM.draft, "#ffd23f", "rgba(255,210,63,.16)");
+    (FM.draft || []).forEach(function (p) { var q = toPx(p); c.fillStyle = "#ffd23f"; c.beginPath(); c.arc(q[0], q[1], 3.5, 0, 7); c.fill(); });
+    if (FM.stroke) {
+      c.beginPath(); FM.stroke.forEach(function (p, k) { if (k) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); });
+      c.strokeStyle = "#ffd23f"; c.lineWidth = 2; c.stroke();
+    }
+    if (m.home) {
+      var hq = toPx(m.home);
+      c.fillStyle = "#fff"; c.beginPath(); c.arc(hq[0], hq[1], 9, 0, 7); c.fill();
+      c.fillStyle = "#1f3b63"; c.font = "700 11px U, sans-serif"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText("H", hq[0], hq[1] + .5);
+    }
+    if (m.position) {
+      var dq = toPx(m.position), hd = Number(m.heading_deg) || 0, a = (hd - 90) * Math.PI / 180;
+      c.fillStyle = "rgba(47,102,184,.25)"; c.beginPath(); c.arc(dq[0], dq[1], 14, 0, 7); c.fill();
+      c.fillStyle = "#2f66b8"; c.strokeStyle = "#fff"; c.lineWidth = 2; c.beginPath(); c.arc(dq[0], dq[1], 6.5, 0, 7); c.fill(); c.stroke();
+      c.beginPath(); c.moveTo(dq[0] + 13 * Math.cos(a), dq[1] + 13 * Math.sin(a));
+      c.lineTo(dq[0] + 7 * Math.cos(a + 2.4), dq[1] + 7 * Math.sin(a + 2.4)); c.lineTo(dq[0] + 7 * Math.cos(a - 2.4), dq[1] + 7 * Math.sin(a - 2.4));
+      c.closePath(); c.fillStyle = "#fff"; c.fill();
+    }
+    $("fm_save").disabled = !dirty || (FM.draft.length > 0 && FM.draft.length < 3) || fenceLocked(m);
+    $("fm_save").textContent = !dirty ? "Saved" : FM.draft.length === 0 ? "Remove geofence" : FM.draft.length < 3 ? "Needs 3 points" : "Save geofence";
+    $("fm_undo").disabled = !(FM.draft || []).length; $("fm_clear").disabled = !(FM.draft || []).length;
+  }
+  function fenceLive(m) {
+    return !!((m.gps || {}).ok && m.compass_ok && m.position);
+  }
+  function fenceLocked(m) { return VIEW || (LAST && LAST.control === "other") || m.phase === "WASP_FLIGHT" || m.phase === "SAFEDOWN"; }
+  var fmPos = "";
+  function paintFence(m) {
+    var f = m.fence || {}, st = $("fence_status"), txt, cls = "";
+    if (!f.points || f.points.length < 3) { txt = "No geofence: draw one, make a circle or type the points"; }
+    else if (!f.enabled) { txt = "Saved but switched off by a script"; cls = "warn"; }
+    else if (f.inside === true) { txt = "Drone inside · " + Math.round(f.edge_m) + " m to the edge"; cls = "ok"; }
+    else if (f.inside === false) { txt = "Drone OUTSIDE by " + Math.round(f.edge_m) + " m"; cls = "bad"; }
+    else { txt = "Geofence saved · waiting for a GPS position to check the drone"; cls = "warn"; }
+    st.textContent = txt; st.className = "fence-status " + cls;
+    var live = fenceLive(m), g = m.gps || {};
+    $("fence_dummy").hidden = live;
+    T("fence_dummy_txt", "GPS " + (g.ok ? "YES" : "NO") + " / Compass " + (m.compass_ok ? "YES" : "NO")
+      + ": the geofence cannot see the drone and does NOT protect it. You can draw and save it now; it works once the tile reads YES / YES.");
+    T("fm_radius_l", m.position ? "Circle around the drone" : "Circle at the map centre (no GPS)");
+    if ($("pop_fence").classList.contains("open")) {
+      var key = JSON.stringify([m.position, m.home, f.points]);
+      if (key !== fmPos) { fmPos = key; if (!FM.user && !(FM.draft || []).length) centreMap(m, false); drawMap(); }
+    }
+  }
+  window.addEventListener("resize", function () { drawMap(); });
 
   var pulling = false;
   function pullConsole() {

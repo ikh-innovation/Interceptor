@@ -22,7 +22,7 @@ from pathlib import Path
 from pymavlink import mavutil
 
 ROOT = Path(__file__).resolve().parents[2]
-REFERENCE = ROOT/"deploy"/"fc"/"TBS_LUCID_H7_2026-10-22.param"
+REFERENCE = ROOT/"deploy"/"fc"/"TBS_LUCID_H7_2026-10-28.param"
 
 # Required by the app or by SafeDown: a difference here blocks WASP or SafeDown.
 CRITICAL = {
@@ -35,6 +35,11 @@ CRITICAL = {
     "LAND_REPOSITION", "PILOT_ACCEL_Z", "PILOT_SPEED_UP", "PILOT_SPEED_DN",
     "PILOT_THR_BHV", "THR_DZ", "DISARM_DELAY", "ANGLE_MAX", "FS_THR_ENABLE",
     "FS_THR_VALUE", "FS_GCS_ENABLE", "ARMING_RUDDER", "MOT_THST_HOVER", "MOT_PWM_TYPE",
+    # GPS and compass: SafeDown home, the phone's ARM and the geofence need them. Written
+    # although COMPASS_ / GPS / SERIAL look board-specific: same FC model, same wiring.
+    "COMPASS_ENABLE", "COMPASS_USE", "COMPASS_AUTODEC", "EK3_SRC1_POSXY", "EK3_SRC1_VELXY",
+    "EK3_SRC1_POSZ", "EK3_SRC1_YAW", "GPS1_TYPE", "GPS_AUTO_CONFIG", "SERIAL2_PROTOCOL",
+    "RTL_ALT", "RTL_SPEED", "RTL_LOIT_TIME", "RTL_ALT_FINAL", "FS_EKF_ACTION", "FENCE_ENABLE",
 }
 # Flight behaviour copied from the reference: tuning, filters, failsafes, EKF.
 TUNING_PREFIXES = ("ATC_", "ACRO_", "PILOT_", "PSC_", "LAND_", "MOT_", "FS_", "BATT_FS",
@@ -182,14 +187,18 @@ def main():
          and all(v(f"FLTMODE{i}") == 0 for i in range(2, 6))),
         ("RC5_OPTION = 154 (arm switch)", v("RC5_OPTION") == 154),
     ]
-    gps = (v("EK3_SRC1_POSXY") or 0) != 0 or (v("EK3_SRC1_VELXY") or 0) != 0
-    if gps:
-        # GPS in the EKF needs a heading: without a compass it never fuses.
-        checks.append(("COMPASS_ENABLE = 1 (GPS is selected in the EKF)", bool(v("COMPASS_ENABLE"))))
-    print("== App and SafeDown checks on the FC's values")
+    checks += [
+        # SafeDown flies home, the phone arms and the geofence works only with these.
+        ("EK3_SRC1_POSXY = 3 and EK3_SRC1_VELXY = 3 (GPS in the EKF)", v("EK3_SRC1_POSXY") == 3 and v("EK3_SRC1_VELXY") == 3),
+        ("COMPASS_ENABLE = 1 and COMPASS_USE = 1 (no heading, no GPS)", v("COMPASS_ENABLE") == 1 and v("COMPASS_USE") == 1),
+        ("COMPASS_AUTODEC = 1 (declination from the GPS)", v("COMPASS_AUTODEC") == 1),
+        ("SERIAL2_PROTOCOL = 5 (GPS port)", v("SERIAL2_PROTOCOL") == 5),
+        ("a compass detected (COMPASS_DEV_ID set)", bool(v("COMPASS_DEV_ID"))),
+        ("FS_EKF_ACTION = 1 (LAND on a bad EKF)", v("FS_EKF_ACTION") == 1),
+    ]
+    print("== App, SafeDown, GPS and ARM checks on the FC's values")
     for label, okay in checks:
         print(f"   {'OK  ' if okay else 'FAIL'} {label}")
-    print(f"   NOTE GPS in the EKF: {'on' if gps else 'off: no position hold, it drifts with the wind'}")
     print()
 
     todo = [x for x in rows if x[0] in ("CRITICAL", "TUNING", "RADIO", "OTHER")

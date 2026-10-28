@@ -117,21 +117,26 @@ Everything needed to rebuild the drone is in the repository:
 
 | What | Where |
 | --- | --- |
-| FC parameters (all 1265, read 2026-10-22) | `deploy/fc/TBS_LUCID_H7_2026-10-22.param` |
+| FC parameters (all 1271, read 2026-10-28, GPS and compass on) | `deploy/fc/TBS_LUCID_H7_2026-10-28.param` |
 | What each WASP-critical parameter does | `controller-settings.md` |
 | App settings (WASP profiles, throttle, ramp, timers, camera, engine) | `deploy/wasp-config/*.json` |
 | Pilot procedure (Greek) | `pilot-instructions-el.md` |
 
 **New FC (same model, ArduCopter):**
 1. Flash the same ArduCopter version.
-2. In Mission Planner or QGC, Config → Full Parameter List → Load from file
-   `deploy/fc/TBS_LUCID_H7_2026-10-22.param` → Write Params → reboot the FC.
+2. Stop the app (`systemctl --user stop wasp-tracker`) and run
+   `"$WASP_PY" src/tests/fc_param_check.py --conn /dev/serial/by-id/usb-ArduPilot_*-if00 --apply`:
+   it lists every difference from `deploy/fc/TBS_LUCID_H7_2026-10-28.param` and writes the ones
+   you accept, one by one, read back (sensor calibrations and IDs are never copied). Or in
+   Mission Planner: Full Parameter List → Load from file → Write Params. Reboot the FC, start
+   the app again.
 3. **Recalibrate on the new board.** The file carries the old board's sensor
    offsets. Do the accelerometer, compass, radio (RC) and ESC calibration, and
    check motor order and direction with Motor Test, props off.
-4. Check the WASP-critical values in `controller-settings.md` section 1:
-   `ACRO_TRAINER=0`, `RC_OVERRIDE_TIME=1`, `FLTMODE_CH=6` with switch
-   low = ACRO / middle = STABILIZE / high = ALT_HOLD, and `SYSID_MYGCS=255`.
+4. Run `fc_param_check.py` again without `--apply`: every line under "App, SafeDown, GPS and
+   ARM checks" must read OK (`ACRO_TRAINER=0`, `RC_OVERRIDE_TIME=1`, `FLTMODE_CH=6` with switch
+   low ACRO / middle STABILIZE / high ALT_HOLD, `SYSID_MYGCS=255`, `RC5_OPTION=154`, GPS in the
+   EKF, compass on and detected). All the values and why are in `controller-settings.md`.
 5. For a different FC model or frame, don't load the whole file. Set only
    section 1 of `controller-settings.md` by hand.
 
@@ -144,12 +149,16 @@ in the app (Parameters → WASP → Advanced).
 `mkdir -p ~/.config/wasp && cp deploy/wasp-config/*.json ~/.config/wasp/`.
 Otherwise leave them out and set the values in the UI.
 
-**After any replacement:** do a props-off bench check. Arm in ACRO, press GO
-(full throttle in 0.1 s), switch up (SafeDown: the FC goes to ALT_HOLD, then RTL
-with a GPS position, else LAND), disarm, re-arm, GO, switch to the middle (catch:
-STABILIZE, sticks back to the pilot after 1–3 s), disarm. GO needs a GPS position:
-power up flat outdoors, then put it on the stand. The GPS module must have a compass
-(`COMPASS_ENABLE 1`, `EK3_SRC1_POSXY 3`, `EK3_SRC1_VELXY 3`), calibrated.
+**GPS with compass:** a module with 6 wires (5V, GND, TX, RX, SDA, SCL): GPS TX to the FC's
+R2, RX to T2 (SERIAL2), SDA / SCL to the FC's I2C. Calibrate the compass in Mission Planner.
+The phone's GPS/Compass tile must read YES / YES outdoors.
+
+**After any replacement:** do a props-off bench check, outdoors (ARM needs a GPS position):
+power up flat, mode switch DOWN, throttle and arm switch down. Phone **ARM** (the app arms the
+FC; amber 2.5 s countdown), then the blue **LAUNCH WASP** (full throttle at once). Switch up
+(SafeDown: ALT_HOLD, then RTL). Disarm (arm switch up, then down), ARM and LAUNCH again, switch
+to the middle (catch: STABILIZE, sticks back to the pilot after 1–3 s), disarm. Last: ARM, then
+SAFEDOWN on the phone must disarm it.
 
 ## 5. Start manually, then install automatic startup
 

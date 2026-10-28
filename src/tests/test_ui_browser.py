@@ -367,5 +367,5 @@ for i, (name, w, h) in enumerate(SIZES):
 if FAILED:
 
     for f in FAILED:
-        pass
+        print("FAIL", f)
     sys.exit(1)
