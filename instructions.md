@@ -149,9 +149,10 @@ in the app (Parameters → WASP → Advanced).
 `mkdir -p ~/.config/wasp && cp deploy/wasp-config/*.json ~/.config/wasp/`.
 Otherwise leave them out and set the values in the UI.
 
-**GPS with compass:** a module with 6 wires (5V, GND, TX, RX, SDA, SCL): GPS TX to the FC's
-R2, RX to T2 (SERIAL2), SDA / SCL to the FC's I2C. Calibrate the compass in Mission Planner.
-The phone's GPS/Compass tile must read YES / YES outdoors.
+**GPS with compass:** the drone uses a **CAN (DroneCAN)** GPS + compass module on the FC's CAN
+port (`GPS1_TYPE 9`, `CAN_P1_DRIVER 1`, `CAN_D1_PROTOCOL 1`). A serial module instead: TX to R2,
+RX to T2 (SERIAL2, `GPS1_TYPE 1`), compass SDA / SCL to the FC's I2C. Calibrate the compass in
+Mission Planner, outdoors. The phone's GPS/Compass tile must read YES / YES outdoors.
 
 **After any replacement:** do a props-off bench check, outdoors (ARM needs a GPS position):
 power up flat, mode switch DOWN, throttle and arm switch down. Phone **ARM** (the app arms the

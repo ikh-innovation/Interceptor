@@ -39,6 +39,7 @@ CRITICAL = {
     # although COMPASS_ / GPS / SERIAL look board-specific: same FC model, same wiring.
     "COMPASS_ENABLE", "COMPASS_USE", "COMPASS_AUTODEC", "EK3_SRC1_POSXY", "EK3_SRC1_VELXY",
     "EK3_SRC1_POSZ", "EK3_SRC1_YAW", "GPS1_TYPE", "GPS_AUTO_CONFIG", "SERIAL2_PROTOCOL",
+    "CAN_P1_DRIVER", "CAN_P1_BITRATE", "CAN_D1_PROTOCOL", "COMPASS_EXTERNAL",
     "RTL_ALT", "RTL_SPEED", "RTL_LOIT_TIME", "RTL_ALT_FINAL", "FS_EKF_ACTION", "FENCE_ENABLE",
 }
 # Flight behaviour copied from the reference: tuning, filters, failsafes, EKF.
@@ -192,7 +193,9 @@ def main():
         ("EK3_SRC1_POSXY = 3 and EK3_SRC1_VELXY = 3 (GPS in the EKF)", v("EK3_SRC1_POSXY") == 3 and v("EK3_SRC1_VELXY") == 3),
         ("COMPASS_ENABLE = 1 and COMPASS_USE = 1 (no heading, no GPS)", v("COMPASS_ENABLE") == 1 and v("COMPASS_USE") == 1),
         ("COMPASS_AUTODEC = 1 (declination from the GPS)", v("COMPASS_AUTODEC") == 1),
-        ("SERIAL2_PROTOCOL = 5 (GPS port)", v("SERIAL2_PROTOCOL") == 5),
+        ("GPS on CAN (GPS1_TYPE 9, CAN_P1_DRIVER 1, CAN_D1_PROTOCOL 1) or on SERIAL2 (GPS1_TYPE 1, SERIAL2_PROTOCOL 5)",
+         (v("GPS1_TYPE") == 9 and v("CAN_P1_DRIVER") == 1 and v("CAN_D1_PROTOCOL") == 1)
+         or (v("GPS1_TYPE") == 1 and v("SERIAL2_PROTOCOL") == 5)),
         ("a compass detected (COMPASS_DEV_ID set)", bool(v("COMPASS_DEV_ID"))),
         ("FS_EKF_ACTION = 1 (LAND on a bad EKF)", v("FS_EKF_ACTION") == 1),
     ]

@@ -47,6 +47,7 @@ class Scenario:
                                      # "fence": none, the drone flies out of the geofence
     arm_by_app: bool = False         # the phone's ARM (the arm switch's function over MAVLink)
     fence_m: float = None            # a geofence square this wide around the stand
+    rc_fail: int = 0                 # trigger "rcloss": SIM_RC_FAIL (1 no pulses, 2 receiver failsafe values)
     gps: bool = True                 # False: no GPS in the EKF, SafeDown lands where it is
     gps_loss: bool = False           # the GPS dies on the way home
     after_s: float = 1.5             # launch -> trigger
@@ -118,6 +119,11 @@ def scenarios():
     add(Scenario("geofence-60m-straight", arm_by_app=True, fence_m=60, trigger="fence", after_s=.1))
     add(Scenario("geofence-100m-wind-5ms", arm_by_app=True, fence_m=100, trigger="fence", after_s=.1,
                  wind_ned=_wind(5, 0)))
+    for fail, what in ((1, "no-pulses"), (2, "receiver-failsafe")):
+        add(Scenario(f"radio-lost-{what}-rtl", trigger="rcloss", rc_fail=fail, after_s=2.0, arm_by_app=True,
+                     extra_params=dict(FS_THR_ENABLE=1), expect="fc_home"))
+        add(Scenario(f"radio-lost-{what}-now-land", trigger="rcloss", rc_fail=fail, after_s=2.0, arm_by_app=True,
+                     expect="any"))
     add(Scenario("catch-nominal", trigger="catch", expect="caught"))
     add(Scenario("catch-low-0.7s", trigger="catch", after_s=.7, expect="caught"))
     add(Scenario("catch-tumble", trigger="catch", upset=(1.6, 1.6, .4), upset_s=.2, expect="caught"))
@@ -281,6 +287,13 @@ class Run:
                 # The pilot: throttle to mid, then the switch to the middle.
                 self.sitl.rc.set_stick("throttle", .5)
                 self.sitl.rc.set(6, SWITCH["middle"])
+            elif sc.trigger == "rcloss":
+                # The transmitter's link dies mid-flight: the FC's own radio failsafe.
+                self.sitl.mav.mav.param_set_send(1, 1, b"SIM_RC_FAIL", sc.rc_fail, 9)
+                self.note(f"RC LOST (SIM_RC_FAIL {sc.rc_fail})")
+                with contextlib.suppress(TimeoutError):
+                    self.wait(lambda: self.c.mode_name in ("RTL", "LAND"), 8, "radio failsafe")
+                self.note(f"FC mode after the radio loss: {self.c.mode_name}")
             elif sc.trigger == "fence":
                 # Nobody does anything: crossing the fence starts SafeDown.
                 self.wait(lambda: m.safedown.active, 15, "SafeDown at the geofence")
@@ -412,7 +425,11 @@ class Run:
               "pilot": not crashed and any("SAFEDOWN ended: pilot switched" in e for e in events),
               "failed": any("SAFEDOWN FAILED" in e for e in events),
               "caught": self._caught_ok(s, crashed),
-              "any": not crashed and not tipped}[self.sc.expect]
+              "any": not crashed and not tipped,
+              # The FC's own RTL (no SafeDown): back on the stand, disarmed, intact.
+              "fc_home": (not crashed and not tipped and self.lifted and not self.c.armed
+                          and bool(final.get("on_ground")) and home_m is not None and home_m <= HOME_RADIUS_M),
+              }[self.sc.expect]
         if self.sc.gps_loss and not any(x.get("fc_pos_ok") is False for x in s):
             ok = False  # the GPS never went: the scenario tested nothing
         if not self.lifted:

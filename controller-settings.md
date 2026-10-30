@@ -168,19 +168,22 @@ return it to 0 before a WASP flight.
 
 ## 8. GPS and compass: needed for SafeDown home, ARM and the geofence
 
-"On the FC" is what the new FC has now (`COMPASS_ENABLE` and the two `EK3_SRC1_*` were
-written on 2026-10-28). The reference file already has `COMPASS_AUTODEC` 1; the FC still needs
-it. `COMPASS_DEV_ID` is 0 on the FC: no compass is connected yet. Calibrate the compass in
-Mission Planner after fitting the module.
+"On the FC" is what the FC has on 2026-10-30, with the GPS and compass module fitted. It is a
+**CAN (DroneCAN) module**: GPS and compass both come over CAN, not SERIAL2. Calibrate the
+compass in Mission Planner after fitting it (Setup → Compass → Onboard Mag Calibration,
+outdoors, then reboot); until then its offsets are 0.
 
 | Parameter | Set to | On the FC | Why |
 | --- | --- | --- | --- |
-| `SERIAL2_PROTOCOL` / `SERIAL2_BAUD` | 5 (GPS) / 57 (auto-detected anyway) | 5 / 57 | The GPS port (T2/R2). GPS TX goes to FC RX. |
-| `GPS1_TYPE` / `GPS_AUTO_CONFIG` | 1 (auto) / 1 | 1 / 1 | The FC finds and sets up the receiver itself. |
+| `GPS1_TYPE` | **9** (DroneCAN) for a CAN module, 1 (auto, serial) for a serial one | 9 | Where the FC looks for the GPS. |
+| `CAN_P1_DRIVER` / `CAN_P1_BITRATE` / `CAN_D1_PROTOCOL` | 1 / 1000000 / 1 (DroneCAN) | 1 / 1000000 / 1 | The CAN port the module is on. Needed for the CAN GPS and compass. |
+| `SERIAL2_PROTOCOL` / `SERIAL2_BAUD` | 5 / 57 | 5 / 57 | Only for a serial GPS (TX to R2, RX to T2). Unused with the CAN module; harmless. |
+| `GPS_AUTO_CONFIG` | 1 | 1 | The FC sets up the receiver itself. |
 | `COMPASS_ENABLE` / `COMPASS_USE` | 1 / 1 | 1 / 1 | **Required.** Without a heading the EKF never uses the GPS. |
-| `COMPASS_AUTODEC` | **1** | 0 | Magnetic declination from the GPS position (about 5° in Greece). At 0 the heading is off by that much. |
+| `COMPASS_AUTODEC` | **1** | 1 (written 2026-10-30) | Magnetic declination from the GPS position (about 5° in Greece). At 0 the heading is off by that much. |
 | `COMPASS_ORIENT` | as Mission Planner detects | 0 | Set by the calibration for an external module. |
-| `COMPASS_DEV_ID` | not 0 (set by the FC) | **0** | 0 = no compass found. After wiring SDA / SCL and a reboot it must change. |
+| `COMPASS_DEV_ID` / `COMPASS_EXTERNAL` | not 0 (set by the FC) / 1 | 97539 (DroneCAN) / 1 | 0 = no compass found. |
+| `COMPASS_OFS_X/Y/Z` | set by the calibration | **0, 0, 0** | Not calibrated yet. |
 | `EK3_SRC1_POSXY` / `EK3_SRC1_VELXY` | 3 / 3 (GPS) | 3 / 3 | Position and velocity from the GPS. |
 | `EK3_SRC1_POSZ` / `EK3_SRC1_YAW` | 1 (baro) / 1 (compass) | 1 / 1 | Height from the barometer, heading from the compass. |
 | `FS_EKF_ACTION` | 1 (LAND) | 1 | A failed EKF lands; SafeDown then never fights it with RTL. |
