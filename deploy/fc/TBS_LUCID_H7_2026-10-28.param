@@ -2,6 +2,7 @@
 # 1271 parameters: the FC checked one by one against the old dump, with GPS and compass on
 # (COMPASS_ENABLE 1, EK3_SRC1_POSXY 3, EK3_SRC1_VELXY 3, COMPASS_AUTODEC 1), and the GPS with
 # compass on CAN (DroneCAN: GPS1_TYPE 9, CAN_P1_DRIVER 1, CAN_D1_PROTOCOL 1), 2026-10-30.
+# FS_THR_ENABLE 1: RTL on radio loss (2026-10-30).
 # Load: src/tests/fc_param_check.py --apply (one by one), or Mission Planner 'Load from file'.
 # Sensor calibrations and IDs belong to this board: recalibrate a new one.
 ACRO_BAL_PITCH,1
@@ -408,7 +409,7 @@ FS_EKF_THRESH,0.8
 FS_GCS_ENABLE,0
 FS_GCS_TIMEOUT,5
 FS_OPTIONS,16
-FS_THR_ENABLE,3
+FS_THR_ENABLE,1
 FS_THR_VALUE,975
 FS_VIBE_ENABLE,1
 GCS_PID_MASK,0

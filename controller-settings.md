@@ -110,7 +110,7 @@ tells you how hard the drone can accelerate.
 
 | Parameter | Now | What it does with WASP |
 | --- | --- | --- |
-| `FS_THR_ENABLE` | 3 (LAND) | On radio loss in ACRO or STABILIZE with the throttle at zero, ArduCopter **disarms immediately, even in the air**. Keep the transmitter on and bound for the whole flight. |
+| `FS_THR_ENABLE` | **1 (RTL)**, written 2026-10-30 (was 3, LAND) | On radio loss the FC flies home (the GO spot: the app sets home at LAUNCH WASP) and lands; LAND where it is without a GPS position. **It works only while the app is not sending sticks**: after the CATCH (the pilot flying), or before launch. During a WASP flight the app's RC override counts as radio input for ArduCopter, so the FC never sees the loss (shown in SITL and in ArduCopter's `radio.cpp`). Until the app watches the receiver itself, a saved geofence is what brings a WASP flight home after a radio loss. In ACRO or STABILIZE with the throttle at zero ArduCopter can also **disarm at once, even in the air**: keep the transmitter on and bound for the whole flight. |
 | `FS_THR_VALUE` | 975 | Must stay more than 10 below the throttle's RC1_MIN (988): it is, by 3. Recalibrating the radio lower than 986 makes the FC refuse to arm; then set `FS_THR_VALUE` to 950. |
 | `FS_GCS_ENABLE` | 0 (off) | The Jetson isn't treated as a GCS for failsafe. Keep it 0. |
 | `BATT_FS_LOW_ACT` | 1 (LAND) at `BATT_LOW_VOLT` 10.5 V | Voltage sag at 100 % throttle can trigger LAND. The mode change out of ACRO ends WASP and the FC starts landing. Check the setting against your pack. |
