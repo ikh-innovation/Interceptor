@@ -1568,9 +1568,13 @@
   }, 50);
   function paintWasp(j, m, ph, testMode, ctl) {
     var gps = m.gps || {}, comp = !!m.compass_ok, gpsOk = !!gps.ok;
-    S("c_gps", (gpsOk ? "YES" : "NO") + " / " + (comp ? "YES" : "NO"),
-      gpsOk && comp ? "ok" : gpsOk || comp ? "warn" : "bad");
-    $("c_gps").title = "GPS fix " + (gps.fix || 0) + ", " + (gps.sats || 0) + " satellites; compass " + (comp ? "healthy" : "missing");
+    // GPS: the satellite count once the receiver talks to the FC (fix 1 = connected,
+    // still searching), NO when there is no receiver or it went silent.
+    var gpsOn = Number(gps.fix) >= 1;
+    S("c_gps", (gpsOn ? (Number(gps.sats) || 0) + " sat" : "NO") + " / " + (comp ? "YES" : "NO"),
+      gpsOk && comp ? "ok" : !gpsOn ? "bad" : "warn");
+    $("c_gps").title = (gpsOn ? "GPS connected, fix type " + gps.fix + (gpsOk ? " (3D, ready)" : " (searching)") : "No GPS: not connected or not talking to the FC")
+      + "; compass " + (comp ? "healthy" : "missing");
     var f = m.fence || {}, chip = $("chip_fence"), live = fenceLive(m);
     // ON only when it really works: a fence, GPS, compass and a position.
     chip.textContent = !f.armed ? "NONE" : f.inside === false ? "OUT" : live ? "ON" : "NO GPS";

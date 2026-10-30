@@ -57,7 +57,7 @@ commands, reports = [], []
 detector_settings = dict(sky_gate=True, follower=True, follower_default=True, cam_fps=30, cam_default=30, cam_busy=False,
                          video_stabilization=False, engine=640, engines=[640, 960], engine_default=640,
                          engine_busy=False)
-simulation = dict(target=True, attitude=True, gate_why="", arm_why="", gps=True, compass=True,
+simulation = dict(target=True, attitude=True, gate_why="", arm_why="", gps=True, gps_fix=0, compass=True,
                   position=[37.98, 23.72], home=[37.98, 23.72])
 done = threading.Event()
 lock = threading.Lock()
@@ -87,7 +87,8 @@ def state():
              wasp_attitude_fresh=simulation["attitude"],
              wasp_arm_why=mapper.wasp_arm_ready(),
              armed_s=context()["armed_s"],
-             gps=dict(fix=3 if simulation["gps"] else 0, sats=12 if simulation["gps"] else 0, ok=simulation["gps"]),
+             gps=dict(fix=3 if simulation["gps"] else simulation["gps_fix"], sats=12 if simulation["gps"] else 0,
+                      ok=simulation["gps"]),
              compass_ok=simulation["compass"], position_ok=simulation["position"] is not None,
              position=simulation["position"], home=simulation["home"])
     return dict(mission=s, armed=mapper.armed, linked=True,
@@ -267,10 +268,13 @@ async function main(){
  await check('refresh has no popup and sends no mode command',!visible('#modechange')&&!q('.app').inert&&!q('.pop.open')&&(await req('/commands')).length===count);
  await check('refresh preserves throttle, rate and profile',q('[data-wp="throttle"] [data-wv="0.75"]').classList.contains('on')&&q('[data-wp="rate"] [data-wv="45"]').classList.contains('on')&&q('#wasp_profiles [data-wasp-profile="standard"]').classList.contains('on'));
  // ---- GPS / compass tile
- await check('GPS / Compass tile reads YES / YES in green',q('#c_gps').textContent==='YES / YES'&&q('#c_gps').classList.contains('ok'));
- await req('/set?armed=0&phase=PILOT&compass=0');await until(()=>q('#c_gps').textContent==='YES / NO');
+ await check('GPS / Compass tile shows the satellites in green',q('#c_gps').textContent==='12 sat / YES'&&q('#c_gps').classList.contains('ok'));
+ await req('/set?armed=0&phase=PILOT&compass=0');await until(()=>q('#c_gps').textContent==='12 sat / NO');
  await check('a missing compass shows on the tile',q('#c_gps').classList.contains('warn'));
- await req('/set?armed=0&phase=PILOT&gps=0&compass=0&armwhy=waiting for a GPS fix: SafeDown flies back to the launch point');
+ await req('/set?armed=0&phase=PILOT&gps=0&gpsfix=1&compass=1&armwhy=waiting for a GPS fix: SafeDown flies back to the launch point');
+ await until(()=>q('#c_gps').textContent==='0 sat / YES');
+ await check('GPS connected but searching: the satellite count in amber',q('#c_gps').classList.contains('warn')&&q('#b_arm').disabled);
+ await req('/set?armed=0&phase=PILOT&gps=0&gpsfix=0&compass=0&armwhy=waiting for a GPS fix: SafeDown flies back to the launch point');
  await until(()=>q('#c_gps').textContent==='NO / NO'&&q('#b_arm').disabled);
  await check('no GPS: red tile and ARM refused with the reason',q('#c_gps').classList.contains('bad')&&q('#armsub').textContent==='waiting for GPS');
  await req('/set?armed=0&phase=PILOT&gps=1&compass=1&armwhy=');await until(()=>!q('#b_arm').disabled);
@@ -488,6 +492,8 @@ class Handler(BaseHTTPRequestHandler):
                 for key in ("gps", "compass"):
                     if key in q:
                         simulation[key] = q[key][0] == "1"
+                if "gpsfix" in q:
+                    simulation["gps_fix"] = int(q["gpsfix"][0])
                 if "armwhy" in q:
                     simulation["arm_why"] = q["armwhy"][0]
                 if "pos" in q:
