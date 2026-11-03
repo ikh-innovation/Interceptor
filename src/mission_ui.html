@@ -39,6 +39,29 @@
   .brand{flex:1;min-width:0;overflow:hidden;white-space:nowrap;font:700 15px/1 var(--sans);letter-spacing:.22em;color:var(--ink)}
   .brand span{color:var(--acc);font-weight:500;letter-spacing:.14em;margin-left:6px;font-size:11px}
   .logo{flex:0 0 auto;display:block;height:38px;width:56px;object-fit:contain}
+  /* Top right: the battery (both modes), then the logo. */
+  .topr{flex:0 0 auto;grid-area:logo;align-self:center;display:flex;align-items:center;gap:8px;min-width:0}
+  .batt{display:flex;align-items:center;gap:5px;padding:5px 8px;border-radius:10px;border:1px solid var(--line);background:var(--bg2);
+        color:var(--faint);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .bico{position:relative;flex:0 0 auto;width:24px;height:13px;border:2px solid currentColor;border-radius:3px}
+  .bico::after{content:"";position:absolute;right:-5px;top:2.5px;width:3px;height:4px;border-radius:0 1px 1px 0;background:currentColor}
+  .bico i{position:absolute;left:1px;top:1px;bottom:1px;width:0;border-radius:1px;background:currentColor;transition:width .4s}
+  .batt b{font:700 13px/1 var(--mono)}
+  .batt small{font:11px/1 var(--mono);color:var(--dim)}
+  .batt small:empty{display:none}
+  .batt.ok{color:var(--ok)}.batt.warn{color:var(--warn)}.batt.bad{color:var(--bad);border-color:var(--bad)}
+  .batt.crit{animation:battflash .6s ease-in-out infinite alternate}
+  .bico em{display:none;position:absolute;inset:-2px 0 0;font:900 10px/13px var(--sans);font-style:normal;text-align:center;color:#fff}
+  .batt.none{color:#9aa3ad;border-style:dashed}
+  .batt.none .bico{background:#9aa3ad}
+  .batt.none .bico em{display:block}
+  .batt.none b{font-size:11px;letter-spacing:.04em}
+  .jico{flex:0 0 auto;width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+  @media (max-width:420px){.batt.jet small{display:none}}
+  @media (max-width:360px){.batt.jet b{display:none}}
+  @keyframes battflash{from{background:var(--bg2)}to{background:rgba(220,38,38,.28)}}
+  @media (prefers-reduced-motion:reduce){.batt.crit{animation:none}}
+  @media (max-width:420px){.batt small{display:none}.batt{padding:4px 6px}.batt b{font-size:12px}}
   .byline{display:flex;flex-direction:column;align-items:center;gap:10px;margin:34px 0 10px}
   .byline img{display:block;height:96px;width:140px;object-fit:contain}
   .byline span{font:11px/1 var(--cond);letter-spacing:.24em;color:var(--faint)}
@@ -514,22 +537,300 @@
     .big{min-height:56px;border-radius:16px}
     .big b{font-size:14px}
   }
+
+  /* The menu: the logo, then the two flight modes as picture cards. */
+  #sh_menu h3{justify-content:space-between}
+  .menu-logo{display:block;height:64px;width:auto;max-width:60%}
+  .menu-k{margin:6px 0 10px;font:700 12px/1 var(--cond);letter-spacing:.16em;color:var(--faint)}
+  .modecards{display:grid;grid-template-columns:1fr;gap:14px}
+  @media (min-width:560px){.modecards{grid-template-columns:1fr 1fr}}
+  .modecard{display:flex;flex-direction:column;padding:0;overflow:hidden;border-radius:20px;border:2px solid var(--line);background:#fff;
+    text-align:left;box-shadow:0 2px 10px rgba(16,19,23,.08);transition:transform .06s,box-shadow .2s}
+  .modecard svg{display:block;width:100%;height:auto;aspect-ratio:320/150}
+  .modecard .mc-foot{display:flex;align-items:center;gap:10px;padding:12px 14px}
+  .modecard .mc-foot > span{flex:1;min-width:0}
+  .modecard b{display:block;font:700 20px/1 var(--sans);letter-spacing:.16em;color:#30353c}
+  .modecard small{display:block;margin-top:6px;font:12.5px/1.3 var(--sans);color:#5b646e}
+  .modecard i{flex:0 0 auto;padding:6px 10px;border-radius:999px;background:#eceef1;color:#8b939d;font:700 11px/1 var(--sans);font-style:normal;letter-spacing:.1em}
+  .modecard.seeker.on{border-color:#ef7a1a;box-shadow:0 0 0 3px rgba(239,122,26,.25)}
+  .modecard.seeker.on i{background:#ef7a1a;color:#fff}
+  .modecard.wasp.on{border-color:#2f66b8;box-shadow:0 0 0 3px rgba(47,102,184,.25)}
+  .modecard.wasp.on i{background:#2f66b8;color:#fff}
+  .modecard:active:not(:disabled){transform:scale(.99)}
+  .modecard:disabled{opacity:.55}
+  .menu-mount{margin-top:14px;display:flex;justify-content:flex-end}
+  .menu-mount .mount-chip{margin:0;padding:8px 12px;border:0;border-radius:10px;background:#eceef1;color:#454b53;font:500 12px/1 var(--sans)}
+  .menu-mount .mount-chip.warn{color:#8a5900;background:#fff6dc}
+  /* ---- SEEKER: WASP's layout and geometry, its own light blue with orange details */
+  .seekmode,.simtag{display:none}
+  body[data-flight-mode="normal"]{--bg:#e2edf7;--bg2:#ffffff;--bg3:#eef5fb;--line:#c3d6e7;--txt:#1d2b38;--dim:#4c6176;
+    --faint:#7b90a4;--ink:#1f2f3e;--ink2:#38495a;--ctl:#4a6078;--ctl-sub:#d3e1ee;--acc:#ef7a1a;--acc-ink:#ffffff}
+  body[data-flight-mode="normal"] :is(#sh_speed,.pop,#modechange){--acc:#e06d10;--acc-ink:#ffffff}
+  body[data-flight-mode="normal"] .seekmode{display:inline;margin-left:8px;color:var(--acc);letter-spacing:.18em}
+  body[data-flight-mode="normal"] .simtag:not([hidden]){display:inline-block;margin-left:8px;padding:3px 7px;border-radius:7px;background:var(--acc);
+    color:#fff;font:700 11px/1 var(--sans);letter-spacing:.12em;vertical-align:2px}
+  /* Old Seeker screen gone: no pad, no heading belt or tape; the video gets the room. The dashed
+     aim line and its mark stay: before ENGAGE the target sits on the mark. */
+  body[data-flight-mode="normal"] .ctl,body[data-flight-mode="normal"] #tile_ai{display:none}
+  body[data-flight-mode="normal"] :is(.belt,.tape){display:none!important}
+  body[data-flight-mode="normal"] .vbox{height:100%}
+  body[data-flight-mode="normal"] .badge{top:12px;max-width:calc(100% - 20px);overflow:hidden;text-overflow:ellipsis}
+  body[data-flight-mode="normal"] .msn-alert{top:12px}
+  @supports (width:1cqw){ body[data-flight-mode="normal"] .vbox{height:auto;width:min(100cqw, 100cqh * var(--ar, 4 / 3))} }
+  body[data-flight-mode="normal"] .tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+  body[data-flight-mode="normal"] .tile .k{letter-spacing:.04em}
+  #tile_ast{cursor:pointer}
+  #tile_ast .k:after{content:" ›";color:var(--acc)}
+  /* The panel: the same boxes and distances as the WASP panel. */
+  .seeker-ui{flex:0 0 auto;display:flex;flex-direction:column;gap:10px;min-width:0}
+  .sktool{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-width:0;
+        min-height:clamp(64px,9vh,78px);padding:8px 4px;border:1px solid var(--line);border-radius:16px;background:var(--bg2);
+        color:var(--ink);font:700 11.5px/1.1 var(--sans);letter-spacing:.02em;box-shadow:0 1px 3px rgba(16,19,23,.08)}
+  .sktool .ico{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:11px;background:#fde7d3;color:var(--acc)}
+  .sktool svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .sktool .tl{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sktool .chip{position:absolute;top:5px;right:5px;padding:2px 5px;border-radius:999px;background:var(--bg3);color:var(--faint);
+              font:700 8.5px/1.1 var(--sans);font-style:normal;letter-spacing:.06em}
+  .sktool .chip.on{background:var(--ok);color:#fff}.sktool .chip.bad{background:var(--bad);color:#fff}.sktool .chip.warn{background:var(--warn);color:#2b1d00}
+  .sktool:disabled{opacity:.5}
+  body[data-flight-mode="normal"] #chip_sim{background:var(--acc);color:#fff;left:5px;right:auto}
+  #s_abort,#s_abort:disabled{background:#c62828;opacity:1;box-shadow:0 4px 14px rgba(198,40,40,.32)}
+  #s_abort:disabled{background:#e3a3a3;box-shadow:none}
+  #s_main{background:#30353c;box-shadow:0 4px 14px rgba(16,19,23,.22)}
+  #s_main.seek{background:var(--acc);box-shadow:0 0 0 3px rgba(239,122,26,.25),0 4px 14px rgba(239,122,26,.35)}
+  #s_main.engage{background:#d62828;box-shadow:0 0 0 3px rgba(214,40,40,.2),0 4px 14px rgba(214,40,40,.3)}
+  #s_main.flying,#s_main.flying:disabled{background:var(--ok);opacity:1}
+  #s_main:disabled{background:#a7aeb6;box-shadow:none;opacity:1}
+  .mh-cue{padding:7px 10px;border-radius:10px;background:#fde7d3;font:500 12.5px/1.3 var(--mono);color:var(--ink);white-space:pre-line}
+  .cue-status{margin:0 0 10px;padding:9px 12px;border-radius:12px;background:var(--bg2);border:1px solid var(--line);font:12.5px/1.4 var(--mono);color:var(--dim)}
+  .cue-status.bad{color:var(--bad)}
+  .cue-list{margin:0 0 12px}
+  .cue-item{display:flex;align-items:center;gap:10px;width:100%;margin:0 0 6px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);
+    background:var(--bg2);color:var(--ink);text-align:left}
+  .cue-item b{flex:0 0 auto;min-width:74px;font:700 14px/1.2 var(--mono)}
+  .cue-item span{flex:1;min-width:0;font:12.5px/1.3 var(--mono);color:var(--dim)}
+  .cue-item.on{border-color:#e06d10;box-shadow:0 0 0 2px #e06d10 inset}
+  .cue-item.stale{opacity:.5}
+  .msn-hud{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:16px;background:var(--bg2);border:1px solid var(--line);
+    font-variant-numeric:tabular-nums}
+  .mh-top{display:flex;align-items:center;gap:8px}
+  .mh-top b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:700 15px/1.2 var(--sans);letter-spacing:.04em}
+  .mh-state{flex:0 0 auto;padding:4px 8px;border-radius:999px;background:var(--acc);color:var(--acc-ink);font:700 11px/1 var(--sans);letter-spacing:.1em}
+  .mh-state.bad{background:var(--bad);color:#fff}.mh-state.warn{background:var(--warn);color:#2b1d00}
+  .mh-step{display:flex;align-items:baseline;gap:8px;padding:8px 10px;border-radius:10px;background:var(--bg3)}
+  .mh-n{flex:0 0 auto;font:700 13px/1 var(--mono);color:var(--acc)}
+  .mh-txt{flex:1;min-width:0;font:500 13.5px/1.3 var(--sans)}
+  .mh-t{flex:0 0 auto;font:12px/1 var(--mono);color:var(--dim)}
+  .mh-warn{padding:8px 10px;border-radius:10px;background:#dc2626;color:#fff;font:700 13px/1.3 var(--sans);animation:msnflash .6s ease-in-out infinite alternate}
+  .mh-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+  .mh-grid div{padding:6px 8px;border-radius:9px;background:var(--bg3);min-width:0}
+  .mh-grid span{display:block;font:10px/1 var(--cond);letter-spacing:.1em;color:var(--faint)}
+  .mh-grid b{display:block;margin-top:4px;font:700 14px/1.1 var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mh-link{display:flex;gap:6px}
+  .mh-link i{flex:1;text-align:center;padding:5px 2px;border-radius:8px;font:700 10.5px/1 var(--sans);font-style:normal;letter-spacing:.08em;
+    background:var(--bg3);color:var(--faint)}
+  .mh-link i.ok{background:rgba(22,163,74,.14);color:#15803d}.mh-link i.bad{background:rgba(220,38,38,.12);color:#b91c1c}
+  .mh-btns{display:flex;gap:8px}
+  .mh-btns:not(:has(button:not([hidden]))){display:none}
+  .mh-btns button{flex:1;min-height:52px;border:0;border-radius:12px;background:var(--ctl);color:#fff;font:700 15px/1 var(--sans);letter-spacing:.08em}
+  .mh-btns .mh-next{background:var(--acc);color:var(--acc-ink)}
+  .msn-alert{position:absolute;left:8px;right:8px;top:34px;z-index:3;display:flex;align-items:center;gap:10px;padding:12px;border-radius:12px;
+    background:#dc2626;color:#fff;box-shadow:0 6px 24px rgba(0,0,0,.45);animation:msnflash .5s ease-in-out infinite alternate}
+  .msn-alert b{flex:1;font:700 15px/1.25 var(--sans);letter-spacing:.03em}
+  .msn-alert button{flex:0 0 auto;min-width:64px;min-height:44px;border:2px solid #fff;border-radius:10px;background:transparent;color:#fff;font:700 15px/1 var(--sans)}
+  .msn-offer{position:absolute;left:8px;right:8px;bottom:8px;z-index:3;display:flex;flex-direction:column;gap:10px;padding:12px;border-radius:14px;
+    background:rgba(16,24,34,.92);border:2px solid var(--acc);color:#fff;box-shadow:0 8px 28px rgba(0,0,0,.5)}
+  .msn-offer.engage{border-color:#ef4444}
+  .msn-offer b{font:700 14.5px/1.3 var(--sans)}
+  .mo-btns{display:grid;grid-template-columns:1fr 1.3fr;gap:8px}
+  .mo-btns button{min-height:52px;border:0;border-radius:12px;font:700 16px/1 var(--sans);letter-spacing:.08em}
+  .mo-no{background:#4a6078;color:#fff}
+  .mo-yes{background:var(--acc);color:var(--acc-ink)}
+  .msn-offer.engage .mo-yes{background:#dc2626;color:#fff}
+  @keyframes msnflash{from{background:#dc2626}to{background:#7f1d1d}}
+  @media (prefers-reduced-motion:reduce){.msn-alert,.mh-warn{animation:none}}
+  .msn-sheet .body{padding-bottom:12px}
+  .msn-limits{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 14px}
+  .msn-limits label{display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:12px;background:var(--bg2);border:1px solid var(--line);
+    font:500 11.5px/1.2 var(--sans);color:var(--dim)}
+  .msn-limits .in,.mc-p .in{display:flex;align-items:center;gap:6px}
+  .msn-sheet input{width:100%;min-width:0;min-height:42px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg3);
+    color:var(--ink);font:700 16px var(--mono);user-select:text;-webkit-user-select:text}
+  .msn-sheet input:focus{outline:2px solid #e06d10;outline-offset:1px}
+  .msn-sheet .in span{font:12px var(--mono);color:var(--dim)}
+  .msn-card{display:flex;align-items:center;gap:12px;width:100%;margin:0 0 8px;padding:12px;border-radius:14px;border:1px solid var(--line);
+    background:var(--bg2);color:var(--ink);text-align:left}
+  .msn-card .id{flex:0 0 auto;width:46px;height:46px;border-radius:12px;display:flex;align-items:center;justify-content:center;
+    background:#e06d10;color:#fff;font:700 15px/1 var(--mono)}
+  .msn-card.ground .id{background:#4a6078}
+  .msn-card > div{flex:1;min-width:0}
+  .msn-card b{display:block;font:700 15px/1.2 var(--sans)}
+  .msn-card small{display:block;margin-top:4px;font:12.5px/1.3 var(--sans);color:var(--dim)}
+  .msn-card .chev{flex:0 0 auto;color:var(--faint);font-size:22px}
+  .msn-card:disabled{opacity:.45}
+  .mc-card{margin:0 0 12px;padding:12px;border-radius:14px;background:var(--bg2);border:1px solid var(--line)}
+  .mc-h{display:flex;align-items:center;gap:8px;margin:0 0 10px;font:700 12px/1 var(--sans);letter-spacing:.1em;color:#d0600a;text-transform:uppercase}
+  .mc-saved{margin-left:auto;font:500 11px/1 var(--sans);letter-spacing:0;text-transform:none;color:var(--ok);opacity:0;transition:opacity .2s}
+  .mc-saved.on{opacity:1}
+  .mc-steps{margin:0;padding-left:22px;font:14px/1.45 var(--sans);color:var(--ink)}
+  .mc-steps li{padding:2px 0}
+  .mc-p{display:grid;grid-template-columns:minmax(0,1fr) 140px;align-items:center;gap:10px;margin:0 0 8px}
+  .mc-p > span{font:500 13px/1.25 var(--sans);color:var(--dim)}
+  .mc-p .seg button{padding:10px 2px;font-size:12.5px}
+  .mc-p.wide{grid-template-columns:1fr}
+  .mc-lim{margin-top:6px;font:12px/1.4 var(--sans);color:var(--faint)}
+  .mc-checks{list-style:none;margin:0;padding:0}
+  .mc-checks li{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font:13.5px/1.3 var(--sans);color:var(--ink)}
+  .mc-checks li:last-child{border-bottom:0}
+  .mc-checks li i{flex:0 0 22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 13px/1 var(--sans);
+    font-style:normal;color:#fff;background:var(--ok)}
+  .mc-checks li.bad i{background:var(--bad)}.mc-checks li.na i{background:var(--faint)}.mc-checks li.warn i{background:var(--warn)}
+  .mc-checks li div{flex:1;min-width:0}.mc-checks li small{display:block;color:var(--dim);margin-top:2px;overflow-wrap:anywhere}
+  .mc-pilot{margin:0 0 8px;padding:10px 12px;border-radius:12px;background:#fff6dc;border:1px solid var(--warn);color:#5c3d00;font:500 12.5px/1.4 var(--sans)}
+  .mc-start{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;width:100%;margin-top:10px;
+    min-height:68px;border:0;border-radius:16px;background:#e06d10;color:#fff}
+  .mc-start b{font:700 19px/1 var(--sans);letter-spacing:.14em}
+  .mc-start small{font:500 12px/1.2 var(--sans);opacity:.9;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 10px}
+  .mc-start:disabled{background:#a7aeb6}
+  .mc-start.mc-abort{background:#c62828;box-shadow:0 4px 14px rgba(198,40,40,.32);min-height:76px}
+  .mc-start.mc-abort b{font-size:22px}
+  .mc-start.mc-restart{background:#ef7a1a;min-height:76px;animation:mcpulse 1s ease-in-out infinite alternate}
+  .mc-start.mc-restart b{font-size:21px}
+  @keyframes mcpulse{from{box-shadow:0 0 0 0 rgba(239,122,26,.6)}to{box-shadow:0 0 0 8px rgba(239,122,26,0)}}
+  .mc-start.done{background:var(--ok)}
+  .mc-start + .mc-start{margin-top:8px}
+  .mc-alert{position:sticky;top:0;left:auto;right:auto;margin:0 0 10px;z-index:2}
+  .mc-sum{margin:0 0 12px;padding:12px 14px;border-radius:14px;background:var(--bg2);border:1px solid var(--line);
+    border-left:5px solid var(--acc);font:500 14.5px/1.45 var(--sans);color:var(--ink)}
+  .mc-now{display:flex;flex-direction:column;gap:9px;margin:0 0 12px;padding:12px;border-radius:16px;background:var(--bg2);
+    border:1px solid var(--line);font-variant-numeric:tabular-nums}
+  .mc-bar{display:flex;gap:3px}
+  .mc-bar i{flex:1;height:6px;border-radius:3px;background:var(--bg3);border:1px solid var(--line)}
+  .mc-bar i.done{background:var(--ok);border-color:var(--ok)}.mc-bar i.cur{background:var(--acc);border-color:var(--acc)}
+  .mc-nowstep{display:flex;align-items:center;gap:8px}
+  .mc-nowstep b{flex:1;min-width:0;font:700 16px/1.25 var(--sans)}
+  .mc-n{flex:0 0 auto;font:700 13px/1 var(--mono);color:var(--acc)}
+  .mc-big{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+  .mc-big div{padding:8px;border-radius:11px;background:var(--bg3);min-width:0}
+  .mc-big span{display:block;font:10px/1 var(--cond);letter-spacing:.1em;color:var(--faint)}
+  .mc-big b{display:block;margin-top:5px;font:700 21px/1 var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mc-big small{display:block;margin-top:4px;font:11.5px/1.1 var(--mono);color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mc-now .mh-link i{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:9.5px}
+  .mc-res{margin:0 0 12px}
+  .mc-res .mr-csv{margin:8px 0 0}
+  .mc-pic,.mc-mapcard{padding:8px}
+  .mc-picbox{position:relative;width:100%;aspect-ratio:16/10;max-height:36vh;border-radius:10px;overflow:hidden;background:var(--bg3)}
+  .mc-picbox canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .mc-map{position:relative;width:100%;aspect-ratio:4/3;max-height:40vh;border-radius:10px;overflow:hidden;background:#1d2228}
+  .mc-map canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .mc-map-note{position:absolute;left:8px;top:8px;right:8px;font:600 11.5px/1.3 var(--sans);color:#fff;text-shadow:0 1px 2px rgba(16,19,23,.9);pointer-events:none}
+  .mc-legend{display:flex;flex-wrap:wrap;gap:4px 12px;padding:8px 4px 2px;font:11.5px/1.2 var(--sans);color:var(--dim)}
+  .mc-legend i{display:inline-block;width:14px;height:4px;margin-right:5px;border-radius:2px;vertical-align:middle}
+  .lg-fence{background:#e0b000}.lg-route{background:repeating-linear-gradient(90deg,#ef7a1a 0 4px,transparent 4px 7px)}
+  .lg-trail{background:#2f66b8}.lg-lim{background:repeating-linear-gradient(90deg,#dc2626 0 3px,transparent 3px 6px)}
+  .lg-drone{width:9px!important;height:9px!important;border-radius:50%!important;background:#2f66b8;border:2px solid #fff;box-shadow:0 0 0 1px #2f66b8}
+  .mc-ready{margin:0 0 12px;padding:12px 14px;border-radius:14px;background:#fdecec;border:1px solid #f3b4b4;color:#8a1c1c}
+  .mc-ready b{display:block;font:700 15px/1.25 var(--sans);letter-spacing:.04em}
+  .mc-ready ul{margin:6px 0 0;padding-left:18px;font:13px/1.4 var(--sans)}
+  .mc-ready ul:empty{display:none}
+  .mc-ready.ok{background:#e7f6ec;border-color:#9fd8b2;color:#14532d}
+  .mc-ready.wait{background:var(--bg2);border-color:var(--line);color:var(--dim)}
+  .mc-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .mc-grid .mc-p{display:flex;flex-direction:column;align-items:stretch;gap:5px;margin:0;padding:8px;border-radius:11px;background:var(--bg3)}
+  .mc-grid .mc-p > span{font:500 11.5px/1.2 var(--sans)}
+  .mc-fold summary{cursor:pointer;margin:0;list-style:none}
+  .mc-fold summary::-webkit-details-marker{display:none}
+  .mc-fold summary:after{content:"›";margin-left:auto;font-size:18px;transition:transform .15s}
+  .mc-fold[open] summary{margin-bottom:10px}.mc-fold[open] summary:after{transform:rotate(90deg)}
+  .mc-steps li.done{color:var(--faint)}
+  .mc-steps li.cur{font-weight:700;color:#d0600a}
+  .mc-start.ok{background:#30353c}
+  .mr-verdict{margin:4px 0 6px;padding:18px;border-radius:16px;text-align:center;font:700 40px/1 var(--sans);letter-spacing:.16em;color:#fff;background:var(--faint)}
+  .mr-verdict.PASS{background:var(--ok)}.mr-verdict.FAIL{background:var(--bad)}.mr-verdict.INCOMPLETE{background:var(--warn);color:#2b1d00}
+  .mr-why{margin:0 0 10px;font:13.5px/1.4 var(--sans);color:var(--dim);overflow-wrap:anywhere}
+  .mr-csv{margin:0;font:12px/1.4 var(--mono);color:var(--dim);overflow-wrap:anywhere;user-select:text;-webkit-user-select:text}
+  /* Portrait phone: exactly the WASP rules (video full width, tools 2 x 2 filling down to the big buttons). */
+  @media (orientation:portrait) and (max-width:699px){
+    body[data-flight-mode="normal"] .vidwrap{flex:0 0 auto;height:min(calc((100vw - 24px) / (var(--ar, 4 / 3))), 50vh)}
+    body[data-flight-mode="normal"] .seeker-ui{flex:1 1 auto;min-height:0}
+    body[data-flight-mode="normal"] .wtools{flex:1 1 auto;min-height:0;max-height:330px;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:minmax(0,1fr);gap:10px;margin-top:auto}
+    .sktool{min-height:0;flex-direction:row;gap:10px;font-size:13px}
+    .sktool .ico{width:44px;height:44px;border-radius:13px}
+    .sktool svg{width:26px;height:26px}
+    body[data-flight-mode="normal"] .msn-hud{margin-top:auto}
+    /* A mission: ABORT never leaves the screen; the HUD gives way and scrolls. */
+    body.msn-run[data-flight-mode="normal"] .seeker-ui{overflow:hidden}
+    body.msn-run[data-flight-mode="normal"] .msn-hud{flex:0 1 auto;min-height:0;overflow-y:auto}
+    body.msn-run[data-flight-mode="normal"] .actions{flex:0 0 auto}
+  }
+  @media (orientation:portrait) and (max-width:699px) and (max-height:600px){
+    body[data-flight-mode="normal"] .wtools{grid-template-columns:repeat(4,minmax(0,1fr));flex:0 0 auto}
+    .sktool{flex-direction:column;gap:4px;min-height:58px;font-size:10.5px}
+    .sktool .ico{width:30px;height:30px}
+    .sktool svg{width:20px;height:20px}
+    body.msn-run[data-flight-mode="normal"] .vidwrap{height:min(calc((100vw - 24px) / (var(--ar, 4 / 3))), 34vh)}
+    .msn-hud{padding:8px;gap:6px}
+    .mh-grid{gap:4px}.mh-grid div{padding:4px 6px}.mh-grid b{font-size:12px;margin-top:2px}
+    .mh-step{padding:6px 8px}.mh-txt{font-size:12.5px}
+    .mh-link i{padding:4px 2px;font-size:9.5px}
+  }
+  @media (max-width:420px){ body[data-flight-mode="normal"] .simtag:not([hidden]){display:none} }
+  /* Phones: the title is just the mode name, the indicators keep their icons. */
+  @media (max-width:520px){ body[data-flight-mode="normal"] .brand .bw{display:none} body[data-flight-mode="normal"] .seekmode{margin-left:0} }
+  @media (max-width:420px){ .batt.none b{display:none} }
+  @media (max-width:380px){
+    body[data-flight-mode="normal"] .brand{letter-spacing:.06em;font-size:12px}
+    body[data-flight-mode="normal"] .seekmode{margin-left:5px;letter-spacing:.08em}
+    .topr{gap:5px}
+  }
+  /* Wide or sideways: the WASP side panel, the same sizes. */
+  @media (min-width:700px), (min-width:560px) and (orientation:landscape){
+    body[data-flight-mode="normal"] .app{display:grid;grid-template-columns:minmax(0,1fr) clamp(250px,30vw,340px);grid-template-rows:auto minmax(0,1fr);
+      grid-template-areas:"header header" "vid side";gap:12px;padding-left:12px;padding-right:12px}
+    body[data-flight-mode="normal"] .top{display:grid;grid-area:header;grid-template-columns:auto auto minmax(0,1fr) auto;grid-template-areas:"bur brand tiles logo";gap:8px;min-width:0}
+    body[data-flight-mode="normal"] .burger{grid-area:bur}
+    body[data-flight-mode="normal"] .brand{grid-area:brand;margin-left:0;font-size:15px;letter-spacing:.14em}
+    body[data-flight-mode="normal"] .tiles{grid-area:tiles;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-self:center;height:50px;gap:0;overflow:hidden;background:var(--bg2);border:1px solid var(--line);border-radius:12px}
+    body[data-flight-mode="normal"] .tile{display:flex;flex-direction:column;justify-content:center;min-width:0;padding:6px 10px;border:0;border-left:1px solid var(--line);border-radius:0;background:none}
+    body[data-flight-mode="normal"] .tile:first-child{border-left:0}
+    body[data-flight-mode="normal"] .vidwrap{grid-area:vid;min-width:0;min-height:0;justify-content:center}
+    body[data-flight-mode="normal"] .seeker-ui{grid-area:side;justify-content:space-between;min-height:0;overflow-y:auto}
+    body[data-flight-mode="normal"] .wtools{flex:1 1 auto;min-height:0;grid-template-columns:1fr 1fr;grid-auto-rows:minmax(0,1fr);max-height:300px}
+    .sktool{min-height:0}
+    body[data-flight-mode="normal"] .seeker-ui .big b{font-size:clamp(13px,1.5vw,18px);letter-spacing:.05em}
+  }
+  @media (min-width:560px) and (orientation:landscape) and (max-height:500px){
+    body[data-flight-mode="normal"] .app{gap:8px;padding-top:6px;padding-bottom:8px}
+    body[data-flight-mode="normal"] .burger{width:34px;height:34px}
+    body[data-flight-mode="normal"] .logo{height:32px;width:46px}
+    body[data-flight-mode="normal"] .tiles{height:40px}
+    body[data-flight-mode="normal"] .tile .k{font-size:9px}
+    body[data-flight-mode="normal"] .tile .v{font-size:10px;margin-top:3px}
+    .sktool{min-height:50px;gap:3px;padding:5px 3px;font-size:10px;border-radius:12px}
+    .sktool .ico{width:26px;height:26px;border-radius:8px}
+    .sktool svg{width:17px;height:17px}
+    .mh-grid b{font-size:12px}
+  }
 </style></head>
 <body><div class="app">
 
   <div class="top">
     <button class="burger" id="t_menu" aria-label="menu"><i></i><i></i><i></i></button>
-    <div class="brand">WASP</div>
-    <img class="logo" src="/img/ikd-logo.svg" alt="IKnowHow Defence">
+    <div class="brand"><span class="bw">WASP</span><b class="seekmode" data-only="normal">SEEKER</b><b class="simtag" id="simtag" hidden title="Connected to the ArduPilot simulator (SITL)">SIM</b></div>
+    <div class="topr"><div class="batt jet" id="jbatt" title="Jetson power (module input)"><svg class="jico" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg><b id="jtxt">--</b><small id="jw"></small></div><div class="batt" id="batt" title="Drone battery (from the FC)"><span class="bico"><i id="bfill"></i><em>!</em></span><b id="btxt">--</b><small id="bvolt"></small></div>
+    <img class="logo" src="/img/ikd-logo.svg" alt="IKnowHow Defence"></div>
   </div>
 
   <div class="tiles">
     <div class="tile"><span class="k">FC mode</span><span class="v" id="c_mode">--</span></div>
-    <div class="tile" data-only="normal"><span class="k">Armed</span><span class="v" id="c_arm">--</span></div>
-    <div class="tile" data-only="normal"><span class="k">Heading</span><span class="v" id="c_hdg">--</span></div>
-    <div class="tile" data-only="normal"><span class="k">Target</span><span class="v" id="c_det">--</span></div>
-    <div class="tile" data-only="normal"><span class="k">Vibration</span><span class="v" id="c_vib">--</span></div>
-    <div class="tile"><span class="k" id="c_ai_k">Detector</span><span class="v" id="c_ai">--</span></div>
+    <div class="tile" data-only="none" hidden><span class="k">Armed</span><span class="v" id="c_arm">--</span></div>
+    <div class="tile" data-only="none" hidden><span class="k">Heading</span><span class="v" id="c_hdg">--</span></div>
+    <div class="tile" data-only="normal"><span class="k">GPS/Compass</span><span class="v" id="c_sgps">--</span></div>
+    <div class="tile" data-only="normal" id="tile_ast" role="button" tabindex="0" aria-label="ASTERIX targets"><span class="k">ASTERIX</span><span class="v" id="c_ast">--</span></div>
+    <div class="tile" data-only="none" hidden><span class="k">Battery</span><span class="v" id="c_bat">--</span></div>
+    <div class="tile" data-only="none" hidden><span class="k">Target</span><span class="v" id="c_det">--</span></div>
+    <div class="tile" data-only="none" hidden><span class="k">Vibration</span><span class="v" id="c_vib">--</span></div>
+    <div class="tile" id="tile_ai"><span class="k" id="c_ai_k">Detector</span><span class="v" id="c_ai">--</span></div>
     <div class="tile" data-only="wasp" hidden><span class="k">GPS/Compass</span><span class="v" id="c_gps">--</span></div>
   </div>
 
@@ -544,6 +845,9 @@
     <div class="badge" id="badge" style="display:none"></div>
     <button class="mount-flash" id="mount_flash" hidden><b>90°</b><span id="mount_flash_txt"></span></button>
     <div class="toast" id="toast"></div>
+    <div class="msn-alert" id="msn_alert" role="alert" hidden><b id="msn_alert_t"></b><button id="msn_alert_ok">OK</button></div>
+    <div class="msn-offer" id="msn_offer" role="alertdialog" aria-labelledby="msn_offer_t" hidden><b id="msn_offer_t"></b>
+      <div class="mo-btns"><button class="mo-no" id="msn_offer_no">NO</button><button class="mo-yes" id="msn_offer_yes">YES</button></div></div>
   </div>
   <div class="belt">
     <div class="dial off" id="dial" aria-label="pick a heading"><canvas id="dialc"></canvas></div>
@@ -561,6 +865,35 @@
     <div class="actions">
       <button class="big" id="b_safedown" aria-label="SafeDown: level, fly back to the launch point and land"><b>SAFEDOWN</b><small id="sdsub">level · fly home · land</small></button>
       <button class="big arm" id="b_arm" data-action="arm" aria-label="ARM"><b id="armtxt">ARM</b><small id="armsub">&nbsp;</small><i class="prog" id="armprog"></i></button>
+    </div>
+  </div>
+
+  <div class="seeker-ui" id="seeker_ui" data-only="normal" hidden>
+    <div class="wtools" id="seeker_tools" role="group" aria-label="Seeker settings">
+      <button class="sktool" data-pop="pop_det"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="12" r="3.2"/><path d="M12 7.2v1.6M12 15.2v1.6M7.2 12h1.6M15.2 12h1.6"/></svg></span><span class="tl">Detection</span></button>
+      <button class="sktool" data-pop="pop_flight"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h9M18 7h1M5 12h3M12 12h7M5 17h11M20 17h-1"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="17" r="2"/></svg></span><span class="tl">Flight</span></button>
+      <button class="sktool msn-tool" id="tool_missions"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h11M9 12h11M9 19h11"/><path d="M4 4.5l1.2 1.2L7 4M4 11.5l1.2 1.2L7 11M4 18.5l1.2 1.2L7 18"/></svg></span><span class="tl">MISSIONS</span><i class="chip" id="chip_sim" hidden>SIM</i></button>
+      <button class="sktool" data-pop="pop_fence"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5 9.5 4l6 3 4.5-1.5v12L15.5 19l-6-3L4 18.5z"/><path d="M12 9.2a2.3 2.3 0 0 1 2.3 2.3c0 1.8-2.3 4-2.3 4s-2.3-2.2-2.3-4A2.3 2.3 0 0 1 12 9.2z"/></svg></span><span class="tl">Geofence</span><i class="chip" id="chip_sfence">NONE</i></button>
+    </div>
+    <div class="msn-hud" id="msn_hud" hidden aria-live="polite">
+      <div class="mh-top"><b id="mh_name">--</b><span class="mh-state" id="mh_state">--</span></div>
+      <div class="mh-step"><span class="mh-n" id="mh_n">--</span><span class="mh-txt" id="mh_step">--</span><span class="mh-t" id="mh_t">--</span></div>
+      <div class="mh-cue" id="mh_cue" hidden></div>
+      <div class="mh-warn" id="mh_warn" hidden>PILOT: THROTTLE TO MIDDLE (a takeover with it down drops the drone)</div>
+      <div class="mh-grid">
+        <div><span>ALTITUDE</span><b id="mh_alt">--</b></div>
+        <div><span>SPEED</span><b id="mh_gs">--</b></div>
+        <div><span>FROM HOME</span><b id="mh_home">--</b></div>
+        <div><span>BATTERY</span><b id="mh_bat">--</b></div>
+        <div><span>FC MODE</span><b id="mh_mode">--</b></div>
+        <div><span>TIME</span><b id="mh_time">--</b></div>
+      </div>
+      <div class="mh-link"><i id="mh_fc">FC</i><i id="mh_rc">RC</i><i id="mh_vid">VIDEO</i><i id="mh_gcs">GCS</i></div>
+      <div class="mh-btns"><button class="mh-next" id="mh_next" hidden>NEXT</button><button id="mh_rtl" hidden>RTL · HOME</button><button id="mh_land" hidden>LAND HERE</button></div>
+    </div>
+    <div class="actions" id="seeker_actions">
+      <button class="big" id="s_abort" aria-label="ABORT: fly home (RTL)"><b>ABORT</b><small id="s_abort_sub">&nbsp;</small></button>
+      <button class="big" id="s_main" aria-label="SEEK"><b id="s_maintxt">SEEK</b><small id="s_mainsub">&nbsp;</small></button>
     </div>
   </div>
 
@@ -584,11 +917,53 @@
 </div>
 
 <div class="sheet" id="sh_menu">
-  <h3><span>MENU</span><button data-close aria-label="close">&#x2715;</button></h3>
+  <h3><img class="menu-logo" src="/img/ikd-logo.svg" alt="IKnowHow Defence"><button data-close aria-label="close">&#x2715;</button></h3>
   <div class="body">
-    <button class="row" id="t_par"><div>PARAMETERS</div><span>›</span></button>
-    <button class="row" id="t_log"><div>MESSAGES</div><span>›</span></button>
-    <div class="byline"><img src="/img/ikd-logo.svg" alt="IKnowHow Defence"><span>WASP</span></div>
+    <div class="menu-k">FLIGHT MODE</div>
+    <div class="modecards">
+      <button class="modecard seeker" data-flightmode="normal" aria-pressed="false" aria-label="Seeker drone">
+        <svg viewBox="0 0 320 150" aria-hidden="true">
+          <defs><linearGradient id="sk_sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#cfe5f7"/><stop offset="1" stop-color="#f4f9fd"/></linearGradient></defs>
+          <rect width="320" height="150" fill="url(#sk_sky)"/>
+          <path d="M0 132 Q80 118 160 128 T320 124 V150 H0Z" fill="#b9d3e8"/>
+          <g fill="none" stroke="#ef7a1a" stroke-linecap="round">
+            <path d="M228 40 a34 34 0 0 1 0 48" stroke-width="3" opacity=".9"/>
+            <path d="M240 28 a52 52 0 0 1 0 72" stroke-width="3" opacity=".6"/>
+            <path d="M252 16 a70 70 0 0 1 0 96" stroke-width="3" opacity=".35"/>
+          </g>
+          <g transform="translate(276 58)" fill="#33475b"><path d="M-14 0 L14 -3 L18 0 L14 3 Z"/><path d="M-2 -1 L4 -12 L8 -12 L5 -1Z M-2 1 L4 12 L8 12 L5 1Z"/><path d="M-12 -1 L-9 -6 L-7 -6 L-8 -1Z M-12 1 L-9 6 L-7 6 L-8 1Z"/></g>
+          <path d="M150 74 L262 52 L262 66 Z" fill="#ef7a1a" opacity=".18"/>
+          <g transform="translate(118 74)">
+            <rect x="-34" y="-5" width="68" height="10" rx="5" fill="#33475b"/>
+            <rect x="-14" y="-12" width="28" height="20" rx="7" fill="#ef7a1a"/>
+            <circle cx="16" cy="6" r="6" fill="#1f2f3e"/><circle cx="17.5" cy="5" r="2.4" fill="#9fd0f5"/>
+            <g fill="#33475b"><rect x="-38" y="-14" width="6" height="10" rx="2"/><rect x="32" y="-14" width="6" height="10" rx="2"/></g>
+            <g fill="#4a6078" opacity=".55"><ellipse cx="-35" cy="-16" rx="24" ry="3.2"/><ellipse cx="35" cy="-16" rx="24" ry="3.2"/></g>
+            <g stroke="#33475b" stroke-width="3" stroke-linecap="round"><path d="M-22 5 L-28 18"/><path d="M22 5 L28 18"/></g>
+          </g>
+          <g fill="#ef7a1a"><circle cx="40" cy="30" r="3"/><circle cx="56" cy="22" r="2"/><circle cx="30" cy="46" r="2"/></g>
+        </svg>
+        <span class="mc-foot"><span><b>SEEKER</b><small>ASTERIX cue · camera · AI</small></span><i>OFF</i></span>
+      </button>
+      <button class="modecard wasp" data-flightmode="wasp" aria-pressed="false" aria-label="Wasp drone">
+        <svg viewBox="0 0 320 150" aria-hidden="true">
+          <defs><linearGradient id="wp_sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1f3b63"/><stop offset="1" stop-color="#2f66b8"/></linearGradient></defs>
+          <rect width="320" height="150" fill="url(#wp_sky)"/>
+          <g stroke="#ffffff" stroke-linecap="round" opacity=".5"><path d="M40 118 L120 80" stroke-width="3"/><path d="M60 128 L136 92" stroke-width="2"/><path d="M30 100 L104 66" stroke-width="2"/></g>
+          <g stroke="#9fb7d8" stroke-width="4" stroke-linecap="round"><path d="M62 146 L80 118 L98 146"/><path d="M70 132 L90 132"/></g>
+          <g transform="translate(176 62) rotate(-28)">
+            <path d="M-42 0 L30 -9 L50 0 L30 9 Z" fill="#ffffff"/>
+            <path d="M-6 -6 L14 -30 L24 -30 L12 -6Z M-6 6 L14 30 L24 30 L12 6Z" fill="#e8eef8"/>
+            <path d="M-38 -3 L-30 -16 L-24 -16 L-28 -3Z M-38 3 L-30 16 L-24 16 L-28 3Z" fill="#e8eef8"/>
+            <circle cx="40" cy="0" r="4" fill="#ef4444"/>
+          </g>
+          <g fill="none" stroke="#ef4444" stroke-width="3"><circle cx="268" cy="34" r="13"/><path d="M268 14 V22 M268 46 V54 M248 34 H256 M280 34 H288"/></g>
+          <g fill="#ffffff" opacity=".8"><circle cx="300" cy="120" r="2"/><circle cx="240" cy="132" r="1.6"/><circle cx="20" cy="20" r="1.6"/></g>
+        </svg>
+        <span class="mc-foot"><span><b>WASP</b><small>Launch · intercept · SafeDown</small></span><i>OFF</i></span>
+      </button>
+    </div>
+    <div class="menu-mount" id="menu_mount"><button class="mount-chip" id="mountstatus" disabled aria-label="Confirm camera angle">--°</button></div>
   </div>
 </div>
 <div class="sheet sub" id="sh_speed">
@@ -600,7 +975,6 @@
         <button data-flightmode="normal" aria-pressed="false" disabled>Seeker drone<i>OFF</i></button>
         <button data-flightmode="wasp" aria-pressed="false" disabled>Wasp drone<i>OFF</i></button>
       </div>
-      <button class="mount-chip" id="mountstatus" disabled aria-label="Confirm camera angle">--°</button>
     </section>
     <section class="param-block" id="detection_params" aria-labelledby="detection_title">
       <h4 class="param-title" id="detection_title"><span class="num">2</span>Detection</h4>
@@ -713,9 +1087,84 @@
         <button class="fbtn" id="fm_usepts">Use these points</button></details>
       <button class="fence-save" id="fm_save">Save geofence</button>
       <p class="test-help">A saved geofence is always on. In a WASP flight, leaving it starts SAFEDOWN at once: it levels, flies back to the GO spot and lands. ARM is refused while the drone is outside it or has no GPS position. Draw: drag a finger around the area, or tap the corners. Without GPS the map still works: Make puts the circle at the map centre.</p>
+      <p class="test-help" data-only="normal">Seeker missions: heading for the edge closer than the geofence margin, or leaving it, stops the mission and flies home (RTL) with an alarm on this phone. Every mission needs a geofence and checks its route against it before ARM.</p>
     </section>
 </div>
 </div></div>
+<div class="pop" id="pop_cue" role="dialog" aria-modal="true" aria-labelledby="pop_cue_t"><div class="card">
+  <h3><span class="pico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="7"/></svg></span><span class="pt" id="pop_cue_t">ASTERIX target</span><button data-popclose aria-label="close">&#x2715;</button></h3>
+  <div class="pmsg" role="alert"></div>
+  <div class="pbody msn-sheet">
+    <div class="cue-status" id="cue_status">--</div>
+    <div class="cue-list" id="cue_tracks"></div>
+    <div class="mc-card"><div class="mc-h">SEEK <span class="mc-saved" id="seek_saved">saved as default</span></div><ol class="mc-steps" id="seek_steps"></ol>
+      <div id="seek_params" style="margin-top:10px"></div></div>
+    <details class="fence-points"><summary>ASTERIX input (UDP)</summary>
+      <div class="mc-p"><span>UDP port</span><span class="in"><input id="cue_port" type="number" min="1" max="65535" inputmode="numeric"></span></div>
+      <div class="mc-p"><span>Multicast group (empty: unicast)</span><span class="in"><input id="cue_mcast" type="text" spellcheck="false" placeholder="239.1.1.1"></span></div>
+      <div class="mc-p"><span>Interface IP (multicast)</span><span class="in"><input id="cue_iface" type="text" spellcheck="false" placeholder="0.0.0.0"></span></div>
+      <button class="fbtn" id="cue_apply">Apply</button></details>
+    <p class="test-help">The cue comes over the RFD radio (asterix062_bridge.py --rfd-dev on the laptop sends the followed track as $RFD lines) or as CAT062 over UDP. SEEK climbs and turns to it, follows it in GUIDED at the speed above with the nose on it and stops short of it. A new target on the feed asks to switch. When the camera holds the target it stops and asks: YES = ALT_HOLD and the AI (AUTO if AUTO is on), NO = wait here for another target. ABORT or the geofence: RTL. The pilot's mode switch takes over at any time.</p>
+  </div>
+</div></div>
+<div class="sheet sub msn-sheet" id="sh_missions">
+  <h3><span>MISSIONS<small>SEEKER TESTS · ONE TAP EACH</small></span><button data-close aria-label="close">&#x2715;</button></h3>
+  <div class="body">
+    <div class="msn-limits" id="msn_limits"></div>
+    <div id="msn_list"></div>
+  </div>
+</div>
+<div class="sheet sub2 msn-sheet" id="sh_mission">
+  <h3><span id="mc_title">--<small id="mc_sub">--</small></span><button id="mc_close" aria-label="close">&#x2715;</button></h3>
+  <div class="body">
+    <div class="msn-alert mc-alert" id="mc_alert" role="alert" hidden><b id="mc_alert_t"></b><button id="mc_alert_ok">OK</button></div>
+    <p class="mc-sum" id="mc_sum"></p>
+    <div class="mc-res" id="mc_res" hidden>
+      <div class="mr-verdict" id="mcr_verdict">--</div>
+      <p class="mr-why" id="mcr_why"></p>
+      <ul class="mc-checks" id="mcr_checks"></ul>
+      <p class="mr-csv" id="mcr_csv"></p>
+    </div>
+    <div class="mc-now" id="mc_now" hidden aria-live="polite">
+      <div class="mc-bar" id="ml_bar"></div>
+      <div class="mc-nowstep"><span class="mc-n" id="ml_n">--</span><b id="ml_step">--</b><span class="mh-state" id="ml_state">--</span></div>
+      <div class="mh-warn" id="ml_warn" hidden>PILOT: THROTTLE TO MIDDLE (a takeover with it down drops the drone)</div>
+      <div class="mc-big">
+        <div><span>HEIGHT</span><b id="ml_alt">--</b><small id="ml_alt2">&nbsp;</small></div>
+        <div><span>SPEED</span><b id="ml_gs">--</b><small id="ml_vz">&nbsp;</small></div>
+        <div><span>FROM HOME</span><b id="ml_home">--</b><small id="ml_mode">&nbsp;</small></div>
+      </div>
+      <div class="mh-link"><i id="ml_fc">FC</i><i id="ml_rc">RC</i><i id="ml_vid">VIDEO</i><i id="ml_gcs">APP LINK</i><i id="ml_fence">FENCE</i></div>
+    </div>
+    <div class="mc-card mc-pic" id="mc_piccard"><div class="mc-picbox"><canvas id="mc_prof" aria-label="The flight seen from the side"></canvas></div>
+      <div class="mc-legend"><span><i class="lg-route"></i>planned</span><span><i class="lg-trail"></i>flown</span><span><i class="lg-lim"></i>altitude limit</span><span><i class="lg-drone"></i>drone</span></div></div>
+    <div class="mc-card mc-mapcard" id="mc_mapcard" hidden>
+      <div class="fence-dummy" id="mc_fdummy" role="alert" hidden><b>PREVIEW ONLY · NOT WORKING</b><span id="mc_fdummy_t"></span></div>
+      <div class="mc-map" id="mc_map"><canvas id="mc_mapc" aria-label="Map: geofence, route and the drone"></canvas>
+      <div class="fmap-scale" id="mc_map_scale"></div><div class="mc-map-note" id="mc_map_note"></div></div>
+      <div class="mc-legend"><span><i class="lg-fence"></i>geofence</span><span><i class="lg-route"></i>planned</span><span><i class="lg-trail"></i>flown</span></div></div>
+    <div class="mc-ready" id="mc_ready"><b id="mc_ready_t">checking…</b><ul id="mc_ready_l"></ul></div>
+    <div class="mc-card" id="mc_pcard"><div class="mc-h">Settings <span class="mc-saved" id="mc_saved">saved as default</span></div><div class="mc-grid" id="mc_params"></div>
+      <div class="mc-lim" id="mc_lim"></div></div>
+    <details class="mc-card mc-fold" id="mc_stepsd"><summary class="mc-h">Steps</summary><ol class="mc-steps" id="mc_steps"></ol></details>
+    <details class="mc-card mc-fold" id="mc_ccard"><summary class="mc-h">All pre-flight checks</summary><ul class="mc-checks" id="mc_checks"></ul></details>
+    <details class="mc-card mc-fold" id="mc_rcard" hidden><summary class="mc-h">Checks so far <span id="mc_rcount"></span></summary><ul class="mc-checks" id="mc_rchecks"></ul></details>
+    <p class="mc-pilot" id="mc_pilot">Pilot: transmitter ON, mode switch UP, throttle DOWN for the ARM, then to MIDDLE once it is in the air. Switch UP &rarr; MIDDLE takes over at once and stops the mission.</p>
+  </div>
+  <button class="mc-start" id="mc_start" disabled><b id="mc_start_t">START</b><small id="mc_start_s">&nbsp;</small></button>
+  <button class="mc-start mc-restart" id="mc_restart" hidden><b>RESTART APP</b><small>the app goes down: the FC must fly home by itself</small></button>
+  <button class="mc-start mc-abort" id="mc_abort" hidden aria-label="ABORT: fly home (RTL)"><b>ABORT · RTL</b><small id="mc_abort_s">fly home and land</small></button>
+</div>
+<div class="sheet sub2 msn-sheet" id="sh_result">
+  <h3><span id="mr_title">RESULT<small id="mr_sub">--</small></span><button id="mr_close" aria-label="close">&#x2715;</button></h3>
+  <div class="body">
+    <div class="mr-verdict" id="mr_verdict">--</div>
+    <p class="mr-why" id="mr_why"></p>
+    <ul class="mc-checks" id="mr_checks"></ul>
+    <div class="mc-card"><div class="mc-h">Log (CSV)</div><p class="mr-csv" id="mr_csv"></p></div>
+  </div>
+  <button class="mc-start ok" id="mr_done"><b>DONE</b><small>back to the main screen</small></button>
+</div>
 <div class="sheet sub" id="sh_log">
   <h3><span>MESSAGES<small>FROM THE JETSON</small></span><button data-close aria-label="close">&#x2715;</button></h3>
   <div class="body" id="logbody"><div class="log" id="log"></div></div>
@@ -818,14 +1267,15 @@
     if (ctl.parentNode !== into) into.appendChild(ctl);
     var video = document.querySelector(".vidwrap"), app = document.querySelector(".app");
     var tiles = document.querySelector(".tiles"), top = document.querySelector(".top");
-    if (wasp && waspLayoutQuery.matches) {
-      if (tiles.parentNode !== top) top.insertBefore(tiles, top.querySelector(".logo"));
+    // WASP and Seeker share the layout: tiles in the header on a wide screen.
+    if (waspLayoutQuery.matches) {
+      if (tiles.parentNode !== top) top.insertBefore(tiles, top.querySelector(".topr"));
     } else if (tiles.parentNode !== app) {
       app.insertBefore(tiles, video);
     }
-    placeSections(wasp);
+    placeSections(true);
   }
-  // WASP keeps its settings in four popups; Seeker in the PARAMETERS sheet.
+  // WASP and Seeker keep their settings in the popups behind the tool buttons.
   var SECTIONS = [["detection_params", "pop_det"], ["flight_params", "pop_flight"], ["test_mode_params", "pop_test"]];
   function placeSections(wasp) {
     var sheet = $("sh_speed").querySelector(".body");
@@ -842,6 +1292,7 @@
     if (LAST && LAST.mission) syncAlign(LAST.mission);
   }
   function closePops() {
+    if (typeof SK !== "undefined") SK.pick = false;
     document.querySelectorAll(".pop.open").forEach(function (p) { p.classList.remove("open"); });
     if (LAST && LAST.mission) syncAlign(LAST.mission);
   }
@@ -1057,7 +1508,6 @@
     if (id === "sh_log") { var B = $("logbody"); B.scrollTop = B.scrollHeight; }
   }
   $("t_menu").onclick = function () { openSheet("sh_menu"); };
-  $("t_par").onclick = function () { openSheet("sh_speed"); };
   document.querySelectorAll("[data-open]").forEach(function (b) {
     b.onclick = function () { openSheet(b.getAttribute("data-open")); };
   });
@@ -1126,7 +1576,6 @@
     b.onclick = function () { cmd("def=" + b.getAttribute("data-save")); };
   });
 
-  $("t_log").onclick = function () { openSheet("sh_log"); };
   document.querySelectorAll("[data-close]").forEach(function (b) {
     b.onclick = function () { b.closest(".sheet").classList.remove("open"); };
   });
@@ -1263,7 +1712,7 @@
     document.body.setAttribute("data-flight-mode", currentMode);
     placeControls();
     var normalPad = $("normal_pad"), belt = document.querySelector(".belt");
-    if (!wasp) closePops();
+    if (UI_MODE && UI_MODE !== currentMode) closePops();
     if (normalPad) normalPad.style.display = wasp ? "none" : "grid";
     if (belt) belt.style.display = wasp ? "none" : "";
     $("tape").hidden = wasp;
@@ -1298,6 +1747,29 @@
     T("vs", m.climb_mps === null || m.climb_mps === undefined ? "height ?"
         : (m.climb_mps >= 0 ? "↑ " : "↓ ") + fmt(Math.abs(m.climb_mps), 1) + " m/s");
 
+    // Battery, top right, in both modes: green / yellow / red, flashing when nearly empty.
+    var bt = m.battery || {}, bp = bt.pct, bv = bt.v, bl = bt.low;
+    // Under 6 V there is no flight battery (the FC on USB): the % is only the
+    // capacity counter, so say NO BATT instead of a red alarm.
+    var nob = bv !== null && bv !== undefined && bv < 6;
+    if (nob) bp = null;
+    var blev = nob ? "" : bp !== null && bp !== undefined ? (bp >= 50 ? "ok" : bp >= 25 ? "warn" : "bad") : "";
+    if (!nob && bv && bl && bv < bl + 0.2) blev = "bad";
+    $("batt").className = "batt " + blev + (!nob && ((bp !== null && bp !== undefined && bp < 15) || (bv && bl && bv < bl)) ? " crit" : "");
+    $("bfill").style.width = bp === null || bp === undefined ? "0" : "calc(" + Math.max(0, Math.min(100, bp)) + "% - 2px)";
+    if (nob) $("batt").className = "batt none";
+    T("btxt", nob ? "NO BATT" : bp !== null && bp !== undefined ? bp + "%" : bv ? fmt(bv, 1) + "V" : "--");
+    T("bvolt", !nob && bp !== null && bp !== undefined && bv ? fmt(bv, 1) + "V" : "");
+    // The Jetson: its module's 5 V input; a sag below 4.75 V is trouble.
+    var jt = m.jetson;
+    $("jbatt").hidden = !jt;
+    if (jt) {
+      $("jbatt").className = "batt jet " + (jt.v >= 4.75 ? "ok" : jt.v >= 4.6 ? "warn" : "bad crit");
+      T("jtxt", fmt(jt.v, 2) + "V"); T("jw", fmt(jt.w, 0) + "W");
+      $("jbatt").title = "Jetson: " + fmt(jt.v, 2) + " V in, " + fmt(jt.w, 1) + " W";
+    }
+    $("batt").title = nob ? "Drone battery: not connected (the FC reads " + fmt(bv, 1) + " V)" : "Drone battery from the FC" + (bv ? ": " + fmt(bv, 2) + " V" : "") + (bp !== null && bp !== undefined ? ", " + bp + " %" : "")
+      + (bl ? " (FC low " + fmt(bl, 1) + " V)" : "");
     var arm = !!j.armed;
     S("c_arm", arm ? "ARMED" : "DISARMED", arm ? "on" : "");
     var wantModes = wasp && ph === "SAFEDOWN" ? ["ALT_HOLD", "RTL", "LAND"] : [wasp && ph !== "IDLE" ? "ACRO" : "ALT_HOLD"];
@@ -1544,8 +2016,718 @@
         b.querySelector("i").textContent = val[g](L);
       });
     });
+    if (!wasp) paintSeeker(j, m, ctl);
     if (j.console_seq !== undefined && j.console_seq > consoleSeq) pullConsole();
   }
+
+  // ---- SEEKER: tiles, the action buttons, the missions --------------------
+  var SK = {view: null, built: null, result: null, alertShown: 0, beepT: null, audio: null};
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+  function openSheetId(id) { $(id).classList.add("open"); }
+  function closeSheetId(id) { $(id).classList.remove("open"); }
+  function seekerOf(j) { return (j && j.mission && j.mission.seeker) || null; }
+  function paintSeeker(j, m, ctl) {
+    var sk = m.seeker || {}, run = sk.run, busy = VIEW || ctl === "other";
+    S("c_arm", j.armed ? "ARMED" + (m.height_m === null || m.height_m === undefined ? "" : " · " + fmt(m.height_m, 1) + " m") : "DISARMED",
+      j.armed ? "on" : "");
+    // GPS / Compass as on the WASP screen; ASTERIX: is the UDP feed live.
+    var gps = m.gps || {}, gpsOn = Number(gps.fix) >= 1, comp = !!m.compass_ok;
+    S("c_sgps", (gpsOn ? (Number(gps.sats) || 0) + " sat" : "NO") + " / " + (comp ? "YES" : "NO"),
+      gps.ok && comp && m.position_ok ? "ok" : !gpsOn ? "bad" : "warn");
+    var cs = sk.cue || {}, rf = cs.rfd || {}, live = cs.rx_age !== null && cs.rx_age !== undefined && cs.rx_age < 3;
+    var rfdLive = rf.rx_age !== null && rf.rx_age !== undefined && rf.rx_age < 3;
+    S("c_ast", live ? (rfdLive ? "RFD LIVE" : "LIVE") + " · " + (cs.tracks || []).length + " trk"
+      : cs.rx_age !== null && cs.rx_age !== undefined ? "STALE " + Math.round(cs.rx_age) + " s"
+      : rf.open ? "RFD · NO DATA" : "NO DATA",
+      live ? ((cs.tracks || []).length ? "ok" : "warn") : "bad");
+    $("c_ast").title = "RFD " + (rf.dev ? rf.dev + (rf.open ? " open" : " closed") : "not found") + (rf.error ? " (" + rf.error + ")" : "")
+      + " · " + (rf.lines || 0) + " lines; UDP " + cs.port + ": " + (cs.packets || 0) + " packets" + (cs.error ? " (" + cs.error + ")" : "");
+    var bt = m.battery || {};
+    S("c_bat", bt.pct !== null && bt.pct !== undefined ? bt.pct + "%" + (bt.v ? " " + fmt(bt.v, 1) + "V" : "")
+      : bt.v ? fmt(bt.v, 1) + " V" : "--", bt.pct === null || bt.pct === undefined ? "" : bt.pct >= 60 ? "ok" : bt.pct >= 30 ? "warn" : "bad");
+    $("simtag").hidden = !sk.sim; $("chip_sim").hidden = !sk.sim;
+    var f = m.fence || {}, chip = $("chip_sfence"), live = fenceLive(m);
+    chip.textContent = !f.armed ? "NONE" : f.inside === false ? "OUT" : live ? "ON" : "NO GPS";
+    chip.className = "chip" + (!f.armed ? " bad" : f.inside === false ? " bad" : live ? " on" : " warn");
+    paintFence(m);
+    // The panel, as on the WASP screen: four tools (or the HUD in flight), then
+    // ABORT on the left and the main action on the right.
+    $("seeker_tools").hidden = !!run; $("msn_hud").hidden = !run;
+    document.body.classList.toggle("msn-run", !!run);
+    var cue = sk.cue || {}, tg = cue.target, seek = sk.seek || {}, be = $("b_eng");
+    var main = $("s_main"), label = "SEEK", sub = "", cls = "big", act = "";
+    if (run) {
+      var ai = run.state === "AI";
+      label = ai ? "AI FLYING" : run.id === "SEEK" ? (run.offer ? "ANSWER ↑" : run.seek === "WAIT" ? "WAITING" : "SEEKING") : run.id + " RUNNING";
+      sub = ai ? "ABORT = fly home" : run.state === "RUNNING" ? (run.steps[run.step_i] || "") : run.why || run.state;
+      cls += " flying";
+    } else if (!j.armed) {
+      label = "SEEK"; cls += " seek";
+      act = seek.ready ? "seek" : "";
+      sub = seek.ready ? (tg ? "→ " + tg.label + " · " + tg.dist_m + " m" : "go") : shortSeek(seek.why);
+    } else {
+      // In the air without SEEK (the pilot flew it up in ALT_HOLD): the AI's ENGAGE, as before.
+      label = $("engtxt").textContent || "ENGAGE"; sub = m.auto_enabled ? "AUTO" : "AI";
+      if (be.classList.contains("go")) cls += " flying";
+      else { cls += " engage"; act = be.disabled ? "" : "engage"; }
+    }
+    main.className = cls; main.setAttribute("data-action", act);
+    main.disabled = !act || busy;
+    T("s_maintxt", label); T("s_mainsub", sub || " ");
+    main.setAttribute("aria-label", label + (sub ? ": " + sub : ""));
+    var ab = $("s_abort");
+    ab.disabled = busy || !(run || j.armed);
+    T("s_abort_sub", run ? "RTL · fly home" : j.armed ? "stop the AI" : "in flight only");
+    if ($("pop_cue").classList.contains("open")) paintCue(sk, j, busy);
+    document.querySelectorAll("#seeker_tools .sktool").forEach(function (t) { t.disabled = busy; });
+    if (run) {
+      paintHud(run, j);
+      S("c_mode", j.linked ? (j.fc_mode || "?") : "NO FC", !j.linked ? "bad"
+        : ["GUIDED", "RTL", "LAND", "BRAKE"].indexOf(j.fc_mode) >= 0 ? "ok" : "warn");
+      if (run.state !== "AI") {
+        var bd = $("badge"); bd.style.display = "block"; bd.className = "badge";
+        bd.textContent = run.id + " · " + (run.state === "RUNNING" ? run.steps[run.step_i] || "" : run.state);
+      }
+    }
+    paintAlert(sk.alert);
+    paintOffer(run ? run.offer : groundOffer(sk, j, busy), busy);
+    // A mission started from its own screen runs, and ends, on that screen.
+    var here = $("sh_mission").classList.contains("open") && SK.view;
+    if ($("sh_missions").classList.contains("open")) paintList(sk, j);
+    var r = sk.result;
+    if (r && r.csv !== SK.result) {
+      SK.result = r.csv;
+      if (here && SK.view === r.id) SK.inline = r.csv;
+      else { showResult(r); closeSheetId("sh_mission"); closeSheetId("sh_missions"); }
+    }
+    if (!r && $("sh_result").classList.contains("open")) closeSheetId("sh_result");
+    if (run && !(here && SK.view === run.id) && ($("sh_mission").classList.contains("open") || $("sh_missions").classList.contains("open"))) {
+      closeSheetId("sh_mission"); closeSheetId("sh_missions"); closePops();
+    }
+    if ($("sh_mission").classList.contains("open")) paintMission(sk, j, ctl);
+  }
+  // Back from the main screen into a running mission's screen.
+  $("msn_hud").addEventListener("click", function (e) {
+    var run = (seekerOf(LAST) || {}).run;
+    if (run && run.id !== "SEEK" && !e.target.closest("button")) openMission(run.id);
+  });
+  function paintHud(run, j) {
+    T("mh_name", run.id + " · " + run.name);
+    var st = $("mh_state"), stt = run.state === "RUNNING" ? (run.wait_next ? "WAITING" : "RUNNING") : run.state;
+    st.textContent = stt; st.className = "mh-state" + (run.state === "ABORTED" ? " bad" : run.state === "PILOT" || run.wait_next ? " warn" : "");
+    T("mh_n", (run.step_i + 1) + "/" + run.steps.length);
+    T("mh_step", run.state === "RUNNING" ? (run.seek === "WAIT" ? "Holding here: waiting for a new ASTERIX target"
+        : run.offer ? run.offer.kind === "engage" ? "Holding on the target: answer ENGAGE?" : "New target: answer the question"
+        : run.steps[run.step_i] || "")
+      : (run.why || run.state) + (run.state === "HOVER" ? " · choose RTL or LAND" : ""));
+    T("mh_t", Math.round(run.step_s) + " s");
+    T("mh_alt", run.alt === null ? "--" : fmt(run.alt, 1) + (run.target_alt !== null ? " / " + fmt(run.target_alt, 0) : "") + " m");
+    T("mh_gs", run.gs === null ? "--" : fmt(run.gs, 1) + " m/s" + (run.vz !== null && Math.abs(run.vz) >= 0.3 ? (run.vz > 0 ? " ↑" : " ↓") + fmt(Math.abs(run.vz), 1) : ""));
+    T("mh_home", run.home_m === null ? "--" : run.home_m + " m");
+    T("mh_bat", run.battery_pct !== null && run.battery_pct !== undefined ? run.battery_pct + " %" : run.battery_v ? fmt(run.battery_v, 1) + " V" : "--");
+    T("mh_mode", (run.mode || "--") + (run.armed ? "" : " · OFF"));
+    var el_ = Math.round(run.elapsed_s);
+    T("mh_time", Math.floor(el_ / 60) + ":" + ("0" + el_ % 60).slice(-2));
+    $("mh_fc").className = run.fc_age !== null && run.fc_age < 1.5 ? "ok" : "bad";
+    $("mh_rc").className = run.rc_ok ? "ok" : "bad";
+    $("mh_vid").className = run.video_age !== null && run.video_age < 1 ? "ok" : "bad";
+    $("mh_gcs").className = run.muted ? "bad" : "ok";
+    T("mh_gcs", run.muted ? "GCS OFF" : "GCS");
+    var c = run.cue, cm = run.cam;
+    $("mh_cue").hidden = !c && !cm;
+    if (c || cm) T("mh_cue", (c ? "TARGET " + c.label + " · " + c.dist_m + " m · " + ("00" + c.bearing).slice(-3) + "°"
+      + (c.alt_rel !== null ? " · " + Math.round(c.alt_rel) + " m" : "") + " · " + c.age_s + " s" : "")
+      + (cm ? (c ? "\n" : "") + "CAMERA " + (cm.az >= 0 ? "+" : "") + cm.az + "° · "
+        + (Math.abs(cm.err) < 2 ? "on the aim mark" : (cm.err > 0 ? "above" : "below") + " the mark " + Math.abs(cm.err) + "°") : ""));
+    $("mh_warn").hidden = !run.throttle_low;
+    $("mh_next").hidden = !run.wait_next;
+    $("mh_rtl").hidden = $("mh_land").hidden = !run.can_after;
+    T("s_abort_sub", run.state === "RUNNING" ? "ABORT action: " + run.abort : run.state === "PILOT" ? "the pilot has it" : run.why || " ");
+    $("s_abort").disabled = VIEW || !run.armed && run.state !== "RUNNING";
+  }
+  function paintAlert(a) {
+    var box = $("msn_alert");
+    var open = !!(a && a.open && a.age_s < 120);
+    box.hidden = $("mc_alert").hidden = !open;
+    if (!open) { stopBeep(); return; }
+    T("msn_alert_t", a.text); T("mc_alert_t", a.text);
+    if (SK.alertShown !== a.n) {
+      SK.alertShown = a.n;
+      cmd("msn=alertshown:" + a.n, true);
+      startBeep();
+    }
+  }
+  // On the ground: an ASTERIX target that arrives asks to LOCK it and SEEK; several
+  // ask to choose one. Each target asks once (NO, or a tap, remembers it).
+  SK.known = {};
+  function groundOffer(sk, j, busy) {
+    var cue = sk.cue || {}, fresh = (cue.tracks || []).filter(function (t) { return t.fresh; });
+    if (j.armed || busy || sk.run) return null;
+    var newer = fresh.filter(function (t) { return !SK.known[t.key]; });
+    if (!newer.length) return null;
+    if (fresh.length > 1) return {n: "pick:" + newer.map(function (t) { return t.key; }).join(","), kind: "pick",
+      keys: fresh.map(function (t) { return t.key; }), text: fresh.length + " ASTERIX targets: choose the one to SEEK"};
+    var t = newer[0];
+    return {n: "lock:" + t.key, kind: "lock", key: t.key, text: "ASTERIX target " + t.label
+      + (t.dist_m !== null ? " · " + t.dist_m + " m · " + ("00" + t.bearing).slice(-3) + "°" : "")
+      + (t.alt_rel !== null ? " · " + (t.alt_rel >= 0 ? "+" : "") + Math.round(t.alt_rel) + " m" : "") + ": LOCK it and SEEK?"};
+  }
+  // SEEK's questions: a new target (switch / follow), and the ground LOCK / choose.
+  var OFFER = null;
+  function paintOffer(o, busy) {
+    var box = $("msn_offer");
+    box.hidden = !o;
+    OFFER = o || null;
+    if (!o) return;
+    T("msn_offer_t", o.text);
+    box.className = "msn-offer" + (o.kind === "engage" ? " engage" : "");
+    T("msn_offer_yes", o.kind === "lock" ? "YES · SEEK" : o.kind === "pick" ? "CHOOSE" : o.kind === "switch" ? "SWITCH" : "FOLLOW");
+    T("msn_offer_no", o.kind === "pick" ? "LATER" : o.kind === "switch" ? "KEEP" : "NO");
+    $("msn_offer_yes").disabled = $("msn_offer_no").disabled = busy;
+    if (SK.offerShown !== o.n) { SK.offerShown = o.n; chime(); }
+  }
+  function answer(yes) {
+    if (!OFFER) return;
+    var o = OFFER; $("msn_offer").hidden = true; OFFER = null;
+    if (o.kind === "lock" || o.kind === "pick") {
+      (o.keys || [o.key]).forEach(function (k) { SK.known[k] = true; });
+      if (!yes) return;
+      SK.pick = true;
+      if (o.kind === "lock") pick("msn=cue:select:" + o.key);
+      else { openPop("pop_cue"); paintCue(seekerOf(LAST), LAST, false); }
+      return;
+    }
+    cmd("msn=offer:" + (yes ? "yes" : "no") + ":" + o.n);
+  }
+  $("msn_offer_yes").onclick = function () { answer(true); };
+  $("msn_offer_no").onclick = function () { answer(false); };
+  function chime() {
+    try {
+      var A = window.AudioContext || window.webkitAudioContext;
+      if (!A) return;
+      SK.audio = SK.audio || new A();
+      [0, 0.18].forEach(function (dt, i) {
+        var o = SK.audio.createOscillator(), g = SK.audio.createGain(), t = SK.audio.currentTime + dt;
+        o.frequency.value = i ? 1175 : 880; g.gain.setValueAtTime(0.2, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+        o.connect(g); g.connect(SK.audio.destination); o.start(t); o.stop(t + 0.26);
+      });
+    } catch (e) {}
+  }
+  function startBeep() {
+    stopBeep();
+    try {
+      var A = window.AudioContext || window.webkitAudioContext;
+      if (!A) return;
+      SK.audio = SK.audio || new A();
+      if (SK.audio.state === "suspended") SK.audio.resume();
+    } catch (e) { return; }
+    var n = 0;
+    function beep() {
+      if (n++ > 40) { stopBeep(); return; }
+      try {
+        var o = SK.audio.createOscillator(), g = SK.audio.createGain(), t = SK.audio.currentTime;
+        o.type = "square"; o.frequency.value = n % 2 ? 1760 : 1320;
+        g.gain.setValueAtTime(0.25, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+        o.connect(g); g.connect(SK.audio.destination); o.start(t); o.stop(t + 0.3);
+      } catch (e) {}
+    }
+    beep(); SK.beepT = setInterval(beep, 450);
+  }
+  function stopBeep() { if (SK.beepT) { clearInterval(SK.beepT); SK.beepT = null; } }
+  // The phone only plays sound after a touch: unlock it on the first one.
+  document.addEventListener("pointerdown", function () {
+    try { var A = window.AudioContext || window.webkitAudioContext; if (A && !SK.audio) SK.audio = new A(); if (SK.audio && SK.audio.state === "suspended") SK.audio.resume(); } catch (e) {}
+  }, {once: true});
+  $("msn_alert_ok").onclick = function () {
+    var sk = seekerOf(LAST);
+    if (sk && sk.alert) cmd("msn=alertok:" + sk.alert.n, true);
+    stopBeep(); $("msn_alert").hidden = $("mc_alert").hidden = true;
+  };
+  $("mc_alert_ok").onclick = function () { $("msn_alert_ok").onclick(); };
+
+  function numInput(spec, onset) {
+    var wrap = el("span", "in"), inp = el("input");
+    inp.type = "number"; inp.inputMode = "decimal"; inp.min = spec.lo; inp.max = spec.hi; inp.step = spec.step || 1;
+    inp.value = spec.v; inp.setAttribute("aria-label", spec.t);
+    inp.addEventListener("change", function () { onset(inp.value, inp); });
+    inp.addEventListener("keydown", function (e) { if (e.key === "Enter") inp.blur(); });
+    wrap.appendChild(inp); if (spec.u) wrap.appendChild(el("span", "", spec.u));
+    inp._key = spec.k;
+    return wrap;
+  }
+  function setParam(where, key, val, inp) {
+    cmd("msn=set:" + where + ":" + key + ":" + val).then(function (j) {
+      if (j && !j.refused) { var s = $("mc_saved"); s.classList.add("on"); setTimeout(function () { s.classList.remove("on"); }, 1400); }
+      else if (inp && inp._was !== undefined) inp.value = inp._was;
+    });
+  }
+  function paintList(sk, j) {
+    var lim = $("msn_limits");
+    if (!lim.childNodes.length) {
+      (sk.limits || []).forEach(function (x) {
+        var l = el("label"); l.appendChild(document.createTextNode(x.t));
+        l.appendChild(numInput(x, function (v, inp) { setParam("limits", x.k, v, inp); }));
+        lim.appendChild(l);
+      });
+    }
+    lim.querySelectorAll("input").forEach(function (inp) {
+      var x = (sk.limits || []).filter(function (y) { return y.k === inp._key; })[0];
+      if (x && document.activeElement !== inp) { inp.value = x.v; inp._was = x.v; }
+      inp.disabled = VIEW || j.control === "other";
+    });
+    var list = $("msn_list");
+    if (!list.childNodes.length) {
+      (sk.missions || []).forEach(function (mm) {
+        var b = el("button", "msn-card" + (mm.ground ? " ground" : ""));
+        b.appendChild(el("span", "id", mm.id));
+        var d = el("div"); d.appendChild(el("b", "", mm.name)); d.appendChild(el("small", "", mm.short + (mm.ground ? " · no take-off" : "")));
+        b.appendChild(d); b.appendChild(el("span", "chev", "›"));
+        b.onclick = function () { openMission(mm.id); };
+        list.appendChild(b);
+      });
+    }
+  }
+  $("tool_missions").onclick = function () {
+    var sk = seekerOf(LAST); if (!sk) return;
+    $("msn_limits").textContent = ""; $("msn_list").textContent = "";
+    paintList(sk, LAST); openSheetId("sh_missions");
+  };
+  function openMission(id) {
+    SK.view = id; SK.built = null;
+    cmd("msn=view:" + id, true);
+    openSheetId("sh_mission");
+    if (LAST) paintMission(seekerOf(LAST), LAST, LAST.control);
+  }
+  function closeMission() { SK.view = null; cmd("msn=view:", true); closeSheetId("sh_mission"); }
+  $("mc_close").onclick = closeMission;
+  function paintMission(sk, j, ctl) {
+    if (!sk || !SK.view) return;
+    var mm = (sk.missions || []).filter(function (x) { return x.id === SK.view; })[0];
+    if (!mm) return;
+    $("mc_title").firstChild.nodeValue = mm.id + " · " + mm.name;
+    var run = sk.run && sk.run.id === mm.id ? sk.run : null;
+    var res = !run && sk.result && sk.result.id === mm.id && SK.inline === sk.result.csv ? sk.result : null;
+    var locked = VIEW || ctl === "other" || !!sk.run;
+    T("mc_sub", run ? (run.state === "RESTARTING" ? "APP RESTARTING" : "RUNNING · ABORT = FLY HOME") : res ? "RESULT"
+      : mm.ground ? "ON THE GROUND · NO TAKE-OFF" : "FLIES BY ITSELF · ENDS WITH RTL");
+    T("mc_sum", (run && run.summary) || mm.summary || "");
+    $("mc_sum").hidden = !!run;
+    $("mc_now").hidden = !run; $("mc_res").hidden = !res;
+    $("mc_ready").hidden = $("mc_pcard").hidden = $("mc_ccard").hidden = $("mc_pilot").hidden = !!(run || res);
+    $("mc_rcard").hidden = !run;
+    $("mc_start").hidden = !!run; $("mc_abort").hidden = !run;
+    $("mc_restart").hidden = !(run && run.wait_restart);
+    // The picture: side view for the flights; the map only where the geofence is the test (M6).
+    $("mc_piccard").hidden = mm.ground || mm.fence;
+    $("mc_mapcard").hidden = !mm.fence;
+    var steps = run ? run.steps : mm.steps, ol = $("mc_steps");
+    ol.textContent = "";
+    steps.forEach(function (s, i) {
+      ol.appendChild(el("li", res ? "done" : !run ? "" : i < run.step_i ? "done" : i === run.step_i ? "cur" : "", s));
+    });
+    $("mc_stepsd").open = !!run || $("mc_stepsd")._user;
+    if (run) paintLive(run, j, ctl, mm);
+    if (res) paintInlineResult(res);
+    if (!mm.ground && !mm.fence) drawProfile(sk, j, mm, run, res);
+    if (mm.fence) drawMcMap(sk, j, mm, run, res);
+    if (run || res) return;
+    var box = $("mc_params");
+    if (SK.built !== mm.id) {
+      SK.built = mm.id; box.textContent = "";
+      mm.params.forEach(function (x) {
+        var row = el("div", "mc-p");
+        row.appendChild(el("span", "", x.t));
+        if (x.ch) {
+          var seg = el("div", "seg"); seg._key = x.k;
+          x.ch.forEach(function (c) {
+            var b = el("button", "", c); b._v = c;
+            b.onclick = function () { setParam(mm.id, x.k, c); };
+            seg.appendChild(b);
+          });
+          row.appendChild(seg);
+        } else row.appendChild(numInput(x, function (v, inp) { setParam(mm.id, x.k, v, inp); }));
+        box.appendChild(row);
+      });
+    }
+    mm.params.forEach(function (x) {
+      box.querySelectorAll("input").forEach(function (inp) {
+        if (inp._key === x.k && document.activeElement !== inp) { inp.value = x.v; inp._was = x.v; }
+        inp.disabled = locked;
+      });
+      box.querySelectorAll(".seg").forEach(function (seg) {
+        if (seg._key !== x.k) return;
+        seg.querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", b._v === x.v); b.disabled = locked; });
+      });
+    });
+    var lim = {}; (sk.limits || []).forEach(function (x) { lim[x.k] = x.v; });
+    T("mc_lim", "Always on: altitude limit " + lim.alt_limit + " m · minimum battery " + lim.min_battery + " %"
+      + (mm.fence ? " · geofence margin " + lim.fence_margin + " m" : "") + ". Change them in MISSIONS.");
+    // Ready or not: the blocking problems first, each with what to do.
+    var checks = sk.viewing === mm.id ? sk.checks || [] : [];
+    var bad = checks.filter(function (c) { return c.blocking && !c.ok; });
+    var warn = checks.filter(function (c) { return !c.blocking && !c.ok; });
+    var rb = $("mc_ready"), rl = $("mc_ready_l"); rl.textContent = "";
+    var ready = sk.viewing === mm.id && sk.ready && !sk.run && !j.armed && !locked;
+    if (!checks.length) { rb.className = "mc-ready wait"; T("mc_ready_t", "Checking…"); }
+    else if (bad.length || j.armed || locked) {
+      rb.className = "mc-ready"; T("mc_ready_t", "NOT READY");
+      if (j.armed) rl.appendChild(el("li", "", "Disarm first"));
+      if (ctl === "other") rl.appendChild(el("li", "", "Another phone has control"));
+      bad.forEach(function (c) { rl.appendChild(el("li", "", c.name + (c.detail ? ": " + c.detail : ""))); });
+    } else {
+      rb.className = "mc-ready ok"; T("mc_ready_t", "READY · tap START");
+      warn.forEach(function (c) { rl.appendChild(el("li", "", c.name + (c.detail ? ": " + c.detail : "") + " (not required)")); });
+    }
+    var ul = $("mc_checks"); ul.textContent = "";
+    if (!checks.length) ul.appendChild(el("li", "na", "checking…"));
+    checks.forEach(function (c) {
+      var li = el("li", c.ok ? "" : c.blocking ? "bad" : "warn"), i = el("i", "", c.ok ? "✓" : c.blocking ? "✗" : "!"), d = el("div");
+      d.appendChild(document.createTextNode(c.name + (c.blocking ? "" : " (not required)")));
+      if (c.detail) d.appendChild(el("small", "", c.detail));
+      li.appendChild(i); li.appendChild(d); ul.appendChild(li);
+    });
+    $("mc_start").disabled = !ready; $("mc_start").classList.remove("done");
+    T("mc_start_t", "START " + mm.id);
+    T("mc_start_s", ready ? (mm.ground ? "arms by itself, stays on the ground" : "arms by itself, takes off, flies the steps")
+      : sk.run ? "a mission is running" : j.armed ? "disarm first" : bad.length ? "fix the NOT READY list above" : "checking…");
+  }
+  $("mc_stepsd").addEventListener("toggle", function () { if (!(seekerOf(LAST) || {}).run) this._user = this.open; });
+  function paintLive(run, j, ctl, mm) {
+    var bar = $("ml_bar");
+    if (bar.childNodes.length !== run.steps.length) { bar.textContent = ""; run.steps.forEach(function () { bar.appendChild(el("i")); }); }
+    bar.childNodes.forEach(function (b, i) { b.className = i < run.step_i ? "done" : i === run.step_i ? "cur" : ""; });
+    var st = $("ml_state"), stt = run.state === "RESTARTING" ? "APP DOWN" : run.state;
+    st.textContent = stt;
+    st.className = "mh-state" + (run.state === "ABORTED" ? " bad" : run.state === "PILOT" || run.state === "RESTARTING" ? " warn" : "");
+    T("ml_n", (run.step_i + 1) + "/" + run.steps.length);
+    T("ml_step", run.wait_restart ? "Holding · press RESTART APP below"
+      : run.state === "RUNNING" ? (run.steps[run.step_i] || "") : run.why || run.state);
+    T("ml_alt", run.alt === null ? "--" : fmt(run.alt, 1) + " m");
+    T("ml_alt2", mm.ground ? "on the ground" : run.target_alt !== null ? "target " + fmt(run.target_alt, 0) + " m" : " ");
+    T("ml_gs", run.gs === null ? "--" : fmt(run.gs, 1));
+    T("ml_vz", run.vz === null ? "m/s" : "m/s · " + (run.vz > 0.2 ? "↑ " : run.vz < -0.2 ? "↓ " : "") + fmt(Math.abs(run.vz), 1));
+    T("ml_home", run.home_m === null ? "--" : run.home_m + " m");
+    var e = Math.round(run.elapsed_s);
+    T("ml_mode", (run.mode || "--") + (run.armed ? "" : " · OFF") + " · " + Math.floor(e / 60) + ":" + ("0" + e % 60).slice(-2));
+    $("ml_fc").className = run.fc_age !== null && run.fc_age < 1.5 ? "ok" : "bad";
+    $("ml_rc").className = run.rc_ok ? "ok" : "bad";
+    $("ml_vid").className = run.video_age !== null && run.video_age < 1 ? "ok" : "bad";
+    $("ml_gcs").className = run.muted ? "bad" : "ok"; T("ml_gcs", run.muted ? "APP SILENT" : "APP LINK");
+    var f = ((LAST && LAST.mission) || {}).fence || {}, hasF = (f.points || []).length >= 3;
+    $("ml_fence").hidden = !mm.fence || !hasF;
+    $("ml_fence").className = run.fence_alert || f.inside === false ? "bad" : f.inside ? "ok" : "";
+    T("ml_fence", run.fence_alert ? "FENCE STOP" : f.inside && f.edge_m !== null ? "FENCE " + Math.round(f.edge_m) + " m" : "FENCE");
+    $("ml_warn").hidden = !run.throttle_low;
+    var ul = $("mc_rchecks"); ul.textContent = "";
+    var nb = (run.checks || []).filter(function (c) { return c.ok === false; }).length;
+    T("mc_rcount", (run.checks || []).length ? "· " + ((run.checks || []).length - nb) + " ✓" + (nb ? " · " + nb + " ✗" : "") : "");
+    if (!(run.checks || []).length) ul.appendChild(el("li", "na", "none yet"));
+    (run.checks || []).forEach(function (c) {
+      var li = el("li", c.ok === true ? "" : c.ok === false ? "bad" : "na"), d = el("div");
+      li.appendChild(el("i", "", c.ok === true ? "✓" : c.ok === false ? "✗" : "–"));
+      d.appendChild(document.createTextNode(c.name)); if (c.detail) d.appendChild(el("small", "", c.detail));
+      li.appendChild(d); ul.appendChild(li);
+    });
+    var ab = $("mc_abort"), down = run.state === "RESTARTING";
+    ab.disabled = VIEW || ctl === "other" || down || (!run.armed && run.state !== "RUNNING") || run.state === "PILOT";
+    T("mc_abort_s", down ? "the app is restarting: the FC flies home by itself" : run.state === "PILOT" ? "the pilot has it"
+      : run.state === "ABORTED" ? (run.why || "aborted") + " · returning" : run.armed ? "fly home and land (RTL)" : "stop: disarm");
+    $("mc_restart").disabled = VIEW || ctl === "other";
+  }
+  function resultChecks(ul, r) {
+    var fails = (r.checks || []).filter(function (c) { return c.ok === false; });
+    var pre = (r.checks || []).filter(function (c) { return /^Pre-flight: /.test(c.name) && c.ok !== false; });
+    var rest = (r.checks || []).filter(function (c) { return c.ok !== false && pre.indexOf(c) < 0; });
+    var list = fails.concat(rest);
+    if (pre.length) list.unshift({name: "Pre-flight checks: " + pre.length + " passed", ok: true,
+      detail: pre.map(function (c) { return c.name.replace(/^Pre-flight: /, ""); }).join(" · ")});
+    ul.textContent = "";
+    list.forEach(function (c) {
+      var li = el("li", c.ok === true ? "" : c.ok === false ? "bad" : "na"), d = el("div");
+      li.appendChild(el("i", "", c.ok === true ? "✓" : c.ok === false ? "✗" : "–"));
+      d.appendChild(document.createTextNode(c.name)); if (c.detail) d.appendChild(el("small", "", c.detail));
+      li.appendChild(d); ul.appendChild(li);
+    });
+    return fails;
+  }
+  function paintInlineResult(r) {
+    var v = $("mcr_verdict"); v.textContent = r.verdict; v.className = "mr-verdict " + r.verdict;
+    var fails = (r.checks || []).filter(function (c) { return c.ok === false; });
+    T("mcr_why", (fails.length ? fails.length + " check" + (fails.length > 1 ? "s" : "") + " failed · " : "all checks passed · ")
+      + (r.why ? r.why + " · " : "") + Math.round(r.duration_s) + " s");
+    resultChecks($("mcr_checks"), r);
+    T("mcr_csv", "Log: " + (r.csv || "no log file"));
+    $("mc_start").disabled = false; $("mc_start").classList.add("done");
+    T("mc_start_t", "DONE"); T("mc_start_s", "back to " + r.id + ", ready for the next run");
+  }
+  $("mc_start").onclick = function () {
+    if ($("mc_start").disabled || !SK.view) return;
+    if ($("mc_start").classList.contains("done")) {
+      SK.inline = null; cmd("msn=dismiss", true);
+      $("mc_res").hidden = true; $("mc_start").classList.remove("done");
+      if (LAST) paintMission(seekerOf(LAST), LAST, LAST.control);
+      return;
+    }
+    cmd("msn=start:" + SK.view);
+  };
+  $("mc_abort").addEventListener("pointerdown", function (e) {
+    if (this.disabled) return;
+    e.preventDefault(); cmd("abort=1");
+  });
+  $("mc_restart").onclick = function () {
+    if (this.disabled) return;
+    if (!confirm("RESTART THE APP NOW?\n\nThe app goes down in flight. The FC must fly home by itself (RTL). The app comes back in about 30 s and shows the result.")) return;
+    cmd("msn=restart");
+  };
+  function sizeCanvas(cv) {
+    var dpr = window.devicePixelRatio || 1, w = cv.clientWidth || 320, h = cv.clientHeight || 200;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+    var c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return [c, w, h];
+  }
+  // The flight seen from the side: metres from home across, height up.
+  function drawProfile(sk, j, mm, run, res) {
+    var cw = sizeCanvas($("mc_prof")), c = cw[0], w = cw[1], h = cw[2];
+    var css = getComputedStyle(document.body), ink = css.getPropertyValue("--dim") || "#4c6176", line = css.getPropertyValue("--line") || "#c3d6e7";
+    c.fillStyle = css.getPropertyValue("--bg3") || "#eef5fb"; c.fillRect(0, 0, w, h);
+    var pr = (run && run.profile) || mm.profile || [[], []], pts = pr[0] || [], marks = pr[1] || [];
+    var side = (run && run.side) || (res && SK.side) || [];
+    if (run) SK.side = run.side;
+    var lim = 120; (sk.limits || []).forEach(function (x) { if (x.k === "alt_limit") lim = x.v; });
+    var m = (j && j.mission) || {};
+    var now = run && run.alt !== null ? [run.home_m || 0, run.alt] : null;
+    var dmax = 30, hmax = lim * 1.08;
+    pts.concat(side, now ? [now] : []).forEach(function (p) { dmax = Math.max(dmax, p[0] * 1.12); hmax = Math.max(hmax, p[1] * 1.08); });
+    // True to scale (the same metres across and up), so a 45° line looks 45°.
+    var L = 38, R = 14, T0 = 12, B = 24, vertical = dmax <= 30.1;
+    var k = Math.min((w - L - R) / dmax, (h - B - T0) / hmax);
+    hmax = (h - B - T0) / k;
+    var x0 = L + Math.max(0, (w - L - R) - dmax * k) * (vertical ? 0.35 : 0);
+    var X = function (d) { return x0 + d * k; };
+    var Y = function (a) { return h - B - a * k; };
+    // Grid and axes.
+    c.strokeStyle = line; c.lineWidth = 1; c.fillStyle = ink; c.font = "10.5px sans-serif"; c.textAlign = "right"; c.textBaseline = "middle";
+    var hs = [10, 20, 25, 50, 100, 200], step = hs[hs.length - 1];
+    for (var i = 0; i < hs.length; i++) if (hmax / hs[i] <= 6) { step = hs[i]; break; }
+    for (var a = 0; a <= hmax; a += step) { c.beginPath(); c.moveTo(L, Y(a)); c.lineTo(w - R, Y(a)); c.stroke(); c.fillText(a + " m", L - 4, Y(a)); }
+    c.textAlign = "center"; c.textBaseline = "top";
+    if (!vertical) {
+      var ds = [10, 20, 50, 100, 200, 500, 1000], dstep = ds[ds.length - 1];
+      var span = (w - R - x0) / k;
+      for (i = 0; i < ds.length; i++) if (span / ds[i] <= 5) { dstep = ds[i]; break; }
+      for (var d = dstep; X(d) < w - R - 10; d += dstep) c.fillText(d + " m", X(d), h - B + 6);
+    } else c.fillText("straight up", X(0), h - B + 6);
+    c.strokeStyle = "#7b90a4"; c.lineWidth = 2; c.beginPath(); c.moveTo(L, Y(0)); c.lineTo(w - R, Y(0)); c.stroke();
+    if (Y(lim) < T0 - 1) lim = null;
+    // The altitude limit.
+    if (lim !== null) {
+      c.setLineDash([5, 4]); c.strokeStyle = "#dc2626"; c.lineWidth = 2; c.beginPath(); c.moveTo(L, Y(lim)); c.lineTo(w - R, Y(lim)); c.stroke(); c.setLineDash([]);
+      c.fillStyle = "#dc2626"; c.textAlign = "right"; c.textBaseline = "bottom"; c.font = "600 10.5px sans-serif";
+      c.fillText("limit " + lim + " m", w - R - 2, Y(lim) - 2);
+    }
+    // The plan.
+    if (pts.length >= 2) {
+      c.setLineDash([8, 6]); c.strokeStyle = "#ef7a1a"; c.lineWidth = 3.5; c.lineJoin = "round"; c.beginPath();
+      pts.forEach(function (p, k) { if (k) c.lineTo(X(p[0]), Y(p[1])); else c.moveTo(X(p[0]), Y(p[1])); }); c.stroke(); c.setLineDash([]);
+    }
+    marks.forEach(function (mk) {
+      var x = X(mk.d), y = Y(mk.h);
+      c.fillStyle = mk.hot ? "#dc2626" : "#ef7a1a"; c.beginPath(); c.arc(x, y, 5, 0, 7); c.fill();
+      c.font = "600 11px sans-serif"; c.textBaseline = "middle";
+      var right = x < w * 0.6; c.textAlign = right ? "left" : "right";
+      c.fillStyle = mk.hot ? "#b91c1c" : "#b45309"; c.fillText(mk.t, x + (right ? 9 : -9), y);
+    });
+    // Flown, and the drone now.
+    if (side.length >= 2) {
+      c.strokeStyle = "#2f66b8"; c.lineWidth = 3; c.beginPath();
+      side.forEach(function (p, k) { if (k) c.lineTo(X(p[0]), Y(p[1])); else c.moveTo(X(p[0]), Y(p[1])); }); c.stroke();
+    }
+    c.fillStyle = "#fff"; c.strokeStyle = "#1f3b63"; c.lineWidth = 2; c.beginPath(); c.arc(X(0), Y(0), 8, 0, 7); c.fill(); c.stroke();
+    c.fillStyle = "#1f3b63"; c.font = "700 10px sans-serif"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText("H", X(0), Y(0) + .5);
+    if (now) {
+      c.fillStyle = "#2f66b8"; c.strokeStyle = "#fff"; c.lineWidth = 2.5; c.beginPath(); c.arc(X(now[0]), Y(now[1]), 7, 0, 7); c.fill(); c.stroke();
+    }
+  }
+  // M6's map: geofence, the planned line, the flown track, the drone.
+  function drawMcMap(sk, j, mm, run, res) {
+    var cw = sizeCanvas($("mc_mapc")), c = cw[0], w = cw[1], h = cw[2];
+    c.fillStyle = "#1d2228"; c.fillRect(0, 0, w, h);
+    var m = (j && j.mission) || {}, fence = ((m.fence || {}).points) || [], live = fenceLive(m), g = m.gps || {};
+    // No GPS (indoors): the geofence as a preview, as on the Geofence screen; live once the satellites are up.
+    $("mc_fdummy").hidden = live || fence.length < 3;
+    T("mc_fdummy_t", "GPS " + (g.ok ? "YES" : "NO") + " / Compass " + (m.compass_ok ? "YES" : "NO")
+      + ": the geofence cannot see the drone yet. It switches to the live map by itself once GPS reads YES / YES.");
+    var pos = live ? m.position : null, home = (run && run.home) || (live ? m.home || pos : null);
+    var route = live ? (run && run.route) || mm.route || [] : [], trail = live ? (run && run.trail) || (res && SK.trail) || [] : [];
+    if (run) SK.trail = run.trail;
+    var pts = fence.concat(route, trail, pos ? [pos] : [], home ? [home] : []);
+    if (!pts.length) { T("mc_map_note", "Draw the geofence first (Geofence button). The map fills in with GPS."); T("mc_map_scale", ""); return; }
+    var la = pts.map(function (p) { return p[0]; }), lo = pts.map(function (p) { return p[1]; });
+    var clat = (Math.min.apply(null, la) + Math.max.apply(null, la)) / 2, clon = (Math.min.apply(null, lo) + Math.max.apply(null, lo)) / 2;
+    var span = Math.max(1e-7, wx(Math.max.apply(null, lo), 0) - wx(Math.min.apply(null, lo), 0), (wy(Math.min.apply(null, la), 0) - wy(Math.max.apply(null, la), 0)) * w / h);
+    var z = Math.max(3, Math.min(19, Math.floor(Math.log2(w * .85 / span))));
+    var cx = wx(clon, z) - w / 2, cy = wy(clat, z) - h / 2;
+    var P = function (p) { return [wx(p[1], z) - cx, wy(p[0], z) - cy]; };
+    for (var tx = Math.floor(cx / 256); tx <= Math.floor((cx + w) / 256); tx++)
+      for (var ty = Math.floor(cy / 256); ty <= Math.floor((cy + h) / 256); ty++) {
+        if (ty < 0 || ty >= Math.pow(2, z)) continue;
+        var im = tile(z, tx, ty);
+        if (im) c.drawImage(im, tx * 256 - cx, ty * 256 - cy, 256, 256);
+      }
+    var mpp = Math.cos(clat * Math.PI / 180) * 2 * Math.PI * 6378137 / (256 * Math.pow(2, z));
+    var steps = [10, 20, 50, 100, 200, 500, 1000, 2000], gstep = 2000;
+    for (var i = 0; i < steps.length; i++) if (steps[i] / mpp >= 50) { gstep = steps[i]; break; }
+    var gp = gstep / mpp; c.strokeStyle = "rgba(255,255,255,.12)"; c.lineWidth = 1; c.beginPath();
+    for (var gx = ((-cx % gp) + gp) % gp; gx < w; gx += gp) { c.moveTo(gx, 0); c.lineTo(gx, h); }
+    for (var gy = ((-cy % gp) + gp) % gp; gy < h; gy += gp) { c.moveTo(0, gy); c.lineTo(w, gy); }
+    c.stroke();
+    function path(list, close) {
+      c.beginPath(); list.forEach(function (p, k) { var q = P(p); if (k) c.lineTo(q[0], q[1]); else c.moveTo(q[0], q[1]); });
+      if (close) c.closePath();
+    }
+    var hot = run && run.fence_alert;
+    if (fence.length >= 3) {
+      path(fence, true); c.fillStyle = hot ? "rgba(220,38,38,.22)" : "rgba(255,210,63,.14)"; c.fill();
+      c.strokeStyle = hot ? "#ef4444" : "#ffd23f"; c.lineWidth = 3; c.stroke();
+    }
+    if (route.length >= 2) { path(route); c.setLineDash([7, 5]); c.strokeStyle = "#ef7a1a"; c.lineWidth = 3; c.stroke(); c.setLineDash([]); }
+    if (trail.length >= 2) { path(trail); c.strokeStyle = "#3b82f6"; c.lineWidth = 3; c.stroke(); }
+    if (home) {
+      var hq = P(home);
+      c.fillStyle = "#fff"; c.beginPath(); c.arc(hq[0], hq[1], 9, 0, 7); c.fill();
+      c.fillStyle = "#1f3b63"; c.font = "700 11px sans-serif"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText("H", hq[0], hq[1] + .5);
+    }
+    if (pos) {
+      var dq = P(pos), a = ((Number(m.heading_deg) || 0) - 90) * Math.PI / 180;
+      c.fillStyle = "#2f66b8"; c.strokeStyle = "#fff"; c.lineWidth = 2; c.beginPath(); c.arc(dq[0], dq[1], 7, 0, 7); c.fill(); c.stroke();
+      c.beginPath(); c.moveTo(dq[0] + 15 * Math.cos(a), dq[1] + 15 * Math.sin(a));
+      c.lineTo(dq[0] + 8 * Math.cos(a + 2.4), dq[1] + 8 * Math.sin(a + 2.4)); c.lineTo(dq[0] + 8 * Math.cos(a - 2.4), dq[1] + 8 * Math.sin(a - 2.4));
+      c.closePath(); c.fillStyle = "#fff"; c.fill();
+    }
+    T("mc_map_scale", "grid " + (gstep >= 1000 ? gstep / 1000 + " km" : gstep + " m") + (FM.failed && !FM.loaded ? " · no map tiles offline" : ""));
+    var f = m.fence || {};
+    T("mc_map_note", fence.length < 3 ? "Draw the geofence first (Geofence button)" : !live ? "Preview: no GPS" : hot ? "GEOFENCE STOP"
+      : f.inside === true ? "Inside · " + Math.round(f.edge_m) + " m to the edge" : f.inside === false ? "OUTSIDE the geofence" : "Waiting for GPS");
+  }
+  window.addEventListener("resize", function () { if (LAST && SK.view && $("sh_mission").classList.contains("open")) paintMission(seekerOf(LAST), LAST, LAST.control); });
+  function showResult(r) {
+    $("mr_title").firstChild.nodeValue = r.id + " · " + r.name;
+    T("mr_sub", "RESULT · " + Math.round(r.duration_s) + " s");
+    var v = $("mr_verdict"); v.textContent = r.verdict; v.className = "mr-verdict " + r.verdict;
+    T("mr_why", r.why || "");
+    resultChecks($("mr_checks"), r);
+    T("mr_csv", r.csv || "no log file");
+    openSheetId("sh_result");
+  }
+  function closeResult() { closeSheetId("sh_result"); cmd("msn=dismiss", true); }
+  $("mr_close").onclick = closeResult; $("mr_done").onclick = closeResult;
+  $("s_abort").addEventListener("pointerdown", function (e) {
+    if (this.disabled) return;
+    e.preventDefault(); cmd("abort=1");
+  });
+  function shortSeek(why) {
+    if (!why) return "checking…";
+    if (/ASTERIX/.test(why)) return "no ASTERIX target";
+    if (/Geofence/.test(why)) return "draw a geofence";
+    if (/GPS/.test(why)) return "waiting for GPS";
+    if (/Battery/.test(why)) return "battery";
+    if (/radio/.test(why)) return "pilot radio off";
+    if (/Camera/.test(why)) return "camera 30°";
+    return why.length > 24 ? why.slice(0, 23) + "…" : why;
+  }
+  var CUEBUILT = false;
+  function paintCue(sk, j, busy) {
+    var cue = sk.cue || {}, seek = sk.seek || {}, st = $("cue_status");
+    var rf = cue.rfd || {};
+    st.textContent = "RFD radio: " + (rf.dev ? rf.dev.replace(/^.*\//, "") + (rf.open ? " open @" + rf.baud : " not open") : "not found")
+      + (rf.error ? " (" + rf.error + ")" : "") + " · " + (rf.lines || 0) + " lines"
+      + (rf.bad ? ", " + rf.bad + " bad" : "") + (rf.rx_age !== null && rf.rx_age !== undefined ? ", last " + rf.rx_age + " s ago" : "")
+      + "\nUDP " + cue.port + (cue.mcast ? " · " + cue.mcast : "") + ": " + (cue.error || (cue.packets || 0) + " packets"
+      + (cue.rx_age !== null && cue.rx_age !== undefined ? ", last " + cue.rx_age + " s ago" : "")) + " · " + (cue.tracks || []).length + " tracks";
+    st.className = "cue-status" + (!rf.open && cue.error ? " bad" : "");
+    if (SK.pick) st.textContent = "CHOOSE THE TARGET: SEEK starts with it\n" + st.textContent;
+    st.style.whiteSpace = "pre-line";
+    var box = $("cue_tracks"); box.textContent = "";
+    var near = el("button", "cue-item" + (cue.selected ? "" : " on"));
+    near.appendChild(el("b", "", "NEAREST")); near.appendChild(el("span", "", "the closest fresh track"));
+    near.onclick = function () { pick("msn=cue:nearest"); };
+    near.disabled = busy; box.appendChild(near);
+    (cue.tracks || []).forEach(function (t) {
+      var b = el("button", "cue-item" + (cue.selected === t.key ? " on" : "") + (t.fresh ? "" : " stale"));
+      b.appendChild(el("b", "", t.label));
+      b.appendChild(el("span", "", (t.dist_m !== null ? t.dist_m + " m · " + ("00" + t.bearing).slice(-3) + "°" : "--")
+        + (t.alt_rel !== null ? " · " + (t.alt_rel >= 0 ? "+" : "") + Math.round(t.alt_rel) + " m" : "")
+        + (t.speed !== null ? " · " + t.speed + " m/s" : "") + " · " + t.age_s + " s"));
+      b.onclick = function () { pick("msn=cue:select:" + t.key); };
+      b.disabled = busy; box.appendChild(b);
+    });
+    var ol = $("seek_steps"); ol.textContent = "";
+    (seek.steps || []).forEach(function (s) { ol.appendChild(el("li", "", s)); });
+    var pb = $("seek_params");
+    if (!CUEBUILT) {
+      CUEBUILT = true;
+      (seek.params || []).forEach(function (x) {
+        var row = el("div", "mc-p"); row.appendChild(el("span", "", x.t));
+        if (x.ch) {
+          var seg = el("div", "seg"); seg._key = x.k;
+          x.ch.forEach(function (c) { var b = el("button", "", c); b._v = c; b.onclick = function () { setSeek(x.k, c); }; seg.appendChild(b); });
+          row.appendChild(seg);
+        } else row.appendChild(numInput(x, function (v, inp) { setSeek(x.k, v, inp); }));
+        pb.appendChild(row);
+      });
+    }
+    (seek.params || []).forEach(function (x) {
+      pb.querySelectorAll("input").forEach(function (inp) {
+        if (inp._key === x.k && document.activeElement !== inp) { inp.value = x.v; inp._was = x.v; }
+        inp.disabled = busy;
+      });
+      pb.querySelectorAll(".seg").forEach(function (seg) {
+        if (seg._key === x.k) seg.querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", b._v === x.v); b.disabled = busy; });
+      });
+    });
+    [["cue_port", cue.port], ["cue_mcast", cue.mcast || ""], ["cue_iface", cue.iface || ""]].forEach(function (x) {
+      if (document.activeElement !== $(x[0]) && !$(x[0])._dirty) $(x[0]).value = x[1];
+    });
+  }
+  // A tap on a target selects it; after SEEK's "choose the target" it also starts SEEK.
+  function pick(q) {
+    var go = SK.pick;
+    cmd(q).then(function (j) {
+      if (!go || !j || j.refused) return;
+      SK.pick = false; closePops();
+      var seek = (seekerOf(j) || {}).seek || {};
+      // Locked; SEEK only when its checks pass, else say what is missing.
+      if (seek.ready) cmd("msn=start:SEEK");
+      else note("Target locked · SEEK blocked: " + (seek.why || "checks not done"), true);
+    });
+  }
+  function setSeek(key, val, inp) {
+    cmd("msn=set:SEEK:" + key + ":" + val).then(function (j) {
+      if (j && !j.refused) { var s = $("seek_saved"); s.classList.add("on"); setTimeout(function () { s.classList.remove("on"); }, 1400); }
+      else if (inp && inp._was !== undefined) inp.value = inp._was;
+    });
+  }
+  ["cue_port", "cue_mcast", "cue_iface"].forEach(function (id) { $(id).addEventListener("input", function () { $(id)._dirty = true; }); });
+  $("cue_apply").onclick = function () {
+    cmd("msn=cue:udp:" + $("cue_port").value + ":" + $("cue_mcast").value.trim() + ":" + $("cue_iface").value.trim())
+      .then(function () { ["cue_port", "cue_mcast", "cue_iface"].forEach(function (id) { $(id)._dirty = false; }); });
+  };
+  $("s_main").addEventListener("pointerdown", function (e) {
+    var act = this.getAttribute("data-action");
+    if (this.disabled || !act) return;
+    e.preventDefault();
+    if (act === "seek") {
+      // More than one target and none picked: choose first, that tap starts SEEK.
+      var c = (seekerOf(LAST) || {}).cue || {}, fresh = (c.tracks || []).filter(function (t) { return t.fresh; });
+      if (fresh.length > 1 && !c.selected) { SK.pick = true; openPop("pop_cue"); paintCue(seekerOf(LAST), LAST, false); }
+      else cmd("msn=start:SEEK");
+    } else $("b_eng").dispatchEvent(new Event("pointerdown"));
+  });
+  $("tile_ast").addEventListener("click", function () { if (LAST && seekerOf(LAST)) openPop("pop_cue"); });
+  $("tile_ast").addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("tile_ast").click(); } });
+  $("mh_next").onclick = function () { cmd("msn=next"); };
+  $("mh_rtl").onclick = function () { cmd("msn=after:RTL"); };
+  $("mh_land").onclick = function () { cmd("msn=after:LAND"); };
 
   function short(why) {
     if (!why) return "";

@@ -959,6 +959,17 @@ class ArduPilotAcro(FcBackend):
         self.fltmode_ch = 5
         self.flight_modes = None
         self._mode_switch = None
+        # Seeker missions (seeker_missions.py): GUIDED telemetry, every ACK,
+        # message counts, and a mute that stops everything the Jetson sends
+        # to the FC (the link-loss test).
+        self.gcs_muted = False
+        self.link_t = None
+        self._gpos_rel = None
+        self._battery = None
+        self._acks = {}
+        self.acks_rejected = 0
+        self.rx_counts = {}
+        self.fc_text = []
 
     def connect(self):
         if mavutil is None:
@@ -986,6 +997,7 @@ class ArduPilotAcro(FcBackend):
                 f"({mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA})")
 
         self.linked = True
+        self.link_t = perf_counter()
         self._apply_heartbeat(hb)
 
 
@@ -1302,6 +1314,7 @@ class ArduPilotAcro(FcBackend):
             if msg is None:
                 continue
             t = msg.get_type()
+            self._rx_seeker(t, msg)
             if (t == "HEARTBEAT"
                     and msg.autopilot != mavutil.mavlink.MAV_AUTOPILOT_INVALID
                     and msg.type != mavutil.mavlink.MAV_TYPE_GCS):
@@ -1383,8 +1396,33 @@ class ArduPilotAcro(FcBackend):
                     while self._att_hist and self._att_hist[0][0] < cut:
                         self._att_hist.pop(0)
 
+    def _rx_seeker(self, t, msg):
+        now = perf_counter()
+        with self._lock:
+            self.rx_counts[t] = self.rx_counts.get(t, 0) + 1
+            if t == "GLOBAL_POSITION_INT":
+                self._gpos_rel = (now, msg.relative_alt*1e-3, msg.vx*1e-2, msg.vy*1e-2, msg.vz*1e-2)
+            elif t == "SYS_STATUS":
+                self._battery = (now, msg.voltage_battery, msg.current_battery, msg.battery_remaining)
+            elif t == "COMMAND_ACK":
+                self._acks[int(msg.command)] = (now, int(msg.result))
+                if msg.result not in (mavutil.mavlink.MAV_RESULT_ACCEPTED,
+                                      mavutil.mavlink.MAV_RESULT_IN_PROGRESS):
+                    self.acks_rejected += 1
+            elif t == "PARAM_VALUE":
+                pid = msg.param_id
+                if isinstance(pid, bytes):
+                    pid = pid.decode(errors="ignore")
+                self.params[pid.strip("\x00")] = float(msg.param_value)
+            elif t == "STATUSTEXT":
+                text = msg.text.decode(errors="ignore") if isinstance(msg.text, bytes) else str(msg.text)
+                self.fc_text.append((now, text.strip("\x00")))
+                del self.fc_text[:-50]
+
     def _hb_loop(self):
         while not self._stop.wait(1.0):
+            if self.gcs_muted:
+                continue
             try:
                 self.master.mav.heartbeat_send(
                     mavutil.mavlink.MAV_TYPE_GCS,
@@ -1639,9 +1677,9 @@ class ArduPilotAcro(FcBackend):
             return f"FC in {self.mode_name}"
         return ""
 
-    def request_mode(self, name):
+    def request_mode(self, name, allow_disarmed=False):
         number = next((n for n, m in COPTER_MODES.items() if m == name), None)
-        if number is None or not self.linked or not self.armed:
+        if number is None or not self.linked or not (self.armed or allow_disarmed) or self.gcs_muted:
             return False
         with self._lock:
             self._mode_req = (perf_counter(), name)
@@ -1659,6 +1697,123 @@ class ArduPilotAcro(FcBackend):
         except Exception:
             return False
 
+    # ---- Seeker missions: GUIDED flight over MAVLink -----------------------
+
+    def _command(self, cmd, *p):
+        if self.master is None or not self.linked or self.gcs_muted:
+            return False
+        p = (list(p) + [0] * 7)[:7]
+        try:
+            self.master.mav.command_long_send(
+                self.master.target_system, self.master.target_component, cmd, 0, *p)
+            return True
+        except Exception:
+            return False
+
+    def command_ack(self, cmd):
+        """(time, result) of the latest COMMAND_ACK for this command, or None."""
+        with self._lock:
+            return self._acks.get(int(cmd))
+
+    def guided_takeoff(self, alt_m):
+        return self._command(mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 0, 0, 0, 0, float(alt_m))
+
+    def guided_goto(self, lat, lon, rel_alt_m, yaw_deg=None):
+        """A position target in GUIDED: lat/lon and an altitude above home;
+        yaw_deg points the nose (and the camera) while it flies."""
+        if self.master is None or not self.linked or self.gcs_muted:
+            return False
+        try:
+            self.master.mav.set_position_target_global_int_send(
+                0, self.master.target_system, self.master.target_component,
+                mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+                0b110111111000 if yaw_deg is None else 0b100111111000,
+                int(round(lat*1e7)), int(round(lon*1e7)), float(rel_alt_m),
+                0, 0, 0, 0, 0, 0, 0 if yaw_deg is None else math.radians(yaw_deg), 0)
+            return True
+        except Exception:
+            return False
+
+    def guided_velocity(self, vn, ve, vd, yaw_deg=None):
+        """A velocity target in GUIDED (m/s, north/east/down).  The FC keeps
+        it about 3 s, then stops and holds, if no new one comes."""
+        if self.master is None or not self.linked or self.gcs_muted:
+            return False
+        try:
+            self.master.mav.set_position_target_local_ned_send(
+                0, self.master.target_system, self.master.target_component,
+                mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+                0b110111000111 if yaw_deg is None else 0b100111000111,
+                0, 0, 0, float(vn), float(ve), float(vd), 0, 0, 0,
+                0 if yaw_deg is None else math.radians(yaw_deg), 0)
+            return True
+        except Exception:
+            return False
+
+    SPEED_GROUND, SPEED_CLIMB, SPEED_DESCENT = 1, 2, 3
+
+    def change_speed(self, kind, mps):
+        return self._command(mavutil.mavlink.MAV_CMD_DO_CHANGE_SPEED, int(kind), float(mps), -1)
+
+    def set_param(self, name, value):
+        """Write one FC parameter (RAM and EEPROM); the reply lands in params."""
+        if self.master is None or not self.linked or self.gcs_muted:
+            return False
+        try:
+            self.master.mav.param_set_send(
+                self.master.target_system, self.master.target_component, name.encode(),
+                float(value), mavutil.mavlink.MAV_PARAM_TYPE_REAL32)
+            return True
+        except Exception:
+            return False
+
+    def request_params(self, names):
+        """Ask for parameters; the replies land in params (no wait)."""
+        if self.master is None or self.gcs_muted:
+            return False
+        try:
+            for name in names:
+                self.master.mav.param_request_read_send(
+                    self.master.target_system, self.master.target_component, name.encode(), -1)
+            return True
+        except Exception:
+            return False
+
+    def telemetry(self, max_age=2.0):
+        """What a Seeker mission needs, in one read; stale values are None."""
+        now = perf_counter()
+        with self._lock:
+            g, r, bat = self._gpos, self._gpos_rel, self._battery
+            roll, pitch, att_t = self._roll_rad, self._pitch_rad, self._attitude_t
+            hb = getattr(self, "_heartbeat_t", None)
+            sw = self._mode_switch
+        fresh = lambda x: x is not None and now - x[0] <= max_age
+        out = dict(rel_alt=None, vn=None, ve=None, vd=None, gs=None, battery_v=None,
+                   battery_pct=None, current_a=None, tilt_deg=None,
+                   hb_age=None if hb is None else now - hb,
+                   rc_age=None if sw is None else now - sw[0])
+        if fresh(r):
+            out.update(rel_alt=r[1], vn=r[2], ve=r[3], vd=r[4], gs=math.hypot(r[2], r[3]))
+        if fresh(bat):
+            out.update(battery_v=None if bat[1] in (None, 0, 65535) else bat[1]/1000.0,
+                       current_a=None if bat[2] is None or bat[2] < 0 else bat[2]/100.0,
+                       battery_pct=None if bat[3] is None or bat[3] < 0 else int(bat[3]))
+        if att_t is not None and now - att_t <= .5 and roll is not None and pitch is not None:
+            out["tilt_deg"] = math.degrees(math.acos(max(-1.0, min(1.0, math.cos(roll)*math.cos(pitch)))))
+        out["position"] = (g[1], g[2]) if fresh(g) and self.position_ok() else None
+        out["amsl"] = g[3] if fresh(g) else None
+        with self._lock:
+            v = self._vfr
+        out["heading"] = float(v[3]) if v is not None and now - v[0] <= max_age else None
+        return out
+
+    def link_stats(self):
+        """MAVLink packets lost / received from the FC, and rejected commands."""
+        m = self.master
+        with self._lock:
+            return dict(lost=int(getattr(m, "mav_loss", 0) or 0), received=int(getattr(m, "mav_count", 0) or 0),
+                        rejected=self.acks_rejected, counts=dict(self.rx_counts))
+
     def mode_ack(self):
         """(mode, accepted, ack time) of the ACK to the latest mode request."""
         with self._lock:
@@ -1670,10 +1825,11 @@ class ArduPilotAcro(FcBackend):
     FORCE_DISARM = 21196
     AUX_POS_HIGH = 2
 
-    def request_arm(self):
+    def request_arm(self, mavlink=False):
         """Arm from the Jetson: the arm switch's own function, so the FC arms
-        exactly as the pilot's switch does (airmode included), throttle at zero."""
-        ch = self.arm_switch_chan()
+        exactly as the pilot's switch does (airmode included), throttle at zero.
+        mavlink: the GCS arm command instead (GUIDED refuses the switch's)."""
+        ch = None if mavlink else self.arm_switch_chan()
         option = int(self.params[f"RC{ch}_OPTION"]) if ch else 0
         with self._lock:
             self._arm_ack = None
@@ -2176,7 +2332,7 @@ class ArduPilotAcro(FcBackend):
         return self._send_override([0] * 8)
 
     def _send_override(self, chans):
-        if self.master is None:
+        if self.master is None or self.gcs_muted:
             return False
         try:
             self.master.mav.rc_channels_override_send(
@@ -2186,7 +2342,7 @@ class ArduPilotAcro(FcBackend):
             return False
 
     def statustext(self, text):
-        if self.master is None:
+        if self.master is None or self.gcs_muted:
             return
         try:
             self.master.mav.statustext_send(
@@ -2635,6 +2791,7 @@ class AcroCommander:
         self._steering = False
         self._mode_gate = None
         self._rate_mode_ok = True
+        self.frame_t = self.frame_first_t = None
 
     @property
     def linked(self):
@@ -2886,6 +3043,11 @@ class AcroCommander:
                bbox=None):
         now = perf_counter()
         with self._lock:
+            # Every processed camera frame comes through here: video timing
+            # for the Seeker missions.
+            if self.frame_first_t is None:
+                self.frame_first_t = now
+            self.frame_t = now
             self._cmd = dict(cmd)
             self._target_off = target_off
             if have_target:
@@ -2979,7 +3141,8 @@ class AcroCommander:
             jerk_z=getattr(b, "jerk_z", 5.0) or 5.0,
             log=lambda m: None, idle_path=_mission_mod.IDLE_FILE, wasp_path=_mission_mod.WASP_FILE,
             auto_path=_mission_mod.AUTO_FILE, levels_path=_mission_mod.LEVELS_FILE,
-            flight_path=_mission_mod.FLIGHT_FILE, fence_path=_mission_mod.FENCE_FILE)
+            flight_path=_mission_mod.FLIGHT_FILE, fence_path=_mission_mod.FENCE_FILE,
+            seeker_path=_mission_mod.SEEKER_FILE)
         _saved = _mission_mod.load_auto_params(self.mission)
         _lv = _mission_mod.load_levels(self.mission)
         _mission_mod.load_idle_settings(self.mission)
@@ -3246,6 +3409,32 @@ class AcroCommander:
             "IMU batch log for vibration FFT")
         return rows
 
+    _JETSON_HWMON = None
+
+    @classmethod
+    def jetson_power(cls):
+        """(volts, watts) on the Jetson module's input (INA3221 VDD_IN), or None."""
+        import glob as _glob
+        if cls._JETSON_HWMON is None:
+            cls._JETSON_HWMON = ()
+            for label in _glob.glob("/sys/bus/i2c/drivers/ina3221/*/hwmon/hwmon*/in*_label"):
+                try:
+                    if open(label).read().strip() == "VDD_IN":
+                        # .../hwmon0/in1_label -> (".../hwmon0", "1")
+                        cls._JETSON_HWMON = (os.path.dirname(label), os.path.basename(label)[2:-len("_label")])
+                        break
+                except OSError:
+                    pass
+        if not cls._JETSON_HWMON:
+            return None
+        d, n = cls._JETSON_HWMON
+        try:
+            mv = float(open(f"{d}/in{n}_input").read())
+            ma = float(open(f"{d}/curr{n}_input").read())
+        except (OSError, ValueError):
+            return None
+        return round(mv/1000.0, 2), round(mv*ma/1e6, 1)
+
     def mission_state(self):
         now = perf_counter()
         b = self.backend
@@ -3268,6 +3457,11 @@ class AcroCommander:
             st["position"] = None if pos is None else [round(pos[0], 7), round(pos[1], 7)]
             lp = (b.launch_point() or b.home()) if mav else None
             st["home"] = None if lp is None else [round(lp[0], 7), round(lp[1], 7)]
+            tel = b.telemetry() if mav else {}
+            st["battery"] = dict(v=None if tel.get("battery_v") is None else round(tel["battery_v"], 2),
+                                 pct=tel.get("battery_pct"), low=b.params.get("BATT_LOW_VOLT") if mav else None)
+        jp = self.jetson_power()
+        st["jetson"] = None if jp is None else dict(v=jp[0], w=jp[1])
         h = b.height() if b is not None and hasattr(b, "height") else None
         st["height_m"] = None if h is None else round(h[0], 2)
         st["climb_mps"] = None if h is None else round(h[1], 2)

@@ -108,7 +108,7 @@ const visible=s=>q(s)&&q(s).getClientRects().length>0&&f.contentWindow.getComput
 async function check(name,ok){await req('/report?data='+encodeURIComponent(JSON.stringify({name,ok:!!ok})));if(!ok)throw Error(name)}
 async function until(fn){for(let i=0;i<100;i++){if(await fn())return;await sleep(50)}throw Error('timeout: '+fn)}
 async function load(){f.src='/?t='+Date.now();await new Promise(r=>f.onload=r);await until(()=>q('[data-wp="throttle"] button.on')&&q('#c_ai').classList.contains('ok'))}
-function parameters(){q('#t_menu').click();q('#t_par').click()}
+function parameters(){q('#t_menu').click()}
 function tap(s){q(s).dispatchEvent(new f.contentWindow.PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:1}))}
 async function switchMode(mode){q('[data-flightmode="'+mode+'"]').click();await until(()=>visible('#modechange'));await check('camera warning '+mode,q('#mode_degrees').textContent===(mode==='wasp'?'90°':'30°'));q('#mode_confirm').click();await until(()=>!visible('#modechange'))}
 async function layout(mode){
@@ -176,12 +176,16 @@ async function main(){
  await load();
  await check('startup has no chooser or blocking popup',!q('#modechooser')&&!visible('#modechange')&&!q('.app').inert);
  await check('startup is read-only',(await req('/commands')).length===0);
- await check('Seeker keeps Engage and Lock without Auto or Abort',visible('#normal_pad')&&visible('#b_lock')&&visible('#b_eng')&&!q('#b_auto')&&!visible('#b_safedown')&&visible('#dial')&&visible('#hbox')&&visible('#tape')&&!visible('#wasp_ui'));
+ await check('Seeker shows its panel: ABORT left, SEEK right, like WASP',visible('#seeker_ui')&&visible('#s_abort')&&visible('#s_main')&&!visible('#wasp_ui')&&q('#s_abort').getBoundingClientRect().right<=q('#s_main').getBoundingClientRect().left&&Math.abs(q('#s_abort').getBoundingClientRect().height-q('#s_main').getBoundingClientRect().height)<1);
+ await check('Seeker has no arrow pad, no compass bar, no cue strip; the dashed aim line stays',!visible('#normal_pad')&&!visible('#dial')&&!visible('#hbox')&&!visible('#tape')&&visible('#arc')&&visible('#aim')&&!q('#cue_strip')&&!q('#b_auto')&&!visible('#b_safedown'));
+ await check('Seeker tools: Detection, Flight, MISSIONS, Geofence '+[...f.contentDocument.querySelectorAll('#seeker_tools .sktool .tl')].map(x=>x.textContent).join('|'),[...f.contentDocument.querySelectorAll('#seeker_tools .sktool')].filter(x=>x.getClientRects().length).map(x=>x.querySelector('.tl').textContent).join('|')==='Detection|Flight|MISSIONS|Geofence');
  await check('TensorRT FPS stays green',q('#c_ai_k').textContent==='TensorRT 640'&&q('#c_ai').classList.contains('ok'));
  parameters();
- await check('three Seeker parameter sections in order',[...f.contentDocument.querySelectorAll('.param-title')].filter(x=>x.getClientRects().length).map(x=>x.textContent).join('|')==='1Flight mode|2Detection|3Flight parametersSEEKER');
- await check('Seeker ON and Wasp OFF',q('[data-flightmode="normal"]').textContent.startsWith('Seeker drone')&&q('[data-flightmode="normal"]').getAttribute('aria-pressed')==='true'&&q('[data-flightmode="wasp"]').getAttribute('aria-pressed')==='false');
- await check('detection always visible',visible('#skyseg')&&visible('#folseg')&&visible('#camseg'));
+ await check('PARAMETERS in Seeker keeps only the flight mode, like WASP',[...q('#sh_speed').querySelectorAll('.param-block')].map(x=>x.id).join()==='flight_mode_params');
+ await check('Seeker ON and Wasp OFF',q('[data-flightmode="normal"]').getAttribute('aria-label')==='Seeker drone'&&q('#sh_menu').contains(q('[data-flightmode="normal"]'))&&q('[data-flightmode="normal"] svg')&&q('[data-flightmode="wasp"] svg')&&q('[data-flightmode="normal"]').getAttribute('aria-pressed')==='true'&&q('[data-flightmode="wasp"]').getAttribute('aria-pressed')==='false');
+ q('#sh_speed [data-close]').click();
+ q('#seeker_tools [data-pop="pop_det"]').click();await until(()=>visible('#skyseg'));
+ await check('Seeker detection settings in the Detection popup',visible('#skyseg')&&visible('#folseg')&&visible('#camseg')&&visible('#idle_seconds'));
  await check('Idle default is 10 seconds and Search removed',q('#idle_seconds').value==='10'&&!q('[data-g="search"]'));
  const field=q('#idle_seconds');field.focus();field.value='12.5';await sleep(400);
  await check('polling preserves typed Idle value',field.value==='12.5');
@@ -191,6 +195,7 @@ async function main(){
  const idleCommands=(await req('/commands')).length;
  field.value='0';field.dispatchEvent(new f.contentWindow.Event('change',{bubbles:true}));
  await check('invalid Idle sends nothing and restores saved value',field.value==='12.5'&&(await req('/commands')).length===idleCommands);
+ closePop();parameters();
  const start=(await req('/commands')).length;
  q('[data-flightmode="wasp"]').click();await until(()=>visible('#modechange'));
  await check('switch waits for physical-camera confirmation',(await req('/commands')).length===start&&q('#mode_degrees').textContent==='90°');
@@ -198,7 +203,9 @@ async function main(){
  await check('Cancel preserves mode and sends nothing',!visible('#modechange')&&!(await req('/state')).mission.wasp_enabled&&(await req('/commands')).length===start);
  await switchMode('normal');
  await check('normal confirmation sets 30 degrees',(await req('/state')).mission.camera_mount_deg===30&&q('#mountstatus').textContent==='30° ✓');
- await layout('normal');
+ q('#sh_speed [data-close]').click();q('#sh_menu [data-close]').click();
+ await popLayout();
+ q('#seeker_tools [data-pop="pop_flight"]').click();await until(()=>visible('#normal_params'));
  q('#ptab_auto').click();
  await check('Auto tab replaces Manual controls',visible('#pp_auto')&&!visible('#pp_semi'));
  q('[data-autoen="on"]').click();await until(()=>q('#autotag').textContent==='ON');
@@ -210,6 +217,7 @@ async function main(){
  q('#ptab_semi').click();q('.seg[data-g="vert"] [data-lv="FAST"]').click();await until(()=>q('.seg[data-g="vert"] [data-lv="FAST"]').classList.contains('on'));
  await check('Manual speed changes apply',(await req('/state')).mission.levels.vert==='FAST');
  await check('no camera prompt in Seeker',!visible('#mount_flash'));
+ closePop();
  await req('/cmd?c=test&flightmode=wasp');
  await until(()=>visible('#mount_flash'));
  await check('unconfirmed Wasp camera flashes a prompt on the video',q('#mount_flash').textContent==='90°Turn the camera to 90°, then tap here to confirm'
@@ -395,11 +403,15 @@ async function main(){
  parameters();
  await switchMode('normal');
  await check('leaving WASP disables Test mode and hides the WASP screen',!(await req('/state')).mission.test_mode&&!visible('#test_target')&&!visible('#wasp_ui')&&!visible('#b_safedown'));
- await check('returning to Seeker restores flight controls and its six tiles',visible('#normal_pad')&&visible('#b_lock')&&visible('#dial')&&visible('#hbox')&&visible('#tape')&&[...f.contentDocument.querySelectorAll('.tile')].filter(x=>x.getClientRects().length).length===6);
- await check('Seeker sections go back into PARAMETERS',q('#sh_speed').contains(q('#detection_params'))&&q('#sh_speed').contains(q('#flight_params'))&&visible('#normal_params')&&!visible('#pp_wasp'));
+ await check('returning to Seeker restores its panel and its three tiles: FC mode, GPS / Compass, ASTERIX',visible('#seeker_ui')&&visible('#s_abort')&&visible('#s_main')&&!visible('#normal_pad')&&!visible('#dial')&&!visible('#tape')&&[...f.contentDocument.querySelectorAll('.tile')].filter(x=>x.getClientRects().length).length===3&&visible('#c_mode')&&visible('#c_sgps')&&visible('#c_ast'));
+ q('#sh_speed [data-close]').click();q('#sh_menu [data-close]').click();
+ q('#seeker_tools [data-pop="pop_flight"]').click();await until(()=>visible('#normal_params'));
+ await check('Seeker flight parameters in the Flight popup',visible('#normal_params')&&!visible('#pp_wasp'));
+ closePop();q('#seeker_tools [data-pop="pop_det"]').click();await until(()=>visible('#skyseg'));
  q('[data-sky="on"]').click();q('[data-fol="on"]').click();q('[data-cam="30"]').click();
  await until(async()=>{const s=await req('/state');return s.sky_gate&&s.follower&&s.cam_fps===30});
  await check('detection controls work in Normal',(await req('/state')).sky_gate&&(await req('/state')).follower&&(await req('/state')).cam_fps===30);
+ closePop();parameters();
  q('[data-flightmode="wasp"]').click();await until(()=>visible('#modechange'));
  await req('/set?armed=1&phase=PILOT');await until(()=>q('#mode_confirm').disabled);
  await check('arming during confirmation blocks the change',q('#mode_note').textContent.includes('Disarm')&&!q('#mode_cancel').disabled);

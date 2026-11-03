@@ -9,6 +9,7 @@ from wasp import Wasp, WaspGuidance
 from idle import Idle
 from safedown import Handover, SafeDown
 from geofence import Geofence, parse_points
+from seeker_missions import SeekerMissions
 
 SPEEDS = {
     "climb":   {"SLOW": 1.0, "MEDIUM": 3.0, "FAST": 8.0},
@@ -95,6 +96,7 @@ IDLE_FILE = os.path.join(CONF_DIR, "idle.json")
 WASP_FILE = os.path.join(CONF_DIR, "wasp.json")
 FLIGHT_FILE = os.path.join(CONF_DIR, "flight.json")
 FENCE_FILE = os.path.join(CONF_DIR, "geofence.json")
+SEEKER_FILE = os.path.join(CONF_DIR, "seeker_missions.json")
 DETECT_SAVED = {"follow": bool, "cam": int, "sky": bool, "engine": int}
 SAVED_COMMANDS = ("autop", "autoreset", "autoen", "waspen", "flightmode", "mount", "lvl")
 
@@ -178,6 +180,8 @@ def load_flight_settings(m):
         m.set_wasp_enabled(d["flightmode"] == "wasp", selection=True)
     if "mount" in d:
         m.confirm_mount(d["mount"])
+    if not m.wasp.enabled:
+        m.camera_mount_deg = 30.0
     if isinstance(d.get("auto"), bool):
         m.set_auto_enabled(d["auto"])
 
@@ -294,6 +298,8 @@ def _phone_command(m, key, value, now):
         return m.set_test_mode(value.strip().lower() == "on")
     if key == "testtarget":
         return m.set_test_target(value)
+    if key == "msn":
+        return m.seeker_command(value)
     if key in ("abort", "safedown"):
         return m.request_abort()
     if key == "arm":
@@ -371,7 +377,8 @@ class Mission:
 
     def __init__(self, mapper, min_conf=0.20, ceiling_m=30.0,
                  accel_z=5.0, jerk_z=5.0, log=(lambda *_args, **_kwargs: None), idle_path=None,
-                 wasp_path=None, auto_path=None, levels_path=None, flight_path=None, fence_path=None):
+                 wasp_path=None, auto_path=None, levels_path=None, flight_path=None, fence_path=None,
+                 seeker_path=None):
         self.mapper = mapper
         self.min_conf = float(min_conf)
         self.ceiling_m = float(ceiling_m)
@@ -414,7 +421,11 @@ class Mission:
         if fence_path:
             self.fence.load(_read_json(fence_path))
         self._fence_state = (None, None)
+        # Seeker test missions (seeker_missions.py): scripted GUIDED flights.
+        self.seeker = SeekerMissions(path=seeker_path, log=lambda text: self.log(text), log_dir=getattr(mapper, "log_dir", None)
+                                     or os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
         self._position = None
+        self._seek_engage_t = None
         self._req_arm = False
         self._arm_t = None
         self.safedown = SafeDown()
@@ -533,6 +544,8 @@ class Mission:
             self._req_engage = True
         return ""
 
+    SEEK_ENGAGE_S = 3.0
+
     # ArduCopter holds the motors at idle for 2 s after arming: a launch
     # before that would jump to full throttle on the stand later.
     ARM_SETTLE_S = 2.5
@@ -600,6 +613,8 @@ class Mission:
         return ""
 
     def _configuration_error(self):
+        if self.seeker.active:
+            return "a Seeker mission is running"
         if getattr(self.mapper, "armed", False):
             return "disarm before changing flight parameters or the camera mount"
         if self.phase not in ("PILOT", "HOVER", "WASP_READY", "WASP_DONE"):
@@ -625,6 +640,7 @@ class Mission:
                 self.test_mode = False
                 self.test_target = None
                 self._test_target_started = None
+                self.camera_mount_deg = 30.0      # the Seeker's camera is always at 30 degrees
             self.wasp.camera_confirmed = False
             self.wasp.started = None
             self.wasp.launch_t = None
@@ -649,6 +665,8 @@ class Mission:
                 return error
             if self.wasp.enabled and value != 90.0:
                 return "WASP requires the fixed 90 degree camera"
+            if not self.wasp.enabled and value != 30.0:
+                return "the Seeker uses the fixed 30 degree camera"
             self.camera_mount_deg = value
             self.wasp.camera_confirmed = self.wasp.enabled and value == 90.0
         return ""
@@ -828,7 +846,20 @@ class Mission:
             self._req_auto = "on"
         return ""
 
+    def seeker_command(self, value):
+        verb = str(value).strip().split(":", 1)[0].lower()
+        with self._lock:
+            if verb == "start":
+                if self.wasp.enabled:
+                    return "missions are for the Seeker: select Seeker in PARAMETERS"
+                if self.phase != "PILOT" or getattr(self.mapper, "armed", False):
+                    return "start a mission on the ground, disarmed"
+        return self.seeker.command(value)
+
     def request_abort(self):
+        if self.seeker.active:
+            self.seeker.request_abort()
+            return ""
         with self._lock:
             self._req_abort = True
             if self._hold:
@@ -956,6 +987,36 @@ class Mission:
                 return {}
             self._set_phase("PILOT", now)
 
+        self.seeker.keep_fc(now, self.mapper)
+        if not self.wasp.enabled:
+            # Seeker test missions fly GUIDED by MAVLink commands: no stick
+            # overrides while one runs (the empty output releases them).
+            self.seeker.cycle(now, self.mapper, self, ctx)
+            if self.seeker.blocking:
+                if self.phase != "PILOT":
+                    self._reset_motion()
+                    self._set_phase("PILOT", now, "Seeker mission")
+                return {}
+            handover = self.seeker.take_handover()
+            if handover is not None:
+                # SEEK flew the ASTERIX cue until the camera had the target and
+                # switched to ALT_HOLD: ENGAGE (or AUTO) as the button would.
+                self._seek_engage_t = handover
+            if self._seek_engage_t is not None:
+                if now - self._seek_engage_t > self.SEEK_ENGAGE_S:
+                    self._seek_engage_t = None
+                    self._note("SEEK: the AI could not take over (gate: "
+                               f"{ctx.get('gate_why') or 'phase ' + self.phase}); the pilot has it", now)
+                elif ctx.get("gate_ok") and self.phase in ("PILOT", "HOVER"):
+                    self._seek_engage_t = None
+                    if self.phase == "PILOT":
+                        self._set_phase("HOVER", now, "SEEK handover")
+                        self._reset_motion()
+                    if self.auto_enabled:
+                        auto_req = "on"
+                    else:
+                        engage = True
+                    self._note("SEEK: target in the camera, " + ("AUTO" if self.auto_enabled else "ENGAGE"), now)
 
         if (abort and ctx.get("gate_ok") and self.idle_supported and not self.wasp.enabled
                 and (self._run_t is not None or ctx.get("airborne"))):
@@ -1835,4 +1896,5 @@ class Mission:
             auto_height_m=self.AUTO_HEIGHT_M,
             lock_hdg=None if self.lock_hdg is None else round(self.lock_hdg, 1),
             lock_away=bool(self._lock_away),
-            handover=self.last_handover)
+            handover=self.last_handover,
+            seeker=self.seeker.snapshot(now))

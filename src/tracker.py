@@ -43,7 +43,7 @@ def shrink_to(img, w, h):
 # the HTTP server accepts is the tracker's own (detection, camera).
 MISSION_KEYS = ("hold", "release", "step", "engage", "abort", "safedown", "arm", "fence", "lvl",
                 "lock", "auto", "autoen", "waspen", "waspp", "mount", "flightmode",
-                "autop", "autoreset", "def", "idles", "testmode", "testtarget")
+                "autop", "autoreset", "def", "idles", "testmode", "testtarget", "msn")
 TRACKER_KEYS = ("mode", "sens", "sky", "follow", "cam", "engine", "stabilization")
 
 class SkyDetector:
