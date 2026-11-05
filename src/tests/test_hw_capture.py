@@ -6,6 +6,7 @@ source, the same memory nvarguscamerasrc delivers, so the camera stays free.
 """
 import contextlib
 import io
+import os
 from pathlib import Path
 import sys
 import unittest
@@ -225,6 +226,53 @@ class TrackerTests(unittest.TestCase):
             t._open_capture()
         hw.assert_not_called()
         self.assertEqual(t.cam_capture, "CPU")
+
+    def test_a_dead_sensor_falls_through_to_the_other_port(self):
+        t = self.cam(30, None)
+        good = Mock(); good.read.return_value = (True, _Frame(1280, 960))
+        cpu = Mock(); cpu.isOpened.return_value = False
+        seen = []
+
+        def hw(source, *_a, **_k):
+            seen.append(source)
+            if "sensor-id=1" in source:
+                return good
+            raise RuntimeError("hardware capture: no frames")
+
+        with patch.dict(os.environ, {"CAM_SENSOR_ID": ""}), \
+             patch.object(T.hw_capture, "available", return_value=True), \
+             patch.object(T.hw_capture, "HwCapture", side_effect=hw), \
+             patch.object(T.cv2, "VideoCapture", return_value=cpu):
+            cap, fps, _ = t._open_capture()
+        self.assertIs(cap, good)
+        self.assertEqual(fps, 30.0)
+        self.assertEqual(t.camera_config.sensor_id, 1)
+        self.assertEqual(t._cam_cfg.sensor_id, 1)
+        self.assertEqual(seen[0].count("sensor-id=0"), 1)
+        self.assertIn("sensor-id=1", seen[-1])
+        t._apply_cam_mode(60)
+        self.assertIn("sensor-id=1", t.camera_pipeline)
+        self.assertIn("sensor-mode=4", t.camera_pipeline)
+
+    def test_an_explicit_sensor_id_is_not_replaced(self):
+        t = self.cam(30, None)
+        seen = []
+
+        def hw(source, *_a, **_k):
+            seen.append(source)
+            raise RuntimeError("hardware capture: no frames")
+
+        cpu = Mock(); cpu.isOpened.return_value = False
+        with patch.dict(os.environ, {"CAM_SENSOR_ID": "0"}), \
+             patch.object(T.hw_capture, "available", return_value=True), \
+             patch.object(T.hw_capture, "HwCapture", side_effect=hw), \
+             patch.object(T.cv2, "VideoCapture", return_value=cpu):
+            with self.assertRaisesRegex(RuntimeError, "sensor-id=0"):
+                t._open_capture()
+        self.assertTrue(seen)
+        self.assertTrue(all("sensor-id=0" in s for s in seen))
+        self.assertFalse(any("sensor-id=1" in s for s in seen))
+        self.assertEqual(t.camera_config.sensor_id, 0)
 
     def test_a_failed_switch_reverts_and_says_why(self):
         t = self.cam(30, None)

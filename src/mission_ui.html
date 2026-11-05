@@ -405,6 +405,10 @@
     .toast{left:50%;right:auto;transform:translateX(-50%);max-width:42%;bottom:calc(var(--K) * .4)}
   }
   .test-help{margin:10px 0 0;color:var(--dim);font:12px/1.4 var(--sans)}
+  .nocam{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);width:calc(100% - 28px);max-width:320px;padding:12px 14px;text-align:center;border-radius:12px;background:rgba(0,0,0,.72);border:1px solid var(--bad);color:#fff;z-index:4}
+  .nocam b{display:block;font:700 18px/1.2 var(--mono);color:var(--bad);margin-bottom:4px}
+  .nocam span{display:block;font:12px/1.35 var(--mono);color:#ddd}
+  .nocam[hidden]{display:none}
   .mount-flash{position:absolute;left:50%;top:48px;transform:translateX(-50%);width:calc(100% - 32px);max-width:300px;padding:10px 14px;
        border:2px solid var(--warn);border-radius:12px;background:rgba(43,30,0,.9);color:#fff;text-align:center;font:500 13px/1.35 var(--sans);
        animation:mountflash .8s ease-in-out infinite alternate}
@@ -843,6 +847,7 @@
     <div class="test-prompt" id="test_prompt" role="status" hidden>Test mode is on.<br>Tap anywhere in the image to place a target.</div>
     <canvas class="tape" id="tape"></canvas>
     <div class="badge" id="badge" style="display:none"></div>
+    <div class="nocam" id="nocam" hidden><b>No camera</b><span>The app is running. Video stays off until a camera delivers frames.</span></div>
     <button class="mount-flash" id="mount_flash" hidden><b>90°</b><span id="mount_flash_txt"></span></button>
     <div class="toast" id="toast"></div>
     <div class="msn-alert" id="msn_alert" role="alert" hidden><b id="msn_alert_t"></b><button id="msn_alert_ok">OK</button></div>
@@ -1989,9 +1994,11 @@
       x.disabled = !!j.cam_busy || VIEW || ctl === "other" || flying || m.engaged || ph === "WASP_FLIGHT";
     });
     var fr = j.cam_frame, cap = j.cam_capture || "";
-    T("cam_now", j.cam_busy ? "switching camera…" : [fr ? fr[0] + "×" + fr[1] : "", cap, j.cam_error || ""]
+    var sens = (j.cam_sensor === undefined || j.cam_sensor === null) ? "" : ("sensor " + j.cam_sensor);
+    T("cam_now", j.cam_busy ? "switching camera…" : [fr ? fr[0] + "×" + fr[1] : "", sens, cap, j.cam_error || ""]
       .filter(Boolean).join(" · "));
     $("cam_now").className = "camnow" + (j.cam_error || /failed/.test(cap) ? " bad" : "");
+    $("nocam").hidden = !(cap === "no camera" || (!fr && j.cam_error));
     var engs = j.engines || [];
     document.querySelectorAll("[data-engine]").forEach(function (x) {
       var e = Number(x.getAttribute("data-engine")), have = engs.indexOf(e) >= 0;

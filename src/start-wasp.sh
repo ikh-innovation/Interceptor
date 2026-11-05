@@ -27,7 +27,7 @@ fi
 
 export YOLO_AUTOINSTALL=false
 
-CAM_WAIT_S=${CAM_WAIT_S:-90}
+CAM_WAIT_S=${CAM_WAIT_S:-8}
 if [ ! -e /dev/video0 ]; then
     for _ in $(seq "$CAM_WAIT_S"); do
         [ -e /dev/video0 ] && break

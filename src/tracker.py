@@ -717,6 +717,8 @@ class DroneTracker:
             engine_default=getattr(self, "engine_default", None),
             engine_busy=getattr(self, "_engine_req", None) is not None,
             cam_frame=([self.full_w, self.full_h] if self.full_w else None),
+            cam_sensor=(int(self._cam_cfg.sensor_id)
+                        if getattr(self, "_cam_cfg", None) is not None else None),
             cam_capture=getattr(self, "cam_capture", None),
             cam_error=getattr(self, "cam_error", ""),
             video_stabilization=bool(getattr(self, "video_stabilization", False)),
@@ -1555,9 +1557,61 @@ class DroneTracker:
 
 
 
+    def _sensor_ids(self):
+        # One IMX219 can sit on either CSI connector. Argus numbers the ports the
+        # boot overlay actually enabled, from 0. CAM_SENSOR_ID pins one of those
+        # ports; otherwise the first port that delivers a frame is the camera.
+        if self.camera_config is None:
+            return [None]
+        raw = os.environ.get("CAM_SENSOR_ID")
+        preferred = int(self._cam_cfg.sensor_id)
+        if raw is not None and str(raw).strip() != "":
+            return [preferred]
+        return [preferred] + [n for n in (0, 1) if n != preferred]
+
+    def _select_sensor(self, sensor_id):
+        if sensor_id is None or self.camera_config is None:
+            return
+        sensor_id = int(sensor_id)
+        if int(self.camera_config.sensor_id) != sensor_id:
+            self.camera_config = _dc_replace(self.camera_config, sensor_id=sensor_id)
+        if int(self._cam_cfg.sensor_id) != sensor_id:
+            self._cam_cfg = _dc_replace(self._cam_cfg, sensor_id=sensor_id)
+            self.camera_pipeline = make_pipeline(self._cam_cfg)
+
     def _open_capture(self):
         if self.camera_pipeline is None:
             raise RuntimeError("camera_pipeline is required (no capture source set).")
+        errors = []
+        ids = self._sensor_ids()
+        retries = self.CAM_OPEN_RETRIES
+        try:
+            for n, sensor_id in enumerate(ids):
+                self._select_sensor(sensor_id)
+                # A dead first port must not spend the whole retry budget.
+                self.CAM_OPEN_RETRIES = retries if n + 1 == len(ids) else 1
+                try:
+                    return self._open_capture_sensor()
+                except RuntimeError as exc:
+                    text = str(exc)
+                    if text.startswith("camera delivered"):
+                        raise
+                    label = "pipeline" if sensor_id is None else f"sensor-id={sensor_id}"
+                    errors.append(f"{label}: {text.splitlines()[0]}")
+        finally:
+            self.CAM_OPEN_RETRIES = retries
+        raise RuntimeError(
+            "no CSI sensor delivered a frame (" + "; ".join(errors) + ").\n"
+            "  With CAM_SENSOR_ID unset, sensor-id 0 and 1 are both tried.\n"
+            "  Those ids are only the ports the boot overlay registered "
+            "(IMX219-A is CAM1, IMX219-C is CAM0, the dual overlay is both).\n"
+            "  A connector with no overlay never appears. A ribbon that answers\n"
+            "  I2C but then times out is not sending MIPI frames.\n"
+            "      sudo systemctl restart nvargus-daemon\n"
+            f"Pipeline: {self.camera_pipeline}"
+        )
+
+    def _open_capture_sensor(self):
         hw_error = None
         if (self.camera_config is not None and os.environ.get("HW_CAPTURE", "1") != "0"
                 and hw_capture.available()):
@@ -1717,18 +1771,30 @@ class DroneTracker:
     def _run(self):
         self.ap.connect()
 
-        try:
-            cap, src_fps, source_label = self._open_capture()
-        except RuntimeError as exc:
-            if self.cam_mode == 30 or self.camera_config is None:
-                raise
-
-
-            self._apply_cam_mode(30)
-            cap, src_fps, source_label = self._open_capture()
+        cap, src_fps = None, float(self.REF_FPS)
+        if os.environ.get("WASP_NO_CAMERA") == "1":
+            exc = RuntimeError("camera device is missing")
+        else:
+            exc = None
+            try:
+                cap, src_fps, _source_label = self._open_capture()
+            except RuntimeError as opened_exc:
+                exc = opened_exc
+        if cap is None and exc is not None:
+            if (os.environ.get("WASP_NO_CAMERA") != "1"
+                    and self.cam_mode != 30 and self.camera_config is not None):
+                try:
+                    self._apply_cam_mode(30)
+                    cap, src_fps, _source_label = self._open_capture()
+                except RuntimeError as retry_exc:
+                    exc = retry_exc
+            if cap is None:
+                self.cam_error = "No camera connected"
+                self.cam_capture = "no camera"
         self._cap = cap
 
-        src_fps = min(src_fps, self.REF_FPS)
+        if cap is not None:
+            src_fps = min(src_fps, self.REF_FPS)
 
         rec_on       = self.record_dir is not None
         pad          = max(1, int(round(self.record_pad_sec * src_fps)))
@@ -1763,6 +1829,15 @@ class DroneTracker:
             cv2.resizeWindow(self._WIN, *self.display_size)
 
         period = self.skip_frames + 1
+
+        if cap is None:
+            # The phone UI and flight commands stay up while the CSI port is dead.
+            try:
+                while True:
+                    sleep(0.5)
+            finally:
+                self._finish_recording()
+            return
 
         try:
             self._loop(cap, src_fps, period, rec_on, pad, pre_buf, out_path,

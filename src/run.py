@@ -556,7 +556,8 @@ def main():
         die(f"FC serial '{FC_DEV}' not found — is the flight controller plugged in?")
 
     if not Path(CAM_DEV).exists():
-        die(f"camera '{CAM_DEV}' not found — check CSI ribbon / USB cam")
+        # Tracker still serves the phone UI and shows that the camera is missing.
+        os.environ["WASP_NO_CAMERA"] = "1"
 
     if not YOLO_PY.exists():
         die(f"yolo-env python missing: {YOLO_PY}")
