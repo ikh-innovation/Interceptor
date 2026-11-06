@@ -158,7 +158,7 @@ Mission Planner, outdoors. The phone's GPS/Compass tile must read YES / YES outd
 power up flat, mode switch DOWN, throttle and arm switch down. Phone **ARM** (the app arms the
 FC; amber 2.5 s countdown), then the blue **LAUNCH WASP** (full throttle at once). Switch up
 (SafeDown: ALT_HOLD, then RTL). Disarm (arm switch up, then down), ARM and LAUNCH again, switch
-to the middle (catch: STABILIZE, sticks back to the pilot after 1–3 s), disarm. Last: ARM, then
+to the middle (catch: STABILIZE, sticks back to the pilot once it is hovering), disarm. Last: ARM, then
 SAFEDOWN on the phone must disarm it.
 
 ## 5. Start manually, then install automatic startup

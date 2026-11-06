@@ -1014,7 +1014,7 @@ class ArduPilotAcro(FcBackend):
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE, 5.0)
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_SCALED_IMU, 20.0)
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT, 2.0)
-        self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT, 4.0)
+        self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT, 10.0)
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_HOME_POSITION, 0.5)
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_GPS_RAW_INT, 2.0)
         self._request_message(mavutil.mavlink.MAVLINK_MSG_ID_SYS_STATUS, 1.0)
@@ -1413,7 +1413,11 @@ class ArduPilotAcro(FcBackend):
                 pid = msg.param_id
                 if isinstance(pid, bytes):
                     pid = pid.decode(errors="ignore")
-                self.params[pid.strip("\x00")] = float(msg.param_value)
+                name = pid.strip("\x00")
+                value = float(msg.param_value)
+                self.params[name] = value
+                if name == "MOT_THST_HOVER" and 0.0 < value < 1.0:
+                    self.hover_thrust = value
             elif t == "STATUSTEXT":
                 text = msg.text.decode(errors="ignore") if isinstance(msg.text, bytes) else str(msg.text)
                 self.fc_text.append((now, text.strip("\x00")))
@@ -1902,6 +1906,16 @@ class ArduPilotAcro(FcBackend):
             return True
         except Exception:
             return False
+
+    def ned_velocity(self, max_age=0.6):
+        """(vn, ve, vd) m/s from GLOBAL_POSITION_INT, or None. NED."""
+        with self._lock:
+            r = self._gpos_rel
+        if r is None or perf_counter() - r[0] > max_age:
+            return None
+        if not all(math.isfinite(v) for v in r[2:5]):
+            return None
+        return r[2], r[3], r[4]
 
     def body_accel(self, max_age=.3):
         with self._lock:
@@ -3243,6 +3257,14 @@ class AcroCommander:
     def hover_thrust(self):
         return getattr(self.backend, "hover_thrust", None)
 
+    def set_hover_thrust(self, value):
+        """MOT_THST_HOVER, so the middle of the throttle stick holds this weight.
+        The local copy updates when the FC echoes the parameter."""
+        b = self.backend
+        if not isinstance(b, ArduPilotAcro) or not hasattr(b, "set_param"):
+            return False
+        return bool(b.set_param("MOT_THST_HOVER", float(value)))
+
     def _mission_gate(self):
         b = self.backend
         if not self.linked:
@@ -3337,6 +3359,7 @@ class AcroCommander:
                    landed_state=b.landed_state() if mav else None,
                    accel=b.body_accel() if mav else None,
                    baro_climb=b.baro_climb() if mav else None,
+                   vel_ned=b.ned_velocity() if mav else None,
                    position_ok=b.position_ok() if mav else False,
                    home_ok=bool(mav and (b.launch_point() is not None or b.home() is not None)),
                    home_m=b.home_distance() if mav else None,

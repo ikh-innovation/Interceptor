@@ -155,8 +155,10 @@ was armed. With no GPS position, or below 5 m, it lands where it is (LAND).
    button: level, stop, then RTL to the GO spot and land there. See
    `pilot-instructions-el.md`.
 5. **Plan B (catch).** The pilot sets the throttle stick to mid, then switches to
-   the **middle** (STABILIZE). The app levels and steadies it for 1–3 s, then all
-   channels return to the transmitter. Switch up again to send it home.
+   the **middle** (STABILIZE). The app levels it and brakes to a hover (barometer
+   for the climb, GPS speed for the stop) and only then returns every channel.
+   It does not hand the sticks back on a timer while the drone is still moving.
+   Switch up again to send it home.
 6. **Next launch.** Disarm before the next ARM; WASP stays off until then.
 7. **Geofence.** A polygon drawn or typed on the phone (`~/.config/wasp/geofence.json`). While it
    is saved (there is no on / off: Clear and Save removes it), ARM needs the drone inside it, and leaving it during a WASP flight starts SafeDown home.

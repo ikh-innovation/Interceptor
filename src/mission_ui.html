@@ -1889,7 +1889,7 @@
         RETURN: rc.home_m === null || rc.home_m === undefined ? "RETURNING" : "RETURNING " + rc.home_m + " M",
         DESCEND: rc.landed ? "TOUCHDOWN" : "LANDING HERE"}[rc.stage] || "LEVELLING";
       bd.textContent = ph === "SAFEDOWN_FAILED" ? "SAFEDOWN FAILED · THROTTLE MID, SWITCH MIDDLE, FLY IT"
-        : rc.stage === "CATCH" ? "CATCH · STEADYING · THEN IT IS YOURS"
+        : rc.stage === "CATCH" ? "CATCH · BRAKING TO A HOVER"
         : "SAFEDOWN · " + rcStage + (rc.fallback ? " · " + rc.fallback : "") + " · MIDDLE = YOU FLY";
     }
     if (ph === "IDLE" || ph === "IDLE_FAILED") {

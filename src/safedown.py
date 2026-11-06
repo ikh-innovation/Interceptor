@@ -44,9 +44,10 @@ class SafeDown:
     app flies STABILIZE on the barometer's climb rate until they agree again.
 
     CATCH (the pilot's switch to STABILIZE) is the first part on its own: in
-    STABILIZE, with no mode changes, the app levels it, stops the climb or
-    dive and leans against the drag for at most CATCH_MAX_S, then every
-    channel goes to the pilot, still in STABILIZE.
+    STABILIZE, with no mode changes, the app levels it from any attitude,
+    holds the climb on the barometer and brakes the ground speed until the
+    drone is hovering. Every channel then goes to the pilot, still in
+    STABILIZE. Nothing gives the sticks back on a timer while it is moving.
 
     Fallbacks keep it autonomous when the FC refuses a mode.  LAND refused:
     the descent is flown with the ALT_HOLD throttle stick.  ALT_HOLD refused
@@ -99,10 +100,17 @@ class SafeDown:
     SWITCH_MODE = "ALT_HOLD"   # the pilot's switch position that means SafeDown
     CATCH_MODE = "STABILIZE"   # the one that means: steady it, then it is mine
     CATCH_MIN_S = 1.0
-    CATCH_MAX_S = 3.0
-    CATCH_STEADY_S = 0.5
+    CATCH_HOVER_S = 1.0        # inside the hover band this long, then the pilot
     CATCH_LEVEL_DEG = 8.0
-    CATCH_CLIMB_MPS = 1.5
+    CATCH_CLIMB_MPS = 1.5      # EKF climb band when the barometer is absent
+    CATCH_BARO_MPS = 0.20      # smoothed barometer climb band
+    CATCH_EKF_MPS = 0.25       # EKF climb band once the barometer is present
+    CATCH_HOLD_M = 0.8         # baro height must sit on the captured hover
+    CATCH_STOP_MPS = 0.6       # ground speed counted as stopped
+    CATCH_BRAKE_MAX_DEG = 30.0 # under ANGLE_MAX (40 deg): stops a fast run
+    CATCH_BRAKE_TAU_S = 1.2
+    CATCH_BRAKE_FADE_MPS = 3.0 # lean fades out across this band above the stop
+    CATCH_BRAKE_RATE_DPS = 60.0
     CATCH_HEARTBEAT_LAG_S = 1.5
     RETURN_CLIMB_MPS = 2.0     # vertical speed RTL may start from
     POSITION_LOST_S = 2.0
@@ -150,6 +158,12 @@ class SafeDown:
         self._drag = None
         self._brake_i = [0.0, 0.0]
         self.brake = (0.0, 0.0)
+        self._catch_baro = self._catch_baro_t = None
+        self._catch_lean = [0.0, 0.0]
+        self._catch_src = None
+        self._catch_hold_h = None
+        self._hover_set_t = None
+        self._hover_anchor = None
         self.home_m = None
         self._no_return = False
         self._lost_t = None
@@ -288,12 +302,15 @@ class SafeDown:
                 hi = mid
         return (lo+hi)/2
 
-    def _manual_throttle(self, mapper, ctx, climb_target, dt, full=False):
+    def _manual_throttle(self, mapper, ctx, climb_target, dt, full=False,
+                         accel_limit=None, kp=None, ki=None, i_limit=None,
+                         freeze_i=False, thrust_slew=None):
         """Throttle stick fraction holding `climb_target` in ACRO / STABILIZE.
 
         The FC's hover throttle may be wrong for this payload, so the hover
         thrust is learnt from the IMU: the specific force along the thrust
-        axis is thrust / mass."""
+        axis is thrust / mass. The extra arguments are the catch hover; left
+        unset, SafeDown's own loop is unchanged."""
         curve = getattr(mapper, "hover_thrust", None) or 0.5
         if self._hover is None:
             self._hover = curve
@@ -304,15 +321,27 @@ class SafeDown:
             self._hover += min(1.0, dt/self.HOVER_TAU_S)*(seen-self._hover)
         if self._fresh(ctx):
             error = climb_target - ctx["climb"]
-            self._thr_i = max(-G, min(G, self._thr_i + self.CLIMB_KI*error*dt))
-            full = full or self.stage == "ARREST"
-            lo, hi = (-G, 3*G) if full else (-4.0, 4.0)
-            accel = max(lo, min(hi, self.CLIMB_KP*error + self._thr_i))
+            ki_v = self.CLIMB_KI if ki is None else ki
+            lim = G if i_limit is None else i_limit
+            if not freeze_i:
+                self._thr_i = max(-lim, min(lim, self._thr_i + ki_v*error*dt))
+            kp_v = self.CLIMB_KP if kp is None else kp
+            if accel_limit is None:
+                full = full or self.stage == "ARREST"
+                lo, hi = (-G, 3*G) if full else (-4.0, 4.0)
+            else:
+                lo, hi = -float(accel_limit), float(accel_limit)
+                full = True
+            accel = max(lo, min(hi, kp_v*error + self._thr_i))
             tilt = self._tilt(ctx["att"])
             # Past 60 degrees thrust pushes it sideways or down: keep just
             # enough for the FC's attitude control while it rights itself.
             lift = math.cos(min(tilt, math.radians(60)))
-            self._thrust = self._hover*(1 + accel/G)/lift if tilt < math.radians(75) else .1
+            desired = self._hover*(1 + accel/G)/lift if tilt < math.radians(75) else .1
+            if thrust_slew is not None and self._thrust is not None:
+                step = max(0.0, thrust_slew)*dt
+                desired = max(self._thrust-step, min(self._thrust+step, desired))
+            self._thrust = desired
         elif self._thrust is None:
             self._thrust = self._hover
         self._thrust = max(.02 if full else .05, min(.95, self._thrust))
@@ -358,7 +387,9 @@ class SafeDown:
                     self._note(f"EKF climb {ekf:+.1f} m/s but barometer {baro:+.1f} m/s:"
                                " STABILIZE, the app flies the height on the barometer")
                     self.ekf_bad, self._vz_good_t = True, None
-                    if self.stage != "ARREST":
+                    # A catch already flies the barometer. Do not leave a
+                    # STABILIZE fallback behind for a later return home.
+                    if self.stage != "ARREST" and not self.catch:
                         self.fallback, self._req_mode = "STABILIZE", None
             else:
                 self._vz_bad_t = None
@@ -414,8 +445,160 @@ class SafeDown:
         self._last_mode = mode
         return self._sticks(mapper, ctx, mode, dt)
 
+    def _catch_vertical(self, ctx, now):
+        """(climb m/s, barometer is the source). The slope jitters at rest,
+        so a present barometer is smoothed and is the authority even when the
+        EKF climb says something else."""
+        baro = ctx.get("baro_climb")
+        if baro is None or not math.isfinite(baro):
+            self._catch_baro = self._catch_baro_t = None
+            climb = ctx.get("climb")
+            return (0.0 if climb is None or not math.isfinite(climb) else climb), False
+        k = 1.0 if self._catch_baro is None else min(1.0, (now - (self._catch_baro_t or now))/self.REST_TAU_S)
+        self._catch_baro = baro if self._catch_baro is None else self._catch_baro + k*(baro - self._catch_baro)
+        self._catch_baro_t = now
+        return self._catch_baro, True
+
+    def _catch_rate(self, ctx):
+        """Climb the throttle follows. The EKF rate has little lag, so it
+        stops a climb without overshooting into a dive. The barometer takes
+        over when the two disagree, and it is what the hover gate trusts."""
+        baro = ctx.get("baro_climb")
+        ekf = ctx.get("climb")
+        baro_ok = baro is not None and math.isfinite(baro)
+        ekf_ok = ekf is not None and math.isfinite(ekf)
+        if baro_ok and ekf_ok and abs(baro - ekf) > 3.0:
+            return baro
+        if ekf_ok:
+            return ekf
+        if baro_ok:
+            return baro
+        return 0.0
+
+    def _catch_climb_target(self, ctx, rate, baro_rate=None):
+        """Zero until the climb has actually stopped, then hold the height.
+
+        The barometer altitude trails a fast climb. Locking it at the first
+        moment the EKF is under 0.8 m/s stores a point below the crest, and
+        the hold then descends back to that point. The lock waits until the
+        smoothed barometer and the EKF are both slow."""
+        ekf = ctx.get("climb")
+        ekf_v = ekf if ekf is not None and math.isfinite(ekf) else rate
+        baro_slow = baro_rate is None or abs(baro_rate) <= self.CATCH_EKF_MPS
+        if (self._catch_hold_h is None and baro_slow
+                and abs(rate) <= self.CATCH_EKF_MPS and abs(ekf_v) <= self.CATCH_EKF_MPS):
+            h = ctx.get("height")
+            if h is not None and math.isfinite(h):
+                self._catch_hold_h = h
+        if self._catch_hold_h is None:
+            return 0.0
+        h = ctx.get("height")
+        if h is None or not math.isfinite(h):
+            return 0.0
+        return max(-0.8, min(0.8, 0.35*(self._catch_hold_h - h)))
+
+    def _catch_hovering(self, ctx, fresh, vz, have_baro):
+        if not fresh or self._catch_hold_h is None or ctx.get("att") is None:
+            return False
+        if not self._level(ctx["att"], self.CATCH_LEVEL_DEG):
+            return False
+        h = ctx.get("height")
+        if h is None or abs(h - self._catch_hold_h) > self.CATCH_HOLD_M:
+            return False
+        if abs(vz) > (self.CATCH_BARO_MPS if have_baro else self.CATCH_CLIMB_MPS):
+            return False
+        ekf = ctx.get("climb")
+        ekf_lim = self.CATCH_EKF_MPS if have_baro else self.CATCH_CLIMB_MPS
+        if ekf is not None and math.isfinite(ekf) and abs(ekf) > ekf_lim:
+            return False
+        vel = ctx.get("vel_ned") if ctx.get("position_ok") else None
+        if vel is not None and len(vel) >= 2 and all(math.isfinite(v) for v in vel[:2]):
+            return math.hypot(vel[0], vel[1]) <= self.CATCH_STOP_MPS
+        return self._accel is None or self._accel <= self.STOPPED_ACCEL
+
+    def _catch_speed_lean(self, ctx):
+        """(roll, pitch) degrees that brake the GPS ground speed, or None.
+
+        Positive pitch is nose up and brakes a forward run. Positive roll
+        lowers the right side and brakes a leftward run."""
+        vel, att = ctx.get("vel_ned"), ctx.get("att")
+        if not ctx.get("position_ok") or vel is None or att is None or len(vel) < 2:
+            return None
+        if not all(math.isfinite(v) for v in vel[:2]):
+            return None
+        yaw = att.get("yaw", 0.0)
+        if yaw is None or not math.isfinite(yaw):
+            return None
+        vn, ve = vel[0], vel[1]
+        vf = vn*math.cos(yaw) + ve*math.sin(yaw)
+        vr = -vn*math.sin(yaw) + ve*math.cos(yaw)
+        speed = math.hypot(vf, vr)
+        fade = 0.0 if speed <= self.CATCH_STOP_MPS else min(
+            1.0, (speed - self.CATCH_STOP_MPS)/self.CATCH_BRAKE_FADE_MPS)
+        af = fade*(-vf/self.CATCH_BRAKE_TAU_S)
+        ar = fade*(-vr/self.CATCH_BRAKE_TAU_S)
+        return (math.degrees(math.atan2(ar, G)), math.degrees(math.atan2(-af, G)))
+
+    def _slew_pair(self, cur, target, dt, cap, rate):
+        out = []
+        for i, want in enumerate(target):
+            want = max(-cap, min(cap, want))
+            step = max(-rate*dt, min(rate*dt, want - cur[i]))
+            cur[i] = cur[i] + step
+            out.append(cur[i])
+        return tuple(out)
+
+    def _catch_brake(self, mapper, ctx, mode, dt):
+        """Lean that replaces the level sticks, or None to stay centred.
+
+        Angle sticks in ACRO would be read as a rate, so the brake waits
+        until the FC is in STABILIZE."""
+        if mode != "STABILIZE" or not callable(getattr(mapper, "lean_pwm", None)):
+            self._catch_lean = [0.0, 0.0]
+            return None
+        target = self._catch_speed_lean(ctx)
+        if target is None:
+            dragged = self._air_brake(mapper, ctx, mode, dt, max_deg=self.CATCH_BRAKE_MAX_DEG)
+            target = dragged if dragged is not None else (0.0, 0.0)
+        lean = self._slew_pair(self._catch_lean, target, dt, self.CATCH_BRAKE_MAX_DEG,
+                               self.CATCH_BRAKE_RATE_DPS)
+        return None if max(abs(v) for v in lean) < 0.2 else lean
+
+    # ArduCopter refuses a hover throttle outside this band.
+    HOVER_MIN, HOVER_MAX = 0.125, 0.6875
+
+    def _hover_stick_ready(self, mapper, now):
+        """True once mid stick is the thrust that is holding this weight."""
+        raw = self._hover
+        if raw is None or not math.isfinite(raw):
+            self._hover_anchor = None
+            return False
+        learned = min(self.HOVER_MAX, max(self.HOVER_MIN, raw))
+        # The IMU average is still moving just after the stop. Wait until it
+        # holds still, or the stick is set to a thrust this weight has already
+        # left behind.
+        anchor = self._hover_anchor
+        if anchor is None or abs(learned - anchor[1]) > 0.005:
+            self._hover_anchor = (now, learned)
+            return False
+        if now - anchor[0] < 0.5:
+            return False
+        current = getattr(mapper, "hover_thrust", None)
+        if current is not None and abs(float(current) - learned) <= 0.01:
+            return True
+        setter = getattr(mapper, "set_hover_thrust", None)
+        if not callable(setter):
+            return True
+        if self._hover_set_t is None or now - self._hover_set_t >= 0.5:
+            if setter(learned):
+                first = self._hover_set_t is None
+                self._hover_set_t = now
+                if first:
+                    self._note(f"this weight hovers at {learned:.1%} thrust: middle of the stick set there")
+        return False
+
     def _catch(self, mapper, now, ctx, fresh, dt):
-        # The pilot's STABILIZE, never a mode request: steady it, then his.
+        # The pilot's STABILIZE, never a mode request: hover, then his.
         mode = ctx.get("fc_mode")
         if mode not in ("STABILIZE", "ACRO"):
             # The switch moved it to STABILIZE; the 1 Hz heartbeat may still
@@ -424,22 +607,42 @@ class SafeDown:
                 raise Handover(f"FC in {mode}")
             mode = "STABILIZE"
         self.stage = "CATCH"
+        vz, have_baro = self._catch_vertical(ctx, now)
+        src = "speed" if self._catch_speed_lean(ctx) is not None else "drag"
+        if src != self._catch_src:
+            self._catch_src = src
+            self._note("CATCH: braking to a hover on the "
+                       + ("GPS speed" if src == "speed" else "air drag")
+                       + " and the " + ("barometer" if have_baro else "EKF climb"))
         held = now - self.started
-        steady = (fresh and math.degrees(self._tilt(ctx["att"])) <= self.CATCH_LEVEL_DEG
-                  and abs(ctx["climb"]) <= self.CATCH_CLIMB_MPS)
-        self._steady_t = (self._steady_t or now) if steady else None
-        if ((held >= self.CATCH_MIN_S and self._steady_t is not None
-             and now - self._steady_t >= self.CATCH_STEADY_S) or held >= self.CATCH_MAX_S):
-            raise Handover("caught: level and steady, the pilot flies it in STABILIZE"
-                           if steady else f"caught for {self.CATCH_MAX_S:g} s, the pilot flies it in STABILIZE")
+        hovering = self._catch_hovering(ctx, fresh, vz, have_baro)
+        self._steady_t = (self._steady_t or now) if hovering else None
+        # The middle of the stick is whatever MOT_THST_HOVER says. That number
+        # is not today's weight, so publish the thrust the IMU just measured
+        # and only then give the stick back. Until the FC echoes it, keep
+        # flying the height.
+        stick_ready = hovering and self._hover_stick_ready(mapper, now)
+        if (held >= self.CATCH_MIN_S and self._steady_t is not None
+                and now - self._steady_t >= self.CATCH_HOVER_S and stick_ready):
+            raise Handover(
+                "hovering: level, barometer steady, stopped in the air; the pilot flies it in STABILIZE"
+                if have_baro else
+                "hovering: level and stopped in the air; the pilot flies it in STABILIZE")
         rates = self._acro_level_rates(ctx.get("att")) if mode == "ACRO" else (0.0, 0.0, 0.0)
-        self._climb_cmd = 0.0
-        if fresh and abs(ctx["climb"]) > 2*self.CATCH_CLIMB_MPS:
-            # Wound up on a 30 m/s launch climb, the integrator turns it
-            # into a sink just as the pilot takes it.
-            self._thr_i = 0.0
-        out = mapper.wasp_pwm(rates, self._manual_throttle(mapper, ctx, 0.0, dt, full=True))
-        brake = self._air_brake(mapper, ctx, mode, dt) if mode == "STABILIZE" else None
+        rate = self._catch_rate(ctx)
+        hard = abs(rate) > 6.0
+        target = 0.0 if hard else self._catch_climb_target(
+            ctx, rate, vz if have_baro else None)
+        self._climb_cmd = target
+        # Full brake only while it is still fast. The integrator stays frozen
+        # until the height is captured, so it cannot wind up during the stop
+        # and then push the drone through the hover.
+        out = mapper.wasp_pwm(rates, self._manual_throttle(
+            mapper, dict(ctx, climb=rate), target, dt,
+            accel_limit=25.0 if hard else 2.5, kp=2.0 if hard else 0.8, ki=0.4,
+            i_limit=1.2, freeze_i=hard or self._catch_hold_h is None,
+            thrust_slew=0.8))
+        brake = self._catch_brake(mapper, ctx, mode, dt)
         self.brake = brake or (0.0, 0.0)
         return dict(out, **mapper.lean_pwm(*brake)) if brake else out
 
@@ -611,9 +814,10 @@ class SafeDown:
                 and abs(self._rest_baro) < self.REST_BARO_MPS and ctx.get("height") is not None
                 and ctx["height"] < self.GROUND_HEIGHT_M)
 
-    def _air_brake(self, mapper, ctx, mode, dt):
+    def _air_brake(self, mapper, ctx, mode, dt, max_deg=None):
         """(roll, pitch) degrees that lean against the drag, or None."""
         att = ctx.get("att")
+        cap = self.BRAKE_MAX_DEG if max_deg is None else max_deg
         # With a GPS position the FC holds it itself, and LAND would take our
         # sticks as a request to move.
         if ((ctx.get("position_ok") and mode != "STABILIZE") or mode not in ("STABILIZE", "ALT_HOLD", "LAND")
@@ -627,10 +831,8 @@ class SafeDown:
         # to brake, so pitch (nose up positive) follows -x; roll follows +y.
         for i, err in enumerate((self._drag[1], -self._drag[0])):
             err = math.copysign(max(0.0, abs(err)-self.BRAKE_DEADBAND), err)
-            self._brake_i[i] = max(-self.BRAKE_MAX_DEG, min(self.BRAKE_MAX_DEG,
-                                   self._brake_i[i] + self.BRAKE_KI*err*dt))
-            out.append(max(-self.BRAKE_MAX_DEG, min(self.BRAKE_MAX_DEG,
-                                                    self.BRAKE_KP*err + self._brake_i[i])))
+            self._brake_i[i] = max(-cap, min(cap, self._brake_i[i] + self.BRAKE_KI*err*dt))
+            out.append(max(-cap, min(cap, self.BRAKE_KP*err + self._brake_i[i])))
         return tuple(out)
 
     def _sticks(self, mapper, ctx, mode, dt):

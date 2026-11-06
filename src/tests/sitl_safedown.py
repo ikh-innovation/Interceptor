@@ -69,6 +69,8 @@ class Scenario:
     stick: str = None                # None: the trigger's own sticks. "before": throttle mid, then the
                                      # switch. "after": the switch first; throttle mid only once SafeDown
                                      # has the sticks (ALT_HOLD) or once the catch has given them back.
+    stab_speed_mps: float = None     # catch: throttle mid once airborne, STAB once this fast
+                                     # (after_s is then the longest wait for that speed)
     fence_wait_s: float = 15.0       # how long a fence trigger waits to leave the polygon
     watch_s: float = 120.0           # how long to follow the flight after the trigger
     expect: str = None               # "home" (GPS) / "landed" (no GPS) by default; "pilot", "failed", "any"
@@ -137,12 +139,26 @@ def scenarios():
                  expect="caught"))
     # Pilot stick order. ALT_HOLD keeps the app's sticks for the whole return, so
     # the throttle stick is ignored either way. STABILIZE gives the sticks back
-    # after 1-3 s: mid stick must already be there. The model hovers at 12.5 %
-    # thrust, so these two match mid-stick to that hover (the real FC's learned
-    # MOT_THST_HOVER is 0.152; the pilot still holds the middle of the stick).
+    # only once the drone is hovering: mid stick must already be there. The model
+    # hovers at 12.5 % thrust, so these match mid-stick to that hover (the real
+    # FC's learned MOT_THST_HOVER is 0.152; the pilot still holds the middle).
     # stand_pitch 20 is 70 degrees above the ground. The square is 200 m across,
     # so the nearest side is 100 m from the stand.
+    # Launch elevation above the ground, 40 / 60 / 80 degrees. The stand is
+    # nose-down by (90 - elevation): 50, 30 and 10. The shot stays in ACRO
+    # with the throttle stick down; the pilot puts the stick at mid once it
+    # is flying, and selects STAB only after it is fast. 27.8 m/s is 100 km/h.
+    # Mid stick is the hover point (the model hovers at 12.5 % thrust).
     hover = dict(MOT_THST_HOVER=0.125)
+    for elev, stand in ((40, 50), (60, 30), (80, 10)):
+        add(Scenario(f"stab-hover-{elev}deg", trigger="catch", arm_by_app=True,
+                     stand_pitch_deg=stand, stab_speed_mps=27.8, after_s=8,
+                     expect="hover", watch_s=100, extra_params=dict(hover)))
+    # 1.2 kg needs 16.7 % thrust. The FC still starts at 12.5 %, so mid stick
+    # is light until the catch writes the thrust it measured.
+    add(Scenario("stab-hover-heavy", trigger="catch", arm_by_app=True,
+                 stand_pitch_deg=30, stab_speed_mps=27.8, after_s=8, mass_kg=1.2,
+                 expect="hover", watch_s=140, extra_params=dict(hover)))
     add(Scenario("pilot-althold-stick-before", trigger="switch", stick="before"))
     add(Scenario("pilot-althold-stick-after", trigger="switch", stick="after"))
     add(Scenario("pilot-stab-stick-before", trigger="catch", stick="before", expect="caught",
@@ -151,6 +167,36 @@ def scenarios():
                  extra_params=hover))
     add(Scenario("pilot-geofence-100m-elev70", arm_by_app=True, fence_m=200, trigger="fence",
                  after_s=.1, stand_pitch_deg=20, fence_wait_s=25, watch_s=220))
+    # Geofence while WASP is still on the launch angle, at about 100 km/h.
+    # Elevation 40 / 60 / 80 is stand pitch 50 / 30 / 10. The square is 40 m
+    # across, so the side is 20 m from the stand: past the few metres it
+    # takes to reach 27.8 m/s, and still pitched because ACRO is not levelling.
+    # stab_speed_mps is the speed the breach has to be at; nobody selects STAB.
+    for elev, stand in ((40, 50), (60, 30), (80, 10)):
+        add(Scenario(f"fence-return-{elev}", arm_by_app=True, fence_m=40, trigger="fence",
+                     after_s=.1, stand_pitch_deg=stand, stab_speed_mps=27.8,
+                     fence_wait_s=40, watch_s=240))
+    # Ten STAB catches and ten geofence returns. Each cell is one elevation
+    # and one weight, and the shot has to be at 27.8 m/s (100 km/h). The
+    # stand is nose-down by (90 - elevation). Mass None is the 0.9 kg model.
+    for name, elev, stand, mass in (
+            ("40-09", 40, 50, None), ("40-12", 40, 50, 1.2),
+            ("50-10", 50, 40, 1.0), ("50-14", 50, 40, 1.4),
+            ("60-09", 60, 30, None), ("60-11", 60, 30, 1.1),
+            ("60-15", 60, 30, 1.5), ("70-12", 70, 20, 1.2),
+            ("75-10", 75, 15, 1.0), ("80-13", 80, 10, 1.3)):
+        add(Scenario(f"stab-matrix-{name}", trigger="catch", arm_by_app=True,
+                     stand_pitch_deg=stand, stab_speed_mps=27.8, after_s=8,
+                     mass_kg=mass, expect="hover", watch_s=140, extra_params=dict(hover)))
+    for name, elev, stand, mass in (
+            ("35-09", 35, 55, None), ("40-12", 40, 50, 1.2),
+            ("45-10", 45, 45, 1.0), ("50-14", 50, 40, 1.4),
+            ("55-11", 55, 35, 1.1), ("60-09", 60, 30, None),
+            ("65-13", 65, 25, 1.3), ("70-15", 70, 20, 1.5),
+            ("75-12", 75, 15, 1.2), ("80-10", 80, 10, 1.0)):
+        add(Scenario(f"fence-matrix-{name}", arm_by_app=True, fence_m=40, trigger="fence",
+                     after_s=.1, stand_pitch_deg=stand, stab_speed_mps=27.8, mass_kg=mass,
+                     fence_wait_s=40, watch_s=260))
     for sc in out:
         sc.expect = sc.expect or ("home" if sc.gps else "landed")
     return out
@@ -296,7 +342,9 @@ class Run:
                 self.wait(lambda: time.perf_counter()-launched >= sc.after_s-lead, sc.after_s+1, "flight")
                 self.sitl.physics.event("torque", nm=torque, duration=duration)
                 self.note("PRE-UPSET")
-            self.wait(lambda: time.perf_counter()-launched >= sc.after_s, sc.after_s+1, "flight")
+            speed_catch = sc.trigger == "catch" and sc.stab_speed_mps
+            if not speed_catch:
+                self.wait(lambda: time.perf_counter()-launched >= sc.after_s, sc.after_s+1, "flight")
             st = self.sample()
             at_trigger = dict(st)
             self.lifted = any(x.get("left_stand") for x in self.samples)
@@ -310,6 +358,35 @@ class Run:
                 elif sc.stick == "after":
                     self.note("PILOT: switch UP, throttle still down")
                 self.sitl.rc.set(6, SWITCH["up"])
+            elif sc.trigger == "catch" and speed_catch:
+                # ACRO, throttle down, app ARM and GO already happened. As soon
+                # as it is flying the pilot puts the throttle at mid. The app
+                # keeps the launch. STAB comes only once it is fast.
+                try:
+                    self.wait(lambda: self.sample().get("left_stand"), 15, "airborne")
+                except TimeoutError:
+                    st = self.samples[-1] if self.samples else {}
+                    raise TimeoutError(
+                        "airborne"
+                        f" h={st.get('height')} tilt={st.get('tilt')} left={st.get('left_stand')}"
+                        f" crashed={st.get('crashed')} on_stand={st.get('on_stand')}"
+                        f" thrust={st.get('thrust_frac')} vel={st.get('vel')}"
+                        f" phase={self.m.phase} mode={self.c.mode_name}")
+                self.sitl.rc.set_stick("throttle", .5)
+                mid = self.sample()
+                self.speed_at_mid = math.hypot(*mid["vel"])
+                self.note(f"PILOT: throttle mid, still ACRO, {self.speed_at_mid:.1f} m/s")
+                try:
+                    self.wait(lambda: math.hypot(*self.sample()["vel"]) >= sc.stab_speed_mps,
+                              sc.after_s, "target speed")
+                    self.note("PILOT: STAB at the target speed")
+                except TimeoutError:
+                    seen = math.hypot(*self.sample()["vel"])
+                    self.note(f"PILOT: STAB at {seen:.1f} m/s, below {sc.stab_speed_mps}")
+                st = self.sample()
+                at_trigger = dict(st)
+                self.lifted = any(x.get("left_stand") for x in self.samples)
+                self.sitl.rc.set(6, SWITCH["middle"])
             elif sc.trigger == "catch":
                 if sc.stick == "after":
                     # Throttle stays at the bottom through the handover.
@@ -331,7 +408,16 @@ class Run:
                 self.note(f"FC mode after the radio loss: {self.c.mode_name}")
             elif sc.trigger == "fence":
                 # Nobody does anything: crossing the fence starts SafeDown.
-                self.wait(lambda: m.safedown.active, sc.fence_wait_s, "SafeDown at the geofence")
+                try:
+                    self.wait(lambda: m.safedown.active, sc.fence_wait_s, "SafeDown at the geofence")
+                except TimeoutError:
+                    st = self.samples[-1] if self.samples else {}
+                    raise TimeoutError(
+                        "SafeDown at the geofence"
+                        f" h={st.get('height')} tilt={st.get('tilt')} left={st.get('left_stand')}"
+                        f" crashed={st.get('crashed')} on_stand={st.get('on_stand')}"
+                        f" phase={self.m.phase} mode={self.c.mode_name}"
+                        f" fence={m._fence_state} pos={self.c.backend.position()}")
                 if "GEOFENCE" not in m.safedown.reason:
                     raise RuntimeError(f"SafeDown, but not the fence: {m.safedown.reason}")
                 at_trigger = dict(self.sample())
@@ -398,16 +484,16 @@ class Run:
                     self.note("PILOT: throttle mid 0.5 s after the handover")
                 if stick_after and time.perf_counter() - release_t > 6.5:
                     break
-            if sc.expect == "caught" and caught:
+            if sc.expect in ("caught", "hover") and caught:
                 self.caught_t = getattr(self, "caught_t", None) or time.perf_counter()
-                if sc.stick == "before":
+                if sc.expect == "hover" or sc.stick == "before":
                     # Exactly mid, the hover point. No extra correction.
                     self.sitl.rc.set_stick("throttle", .5)
                 elif st.get("vel") is not None:
                     # The pilot flies it now: mid stick, plus what holds the height.
                     self._pilot_i = max(-.3, min(.3, getattr(self, "_pilot_i", 0.0) + .002*st["vel"][2]))
                     self.sitl.rc.set_stick("throttle", max(.2, min(.95, .5 + self._pilot_i + .06*st["vel"][2])))
-                if time.perf_counter() - self.caught_t > 6:
+                if time.perf_counter() - self.caught_t > (8 if sc.expect == "hover" else 6):
                     break
             if not self.c.armed and (st.get("on_ground") or st.get("crashed")):
                 for _ in range(25):
@@ -453,6 +539,50 @@ class Run:
         return (at is not None and at["tilt"] < 20 and abs(at["vel"][2]) < 2.5
                 and later is not None and later["tilt"] < 10)
 
+    def _hover_ok(self, s, crashed):
+        # Handed over stopped and level, and still up under the pilot's mid stick.
+        t = next((t for t, e in self.events if "CATCH done" in e), None)
+        if t is None or crashed or not self.lifted:
+            return False
+        at = next((x for x in s if x["t"] >= t), None)
+        later = next((x for x in s if x["t"] >= t + 4.0), None)
+        if at is None or later is None:
+            self.catch_report = None
+            return False
+        end = next((x for x in s if x["t"] >= t + 7.5), None)
+        if end is None:
+            self.catch_report = None
+            return False
+        vh = math.hypot(at["vel"][0], at["vel"][1])
+        later_vh = math.hypot(later["vel"][0], later["vel"][1])
+        end_vh = math.hypot(end["vel"][0], end["vel"][1])
+        h, later_h, end_h = -at["pos"][2], -later["pos"][2], -end["pos"][2]
+        later_vz, end_vz = -later["vel"][2], -end["vel"][2]
+        hold_drift = math.hypot(later["pos"][0]-at["pos"][0], later["pos"][1]-at["pos"][1])
+        end_drift = math.hypot(end["pos"][0]-at["pos"][0], end["pos"][1]-at["pos"][1])
+        self.catch_report = dict(
+            catch_s=round(t - (self.trigger_t - self.t0), 2), tilt=round(at["tilt"]),
+            vz=round(-at["vel"][2], 1), vh=round(vh, 1), h=round(h, 1),
+            later_vh=round(later_vh, 1), later_vz=round(later_vz, 1),
+            later_h=round(later_h, 1), drop_m=round(h - later_h, 1),
+            hold_drift_m=round(hold_drift, 1),
+            end_h=round(end_h, 1), end_vz=round(end_vz, 1), end_vh=round(end_vh, 1),
+            end_drift_m=round(end_drift, 1), armed=bool(at.get("armed")),
+            thrust=None if at.get("thrust_frac") is None else round(at["thrust_frac"], 4),
+            later_thrust=None if later.get("thrust_frac") is None else round(later["thrust_frac"], 4),
+            end_thrust=None if end.get("thrust_frac") is None else round(end["thrust_frac"], 4))
+        # Mid stick has to hold the height both ways for the whole handover,
+        # and the launch direction has to be gone. A slow sink that is still
+        # inside the band at 4 s and running away at 8 s is not a hover.
+        still = (at.get("armed") and not later.get("on_ground") and not later.get("crashed")
+                 and not end.get("on_ground") and not end.get("crashed"))
+        return (still and h > 5
+                and vh <= 0.8 and abs(at["vel"][2]) <= 0.25 and at["tilt"] < 12
+                and later_vh <= 0.6 and abs(later_vz) <= 0.20 and later["tilt"] < 12
+                and abs(h - later_h) < 0.4 and hold_drift < 4.0
+                and end_vh <= 0.6 and abs(end_vz) <= 0.25 and end["tilt"] < 12
+                and abs(h - end_h) < 0.6 and end_drift < 5.0)
+
     def metrics(self, at_trigger):
         s = [x for x in self.samples if x["t"] >= self.trigger_t - self.t0]
         tilt = lambda x: x["tilt"]
@@ -484,6 +614,7 @@ class Run:
               "pilot": not crashed and any("SAFEDOWN ended: pilot switched" in e for e in events),
               "failed": any("SAFEDOWN FAILED" in e for e in events),
               "caught": self._caught_ok(s, crashed),
+              "hover": self._hover_ok(s, crashed),
               "measured": self.lifted and any("CATCH done" in e for e in events),
               "any": not crashed and not tipped,
               # The FC's own RTL (no SafeDown): back on the stand, disarmed, intact.
@@ -494,8 +625,48 @@ class Run:
             ok = False  # the GPS never went: the scenario tested nothing
         if not self.lifted:
             ok = None  # never left the stand: a launch finding, SafeDown never flew
+        if self.sc.expect == "hover" and ok is None:
+            ok = False
+        tas = math.hypot(*at_trigger["vel"])
+        if (self.sc.expect == "hover" and ok and self.sc.stab_speed_mps
+                and tas < 0.95*self.sc.stab_speed_mps):
+            ok = False  # never reached the speed this scenario exists to stop
+        if self.sc.expect == "hover" and ok and not any("still ACRO" in e for e in events):
+            ok = False  # STAB came before the pilot had put the throttle at mid, in ACRO
+        # A fence return only counts if the breach was the fast, still-pitched
+        # shot, and the way home did not tumble or hit hard.
+        breach = None
+        if self.sc.trigger == "fence" and self.sc.stab_speed_mps:
+            launch_tilt = self.sc.stand_pitch_deg
+            tilt_now = tilt(at_trigger)
+            need = 0.95*self.sc.stab_speed_mps
+            wild = max((tilt(x) for x in after_level), default=0)
+            reasons = []
+            if tas < need:
+                reasons.append(f"speed {tas:.1f} m/s is under {need:.0f}")
+            if abs(tilt_now - launch_tilt) > 25:
+                reasons.append(f"tilt {tilt_now:.0f} deg has left the launch angle {launch_tilt:.0f}")
+            if final and final.get("hard_landings"):
+                reasons.append("hard landing")
+            if wild > 60:
+                reasons.append(f"tilt {wild:.0f} deg after it had levelled")
+            if not self.lifted:
+                reasons.append("never left the stand")
+            breach = (f"tas {tas:.1f} m/s, tilt {tilt_now:.0f} vs launch {launch_tilt:.0f}"
+                      + ("" if not reasons else "; " + "; ".join(reasons)))
+            if reasons and ok is not False:
+                ok = False
+        t_trig = self.trigger_t - self.t0
+        stopped = next((x for x in s if x["t"] >= t_trig
+                        and math.hypot(x["vel"][0], x["vel"][1]) <= 2.0
+                        and abs(x["vel"][2]) <= 2.0), None)
+        stop_s = stop_m = None
+        if stopped is not None:
+            stop_s = round(stopped["t"] - t_trig, 2)
+            stop_m = round(math.hypot(stopped["pos"][0]-at_trigger["pos"][0],
+                                      stopped["pos"][1]-at_trigger["pos"][1]), 1)
         return dict(
-            name=self.sc.name, ok=ok, expect=self.sc.expect, lifted=self.lifted,
+            name=self.sc.name, ok=ok, expect=self.sc.expect, breach=breach, lifted=self.lifted,
             returned=returned, home_m=None if home_m is None else round(home_m, 1),
             catch=getattr(self, "catch_report", None),
             range_m=round(math.hypot(at_trigger["pos"][0], at_trigger["pos"][1]), 1),
@@ -503,6 +674,9 @@ class Run:
             min_h_after=None if min_after is None else round(min_after, 1),
             drop_m=None if hand_h is None else round(hand_h - min_after, 1),
             trigger_h=round(h(at_trigger), 1), trigger_speed=round(vh(at_trigger), 1),
+            trigger_tas=round(tas, 1),
+            speed_at_mid=None if getattr(self, "speed_at_mid", None) is None else round(self.speed_at_mid, 1),
+            stop_s=stop_s, stop_m=stop_m,
             trigger_vz=round(-at_trigger["vel"][2], 1),
             trigger_tilt=round(tilt(at_trigger)), max_tilt=round(max(tilt(x) for x in s)),
             max_rate_dps=round(max(max(abs(r) for r in x["rates"]) for x in self.samples)),
@@ -552,7 +726,7 @@ def _spawn(name, instance, out_dir):
     import subprocess
     path = Path(out_dir)/f"{name}.json"
     cmd = [sys.executable, __file__, "--one", name, "--instance", str(instance), "--out", str(out_dir)]
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=520)
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=700)
     try:
         return json.loads(path.read_text())
     except (OSError, ValueError):

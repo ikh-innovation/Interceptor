@@ -1234,7 +1234,7 @@ class Mission:
         with self._lock:
             self._hold = None
         self.safedown.begin(now, ctx, reason, hold, catch=catch)
-        self._note(f"CATCH: {reason}; level and steady, then the pilot flies it" if catch else
+        self._note(f"CATCH: {reason}; braking to a hover, then the pilot flies it" if catch else
                    f"SAFEDOWN: {reason}; level, stop, then fly home and land", now)
         self._set_phase("SAFEDOWN", now)
         # This cycle's gate is still the launch's (often closed by the very
@@ -1267,7 +1267,7 @@ class Mission:
             elif selected == SafeDown.CATCH_MODE and not r.catch:
                 # The pilot wants it, in STABILIZE: steady it first, then his.
                 r.begin(now, ctx, f"pilot switched to {selected}", self.wasp.params["throttle"], catch=True)
-                self._note(f"CATCH: pilot switched to {selected}; level and steady, then the pilot flies it", now)
+                self._note(f"CATCH: pilot switched to {selected}; braking to a hover, then the pilot flies it", now)
             else:
                 # Plan B: any other position is the pilot taking over, even
                 # ALT_HOLD, which the FC may already be in.

@@ -21,6 +21,34 @@ G = 9.80665
 RHO = 1.225
 NOMINAL_MASS = 0.9
 
+
+def _isa_density_ratio(amsl_m):
+    """US Standard Atmosphere density / sea-level density, troposphere.
+
+    ArduCopter multiplies motor thrust by the inverse of this, from the
+    barometer's altitude. The force below is scaled by the same ratio so
+    the two cancel: mid stick stays a hover at any height."""
+    h = max(0.0, min(10000.0, amsl_m))
+    t = (288.15 - 0.0065*h)/288.15
+    return t ** 4.25588
+
+
+def _hover_pwm(sigma):
+    """Motor PWM ArduCopter computes for MOT_THST_HOVER 0.125, before the
+    integer truncation in output_to_pwm().
+
+    The packet only carries the truncated count. That count is about 0.3 %
+    of thrust low, so a stick held at the middle slowly sinks. STABILIZE
+    does not learn a new hover, and the real FC's learned value already
+    sits on the count that holds. When the packet is that count, the force
+    uses the fraction the FC had computed."""
+    e = 0.62
+    demand = min(1.0, 0.125 / max(sigma, 0.3))
+    ratio = ((e - 1.0) + math.sqrt((1.0 - e) ** 2 + 4.0 * e * demand)) / (2.0 * e)
+    ratio = min(1.0, max(0.0, ratio))
+    actuator = 0.13 + 0.82 * ratio
+    return 1000.0 + 1000.0 * actuator
+
 # BF_X_REV, from AP_MotorsMatrix.cpp: (angle clockwise from the nose, yaw factor).
 # Index i is motor i+1 = SERVOi+1 (SERVO1..4_FUNCTION 33..36). A yaw factor of
 # +1 (CCW prop) yaws the body clockwise (positive NED yaw) as it speeds up.
@@ -56,6 +84,7 @@ class PhysicsConfig:
     imu_noise: tuple = (0.05, 0.002)        # accel m/s^2, gyro rad/s (1 sigma)
     seed: int = 1
     instance: int = 0
+    ground_amsl_m: float = 100.0           # sitl_launch.HOME altitude, for air density
 
     @property
     def port(self):
@@ -245,17 +274,30 @@ class Quad:
         F = [0.0, 0.0, 0.0]   # world, everything but gravity
         T = [0.0, 0.0, 0.0]   # body, about the CG
 
-        # Motors: SITL sends 1000..2000 us; idle motors (SPIN_ARM 0.10) give no
-        # thrust and full thrust is reached at SPIN_MAX 0.95.
+        # Motors: SITL sends 1000..2000 us. The FC's flying range is
+        # MOT_SPIN_MIN 0.13 .. MOT_SPIN_MAX 0.95; MOT_THST_EXPO is applied
+        # inside that range. MOT_SPIN_ARM 0.10 is ground idle, below the
+        # range, so it makes no thrust. Using 0.10 as the zero made a
+        # mid-stick hover (MOT_THST_HOVER) come out about 14 % high, and
+        # the drone climbed as soon as the pilot got the stick back.
+        spin_min, spin_max = 0.13, 0.95
         a = dt/(cfg.motor_tau_s+dt)
         e = cfg.thrust_expo
         thrust = 0.0
+        sigma = _isa_density_ratio(cfg.ground_amsl_m + max(0.0, -p[2]))
+        hover_pwm = _hover_pwm(sigma)
+        hover_count = int(hover_pwm)
         for i, (_ang, yf) in enumerate(MOTORS):
-            c = (pwm[i]-1000)/1000.0 if pwm[i] >= 1000 else 0.0
-            xc = min(1.0, max(0.0, (c-0.10)/0.85))
+            # The hover count stands in for the FC's untruncated command.
+            # Any other count is the integer the FC sent.
+            use = hover_pwm if int(pwm[i]) == hover_count else float(pwm[i])
+            c = (use-1000)/1000.0 if use >= 1000 else 0.0
+            xc = min(1.0, max(0.0, (c-spin_min)/(spin_max-spin_min)))
             self.x[i] += a*(xc-self.x[i])
             x = self.x[i]
-            f = cfg.max_thrust_n*((1-e)*x + e*x*x)*self.motor_scale[i]
+            # Density falls with altitude. The FC commands the extra thrust
+            # that puts it back, so mid stick is the same hover at any height.
+            f = cfg.max_thrust_n*((1-e)*x + e*x*x)*self.motor_scale[i]*sigma
             self.thrust[i] = f
             thrust += f
             r = self.motor_r[i]
