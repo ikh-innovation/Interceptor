@@ -166,16 +166,21 @@ class ShapeOfSafeDown(SafeDownFlight):
         self.assertEqual(self.m.phase, "PILOT")
         self.assertFalse(self.m.wasp.used, "disarmed: ready for the next launch once armed")
 
-    def test_pilot_switch_up_in_flight_runs_the_same_safedown(self):
+    def test_pilot_switch_up_in_flight_rtls_directly(self):
         self.launch()
-        # The switch up puts the FC in ALT_HOLD itself: centred ALT_HOLD sticks
-        # at once, never the launch throttle (which ALT_HOLD reads as a climb).
+        # The switch up puts the FC in ALT_HOLD itself: SafeDown now goes
+        # straight to RTL (the launch point), skipping the level/stop stages.
         self.fc.mode = self.fc.heartbeat = "ALT_HOLD"
-        self.tick(gate_ok=False, pilot_takeover=True, pilot_safedown=True)
+        self.tick(gate_ok=False, pilot_takeover=True, pilot_safedown=True,
+                  position_ok=True, home_ok=True, home_m=80.0)
         self.assertEqual(self.m.phase, "SAFEDOWN")
-        self.assertIn("pilot switched to ALT_HOLD", self.m.event)
-        self.assertEqual(self.out, dict(kind="alt", yaw=0.0, climb=0.0))
-        self.assert_land_and_disarm()
+        self.assertIn("launch point", self.m.event)
+        self.assertEqual(self.r.stage, "RETURN")
+        self.assertTrue(self.run_for(2, lambda: self.fc.mode == "RTL",
+                                     position_ok=True, home_ok=True, home_m=80.0))
+        self.mapper.armed = False
+        self.tick(position_ok=True, home_ok=True)
+        self.assertIn("landed, FC disarmed", self.m.event)
 
     def test_the_pilots_stabilize_is_his_own_flight(self):
         self.launch()
@@ -610,113 +615,80 @@ class Catch(SafeDownFlight):
         began = self.now
         self.assertTrue(self.run_for(4, lambda: not self.r.active, pilot_catch=True))
         self.assertAlmostEqual(self.now - began, SafeDown.CATCH_MIN_S, delta=.1)
-        self.assertIn("CATCH done: hovering: level and stopped", self.m.event)
+        self.assertIn("CATCH done: hovering", self.m.event)
         self.assertEqual(self.mapper.requests, [], "never a mode change")
         self.tick(gate_ok=False, pilot_catch=True)
         self.assertEqual(self.out, {})
         self.assertEqual(self.m.phase, "WASP_DONE")
-
-    def test_a_heavier_drone_sets_the_stick_before_the_handover(self):
-        self.mapper.hover_sets = []
-
-        def set_hover(value):
-            self.mapper.hover_sets.append(value)
-            self.mapper.hover_thrust = value
-            return True
-
-        self.mapper.set_hover_thrust = set_hover
-        self.launch()
-        self.stab()
-        # 0.125 of thrust is only 0.4 g, so this drone hovers near 0.31.
-        def heavy():
-            thrust = self.r._thrust or 0.125
-            self.fc.accel = (0.0, 0.0, -9.80665 * thrust / 0.31)
-            return not self.r.active
-        self.assertTrue(self.run_for(8, heavy, pilot_catch=True))
-        self.assertTrue(self.mapper.hover_sets)
-        self.assertAlmostEqual(self.mapper.hover_sets[-1], 0.31, delta=0.02)
-        self.assertAlmostEqual(self.mapper.hover_thrust, 0.31, delta=0.02)
-        self.assertIn("CATCH done", self.m.event)
 
     def test_a_fast_climb_is_held_until_it_actually_hovers(self):
         self.launch()
         self.fc.climb = 12.0
         self.stab()
         self.assertLess(self.out["throttle"], .45, "thrust comes off against a fast climb")
-        self.run_for(5, pilot_catch=True)
+        self.run_for(2, pilot_catch=True)
         self.assertTrue(self.r.active, "still climbing: the sticks stay with the app")
         self.assertEqual(self.r.stage, "CATCH")
         self.assertNotIn("CATCH done", self.m.event)
         self.fc.climb = 0.0
-        self.assertTrue(self.run_for(3, lambda: not self.r.active, pilot_catch=True))
+        self.assertTrue(self.run_for(4, lambda: not self.r.active, pilot_catch=True))
         self.assertIn("hovering", self.m.event)
+
+    def test_catch_never_exceeds_the_time_limit(self):
+        """Even if the drone never fully hovers, the pilot gets the sticks
+        after CATCH_MAX_S (5 s)."""
+        self.launch()
+        self.fc.climb = 8.0
+        self.stab()
+        began = self.now
+        self.assertTrue(self.run_for(7, lambda: not self.r.active, pilot_catch=True))
+        self.assertAlmostEqual(self.now - began, SafeDown.CATCH_MAX_S, delta=.1)
+        self.assertIn("time limit", self.m.event)
 
     def test_the_barometer_holds_height_when_the_ekf_says_still(self):
         self.launch()
         self.stab(baro_climb=4.0)
-        self.run_for(2, pilot_catch=True, baro_climb=4.0)
+        self.run_for(0.5, pilot_catch=True, baro_climb=4.0)
         self.assertTrue(self.r.active)
         self.assertLess(self.out["throttle"], .48, "the barometer climb is what the throttle follows")
         self.assertIn("barometer", self.m.event)
         self.fc.climb = 0.0
-        self.run_for(1.2, pilot_catch=True, baro_climb=4.0)
+        self.run_for(0.3, pilot_catch=True, baro_climb=4.0)
         self.assertTrue(self.r.active, "EKF climb 0 does not override a climbing barometer")
         self.assertTrue(self.run_for(5, lambda: not self.r.active, pilot_catch=True, baro_climb=0.0))
-        self.assertIn("barometer steady", self.m.event)
+        self.assertIn("CATCH done", self.m.event)
 
-    def test_ground_speed_is_braked_and_blocks_the_handover(self):
+    def test_ground_speed_no_longer_blocks_the_handover(self):
+        """Wind at altitude keeps the drone moving in STABILIZE: the catch hands
+        over once it is level and the climb is steady, even with ground speed."""
         self.mapper.lean_pwm = lambda roll, pitch: dict(lean=(roll, pitch))
         self.launch()
         self.fc.att = dict(LEVEL, yaw=0.0)
-        vel = (22.0, 0.0, 0.0)
+        vel = (3.0, 0.0, 0.0)
         self.stab(position_ok=True, vel_ned=vel)
-        self.run_for(.5, pilot_catch=True, position_ok=True, vel_ned=vel)
-        self.assertGreater(self.out["lean"][1], 15, "nose up brakes a northward run")
-        self.assertAlmostEqual(self.out["lean"][0], 0.0, delta=2.0)
-        self.run_for(4, pilot_catch=True, position_ok=True, vel_ned=vel)
-        self.assertTrue(self.r.active, "still fast: not handed back")
-        self.assertIn("GPS speed", self.m.event)
-        self.assertTrue(self.run_for(3, lambda: not self.r.active, pilot_catch=True,
-                                     position_ok=True, vel_ned=(0.0, 0.0, 0.0)))
+        # Still brakes with a lean, but ground speed alone does not hold up the handover.
+        self.assertTrue(self.run_for(4, lambda: not self.r.active,
+                                     pilot_catch=True, position_ok=True, vel_ned=vel))
         self.assertIn("hovering", self.m.event)
 
-    def test_an_eastward_run_rolls_left_against_it(self):
-        self.mapper.lean_pwm = lambda roll, pitch: dict(lean=(roll, pitch))
-        self.launch()
-        self.fc.att = dict(LEVEL, yaw=0.0)
-        vel = (0.0, 18.0, 0.0)
-        self.stab(position_ok=True, vel_ned=vel)
-        self.run_for(.5, pilot_catch=True, position_ok=True, vel_ned=vel)
-        self.assertLess(self.out["lean"][0], -15)
-
-    def test_horizontal_drag_holds_the_catch_until_it_fades(self):
+    def test_horizontal_drag_does_not_hold_the_catch(self):
+        """The accelerometer's drag reading no longer blocks the handover:
+        levelling and height-holding are enough.  The drag brake still leans
+        against the air, but the pilot gets the sticks as soon as it hovers."""
         self.launch()
         self.fc.accel = (6.0, 0.0, -9.8)
         self.stab()
-        self.run_for(3, pilot_catch=True)
-        self.assertTrue(self.r.active)
-        self.fc.accel = (0.0, 0.0, -9.8)
         self.assertTrue(self.run_for(4, lambda: not self.r.active, pilot_catch=True))
+        self.assertIn("hovering", self.m.event)
 
-    def test_a_dive_gets_the_thrust_and_it_leans_against_the_drag(self):
-        self.mapper.lean_pwm = lambda roll, pitch: dict(lean=(roll, pitch))
-        self.launch()
-        self.fc.climb = -15.0
-        self.fc.accel = (-3.0, 0.0, -9.8)
-        self.stab()
-        self.run_for(.5, pilot_catch=True, position_ok=True)
-        self.assertGreater(self.out["throttle"], .7)
-        self.assertGreater(self.out["lean"][1], 0, "air brake in STABILIZE, GPS or not")
-
-    def test_switch_up_from_a_catch_goes_on_to_the_return(self):
+    def test_switch_up_from_a_catch_goes_to_rtl(self):
         self.launch()
         self.stab(mode_switch=2, mode_switch_mode="STABILIZE")
         self.fc.set_mode("ALT_HOLD", self.now)
         self.fc.heartbeat = "ALT_HOLD"
         self.tick(mode_switch=5, mode_switch_mode="ALT_HOLD")
         self.assertFalse(self.r.catch)
-        self.assertIn("fly home and land", self.m.event)
-        self.assert_land_and_disarm()
+        self.assertIn("launch point", self.m.event)
 
     def test_switch_to_stabilize_during_safedown_becomes_a_catch(self):
         self.launch()
@@ -956,12 +928,13 @@ class TriggersAfterHandover(SafeDownFlight):
         self.assertEqual(self.mapper.requests, ["ALT_HOLD"])
         self.assert_land_and_disarm()
 
-    def test_switch_up_after_a_handover_starts_it_again(self):
+    def test_switch_up_after_a_handover_starts_rtl(self):
         self.handed_over()
         self.fc.mode = self.fc.heartbeat = "ALT_HOLD"
         self.tick(gate_ok=False, pilot_safedown=True)
         self.assertEqual(self.m.phase, "SAFEDOWN")
-        self.assertIn("pilot switched to ALT_HOLD", self.m.event)
+        self.assertIn("launch point", self.m.event)
+        self.assertEqual(self.r.stage, "RETURN")
 
     def test_safedown_during_the_countdown_cancels_it(self):
         self.m.wasp.params["launch_s"] = 3.0

@@ -100,6 +100,7 @@ class SafeDown:
     SWITCH_MODE = "ALT_HOLD"   # the pilot's switch position that means SafeDown
     CATCH_MODE = "STABILIZE"   # the one that means: steady it, then it is mine
     CATCH_MIN_S = 1.0
+    CATCH_MAX_S = 5.0          # hard limit: the pilot gets the sticks after this
     CATCH_HOVER_S = 1.0        # inside the hover band this long, then the pilot
     CATCH_LEVEL_DEG = 8.0
     CATCH_CLIMB_MPS = 1.5      # EKF climb band when the barometer is absent
@@ -124,7 +125,8 @@ class SafeDown:
     def active(self):
         return self.started is not None
 
-    def begin(self, now, ctx, reason, hold_throttle, catch=False):
+    def begin(self, now, ctx, reason, hold_throttle, catch=False,
+              direct_return=False):
         self.started = self._t = now
         self.catch = catch
         self._steady_t = None
@@ -132,7 +134,8 @@ class SafeDown:
         self.hold_throttle = hold_throttle
         self.source_mode = ctx.get("fc_mode")
         self.switch_band = ctx.get("mode_switch")
-        self.stage = "SWITCHING"
+        self.stage = "RETURN" if direct_return else "SWITCHING"
+        self._need_set_home = direct_return
         self.fallback = None
         self._left_acro = False
         self._last_mode = None
@@ -432,6 +435,13 @@ class SafeDown:
             self.stage = "LEVEL"
         if self.stage in ("LEVEL", "STOP") and mode != "ACRO":
             self._level_and_stop(mapper, now, ctx, fresh)
+        if self._need_set_home and self.stage == "RETURN":
+            self._need_set_home = False
+            set_home = getattr(mapper, "set_home_to_launch", None)
+            if callable(set_home):
+                set_home()
+            where = f" ({ctx['home_m']:.0f} m)" if ctx.get("home_m") is not None else ""
+            self._note(f"RTL, flying back to the launch point{where}")
         if self.stage == "RETURN":
             self._watch_position(now, ctx)
         elif (self.stage == "DESCEND" and self.fallback is None and not self.landed and fresh
@@ -511,10 +521,10 @@ class SafeDown:
         ekf_lim = self.CATCH_EKF_MPS if have_baro else self.CATCH_CLIMB_MPS
         if ekf is not None and math.isfinite(ekf) and abs(ekf) > ekf_lim:
             return False
-        vel = ctx.get("vel_ned") if ctx.get("position_ok") else None
-        if vel is not None and len(vel) >= 2 and all(math.isfinite(v) for v in vel[:2]):
-            return math.hypot(vel[0], vel[1]) <= self.CATCH_STOP_MPS
-        return self._accel is None or self._accel <= self.STOPPED_ACCEL
+        # Level and the height is held: the pilot can fly it. Ground speed is
+        # not checked — wind at altitude keeps it moving in STABILIZE, and
+        # waiting for it to stop left the pilot without sticks for minutes.
+        return True
 
     def _catch_speed_lean(self, ctx):
         """(roll, pitch) degrees that brake the GPS ground speed, or None.
@@ -598,7 +608,11 @@ class SafeDown:
         return False
 
     def _catch(self, mapper, now, ctx, fresh, dt):
-        # The pilot's STABILIZE, never a mode request: hover, then his.
+        # The pilot's STABILIZE, never a mode request: level it, hold height,
+        # then hand over.  The levelling and braking are the same as before; what
+        # changed is that hovering no longer waits for the ground speed to drop
+        # (wind at altitude keeps it moving in STABILIZE) or for the FC to echo
+        # the hover-thrust parameter.
         mode = ctx.get("fc_mode")
         if mode not in ("STABILIZE", "ACRO"):
             # The switch moved it to STABILIZE; the 1 Hz heartbeat may still
@@ -617,17 +631,19 @@ class SafeDown:
         held = now - self.started
         hovering = self._catch_hovering(ctx, fresh, vz, have_baro)
         self._steady_t = (self._steady_t or now) if hovering else None
-        # The middle of the stick is whatever MOT_THST_HOVER says. That number
-        # is not today's weight, so publish the thrust the IMU just measured
-        # and only then give the stick back. Until the FC echoes it, keep
-        # flying the height.
-        stick_ready = hovering and self._hover_stick_ready(mapper, now)
+        # Best effort: write the learned hover thrust so mid stick hovers, but
+        # do not block the handover waiting for the FC to echo it back.
+        if hovering:
+            self._hover_stick_ready(mapper, now)
+        if held >= self.CATCH_MAX_S:
+            self._note(f"CATCH: {self.CATCH_MAX_S:g} s limit reached, handing over")
+            raise Handover("time limit: the pilot flies it in STABILIZE")
         if (held >= self.CATCH_MIN_S and self._steady_t is not None
-                and now - self._steady_t >= self.CATCH_HOVER_S and stick_ready):
+                and now - self._steady_t >= self.CATCH_HOVER_S):
             raise Handover(
-                "hovering: level, barometer steady, stopped in the air; the pilot flies it in STABILIZE"
+                "hovering: level, barometer steady; the pilot flies it in STABILIZE"
                 if have_baro else
-                "hovering: level and stopped in the air; the pilot flies it in STABILIZE")
+                "hovering: level and steady; the pilot flies it in STABILIZE")
         rates = self._acro_level_rates(ctx.get("att")) if mode == "ACRO" else (0.0, 0.0, 0.0)
         rate = self._catch_rate(ctx)
         hard = abs(rate) > 6.0
@@ -647,8 +663,9 @@ class SafeDown:
         return dict(out, **mapper.lean_pwm(*brake)) if brake else out
 
     def to_safedown(self, now):
-        """The pilot's switch went on up from a catch: the whole SafeDown."""
-        self.catch, self.stage, self._req_mode = False, "SWITCHING", None
+        """The pilot's switch went on up from a catch: RTL directly."""
+        self.catch, self.stage, self._req_mode = False, "RETURN", None
+        self._need_set_home = True
         self._want_t = now
 
     def _arrest(self, now, ctx, fresh):

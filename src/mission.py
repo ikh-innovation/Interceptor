@@ -1110,8 +1110,9 @@ class Mission:
         if not getattr(self.mapper, "armed", False):
             w.used = False
         if w.started is not None and self.fence.armed and self._fence_state[0] is False:
-            # Out of the fence in a WASP flight: home, whatever it was doing.
-            return self._start_safedown(now, ctx, f"GEOFENCE: {self._fence_state[1]:.0f} m outside")
+            # Out of the fence in a WASP flight: RTL to the launch point.
+            return self._start_safedown(now, ctx, f"GEOFENCE: {self._fence_state[1]:.0f} m outside",
+                                        direct_return=True)
         # After a launch, and after a handover to the pilot, SAFEDOWN and a flip
         # up to ALT_HOLD both bring it home on their own while it is in the air.
         in_air = (w.started is None and w.used and getattr(self.mapper, "armed", False)
@@ -1119,7 +1120,8 @@ class Mission:
         if abort and ((w.started is not None and ctx.get("gate_ok")) or in_air):
             return self._start_safedown(now, ctx, "SAFEDOWN button")
         if self._safedown_edge and in_air:
-            return self._start_safedown(now, ctx, f"pilot switched to {SafeDown.SWITCH_MODE}")
+            return self._start_safedown(now, ctx, f"pilot switched to {SafeDown.SWITCH_MODE}",
+                                        direct_return=True)
         if (w.started is not None and ctx.get("catch_takeover")) or (self._catch_edge and in_air):
             return self._start_safedown(now, ctx, f"pilot switched to {SafeDown.CATCH_MODE}", catch=True)
         if abort:
@@ -1138,7 +1140,8 @@ class Mission:
                 self._note("WASP SAFEDOWN: not in the air, every channel returned to the pilot", now)
             return {}
         if w.started is not None and ctx.get("pilot_takeover"):
-            return self._start_safedown(now, ctx, f"pilot switched to {SafeDown.SWITCH_MODE}")
+            return self._start_safedown(now, ctx, f"pilot switched to {SafeDown.SWITCH_MODE}",
+                                        direct_return=True)
         if not ctx.get("gate_ok"):
             self._stop_test_target(now)
             if self.phase not in ("PILOT", "WASP_DONE"):
@@ -1213,7 +1216,7 @@ class Mission:
 
     SAFEDOWN_GROUND_S = 0.5
 
-    def _start_safedown(self, now, ctx, reason, catch=False):
+    def _start_safedown(self, now, ctx, reason, catch=False, direct_return=False):
         # The SAFEDOWN button or the pilot's switch up to ALT_HOLD: level, stop and
         # land on its own (safedown.py).
         hold = self.wasp.params["throttle"]
@@ -1233,9 +1236,13 @@ class Mission:
         self.engaged = True
         with self._lock:
             self._hold = None
-        self.safedown.begin(now, ctx, reason, hold, catch=catch)
-        self._note(f"CATCH: {reason}; braking to a hover, then the pilot flies it" if catch else
-                   f"SAFEDOWN: {reason}; level, stop, then fly home and land", now)
+        self.safedown.begin(now, ctx, reason, hold, catch=catch, direct_return=direct_return)
+        if catch:
+            self._note(f"CATCH: {reason}; braking to a hover, then the pilot flies it", now)
+        elif direct_return:
+            self._note(f"SAFEDOWN: {reason}; RTL to the launch point", now)
+        else:
+            self._note(f"SAFEDOWN: {reason}; level, stop, then fly home and land", now)
         self._set_phase("SAFEDOWN", now)
         # This cycle's gate is still the launch's (often closed by the very
         # mode change that started it): fly straight away.
@@ -1256,11 +1263,11 @@ class Mission:
             selected = ctx.get("mode_switch_mode")
             if selected == SafeDown.SWITCH_MODE:
                 # The switch's SafeDown position: carry on, whoever started it,
-                # or go on from a catch to the whole return.
+                # or go on from a catch to the RTL return.
                 if r.catch:
                     r.to_safedown(now)
                     r.reason = f"pilot switched to {selected}"
-                    self._note(f"SAFEDOWN: pilot switched to {selected}; level, stop, then fly home and land", now)
+                    self._note(f"SAFEDOWN: pilot switched to {selected}; RTL to the launch point", now)
                 else:
                     r.reassert()
                     self._note(f"SAFEDOWN: pilot switch on {selected}, SafeDown carries on", now)

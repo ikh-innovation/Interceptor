@@ -120,13 +120,16 @@ tells you how hard the drone can accelerate.
 | `BATT_FS_LOW_ACT` | 1 (LAND) at `BATT_LOW_VOLT` 10.5 V | Voltage sag at 100 % throttle can trigger LAND. The mode change out of ACRO ends WASP and the FC starts landing. Check the setting against your pack. |
 | `FS_CRASH_CHECK` | 1 | Not active in ACRO. |
 | `DISARM_DELAY` | 10 s | Auto-disarms on the ground after 10 s at zero throttle. Press LAUNCH WASP within 10 s of ARM. |
+| `FENCE_ACTION` | **0 (none)**, changed 2026-11-09 (was 1, RTL) | **Must be 0.** The geofence is the app's, not the FC's. With `FENCE_ACTION = 1` the FC forces RTL whenever the altitude exceeds `FENCE_ALT_MAX` (100 m), which fights SafeDown's own mode changes and caused the drone to land far away on 2026-11-09. The app's geofence handles the boundary; the FC's fence must not interfere. |
+| `FENCE_ENABLE` | 0 | The app's geofence (section 7) is used instead. |
 
 ## 6. SafeDown: settings it uses
 
-SafeDown levels and stops the drone itself (in STABILIZE, then ALT_HOLD), then
-hands it to the FC's own **RTL**. At LAUNCH WASP the app saves the GPS spot and makes it
-the FC's home (`DO_SET_HOME`), so RTL flies back to the stand, not to where it
-was armed. With no GPS position, or below 5 m, it lands where it is (LAND).
+SafeDown flies the drone home. **Pilot switch up (ALT_HOLD) or geofence breach:**
+the app requests RTL directly to the launch-point GPS coordinates (the GO spot,
+saved at LAUNCH WASP with `DO_SET_HOME`). **SAFEDOWN button:** levels and stops
+the drone (in STABILIZE, then ALT_HOLD), then RTL.
+With no GPS position, or below 5 m, it lands where it is (LAND).
 
 | Parameter | Now | What it does in SafeDown |
 | --- | --- | --- |
@@ -155,18 +158,29 @@ was armed. With no GPS position, or below 5 m, it lands where it is (LAND).
 3. **Hold.** WASP keeps the sticks until SafeDown, a mode change or a disarm.
    There is no time limit. Short telemetry gaps keep the launch throttle with zero
    steering.
-4. **SafeDown.** The pilot's switch **up** (ALT_HOLD), or the phone's SAFEDOWN
-   button: level, stop, then RTL to the GO spot and land there. See
-   `pilot-instructions-el.md`.
+4. **SafeDown (switch up / ALT_HOLD).** The pilot's switch **up** (ALT_HOLD):
+   the app requests **RTL directly** to the GO spot (the launch-point GPS
+   coordinates) and the FC flies home and lands. No levelling or stopping
+   first — RTL handles the braking itself. See `pilot-instructions-el.md`.
+   The phone's **SAFEDOWN button** does the same except it levels and stops
+   (STABILIZE → ALT_HOLD) before the RTL, in case the pilot's switch is not
+   on ALT_HOLD.
 5. **Plan B (catch).** The pilot sets the throttle stick to mid, then switches to
    the **middle** (STABILIZE). The app levels it and brakes to a hover (barometer
-   for the climb, GPS speed for the stop) and only then returns every channel.
-   It does not hand the sticks back on a timer while the drone is still moving.
-   Switch up again to send it home.
+   for the climb, air drag for the lean) and returns every channel once it is
+   level and the height is held — or **after 5 seconds at most**, whichever comes
+   first. The pilot is never locked out longer than that.
+   Switch up again to send it home (RTL).
+   The pilot can also switch to STABILIZE during a SafeDown that is already
+   running; the app turns it into a catch and hands the sticks back when
+   it hovers (same 5 s limit).
 6. **Next launch.** Disarm before the next ARM; WASP stays off until then.
 7. **Geofence.** A polygon drawn or typed on the phone (`~/.config/wasp/geofence.json`). While it
-   is saved (there is no on / off: Clear and Save removes it), ARM needs the drone inside it, and leaving it during a WASP flight starts SafeDown home.
-   It is the app's fence, not the FC's (`FENCE_ENABLE` stays as it is).
+   is saved (there is no on / off: Clear and Save removes it), ARM needs the drone inside it,
+   and leaving it during a WASP flight triggers **RTL directly** to the GO spot (the launch-point
+   GPS coordinates), the same as the pilot's switch up.
+   It is the app's fence, not the FC's. **Set `FENCE_ACTION = 0` on the FC** (section 5):
+   the FC's own fence must not fight the app's mode changes.
 
 Pure ACRO with `ACRO_TRAINER = 0` doesn't level itself. Don't hand-fly it unless
 the pilot is trained for it. For hand-flying practice in ACRO, set it back to 2, and
@@ -196,7 +210,7 @@ outdoors, then reboot); until then its offsets are 0.
 | `RTL_ALT`, `RTL_SPEED`, `RTL_LOIT_TIME`, `RTL_ALT_FINAL` | see section 6 | 1500, 0, 5000, 0 | How SafeDown flies home. |
 | `RC5_OPTION` | **154** (arm / disarm switch) | 154 | The phone's ARM runs this switch's function. Without it the app sends a plain arm command (no airmode). |
 | `ARMING_CHECK` | 8524 recommended (adds compass and GPS checks) | 8512 | The FC itself then refuses to arm without a healthy compass and a GPS lock. The app checks both anyway. |
-| `FENCE_ENABLE` | 0 | 0 | The geofence is the app's (section 7), not the FC's. |
+| `FENCE_ENABLE` | 0 | 0 | The geofence is the app's (section 7), not the FC's. `FENCE_ACTION` must also be 0 (section 5). |
 
 The phone's tile **GPS/Compass** reads `YES / YES` only with a 3D fix, at least 6 satellites,
 and a compass the FC reports present, enabled and healthy. ARM needs both, and the EKF using
