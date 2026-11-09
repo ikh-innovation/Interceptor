@@ -55,14 +55,18 @@ cubic:
 | --- | --- | --- | --- | --- |
 | Motor output | 15 % | 45 % | 63 % | 100 % |
 
-So in STABILIZE (the catch) a centred throttle stick is about a hover. The rest of this
+So in STABILIZE (the catch) a centred throttle stick is about a hover. Before
+the app gives the sticks back it writes the thrust it just measured into
+`MOT_THST_HOVER` on this FC (the FC's own limits, 0.125 to 0.6875) and the FC
+saves it. Do not copy this board's number onto another drone. The rest of this
 section is how to check it again after a change of battery, props or payload.
 
 If the drone really needs about 45–60 % to hover, then:
 - WASP at 75 % or 85 % can't climb, and only 100 % takes off.
 - In ACRO and STABILIZE the pilot has to hold the stick far above mid just to
   hover, and a centred stick drops the drone.
-- **At takeover, putting the stick at mid in STABILIZE gives 12.5 % thrust.**
+- **At takeover the app has already set mid-stick to this drone's hover**, not to
+  another board's saved number.
 
 **Check:** in a steady STABILIZE hover, where is the pilot's throttle stick?
 - Near mid: the drone really does hover at about 12.5 %, and this section isn't
@@ -134,7 +138,7 @@ was armed. With no GPS position, or below 5 m, it lands where it is (LAND).
 | `LAND_SPEED` | 50 | Descent in the last `LAND_ALT_LOW` (10 m), cm/s. |
 | `LAND_SPEED_HIGH` / `WPNAV_SPEED_DN` | 0 / 250 | Above 10 m LAND comes down at 2.5 m/s (2.8 m/s measured in SITL). Set `LAND_SPEED_HIGH` lower for a gentler but longer descent. |
 | `PILOT_ACCEL_Z` | 500 | ALT_HOLD stops a climb or sink at only 5 m/s². That is why SafeDown first stops fast climbs and dives itself, in STABILIZE. |
-| `MOT_THST_HOVER` | 0.152 | The app's STABILIZE throttle starts from it, then learns the real hover from the IMU. |
+| `MOT_THST_HOVER` | 0.152 on this board | Do not copy it. On a STAB catch the app writes the thrust it measured and the FC saves that. |
 | (none: the IMU) | | Air brake: without GPS the app leans the drone against the accelerometer's drag reading (at most 12°) so it stops relative to the air even when the EKF's "level" is off. It can't cancel the wind itself. |
 | `DISARM_DELAY`, land detector | 10 s | LAND disarms on touchdown by itself. |
 | `COMPASS_ENABLE`, `EK3_SRC1_POSXY`, `EK3_SRC1_VELXY` | 1, 3, 3 | **Required.** Without a heading the EKF can't fuse GPS at all, even with a fix, so the GPS module must have a compass and it must be calibrated. With a GPS position the app's air brake steps aside and RTL or LAND hold position themselves. If GPS is lost on the way home it lands where it is. |

@@ -113,6 +113,23 @@ preview only. Wasp motion assist has been removed. See [stabilization details](s
 
 ## 4b. Replacement flight controller, camera or settings
 
+**Jetsons that already fly, after the STAB-catch update (`38b66c8`):** nothing
+to type into the flight controller, and nothing to change on the camera. The
+parameter file in `deploy/fc/` was not changed. On each Jetson, pull `virgin`
+and restart the app:
+
+```bash
+cd "$PROJECT_ROOT"
+git pull
+systemctl --user restart wasp-tracker.service
+```
+
+Do not copy `MOT_THST_HOVER` from one board to another. When the pilot selects
+STAB, the app on that Jetson measures the hover and writes it to that FC, and
+the FC saves it. A different weight gets its own number the first time it is
+caught. The geofence is not in git: it stays in `~/.config/wasp/geofence.json`
+on that Jetson. Draw it on the phone for each aircraft.
+
 Everything needed to rebuild the drone is in the repository:
 
 | What | Where |

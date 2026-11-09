@@ -47,6 +47,7 @@ class Scenario:
                                      # "fence": none, the drone flies out of the geofence
     arm_by_app: bool = False         # the phone's ARM (the arm switch's function over MAVLink)
     fence_m: float = None            # a geofence square this wide around the stand
+    fence_circle_m: float = None     # radius of a 24-point circle, the phone's Make button
     rc_fail: int = 0                 # trigger "rcloss": SIM_RC_FAIL (1 no pulses, 2 receiver failsafe values)
     gps: bool = True                 # False: no GPS in the EKF, SafeDown lands where it is
     gps_loss: bool = False           # the GPS dies on the way home
@@ -69,6 +70,9 @@ class Scenario:
     stick: str = None                # None: the trigger's own sticks. "before": throttle mid, then the
                                      # switch. "after": the switch first; throttle mid only once SafeDown
                                      # has the sticks (ALT_HOLD) or once the catch has given them back.
+    stand_height_m: float = None     # stand top above the ground (physics default 0.4)
+    pilot_mid: bool = False          # fence: once airborne, throttle to mid and the switch stays down
+    flight_elev_deg: float = None    # fence: after liftoff, pitch to this elevation, then cross the fence
     stab_speed_mps: float = None     # catch: throttle mid once airborne, STAB once this fast
                                      # (after_s is then the longest wait for that speed)
     fence_wait_s: float = 15.0       # how long a fence trigger waits to leave the polygon
@@ -197,6 +201,25 @@ def scenarios():
         add(Scenario(f"fence-matrix-{name}", arm_by_app=True, fence_m=40, trigger="fence",
                      after_s=.1, stand_pitch_deg=stand, stab_speed_mps=27.8, mass_kg=mass,
                      fence_wait_s=40, watch_s=260))
+    # Already off the stand (launched steep). Then pitched to the angle in the
+    # air, throttle left at mid, switch left down, and the 50 m circle is what
+    # has to bring it home. The score is the recovery after the breach.
+    for name, elev, mass, wind in (
+            ("15", 15, None, None), ("30", 30, None, None), ("45", 45, None, None),
+            ("60", 60, None, None), ("75", 75, None, None),
+            ("30-m12", 30, 1.2, None), ("30-wind5", 30, None, _wind(5, 90))):
+        extra = {} if wind is None else dict(wind_ned=wind, gust_sigma=1.5)
+        add(Scenario(f"circle50-air-{name}", arm_by_app=True, fence_circle_m=50, trigger="fence",
+                     after_s=.1, stand_pitch_deg=15, flight_elev_deg=elev, stab_speed_mps=15,
+                     mass_kg=mass, pilot_mid=True, fence_wait_s=45, watch_s=260, **extra))
+    # Controls for the field plan: the same 30 degree shot with nobody on the
+    # throttle, and 35 / 45 degrees with the pilot at mid.
+    add(Scenario("circle50-nopilot-30-09", arm_by_app=True, fence_circle_m=50, trigger="fence",
+                 after_s=.1, stand_pitch_deg=60, stab_speed_mps=20, fence_wait_s=40, watch_s=260))
+    for elev in (35, 45):
+        add(Scenario(f"circle50-mid-{elev}-09", arm_by_app=True, fence_circle_m=50, trigger="fence",
+                     after_s=.1, stand_pitch_deg=90-elev, stab_speed_mps=20, pilot_mid=True,
+                     fence_wait_s=40, watch_s=260))
     for sc in out:
         sc.expect = sc.expect or ("home" if sc.gps else "landed")
     return out
@@ -243,7 +266,8 @@ class Run:
         from sitl_physics import PhysicsConfig
         from sitl_proxy import MavProxy
         sc = self.sc
-        opt = {k: v for k, v in (("mass_kg", sc.mass_kg), ("cg_offset_m", sc.cg_offset_m)) if v is not None}
+        opt = {k: v for k, v in (("mass_kg", sc.mass_kg), ("cg_offset_m", sc.cg_offset_m),
+                                          ("stand_height_m", sc.stand_height_m)) if v is not None}
         if not sc.gps:
             os.environ["WASP_REQUIRE_GPS"] = "0"  # read when fc_control is imported
         calm = not sc.wind_on_stand
@@ -297,17 +321,26 @@ class Run:
                 time.sleep(2)
                 if not self.c.backend.position_ok():
                     raise RuntimeError("lost the GPS position when put on the stand")
-            if sc.fence_m:
+            if sc.fence_circle_m or sc.fence_m:
                 lat, lon = self.c.backend.position()
-                dlat, dlon = sc.fence_m/2/111320, sc.fence_m/2/(111320*math.cos(math.radians(lat)))
-                why = cmd("fence", "set:" + json.dumps([[lat-dlat, lon-dlon], [lat+dlat, lon-dlon],
-                                                        [lat+dlat, lon+dlon], [lat-dlat, lon+dlon]]))
+                if sc.fence_circle_m:
+                    r = sc.fence_circle_m
+                    pts = []
+                    for i in range(24):
+                        a = i/24*2*math.pi
+                        pts.append([lat + r*math.cos(a)/111320,
+                                    lon + r*math.sin(a)/(111320*math.cos(math.radians(lat)))])
+                else:
+                    dlat, dlon = sc.fence_m/2/111320, sc.fence_m/2/(111320*math.cos(math.radians(lat)))
+                    pts = [[lat-dlat, lon-dlon], [lat+dlat, lon-dlon],
+                           [lat+dlat, lon+dlon], [lat-dlat, lon+dlon]]
+                why = cmd("fence", "set:" + json.dumps(pts))
                 if why:
                     raise RuntimeError(f"geofence: {why}")
             if sc.arm_by_app:
                 self.wait(lambda: not self.c.mission_state()["wasp_arm_why"], 20,
                           f"ARM ready ({self.c.mission_state()['wasp_arm_why']})")
-                if sc.fence_m:
+                if sc.fence_m or sc.fence_circle_m:
                     self.wait(lambda: m._fence_state[0] is True, 10,
                               f"inside the fence (state {m._fence_state}, position {self.c.backend.position()})")
                 why = cmd("arm", "1")
@@ -407,7 +440,22 @@ class Run:
                     self.wait(lambda: self.c.mode_name in ("RTL", "LAND"), 8, "radio failsafe")
                 self.note(f"FC mode after the radio loss: {self.c.mode_name}")
             elif sc.trigger == "fence":
-                # Nobody does anything: crossing the fence starts SafeDown.
+                # Nobody moves the mode switch. A pilot who has put the throttle
+                # about mid leaves it there; the app still owns the sticks.
+                if sc.pilot_mid:
+                    try:
+                        self.wait(lambda: self.sample().get("left_stand"), 15, "airborne")
+                    except TimeoutError:
+                        st = self.samples[-1] if self.samples else {}
+                        raise TimeoutError(
+                            "airborne"
+                            f" h={st.get('height')} tilt={st.get('tilt')} left={st.get('left_stand')}"
+                            f" crashed={st.get('crashed')} phase={self.m.phase} mode={self.c.mode_name}")
+                    self.sitl.rc.set_stick("throttle", .5)
+                    self.note("PILOT: throttle about mid, switch stays DOWN")
+                if sc.flight_elev_deg is not None:
+                    self._pitch_to_elevation(sc.flight_elev_deg)
+                # Crossing the fence starts SafeDown. No further stick.
                 try:
                     self.wait(lambda: m.safedown.active, sc.fence_wait_s, "SafeDown at the geofence")
                 except TimeoutError:
@@ -437,6 +485,31 @@ class Run:
                 self.sitl.stop()
             logs.cleanup()
         return self.metrics(at_trigger)
+
+    def _pitch_to_elevation(self, elev_deg):
+        """Nose to `elev_deg` above the horizon while still inside the fence.
+
+        ACRO is holding zero rate, so a short body torque changes the angle and
+        the rate loop then holds the new one. The launch itself stays steep.
+        """
+        target = 90.0 - elev_deg
+        deadline = time.perf_counter() + 6.0
+        while time.perf_counter() < deadline:
+            st = self.sample()
+            rng = math.hypot(st["pos"][0], st["pos"][1])
+            if st.get("crashed") or rng > 35 or st.get("height", 99) < 2:
+                break
+            err = target - st["tilt"]
+            if abs(err) < 6 and abs(st["rates"][1]) < 80:
+                break
+            # A fifth-of-a-second shove, the same size as the dive tests. The
+            # rate loop then stops the rotation and holds the new angle.
+            ny = -2.2 if err > 0 else 2.2
+            self.sitl.physics.event("torque", nm=(0.0, ny, 0.0), duration=0.18)
+            time.sleep(0.28)
+        st = self.sample()
+        self.note(f"PILOT ANGLE: tilt {st['tilt']:.0f} deg, elevation {90-st['tilt']:.0f} deg, "
+                  f"{math.hypot(*st['vel']):.0f} m/s, {math.hypot(st['pos'][0], st['pos'][1]):.0f} m out")
 
     def _watch(self, at_trigger):
         sc, m = self.sc, self.m
@@ -635,9 +708,11 @@ class Run:
             ok = False  # STAB came before the pilot had put the throttle at mid, in ACRO
         # A fence return only counts if the breach was the fast, still-pitched
         # shot, and the way home did not tumble or hit hard.
+        t_trig = self.trigger_t - self.t0
         breach = None
         if self.sc.trigger == "fence" and self.sc.stab_speed_mps:
-            launch_tilt = self.sc.stand_pitch_deg
+            launch_tilt = (90 - self.sc.flight_elev_deg if self.sc.flight_elev_deg is not None
+                           else self.sc.stand_pitch_deg)
             tilt_now = tilt(at_trigger)
             need = 0.95*self.sc.stab_speed_mps
             wild = max((tilt(x) for x in after_level), default=0)
@@ -652,11 +727,23 @@ class Run:
                 reasons.append(f"tilt {wild:.0f} deg after it had levelled")
             if not self.lifted:
                 reasons.append("never left the stand")
+            if self.sc.fence_circle_m:
+                # Steady means level and no longer climbing or diving. RTL may
+                # still be fast horizontally: the FC brakes that itself.
+                steady = next((x for x in s if x["t"] > t_trig + 0.3 and tilt(x) < 15
+                               and abs(x["vel"][2]) < 3), None)
+                if steady is None:
+                    reasons.append("never levelled with the climb stopped")
+                elif h(at_trigger) > 10 and h(steady) < 5:
+                    reasons.append(f"fell to {h(steady):.0f} m before it was steady")
+                over = max((tilt(x) for x in s if x["t"] >= t_trig), default=0)
+                if over > max(launch_tilt, tilt_now) + 40:
+                    reasons.append(f"nose went on to {over:.0f} deg")
             breach = (f"tas {tas:.1f} m/s, tilt {tilt_now:.0f} vs launch {launch_tilt:.0f}"
                       + ("" if not reasons else "; " + "; ".join(reasons)))
             if reasons and ok is not False:
                 ok = False
-        t_trig = self.trigger_t - self.t0
+        returning = next((x for x in s if x["stage"] == "RETURN"), None)
         stopped = next((x for x in s if x["t"] >= t_trig
                         and math.hypot(x["vel"][0], x["vel"][1]) <= 2.0
                         and abs(x["vel"][2]) <= 2.0), None)
@@ -675,6 +762,10 @@ class Run:
             drop_m=None if hand_h is None else round(hand_h - min_after, 1),
             trigger_h=round(h(at_trigger), 1), trigger_speed=round(vh(at_trigger), 1),
             trigger_tas=round(tas, 1),
+            return_vh=None if returning is None else round(vh(returning), 1),
+            return_h=None if returning is None else round(h(returning), 1),
+            return_tilt=None if returning is None else round(tilt(returning)),
+            return_vz=None if returning is None else round(-returning["vel"][2], 1),
             speed_at_mid=None if getattr(self, "speed_at_mid", None) is None else round(self.speed_at_mid, 1),
             stop_s=stop_s, stop_m=stop_m,
             trigger_vz=round(-at_trigger["vel"][2], 1),
