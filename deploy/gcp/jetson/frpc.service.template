@@ -1,0 +1,22 @@
+[Unit]
+Description=frp client (Interceptor cloud tunnel)
+# Wait for networking AND for the Interceptor service to exist. "Wants" is a
+# soft dependency: if wasp-tracker isn't installed on this Jetson, frpc still
+# starts; if it IS installed, systemd brings it up first.
+After=network-online.target wasp-tracker.service
+Wants=network-online.target wasp-tracker.service
+
+[Service]
+Type=simple
+# Hold the tunnel offline until the Interceptor UI is actually serving on the
+# configured local port. Until this probe passes, the drone does NOT appear on
+# the dashboard, so pilots only see drones that are ready to fly.
+# 5-min ceiling so a broken Jetson doesn't hold the unit forever.
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 300); do (echo >/dev/tcp/127.0.0.1/__LOCAL_PORT__) 2>/dev/null && exit 0; sleep 1; done; echo "timeout: Interceptor never bound 127.0.0.1:__LOCAL_PORT__"; exit 1'
+ExecStart=/usr/local/bin/frpc -c /etc/frp/frpc.toml
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+# Copy this file to terraform.tfvars and fill in your own values.
+# terraform.tfvars is gitignored (see deploy/gcp/.gitignore).
+#
+# No domain purchase — the relay auto-uses <ip>.sslip.io so you get HTTPS
+# with zero DNS setup. The exact URL appears in `terraform output` after apply.
+
+project_id         = "ikh-drone-cloud"
+region             = "europe-west1"
+zone               = "europe-west1-b"
+letsencrypt_email  = "achitos@ikhdefencelabs.com"
+
+# Generate with: docker run --rm caddy:2 caddy hash-password -p 'your-strong-password'
+# Or (if you don't want Docker): openssl passwd -6 'your-strong-password' won't work — Caddy needs bcrypt.
+# Easiest alt: python3 -c "import bcrypt; print(bcrypt.hashpw(b'your-password', bcrypt.gensalt()).decode())"
+basic_auth_user    = "pilot"
+basic_auth_bcrypt  = "$2a$14$REPLACE_ME_WITH_bcrypt_hash"
+
+# Generate with: openssl rand -hex 32
+frp_token          = "REPLACE_ME_WITH_hex_32"
+
+# Generate with: openssl rand -hex 16
+frp_admin_user     = "admin"
+frp_admin_password = "REPLACE_ME_WITH_hex_16"
