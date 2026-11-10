@@ -137,14 +137,10 @@ cat > /etc/caddy/Caddyfile <<CADDY_EOF
     }
 }
 
-# Dashboard host — lists online Jetsons.
+# Dashboard host — lists online Jetsons. OPEN: anyone with the URL can access.
 ${domain} {
-    basicauth {
-        ${basic_auth_user} ${basic_auth_bcrypt}
-    }
-
     # Proxy frp admin API so the dashboard can fetch the tunnel list.
-    # Caddy injects Basic auth; the browser never sees the frp admin creds.
+    # Caddy injects the admin creds; the browser never sees them.
     handle /api/* {
         reverse_proxy 127.0.0.1:7500 {
             header_up Authorization "Basic ${frp_admin_basic_b64}"
@@ -160,16 +156,16 @@ ${domain} {
     tls {
         on_demand
     }
-    basicauth {
-        ${basic_auth_user} ${basic_auth_bcrypt}
-    }
     reverse_proxy 127.0.0.1:7080 {
         header_up Host {host}
         header_up X-Forwarded-Host {host}
-        # MJPEG streams are long-lived; don't time them out.
+        # MJPEG / SSE: flush every write instead of buffering, or the video
+        # looks frozen in the browser. Long timeouts for the same reason.
+        flush_interval -1
         transport http {
             read_timeout 24h
             write_timeout 24h
+            keepalive 2m
         }
     }
 }

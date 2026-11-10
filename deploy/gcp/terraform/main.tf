@@ -89,7 +89,7 @@ resource "google_compute_instance" "relay" {
     enable-oslogin = "TRUE"
   }
 
-  metadata_startup_script = templatefile("${path.module}/startup.sh.tpl", {
+  metadata_startup_script = nonsensitive(templatefile("${path.module}/startup.sh.tpl", {
     domain               = local.domain
     letsencrypt_email    = var.letsencrypt_email
     basic_auth_user      = var.basic_auth_user
@@ -99,7 +99,7 @@ resource "google_compute_instance" "relay" {
     frp_admin_password   = var.frp_admin_password
     frp_admin_basic_b64  = base64encode("${var.frp_admin_user}:${var.frp_admin_password}")
     dashboard_html_b64   = base64encode(file("${path.module}/../vm/dashboard.html"))
-  })
+  }))
 
   shielded_instance_config {
     enable_secure_boot = true

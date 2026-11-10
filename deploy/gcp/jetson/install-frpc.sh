@@ -60,17 +60,18 @@ fi
 
 [ -n "$SERVER" ] || die "no --server given and $CONF has no RELAY_SERVER"
 
-# --- Fetch token from the relay ---------------------------------------------
+# --- Fetch token from the relay (no auth; dashboard is open) ---------------
 if [ -z "$TOKEN" ]; then
-  if [ -z "$PASSWORD" ]; then
-    printf "Dashboard password for %s@%s: " "$USER_NAME" "$SERVER" >&2
-    read -rs PASSWORD
-    echo >&2
+  if [ -n "$PASSWORD" ]; then
+    # Legacy path: dashboard is open now, but keep --password working
+    # in case someone re-enables basic auth on the relay later.
+    TOKEN=$(curl -fsS -u "$USER_NAME:$PASSWORD" "https://$SERVER/_token") \
+      || die "failed to fetch token (wrong password? relay unreachable?)"
+  else
+    echo "[install] fetching token from https://$SERVER/_token"
+    TOKEN=$(curl -fsS "https://$SERVER/_token") \
+      || die "failed to fetch token (relay unreachable?)"
   fi
-  [ -n "$PASSWORD" ] || die "no password given"
-  echo "[install] fetching token from https://$SERVER/_token"
-  TOKEN=$(curl -fsS -u "$USER_NAME:$PASSWORD" "https://$SERVER/_token") \
-    || die "failed to fetch token (wrong password? relay unreachable?)"
   [ -n "$TOKEN" ] || die "relay returned empty token"
 fi
 
