@@ -2,6 +2,9 @@
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#eceef1">
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>WASP</title>
 <link rel="icon" type="image/svg+xml" href="/img/ikd-logo.svg">
 <style>
@@ -3196,7 +3199,7 @@
 
   var v = $("v");
   v.onerror = function () { setTimeout(function () { v.src = "/stream.mjpg?t=" + Date.now(); }, 1000); };
-  setInterval(function () { $("cover").classList.toggle("on", lastOk && Date.now() - lastOk > 5000); }, 250);
+  setInterval(function () { $("cover").classList.toggle("on", lastOk && Date.now() - lastOk > 10000); }, 250);
   setInterval(poll, 250); poll(); pullConsole();
 })();
 </script>
