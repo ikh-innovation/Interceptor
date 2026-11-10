@@ -45,7 +45,7 @@ MANDATORY = [
     ("RC_OVERRIDE_TIME", lambda v: v and 0 < v <= 1,         "must be > 0 and <= 1 second"),
     ("FLTMODE_GCSBLOCK", lambda v: v is not None and not (int(v) & 0b101), "bits 0 and 2 must be clear (STABILIZE and ALT_HOLD allowed)"),
     ("FS_GCS_ENABLE",    lambda v: int(v or 0) in (1, 2, 3, 4, 5), "must be 1 (RTL), 2 (LAND), 3-5 for Jetson-dead failsafe"),
-    ("FS_GCS_TIMEOUT",   lambda v: v is None or v <= 5,      "must be <= 5 s"),
+    ("FS_GCS_TIMEOUT",   lambda v: v is None or v <= 3,      "must be <= 3 s (2 s is ArduPilot minimum)"),
     ("RC_OPTIONS",       lambda v: v is None or not (int(v) & 2), "bit 1 (IGNORE_OVERRIDES) must be CLEAR"),
     ("SYSID_MYGCS",      lambda v: v is not None,            "must be set (matches Jetson sysid)"),
     ("FLTMODE_CH",       lambda v: v is not None and 1 <= v <= 18, "RC channel for mode switch"),

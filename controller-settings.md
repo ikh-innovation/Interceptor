@@ -248,8 +248,8 @@ of the parameters you still set in Mission Planner.
 | `FLTMODE_GCSBLOCK` | `0` | SafeDown needs to put the FC into STABILIZE / ALT_HOLD / LAND. |
 | `FLTMODE_CH` | `6` | Pilot mode switch channel. |
 | `FLTMODE1` | `1` (ACRO) | Switch DOWN — required for WASP launch. |
-| `FS_GCS_ENABLE` | `1` (RTL) or `2` (LAND) | **NEW:** Jetson-dead failsafe. RTL needs GPS+compass; LAND works without. |
-| `FS_GCS_TIMEOUT` | `3` (seconds) | How fast the FC reacts when Jetson heartbeats stop. Max allowed: 5. |
+| `FS_GCS_ENABLE` | `1` (RTL) or `2` (LAND) | **NEW:** Jetson-dead failsafe. RTL needs GPS+compass; LAND works without. **The pilot can override the failsafe mid-flight by flipping the FC mode switch on the transmitter to STAB or ACRO — ArduPilot drops RTL immediately when the pilot picks a new mode.** |
+| `FS_GCS_TIMEOUT` | `2` (seconds, ArduPilot minimum) | How fast the FC reacts when Jetson heartbeats stop. The Jetson sends heartbeats at 5 Hz, so worst case Jetson-death → RTL is ~2 s. Max allowed by the app: 3. |
 | `SYSID_MYGCS` | `255` | Must match the Jetson's sysid (hard-coded default). |
 | `RC5_OPTION` | `154` | Channel 5 is the arm switch. |
 

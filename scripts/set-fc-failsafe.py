@@ -24,7 +24,8 @@ except ImportError:
 
 TARGETS = {
     "FS_GCS_ENABLE": 1.0,
-    "FS_GCS_TIMEOUT": 3.0,
+    "FS_GCS_TIMEOUT": 2.0,   # ArduPilot minimum; paired with the Jetson's 5 Hz
+                             # heartbeat gives ~2 s worst-case Jetson-dead -> RTL.
 }
 
 

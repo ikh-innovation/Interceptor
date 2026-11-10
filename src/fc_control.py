@@ -1441,7 +1441,9 @@ class ArduPilotAcro(FcBackend):
                 del self.fc_text[:-50]
 
     def _hb_loop(self):
-        while not self._stop.wait(1.0):
+        # 5 Hz heartbeat so the FC's GCS failsafe trips within ~2 s of a
+        # Jetson death (vs ~3-4 s at the MAVLink default 1 Hz).
+        while not self._stop.wait(0.2):
             if self.gcs_muted:
                 continue
             try:
@@ -1631,9 +1633,9 @@ class ArduPilotAcro(FcBackend):
             return ("WASP needs FS_GCS_ENABLE=1 (RTL) or 2 (LAND) so the FC "
                     "catches a Jetson failure in flight and brings it down")
         fs_timeout = self.params.get("FS_GCS_TIMEOUT")
-        if fs_timeout is not None and fs_timeout > 5.0:
+        if fs_timeout is not None and fs_timeout > 3.0:
             return (f"FS_GCS_TIMEOUT={fs_timeout:g} s is too long; set it to "
-                    "2-5 s so the FC reacts quickly to a Jetson failure")
+                    "2 s (ArduPilot minimum) for near-instant RTL on Jetson death")
         if self.blockers:
             return self.blockers[0]
         channels = []
