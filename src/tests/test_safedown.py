@@ -126,6 +126,16 @@ class SafeDownFlight(unittest.TestCase):
         self.assertTrue(self.m.wasp.used)
         self.assertIsNone(self.m.wasp.started)
 
+    def abort_rtl(self):
+        """Fly-home safedown (as a geofence breach would raise, not the UI button)."""
+        self.launch()
+        self.m._start_safedown(self.now, self.fc.ctx(),
+                               "test: geofence breach", direct_return=True)
+        self.tick()
+        self.assertEqual(self.m.phase, "SAFEDOWN")
+        self.assertTrue(self.m.wasp.used)
+        self.assertIsNone(self.m.wasp.started)
+
     @property
     def r(self):
         return self.m.safedown
@@ -147,7 +157,7 @@ class ShapeOfSafeDown(SafeDownFlight):
     def test_abort_levels_stops_then_lands_and_ends_when_land_disarms(self):
         self.abort()
         self.assertEqual(self.mapper.requests, ["ALT_HOLD"])
-        self.assertIn("level, stop, then fly home and land", self.m.event)
+        self.assertIn("landing in place", self.m.event)
         # Before the ACK: ACRO, launch throttle, levelling rates (level: none).
         self.assertEqual(self.out, dict(kind="manual", rates=(0.0, 0.0, 0.0), throttle=1.0))
         self.assertTrue(self.run_for(.1, lambda: self.out["kind"] == "alt"))
@@ -166,21 +176,18 @@ class ShapeOfSafeDown(SafeDownFlight):
         self.assertEqual(self.m.phase, "PILOT")
         self.assertFalse(self.m.wasp.used, "disarmed: ready for the next launch once armed")
 
-    def test_pilot_switch_up_in_flight_rtls_directly(self):
+    def test_pilot_throttle_takeover_releases_without_safedown(self):
+        # NEW behaviour: pilot_takeover (from throttle-up in ACRO) releases
+        # every channel back to the pilot and leaves the FC in whatever mode
+        # it's in.  SafeDown stays a UI button; the mode switch no longer
+        # arms it.
         self.launch()
-        # The switch up puts the FC in ALT_HOLD itself: SafeDown now goes
-        # straight to RTL (the launch point), skipping the level/stop stages.
-        self.fc.mode = self.fc.heartbeat = "ALT_HOLD"
-        self.tick(gate_ok=False, pilot_takeover=True, pilot_safedown=True,
+        self.tick(gate_ok=True, pilot_takeover=True,
                   position_ok=True, home_ok=True, home_m=80.0)
-        self.assertEqual(self.m.phase, "SAFEDOWN")
-        self.assertIn("launch point", self.m.event)
-        self.assertEqual(self.r.stage, "RETURN")
-        self.assertTrue(self.run_for(2, lambda: self.fc.mode == "RTL",
-                                     position_ok=True, home_ok=True, home_m=80.0))
-        self.mapper.armed = False
-        self.tick(position_ok=True, home_ok=True)
-        self.assertIn("landed, FC disarmed", self.m.event)
+        self.assertEqual(self.m.phase, "PILOT")
+        self.assertFalse(self.m.safedown.active)
+        self.assertIn("pilot took the throttle", self.m.event)
+        self.assertIsNone(self.m.wasp.started)
 
     def test_the_pilots_stabilize_is_his_own_flight(self):
         self.launch()
@@ -193,15 +200,18 @@ class ShapeOfSafeDown(SafeDownFlight):
 
     def test_levelling_waits_for_level_steady_and_drag_to_fade(self):
         self.abort()
+        # Tilt clearly past the new LEVEL_DEG=10 so the drone is in LEVEL.
         tilted = dict(LEVEL, roll=math.radians(25))
         self.fc.att = tilted
         self.run_for(1)
         self.assertEqual(self.r.stage, "LEVEL")
         self.fc.att = dict(LEVEL)
-        self.fc.accel = (3.0, 0.0, -9.8)  # level, but still moving fast: drag
+        # Accel over the new STOPPED_ACCEL=2.5 keeps us in STOP without settling.
+        self.fc.accel = (4.0, 0.0, -9.8)
         self.run_for(1.5)
         self.assertEqual(self.r.stage, "STOP")
-        self.fc.climb = -.9
+        # Climb past STEADY_CLIMB_MPS=2.0 keeps us in STOP.
+        self.fc.climb = -3.0
         self.fc.accel = (0.4, 0.3, -9.8)
         self.run_for(1.5)
         self.assertEqual(self.r.stage, "STOP", "still sinking")
@@ -212,7 +222,8 @@ class ShapeOfSafeDown(SafeDownFlight):
 
     def test_never_settling_still_lands_after_the_stop_limit(self):
         self.abort()
-        self.fc.climb = 1.2
+        # Climb well past STEADY_CLIMB_MPS=2.0 so the drone never settles.
+        self.fc.climb = 4.0
         began = self.now
         self.assertTrue(self.run_for(12, lambda: self.r.stage == "DESCEND"))
         self.assertAlmostEqual(self.now - began, SafeDown.MAX_STOP_S, delta=.15)
@@ -520,19 +531,31 @@ class AirBrake(SafeDownFlight):
 
 
 class GpsReturn(SafeDownFlight):
+    """The RTL state machine (safedown.py).  The UI SAFEDOWN button now lands
+    in place; RTL is reached only when a geofence violation starts safedown
+    and the drone has GPS + home.  These tests exercise the full stabilise
+    -> RTL flow via a direct call to _start_safedown()."""
+
     GPS = dict(position_ok=True, home_ok=True, home_m=120.0)
 
-    def test_level_then_rtl_without_waiting_for_the_stop(self):
+    def _start_rtl_safedown(self, **ctx_extra):
         self.launch()
-        self.m.request_abort()
-        self.tick(**self.GPS)
+        ctx = self.fc.ctx(**ctx_extra)
+        self.m._start_safedown(self.now, ctx, "test: geofence breach")
+        self.tick(**ctx_extra)
+        self.assertEqual(self.m.phase, "SAFEDOWN")
+        self.assertTrue(self.m.wasp.used)
+        self.assertIsNone(self.m.wasp.started)
+
+    def test_level_then_rtl_without_waiting_for_the_stop(self):
+        self._start_rtl_safedown(**self.GPS)
         self.assertTrue(self.run_for(1, lambda: self.r.stage == "RETURN", **self.GPS))
         self.assertLess(self.now - self.r.started, 1.0, "no 2-8 s stop wait with GPS")
         self.assertIn("RTL, flying back to the launch point (120 m)", self.m.event)
         self.assertTrue(self.run_for(1, lambda: self.fc.mode == "RTL", **self.GPS))
         self.run_for(.3, **self.GPS)
         self.assertEqual(self.out, dict(kind="alt", yaw=0.0, climb=0.0))
-        self.assertEqual(self.mapper.requests, ["ALT_HOLD", "RTL"])
+        self.assertIn("RTL", self.mapper.requests)
         self.assertEqual(self.m.snapshot(self.now)["safedown"]["home_m"], 120)
         self.mapper.armed = False
         self.tick(**self.GPS)
@@ -541,7 +564,8 @@ class GpsReturn(SafeDownFlight):
     def test_a_fast_climb_is_braked_before_the_return(self):
         self.launch()
         self.fc.climb = 25.0
-        self.m.request_abort()
+        self.m._start_safedown(self.now, self.fc.ctx(**self.GPS),
+                               "test: geofence breach")
         self.tick(**self.GPS)
         self.assertEqual(self.r.stage, "ARREST")
         self.run_for(.5, **self.GPS)
@@ -551,13 +575,13 @@ class GpsReturn(SafeDownFlight):
 
     def test_rtl_refused_lands_here(self):
         self.fc.refuse.add("RTL")
-        self.abort()
+        self._start_rtl_safedown(**self.GPS)
         self.assertTrue(self.run_for(3, lambda: "RTL refused" in self.m.event, **self.GPS))
         self.assertTrue(self.run_for(10, lambda: self.fc.mode == "LAND", **self.GPS))
         self.assertNotEqual(self.r.stage, "RETURN")
 
     def test_losing_the_gps_on_the_way_home_lands_here(self):
-        self.abort()
+        self._start_rtl_safedown(**self.GPS)
         self.assertTrue(self.run_for(2, lambda: self.fc.mode == "RTL", **self.GPS))
         self.run_for(SafeDown.POSITION_LOST_S - .2, position_ok=False, home_ok=True)
         self.assertEqual(self.r.stage, "RETURN", "a short dropout is ridden out")
@@ -567,7 +591,7 @@ class GpsReturn(SafeDownFlight):
         self.assertTrue(self.run_for(1, lambda: self.fc.mode == "LAND", position_ok=False))
 
     def test_a_failsafe_land_on_the_way_home_is_accepted(self):
-        self.abort()
+        self._start_rtl_safedown(**self.GPS)
         self.assertTrue(self.run_for(2, lambda: self.fc.mode == "RTL", **self.GPS))
         self.fc.set_mode("LAND", self.now)
         self.fc.heartbeat = "LAND"
@@ -577,7 +601,7 @@ class GpsReturn(SafeDownFlight):
         self.assertEqual(self.mapper.requests[-1], "RTL", "no fight with the FC's LAND")
 
     def test_a_position_found_on_the_way_down_still_flies_it_home(self):
-        self.abort()
+        self._start_rtl_safedown(position_ok=False, home_ok=True)
         # No compass: no position yet, so it stops and starts down in LAND.
         self.assertTrue(self.run_for(10, lambda: self.fc.mode == "LAND", position_ok=False, home_ok=True))
         self.fc.height = 30.0
@@ -587,14 +611,14 @@ class GpsReturn(SafeDownFlight):
         self.assertTrue(self.run_for(1, lambda: self.fc.mode == "RTL", **self.GPS))
 
     def test_too_low_to_turn_back(self):
-        self.abort()
+        self._start_rtl_safedown(position_ok=False, home_ok=True)
         self.assertTrue(self.run_for(10, lambda: self.fc.mode == "LAND", position_ok=False, home_ok=True))
         self.fc.height = 3.0
         self.run_for(1, **self.GPS)
         self.assertEqual(self.r.stage, "DESCEND")
 
     def test_no_home_no_return(self):
-        self.abort()
+        self._start_rtl_safedown(position_ok=True, home_ok=False)
         self.run_for(4, position_ok=True, home_ok=False)
         self.assertNotIn("RTL", self.mapper.requests)
         self.assertTrue(self.run_for(8, lambda: self.fc.mode == "LAND", position_ok=True, home_ok=False))
@@ -723,10 +747,12 @@ class Fallbacks(SafeDownFlight):
         self.run_for(.6)
         hover = self.out["throttle"]
         self.assertAlmostEqual(hover, .5, delta=.05)  # mid stick is the FC's hover
-        self.fc.climb = -1.5
+        # Climb rates must stay above STEADY_CLIMB_MPS so the drone keeps the
+        # fallback STABILIZE loop running (otherwise it settles and descends).
+        self.fc.climb = -3.0
         self.run_for(.3)
         self.assertGreater(self.out["throttle"], hover + .05)
-        self.fc.climb = 1.5
+        self.fc.climb = 3.0
         self.run_for(.6)
         self.assertLess(self.out["throttle"], hover)
         self.fc.climb = 0
@@ -736,6 +762,9 @@ class Fallbacks(SafeDownFlight):
     def test_alt_hold_offer_accepted_later_returns_to_the_fc_height_hold(self):
         self.fc.refuse.add("ALT_HOLD")
         self.abort()
+        # Keep climb above STEADY_CLIMB_MPS so the drone stays in STOP (not
+        # DESCEND) while we test the fallback switch.
+        self.fc.climb = 3.0
         self.run_for(.5)
         self.assertEqual(self.r.fallback, "STABILIZE")
         self.fc.refuse.clear()

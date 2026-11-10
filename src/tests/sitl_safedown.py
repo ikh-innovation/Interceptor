@@ -77,6 +77,8 @@ class Scenario:
                                      # (after_s is then the longest wait for that speed)
     fence_wait_s: float = 15.0       # how long a fence trigger waits to leave the polygon
     watch_s: float = 120.0           # how long to follow the flight after the trigger
+    takeover_after_s: float = None   # trigger "throttle_up": push pilot throttle to max at this time
+    jetson_dead_after_s: float = None # trigger "jetson_dead": freeze proxy at this time (GCS failsafe)
     expect: str = None               # "home" (GPS) / "landed" (no GPS) by default; "pilot", "failed", "any"
     extra_params: dict = field(default_factory=dict)
 
@@ -95,6 +97,19 @@ def scenarios():
     for pitch in (15, 30):
         add(Scenario(f"stand-{pitch}deg", stand_pitch_deg=pitch))
     add(Scenario("stand-45deg-rolled-15", stand_roll_deg=15))
+    # Near-vertical launches the user explicitly asked about: 80 deg (stand
+    # tilted 10 deg off vertical) and 70 deg (20 deg off), with UI SAFEDOWN
+    # (land-in-place) and under light-to-moderate wind.
+    add(Scenario("stand-10deg-button-calm", stand_pitch_deg=10))
+    add(Scenario("stand-20deg-button-calm", stand_pitch_deg=20))
+    add(Scenario("stand-10deg-button-wind5", stand_pitch_deg=10,
+                 wind_ned=_wind(5, 45), gust_sigma=1.2))
+    add(Scenario("stand-20deg-button-wind7", stand_pitch_deg=20,
+                 wind_ned=_wind(7, 90), gust_sigma=1.5))
+    # UI SAFEDOWN with no GPS: the drone should still land peacefully right
+    # under itself (the land_only path through DESCEND).
+    add(Scenario("stand-10deg-button-nogps", stand_pitch_deg=10, gps=False,
+                 expect="landed"))
     for mass in (1.3, 1.8):
         add(Scenario(f"mass-{mass:g}kg-switch", mass_kg=mass, trigger="switch"))
     for name, cg, stand in (("cg-fwd-2cm-stand30", (.02, 0, .01), 30), ("cg-aft-2cm", (-.02, 0, .01), 45),
@@ -220,8 +235,190 @@ def scenarios():
         add(Scenario(f"circle50-mid-{elev}-09", arm_by_app=True, fence_circle_m=50, trigger="fence",
                      after_s=.1, stand_pitch_deg=90-elev, stab_speed_mps=20, pilot_mid=True,
                      fence_wait_s=40, watch_s=260))
+    # --- pilot-driven 40-scenario sweep --------------------------------
+    # 10 per case, covering: throttle-up takeover, geofence breach,
+    # Jetson death mid-air (FC GCS failsafe), and UI SAFEDOWN button.
+    # Launch angles 80 deg (stand=10) and 70 deg (stand=20) are the core
+    # geometry; each case also varies wind, mass, and trigger timing.
+    for sc in _case_a_throttle_takeover(): add(sc)
+    for sc in _case_b_geofence():          add(sc)
+    for sc in _case_c_jetson_dead():       add(sc)
+    for sc in _case_d_safedown_button():   add(sc)
+
     for sc in out:
         sc.expect = sc.expect or ("home" if sc.gps else "landed")
+    return out
+
+
+def _case_a_throttle_takeover():
+    """Case A: pilot pushes throttle stick past PILOT_THR_TAKEOVER_FRAC mid-
+    flight.  Expected: WASP releases every channel, FC stays in ACRO, drone
+    flies the pilot's sticks.  No SafeDown runs."""
+    out = []
+    add = out.append
+    add(Scenario("A1-throttle-takeover-vertical-calm",
+                 trigger="throttle_up", stand_pitch_deg=0, takeover_after_s=3.0))
+    add(Scenario("A2-throttle-takeover-80deg-calm",
+                 trigger="throttle_up", stand_pitch_deg=10, takeover_after_s=3.0))
+    add(Scenario("A3-throttle-takeover-70deg-calm",
+                 trigger="throttle_up", stand_pitch_deg=20, takeover_after_s=3.0))
+    add(Scenario("A4-throttle-takeover-80deg-wind5",
+                 trigger="throttle_up", stand_pitch_deg=10, takeover_after_s=3.0,
+                 wind_ned=_wind(5, 45), gust_sigma=1.0))
+    add(Scenario("A5-throttle-takeover-70deg-wind10",
+                 trigger="throttle_up", stand_pitch_deg=20, takeover_after_s=3.0,
+                 wind_ned=_wind(10, 90), gust_sigma=1.5))
+    add(Scenario("A6-throttle-takeover-80deg-wind15-gusty",
+                 trigger="throttle_up", stand_pitch_deg=10, takeover_after_s=3.0,
+                 wind_ned=_wind(15, 180), gust_sigma=3.0))
+    add(Scenario("A7-throttle-takeover-late-8s",
+                 trigger="throttle_up", stand_pitch_deg=10, takeover_after_s=8.0))
+    add(Scenario("A8-throttle-takeover-early-0.5s",
+                 trigger="throttle_up", stand_pitch_deg=10, takeover_after_s=0.5))
+    add(Scenario("A9-throttle-takeover-heavy-mass",
+                 trigger="throttle_up", stand_pitch_deg=10, takeover_after_s=3.0,
+                 mass_kg=1.8))
+    add(Scenario("A10-throttle-takeover-light-mass-upset",
+                 trigger="throttle_up", stand_pitch_deg=10, takeover_after_s=3.0,
+                 mass_kg=1.2, upset=(1.2, 0.8, 0.3), upset_s=0.2))
+    for sc in out:
+        sc.expect = "pilot"
+    return out
+
+
+def _case_b_geofence():
+    """Case B: drone crosses a geofence in flight.  Expected: SafeDown
+    stabilises, then RTL to the launch point (GPS + home required)."""
+    out = []
+    add = out.append
+    add(Scenario("B1-fence-50m-calm-80deg",
+                 arm_by_app=True, fence_m=50, trigger="fence", after_s=.1,
+                 stand_pitch_deg=10, flight_elev_deg=30, stab_speed_mps=15,
+                 fence_wait_s=25, watch_s=200))
+    add(Scenario("B2-fence-100m-wind5-80deg",
+                 arm_by_app=True, fence_m=100, trigger="fence", after_s=.1,
+                 stand_pitch_deg=10, flight_elev_deg=30, stab_speed_mps=18,
+                 wind_ned=_wind(5, 45), gust_sigma=1.0,
+                 fence_wait_s=30, watch_s=220))
+    add(Scenario("B3-fence-100m-wind10-70deg",
+                 arm_by_app=True, fence_m=100, trigger="fence", after_s=.1,
+                 stand_pitch_deg=20, flight_elev_deg=30, stab_speed_mps=18,
+                 wind_ned=_wind(10, 90), gust_sigma=1.5,
+                 fence_wait_s=30, watch_s=220))
+    add(Scenario("B4-fence-100m-wind15-gusty-70deg",
+                 arm_by_app=True, fence_m=100, trigger="fence", after_s=.1,
+                 stand_pitch_deg=20, flight_elev_deg=35, stab_speed_mps=20,
+                 wind_ned=_wind(15, 180), gust_sigma=3.0,
+                 fence_wait_s=35, watch_s=240))
+    add(Scenario("B5-fence-200m-fast-80deg",
+                 arm_by_app=True, fence_m=200, trigger="fence", after_s=.1,
+                 stand_pitch_deg=10, flight_elev_deg=45, stab_speed_mps=28,
+                 fence_wait_s=35, watch_s=240))
+    add(Scenario("B6-fence-circle100-wind10-80deg",
+                 arm_by_app=True, fence_circle_m=100, trigger="fence", after_s=.1,
+                 stand_pitch_deg=10, flight_elev_deg=30, stab_speed_mps=20,
+                 wind_ned=_wind(10, 0), gust_sigma=1.2,
+                 fence_wait_s=35, watch_s=240))
+    add(Scenario("B7-fence-50m-near-vertical-wind7",
+                 arm_by_app=True, fence_m=50, trigger="fence", after_s=.1,
+                 stand_pitch_deg=5, flight_elev_deg=20, stab_speed_mps=12,
+                 wind_ned=_wind(7, 90), gust_sigma=1.5,
+                 fence_wait_s=25, watch_s=200))
+    add(Scenario("B8-fence-200m-heavy-mass-wind10",
+                 arm_by_app=True, fence_m=200, trigger="fence", after_s=.1,
+                 stand_pitch_deg=20, flight_elev_deg=40, stab_speed_mps=25,
+                 wind_ned=_wind(10, 45), gust_sigma=2.0, mass_kg=1.8,
+                 fence_wait_s=35, watch_s=240))
+    add(Scenario("B9-fence-100m-pilot-mid-80deg",
+                 arm_by_app=True, fence_m=100, trigger="fence", after_s=.1,
+                 stand_pitch_deg=10, flight_elev_deg=30, stab_speed_mps=18,
+                 pilot_mid=True, fence_wait_s=30, watch_s=220))
+    add(Scenario("B10-fence-100m-high-speed-35mps",
+                 arm_by_app=True, fence_m=150, trigger="fence", after_s=.1,
+                 stand_pitch_deg=10, flight_elev_deg=50, stab_speed_mps=35,
+                 fence_wait_s=30, watch_s=240))
+    for sc in out:
+        sc.expect = "home"
+    return out
+
+
+def _case_c_jetson_dead():
+    """Case C: the Jetson stops sending heartbeats mid-flight (cable pull,
+    SoC crash, battery disconnect).  The FC's FS_GCS_ENABLE=1 must RTL on
+    its own.  The scenario freezes the proxy so no Jetson packets reach the
+    FC; the FC's GCS failsafe trips after FS_GCS_TIMEOUT seconds."""
+    out = []
+    add = out.append
+    add(Scenario("C1-jetson-dead-calm-80deg",
+                 trigger="jetson_dead", stand_pitch_deg=10, jetson_dead_after_s=2.0,
+                 watch_s=90))
+    add(Scenario("C2-jetson-dead-calm-70deg",
+                 trigger="jetson_dead", stand_pitch_deg=20, jetson_dead_after_s=2.0,
+                 watch_s=90))
+    add(Scenario("C3-jetson-dead-wind5-80deg",
+                 trigger="jetson_dead", stand_pitch_deg=10, jetson_dead_after_s=3.0,
+                 wind_ned=_wind(5, 45), gust_sigma=1.0, watch_s=100))
+    add(Scenario("C4-jetson-dead-wind10-70deg",
+                 trigger="jetson_dead", stand_pitch_deg=20, jetson_dead_after_s=3.0,
+                 wind_ned=_wind(10, 90), gust_sigma=1.5, watch_s=120))
+    add(Scenario("C5-jetson-dead-wind15-gusty",
+                 trigger="jetson_dead", stand_pitch_deg=10, jetson_dead_after_s=4.0,
+                 wind_ned=_wind(15, 180), gust_sigma=3.0, watch_s=140))
+    add(Scenario("C6-jetson-dead-late-8s",
+                 trigger="jetson_dead", stand_pitch_deg=10, jetson_dead_after_s=8.0,
+                 watch_s=140))
+    add(Scenario("C7-jetson-dead-heavy-mass",
+                 trigger="jetson_dead", stand_pitch_deg=20, jetson_dead_after_s=3.0,
+                 mass_kg=1.8, watch_s=120))
+    add(Scenario("C8-jetson-dead-upset",
+                 trigger="jetson_dead", stand_pitch_deg=10, jetson_dead_after_s=2.5,
+                 upset=(1.5, 1.0, 0.3), upset_s=0.2, watch_s=120))
+    add(Scenario("C9-jetson-dead-no-compass",
+                 trigger="jetson_dead", stand_pitch_deg=20, jetson_dead_after_s=3.0,
+                 gps=False, expect="landed", watch_s=120))
+    add(Scenario("C10-jetson-dead-at-speed",
+                 trigger="jetson_dead", stand_pitch_deg=10, jetson_dead_after_s=5.0,
+                 flight_elev_deg=45, stab_speed_mps=30, watch_s=140))
+    for sc in out:
+        sc.expect = sc.expect or "home"
+    return out
+
+
+def _case_d_safedown_button():
+    """Case D: pilot taps SAFEDOWN in the app.  Expected: SafeDown runs its
+    land_only path -- SWITCHING -> LEVEL -> STOP -> DESCEND (LAND).  No RTL,
+    needs no GPS, no home.  Drone lands roughly under where it was."""
+    out = []
+    add = out.append
+    add(Scenario("D1-safedown-calm-80deg",
+                 trigger="button", stand_pitch_deg=10, after_s=2.0, watch_s=60))
+    add(Scenario("D2-safedown-calm-70deg",
+                 trigger="button", stand_pitch_deg=20, after_s=2.0, watch_s=60))
+    add(Scenario("D3-safedown-wind5-80deg",
+                 trigger="button", stand_pitch_deg=10, after_s=2.0,
+                 wind_ned=_wind(5, 45), gust_sigma=1.0, watch_s=80))
+    add(Scenario("D4-safedown-wind10-70deg",
+                 trigger="button", stand_pitch_deg=20, after_s=2.5,
+                 wind_ned=_wind(10, 90), gust_sigma=1.5, watch_s=100))
+    add(Scenario("D5-safedown-wind15-gusty-80deg",
+                 trigger="button", stand_pitch_deg=10, after_s=3.0,
+                 wind_ned=_wind(15, 180), gust_sigma=3.0, watch_s=120))
+    add(Scenario("D6-safedown-late-8s",
+                 trigger="button", stand_pitch_deg=10, after_s=8.0, watch_s=120))
+    add(Scenario("D7-safedown-heavy-mass",
+                 trigger="button", stand_pitch_deg=20, after_s=2.5,
+                 mass_kg=1.8, watch_s=100))
+    add(Scenario("D8-safedown-upset-at-trigger",
+                 trigger="button", stand_pitch_deg=10, after_s=2.0,
+                 upset=(1.5, 1.0, 0.3), upset_s=0.2, watch_s=100))
+    add(Scenario("D9-safedown-no-gps",
+                 trigger="button", stand_pitch_deg=10, after_s=2.0,
+                 gps=False, expect="landed", watch_s=80))
+    add(Scenario("D10-safedown-at-speed-35mps",
+                 trigger="button", stand_pitch_deg=10, after_s=4.0,
+                 flight_elev_deg=50, stab_speed_mps=35, watch_s=120))
+    for sc in out:
+        sc.expect = sc.expect or "landed"  # land_only: lands where it is
     return out
 
 
@@ -471,6 +668,48 @@ class Run:
                 at_trigger = dict(self.sample())
                 self.lifted = any(x.get("left_stand") for x in self.samples)
                 self.note(f"FENCE: {m.safedown.reason}")
+            elif sc.trigger == "throttle_up":
+                # Pilot pushes the throttle stick near max while mid-flight.
+                # ArduPilot's RC_CHANNELS_RAW surfaces the raw stick even
+                # under our override: fc_control latches _pilot_throttle_takeover
+                # and the mission releases every channel, staying in ACRO.
+                wait_s = sc.takeover_after_s if sc.takeover_after_s is not None else 3.0
+                self.wait(lambda: self.sample().get("left_stand"), 10, "airborne")
+                airborne_t = time.perf_counter()
+                while time.perf_counter() - airborne_t < wait_s:
+                    self.sample()
+                    time.sleep(.05)
+                self.sitl.rc.set_stick("throttle", 0.95)
+                self.note(f"PILOT: throttle -> 0.95 at +{wait_s:g}s (takeover)")
+                try:
+                    self.wait(lambda: self.m.phase == "PILOT", 3.0, "WASP release")
+                    self.note("WASP released: pilot in ACRO")
+                except TimeoutError:
+                    raise RuntimeError(
+                        f"throttle-up did not release WASP (phase={self.m.phase})")
+                at_trigger = dict(self.sample())
+                self.lifted = any(x.get("left_stand") for x in self.samples)
+            elif sc.trigger == "jetson_dead":
+                # Simulated Jetson crash: freeze the proxy so no packets from
+                # the Jetson reach the FC.  The FC must RTL on its own after
+                # FS_GCS_TIMEOUT seconds (via FS_GCS_ENABLE=1 or 2).
+                wait_s = sc.jetson_dead_after_s if sc.jetson_dead_after_s is not None else 3.0
+                self.wait(lambda: self.sample().get("left_stand"), 10, "airborne")
+                airborne_t = time.perf_counter()
+                while time.perf_counter() - airborne_t < wait_s:
+                    self.sample()
+                    time.sleep(.05)
+                self.proxy.frozen = True
+                self.note(f"JETSON DEAD at +{wait_s:g}s: proxy frozen; FC on its own")
+                try:
+                    self.wait(lambda: self.c.mode_name in ("RTL", "LAND", "SMART_RTL"),
+                              15, "FC GCS failsafe")
+                    self.note(f"FC failsafe mode: {self.c.mode_name}")
+                except TimeoutError:
+                    raise RuntimeError(
+                        "FC did not RTL after Jetson died: check FS_GCS_ENABLE")
+                at_trigger = dict(self.sample())
+                self.lifted = any(x.get("left_stand") for x in self.samples)
             else:
                 if cmd("safedown", "1"):
                     raise RuntimeError("SAFEDOWN refused")

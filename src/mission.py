@@ -1110,15 +1110,16 @@ class Mission:
         if not getattr(self.mapper, "armed", False):
             w.used = False
         if w.started is not None and self.fence.armed and self._fence_state[0] is False:
-            # Out of the fence in a WASP flight: RTL to the launch point.
-            return self._start_safedown(now, ctx, f"GEOFENCE: {self._fence_state[1]:.0f} m outside",
-                                        direct_return=True)
+            # Out of the fence in a WASP flight: stabilise, then RTL to the
+            # launch point (the normal flow brakes a fast climb before the
+            # return instead of jumping straight into RTL).
+            return self._start_safedown(now, ctx, f"GEOFENCE: {self._fence_state[1]:.0f} m outside")
         # After a launch, and after a handover to the pilot, SAFEDOWN and a flip
         # up to ALT_HOLD both bring it home on their own while it is in the air.
         in_air = (w.started is None and w.used and getattr(self.mapper, "armed", False)
                   and ctx.get("safedown_ok") and ctx.get("airborne"))
         if abort and ((w.started is not None and ctx.get("gate_ok")) or in_air):
-            return self._start_safedown(now, ctx, "SAFEDOWN button")
+            return self._start_safedown(now, ctx, "SAFEDOWN button", land_only=True)
         if self._safedown_edge and in_air:
             return self._start_safedown(now, ctx, f"pilot switched to {SafeDown.SWITCH_MODE}",
                                         direct_return=True)
@@ -1140,8 +1141,15 @@ class Mission:
                 self._note("WASP SAFEDOWN: not in the air, every channel returned to the pilot", now)
             return {}
         if w.started is not None and ctx.get("pilot_takeover"):
-            return self._start_safedown(now, ctx, f"pilot switched to {SafeDown.SWITCH_MODE}",
-                                        direct_return=True)
+            # Throttle-up takeover: release every override and leave the
+            # pilot flying in ACRO.  No SafeDown (that stays a UI button).
+            w.used = True
+            w.started = None
+            w.launch_t = None
+            self._run_t = None
+            self._set_phase("PILOT", now)
+            self._note("WASP: pilot took the throttle — every channel returned to the pilot", now)
+            return {}
         if not ctx.get("gate_ok"):
             self._stop_test_target(now)
             if self.phase not in ("PILOT", "WASP_DONE"):
@@ -1216,9 +1224,11 @@ class Mission:
 
     SAFEDOWN_GROUND_S = 0.5
 
-    def _start_safedown(self, now, ctx, reason, catch=False, direct_return=False):
-        # The SAFEDOWN button or the pilot's switch up to ALT_HOLD: level, stop and
-        # land on its own (safedown.py).
+    def _start_safedown(self, now, ctx, reason, catch=False, direct_return=False, land_only=False):
+        # SAFEDOWN button (land_only), geofence violation (direct_return), or
+        # other triggers: safedown.py drives the FC from here.  land_only wins
+        # over direct_return: a UI press always lands in place, even if a
+        # fence-violation trigger would have asked for RTL.
         hold = self.wasp.params["throttle"]
         on_ground = (ctx.get("airborne") is False and self.wasp.started is not None
                      and now - self.wasp.started < self.SAFEDOWN_GROUND_S)
@@ -1236,9 +1246,12 @@ class Mission:
         self.engaged = True
         with self._lock:
             self._hold = None
-        self.safedown.begin(now, ctx, reason, hold, catch=catch, direct_return=direct_return)
+        self.safedown.begin(now, ctx, reason, hold, catch=catch,
+                            direct_return=direct_return, land_only=land_only)
         if catch:
             self._note(f"CATCH: {reason}; braking to a hover, then the pilot flies it", now)
+        elif land_only:
+            self._note(f"SAFEDOWN: {reason}; landing in place", now)
         elif direct_return:
             self._note(f"SAFEDOWN: {reason}; RTL to the launch point", now)
         else:

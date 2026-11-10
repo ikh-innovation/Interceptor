@@ -38,7 +38,8 @@ def backend():
     b.linked = b.armed = True
     b.mode_name = "ACRO"
     b.params = dict(ACRO_TRAINER=0, ACRO_RP_RATE=360, ACRO_Y_RATE=202.5,
-                    ACRO_RP_EXPO=0.3, ACRO_Y_EXPO=0.2, RC_OVERRIDE_TIME=1)
+                    ACRO_RP_EXPO=0.3, ACRO_Y_EXPO=0.2, RC_OVERRIDE_TIME=1,
+                    FS_GCS_ENABLE=1, FS_GCS_TIMEOUT=3)
     for ch, axis in enumerate(b.axes, 1):
         b.rc[axis] = dict(chan=ch, min=1100, trim=1500, max=1900, dz=20,
                           reversed=False, from_fc=True, wasp_calibrated=True)
@@ -876,50 +877,41 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.m.cycle(201, self.ctx), {})
         self.assertIn("SAFEDOWN complete: landed", self.m.event)
 
-    def test_switch_up_in_flight_starts_the_same_safedown(self):
+    def test_throttle_takeover_releases_every_channel_in_acro(self):
+        # NEW behaviour: in WASP mode, the only mid-flight takeover trigger is
+        # the pilot pushing the throttle stick up.  The Jetson detects it via
+        # fc_control's periodic peek, mission sees pilot_takeover=True, and
+        # every channel goes back to the pilot.  The FC stays in ACRO; no
+        # SafeDown (SafeDown is UI-only now).
         self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)
         self.launch()
-        # The switch up: the FC itself goes to ALT_HOLD, sticks centre at once.
-        self.ctx.update(gate_ok=False, pilot_takeover=True, pilot_safedown=True, fc_mode="ALT_HOLD", height=4)
-        self.assertIn("idle", self.m.cycle(101, self.ctx))
-        self.assertEqual(self.m.phase, "SAFEDOWN")
-        self.assertEqual(self.m.safedown.source_mode, "ALT_HOLD")
-        self.assertEqual(self.mapper.alt_hold_requests, 0, "already in ALT_HOLD")
-        self.assertIn("ALT_HOLD", self.m.event)
-        self.ctx.update(gate_ok=True, pilot_takeover=False)
-        self.assertIn("idle", self.m.cycle(101.2, self.ctx))
-        # The FC goes to a mode SafeDown did not ask for: every channel back.
-        self.ctx.update(fc_mode="LOITER")
-        self.assertEqual(self.m.cycle(101.3, self.ctx), {})
+        self.ctx.update(gate_ok=True, pilot_takeover=True, fc_mode="ACRO", height=4)
+        self.assertEqual(self.m.cycle(101, self.ctx), {})
+        self.assertEqual(self.m.phase, "PILOT")
         self.assertFalse(self.m.safedown.active)
-        self.ctx.update(gate_ok=True, fc_mode="ACRO")
-        self.assertTrue(self.m.request_engage())
-        self.assertEqual(self.m.cycle(101.4, self.ctx), {})
-        self.assertEqual(self.m.phase, "WASP_DONE")
-        self.assertEqual(self.m.cycle(105, self.ctx), {})
-        self.assertIsNone(self.m.wasp.started)
         self.assertEqual(self.mapper.alt_hold_requests, 0)
+        self.assertIsNone(self.m.wasp.started)
+        self.assertIn("pilot took the throttle", self.m.event)
 
     def test_trigger_on_the_ground_in_the_first_half_second_cancels(self):
-        for trigger in ("safedown", "stabilize"):
-            for after, airborne, lands in ((.1, False, False), (.49, False, False),
-                                           (.51, False, True), (.1, True, True)):
-                with self.subTest(trigger=trigger, after=after, airborne=airborne):
-                    self.setUp()
-                    self.launch()
-                    self.ctx["airborne"] = airborne
-                    if trigger == "safedown":
-                        self.m.request_abort()
-                    else:
-                        self.ctx.update(gate_ok=False, pilot_takeover=True, fc_mode="STABILIZE")
-                    out = self.m.cycle(100+after, self.ctx)
-                    self.assertEqual(self.mapper.alt_hold_requests, int(lands))
-                    self.assertEqual(self.m.safedown.active, lands)
-                    self.assertEqual(self.m.phase, "SAFEDOWN" if lands else "WASP_DONE")
-                    self.assertEqual(out, self.mapper.wasp_pwm((0, 0, 0), 1) if lands else {})
-                    self.assertIsNone(self.m.wasp.started)
-                    if not lands:
-                        self.assertIn("launch cancelled", self.m.event)
+        # Only the SAFEDOWN button can cancel on the ground now.  The old
+        # STABILIZE-switch trigger is gone: flipping to STABILIZE leaves the
+        # Jetson entirely (it releases, the FC flies stock).
+        for after, airborne, lands in ((.1, False, False), (.49, False, False),
+                                       (.51, False, True), (.1, True, True)):
+            with self.subTest(after=after, airborne=airborne):
+                self.setUp()
+                self.launch()
+                self.ctx["airborne"] = airborne
+                self.m.request_abort()
+                out = self.m.cycle(100+after, self.ctx)
+                self.assertEqual(self.mapper.alt_hold_requests, int(lands))
+                self.assertEqual(self.m.safedown.active, lands)
+                self.assertEqual(self.m.phase, "SAFEDOWN" if lands else "WASP_DONE")
+                self.assertEqual(out, self.mapper.wasp_pwm((0, 0, 0), 1) if lands else {})
+                self.assertIsNone(self.m.wasp.started)
+                if not lands:
+                    self.assertIn("launch cancelled", self.m.event)
 
     def test_safedown_starts_on_a_stale_sample_and_centres_sticks_in_alt_hold(self):
         self.ctx.update(ai_cmd=None, det_t=None, det_conf=None)
@@ -1023,22 +1015,23 @@ class LifecycleTests(unittest.TestCase):
 
 
 class BackendTests(unittest.TestCase):
-    def test_no_launch_without_a_gps_position_and_a_home(self):
+    def test_wasp_launches_without_gps_and_can_still_set_home_when_gps_appears(self):
+        # WASP no longer gates on GPS: the UI SAFEDOWN button lands in place
+        # (no RTL), and the mission's geofence-arm path refuses arm when the
+        # fence needs a position it doesn't have.  So the FC-level
+        # wasp_ready() returns OK without any GPS at all.
         b = backend()
         self.assertEqual(b.wasp_ready(), "")
         b._ekf = (perf_counter(), b.EKF_POS_HORIZ_ABS | b.EKF_CONST_POS_MODE)
-        self.assertIn("waiting for GPS", b.wasp_ready())
+        self.assertEqual(b.wasp_ready(), "", "no GPS: still ready")
+        b._gps = None
+        self.assertEqual(b.wasp_ready(), "", "no GPS at all: still ready")
+
+        # When a position does appear, mark_launch / set_home_to_launch still
+        # work as before, so a later geofence arm can RTL to the launch spot.
         b._ekf = (perf_counter(), b.EKF_POS_HORIZ_ABS)
-        b._gps = (perf_counter(), 2, 10, 37.9838, 23.7275, 100.0)
-        self.assertIn("GPS fix", b.wasp_ready())
-        b._gps = (perf_counter(), 3, 4, 37.9838, 23.7275, 100.0)
-        self.assertIn("GPS fix", b.wasp_ready(), "too few satellites")
-        b._gps = (perf_counter(), 3, 10, 37.9838, 23.7275, 100.0)
-        b._home = (perf_counter(), 37.9838, 23.7275)
-        b._gpos = (perf_counter(), 37.9838 + 100/6371000*180/math.pi, 23.7275, 100.0)
-        self.assertAlmostEqual(b.home_distance(), 100, delta=.5)
-        # GO keeps the GPS spot; home is moved there before the return.
         b._gps = (perf_counter(), 3, 10, 37.9840, 23.7280, 101.0)
+        b._gpos = (perf_counter(), 37.9840, 23.7280, 101.0)
         b.master = type("M", (), {"target_system": 1, "target_component": 1})()
         sent = []
         b.master.mav = type("V", (), {"command_int_send": lambda _s, *a: sent.append(a)})()
@@ -1046,13 +1039,6 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(b.launch_point(), (37.9840, 23.7280))
         self.assertTrue(b.set_home_to_launch())
         self.assertEqual(sent[0][10:12], (379840000, 237280000))
-        b._home = (perf_counter(), 37.9840, 23.7280)
-        sent.clear()
-        self.assertTrue(b.set_home_to_launch())
-        self.assertFalse(sent, "home already is the launch point")
-        with patch.object(type(b), "SAFEDOWN_NEEDS_GPS", False):
-            b._gps = None
-            self.assertEqual(b.wasp_ready(), "")
 
     def test_throttle_mapping_does_not_change_existing_acro_behaviour(self):
         b = backend()

@@ -59,13 +59,17 @@ class SafeDown:
     ALT_HOLD_TIMEOUT_S = 1.5
     LAND_TIMEOUT_S = 2.0
     RETRY_FALLBACK_S = 1.0
-    LEVEL_DEG = 5.0
-    STEADY_DPS = 20.0
-    STEADY_CLIMB_MPS = 0.5
-    STOPPED_ACCEL = 1.0
-    SETTLE_S = 1.0
-    MIN_STOP_S = 2.0
-    MAX_STOP_S = 8.0
+    # Relaxed for windy conditions: the earlier tight limits made the drone
+    # stall for minutes in a steady breeze waiting for "settled" before RTL.
+    # RTL and LAND both brake horizontally on their own, so we hand off as
+    # soon as the attitude is roughly level.
+    LEVEL_DEG = 10.0
+    STEADY_DPS = 45.0
+    STEADY_CLIMB_MPS = 2.0
+    STOPPED_ACCEL = 2.5
+    SETTLE_S = 0.5
+    MIN_STOP_S = 1.0
+    MAX_STOP_S = 5.0
     DESCENT_MPS = 0.5
     HIGH_DESCENT_MPS = 1.5
     HIGH_M = 10.0
@@ -126,7 +130,7 @@ class SafeDown:
         return self.started is not None
 
     def begin(self, now, ctx, reason, hold_throttle, catch=False,
-              direct_return=False):
+              direct_return=False, land_only=False):
         self.started = self._t = now
         self.catch = catch
         self._steady_t = None
@@ -134,8 +138,17 @@ class SafeDown:
         self.hold_throttle = hold_throttle
         self.source_mode = ctx.get("fc_mode")
         self.switch_band = ctx.get("mode_switch")
-        self.stage = "RETURN" if direct_return else "SWITCHING"
-        self._need_set_home = direct_return
+        # land_only still runs SWITCHING -> LEVEL -> STOP (so the drone is
+        # stabilised before descent), then DESCEND.  _no_return (set below)
+        # blocks the usual STOP -> RETURN transition, so no GPS is required
+        # and no RTL ever attempts.
+        if land_only:
+            self.stage = "SWITCHING"
+        elif direct_return:
+            self.stage = "RETURN"
+        else:
+            self.stage = "SWITCHING"
+        self._need_set_home = direct_return and not land_only
         self.fallback = None
         self._left_acro = False
         self._last_mode = None
@@ -168,7 +181,7 @@ class SafeDown:
         self._hover_set_t = None
         self._hover_anchor = None
         self.home_m = None
-        self._no_return = False
+        self._no_return = bool(land_only)
         self._lost_t = None
         self.notes = []
 
@@ -750,6 +763,16 @@ class SafeDown:
         held = now - self._stop_t
         settled = self._settle_t is not None and now - self._settle_t >= self.SETTLE_S
         if (settled and held >= self.MIN_STOP_S) or held >= self.MAX_STOP_S:
+            # Prefer RTL when GPS + home are available even if not fully
+            # settled: RTL's own brake handles residual horizontal speed, so
+            # we should fly home rather than land in place (likely still
+            # outside a breached fence) just because wind kept the attitude
+            # jittery.  Fall back to LAND only when RTL is impossible.
+            if self._can_return(ctx) and self.fallback is None:
+                self._start_return(mapper, ctx,
+                    "level: RTL" if settled
+                    else f"not settled after {self.MAX_STOP_S:g} s: RTL anyway")
+                return
             self._note("level and stopped: LAND" if settled
                        else f"not settled after {self.MAX_STOP_S:g} s: LAND anyway")
             self.stage = "DESCEND"

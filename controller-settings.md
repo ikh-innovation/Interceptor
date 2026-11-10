@@ -24,9 +24,11 @@ under the ARM button.
 | `RC1..RC4_MIN/MAX/TRIM/DZ`, `RCMAP_*` | calibrated, 4 different channels within 1–8 | `RCMAP_THROTTLE` 1, ROLL 2, PITCH 3, YAW 4; throttle RC1 988 / 990 / 2010 | The app maps 0–100 % throttle onto RC1_MIN..RC1_MAX (the throttle channel `RCMAP_THROTTLE` names). Recalibrate the radio on a new FC or transmitter. |
 | `SYSID_MYGCS` | the Jetson's system ID | 255 | Overrides from any other system ID are ignored. |
 | Flight mode | **ACRO** (switch down) | n/a | The phone's ARM is refused in any other mode; LAUNCH WASP needs the FC armed for 2.5 s. |
-| `FLTMODE_GCSBLOCK` | bits 0 and 2 **clear** | 0 | SafeDown switches the FC to STABILIZE and ALT_HOLD over MAVLink, then to RTL or LAND. |
-| `FLTMODE_CH` / `FLTMODE1..6` | ch6: low ACRO, middle STABILIZE, high ALT_HOLD | 6 / 1,0,0,0,0,2 | Low = WASP launch. High = SafeDown (fly back to the GO spot and land). Middle = catch, then the pilot flies in STABILIZE. The app reads the switch at connect. |
-| GPS and compass | 3D fix with 6+ satellites, EKF using GPS | `COMPASS_ENABLE 1`, `EK3_SRC1_POSXY 3`, `EK3_SRC1_VELXY 3` | ARM is refused until the FC has a GPS position: SafeDown needs it to fly home. Power up flat (the EKF does not lock GPS on the tilted stand), then put it on the stand. `WASP_REQUIRE_GPS=0` turns the gate off for bench work. |
+| `FLTMODE_GCSBLOCK` | bits 0 and 2 **clear** | 0 | SafeDown switches the FC to STABILIZE / ALT_HOLD / LAND over MAVLink. |
+| `FLTMODE_CH` / `FLTMODE1..6` | ch6: low ACRO | 6 / 1,0,0,0,0,2 | **Low (ACRO) is required for launch and for all of WASP.** Middle/high no longer have app-level meaning — if moved in flight, the Jetson releases every channel and the FC flies stock in whatever mode is selected. No more "catch via STABILIZE" or "SafeDown via ALT_HOLD". |
+| `FS_GCS_ENABLE` | **1** (RTL) or 2 (LAND) | 1 | **New requirement.** If the Jetson dies mid-air (cable, power, SoC crash), the FC falls back to RTL (1) or LAND (2) on its own. ARM is refused if this is 0. |
+| `FS_GCS_TIMEOUT` | **≤ 5** seconds | 3 | How long the FC waits without a Jetson heartbeat before the failsafe fires. 3 s is a good balance between false triggers and reaction speed. |
+| GPS and compass | **Optional** — only needed if geofence is used | `COMPASS_ENABLE 1`, `EK3_SRC1_POSXY 3`, `EK3_SRC1_VELXY 3` | **Changed.** WASP no longer requires GPS to launch. GPS + compass are only needed if you arm a geofence (so the drone can RTL to the launch point when it breaches the fence) or want the Jetson-failsafe to RTL instead of just LAND. Without them, WASP works and the SAFEDOWN button lands in place. |
 
 ## 2. Recommended by the app's checklist (not blocking)
 
@@ -213,5 +215,101 @@ outdoors, then reboot); until then its offsets are 0.
 | `FENCE_ENABLE` | 0 | 0 | The geofence is the app's (section 7), not the FC's. `FENCE_ACTION` must also be 0 (section 5). |
 
 The phone's tile **GPS/Compass** reads `YES / YES` only with a 3D fix, at least 6 satellites,
-and a compass the FC reports present, enabled and healthy. ARM needs both, and the EKF using
-the GPS.
+and a compass the FC reports present, enabled and healthy. ARM needs both **only if a geofence
+is armed** — without a geofence, WASP launches without GPS and the SAFEDOWN button lands in
+place.
+
+---
+
+## Complete Mission Planner parameter list (write these to the FC)
+
+Open Mission Planner → **CONFIG → Full Parameter List** (or **Full Parameter Tree**), paste the
+values below, click **Write Params**, then **Refresh Params** and verify each value stuck.
+Restart the app on the Jetson afterwards:
+```
+sudo systemctl --user restart wasp-tracker
+```
+
+Alternative: run [scripts/set-fc-failsafe.py](scripts/set-fc-failsafe.py) with wasp-tracker
+stopped — it sets `FS_GCS_ENABLE` and `FS_GCS_TIMEOUT` over MAVLink in one shot. The rest
+of the parameters you still set in Mission Planner.
+
+### Mandatory (WASP will not arm without these)
+
+| Parameter | Value | Note |
+| --- | --- | --- |
+| `ACRO_TRAINER` | `0` | ACRO sends raw body rates — no auto-level, no lean limit. |
+| `ACRO_RP_RATE` | `360` | Roll/pitch rate the app assumes. |
+| `ACRO_Y_RATE` | `202.5` | Yaw rate the app assumes. |
+| `ACRO_RP_EXPO` | `0.3` | Must be 0..1. |
+| `ACRO_Y_EXPO` | `0` | Must be 0..1. |
+| `RC_OVERRIDE_TIME` | `1` | Override lapses after 1 s of Jetson silence (FC falls back to pilot sticks). |
+| `RC_OPTIONS` | `32` (any value with bit 1 clear) | Bit 1 set = FC ignores all GCS overrides — DO NOT set it. |
+| `FLTMODE_GCSBLOCK` | `0` | SafeDown needs to put the FC into STABILIZE / ALT_HOLD / LAND. |
+| `FLTMODE_CH` | `6` | Pilot mode switch channel. |
+| `FLTMODE1` | `1` (ACRO) | Switch DOWN — required for WASP launch. |
+| `FS_GCS_ENABLE` | `1` (RTL) or `2` (LAND) | **NEW:** Jetson-dead failsafe. RTL needs GPS+compass; LAND works without. |
+| `FS_GCS_TIMEOUT` | `3` (seconds) | How fast the FC reacts when Jetson heartbeats stop. Max allowed: 5. |
+| `SYSID_MYGCS` | `255` | Must match the Jetson's sysid (hard-coded default). |
+| `RC5_OPTION` | `154` | Channel 5 is the arm switch. |
+
+### Optional (recommended by the app's checklist)
+
+| Parameter | Value | Note |
+| --- | --- | --- |
+| `ATC_INPUT_TC` | `0.15`–`0.25` | Softer FC response to commanded attitude. |
+| `INS_LOG_BAT_MASK` | `1` | Needed for FFT vibration analysis. |
+| `LOG_BACKEND_TYPE` | `1` | SD card logs. Crash diagnosis impossible without this. |
+| `ANGLE_MAX` | `4000` | Centi-degrees. 40° max lean in ALT_HOLD / STABILIZE. |
+| `PILOT_SPEED_UP` | `2500` | 25 m/s climb limit (ALT_HOLD only). |
+| `PILOT_SPEED_DN` | `250` | 2.5 m/s descent limit (ALT_HOLD only). |
+| `PILOT_ACCEL_Z` | `500` | 5 m/s² vertical accel limit. |
+| `MOT_HOVER_LEARN` | `2` | Learns and saves hover throttle. |
+| `ACRO_THR_MID` | `0` | 0 = ACRO mid-stick uses MOT_THST_HOVER. |
+
+### GPS / compass (write these only if using geofence or RTL-on-Jetson-loss)
+
+| Parameter | Value | Note |
+| --- | --- | --- |
+| `COMPASS_ENABLE` | `1` | Required for EKF to use GPS. |
+| `COMPASS_USE` | `1` | |
+| `COMPASS_AUTODEC` | `1` | Auto magnetic declination from GPS. |
+| `GPS1_TYPE` | `9` (DroneCAN) or `1` (serial auto) | Depending on your GPS wiring. |
+| `GPS_AUTO_CONFIG` | `1` | |
+| `EK3_SRC1_POSXY` | `3` | GPS as horizontal position source. |
+| `EK3_SRC1_VELXY` | `3` | GPS as velocity source. |
+| `EK3_SRC1_POSZ` | `1` | Baro as altitude source. |
+| `EK3_SRC1_YAW` | `1` | Compass as heading source. |
+| `FS_EKF_ACTION` | `1` (LAND) | EKF failure lands; prevents RTL fighting a bad EKF. |
+| `FENCE_ENABLE` | `0` | We use the app's geofence, not the FC's. |
+
+### Return-to-launch tuning (if FS_GCS_ENABLE=1 or you use geofence)
+
+| Parameter | Value | Note |
+| --- | --- | --- |
+| `RTL_ALT` | `1500` (15 m) | RTL cruise altitude above home. |
+| `RTL_SPEED` | `0` (use WPNAV_SPEED) | 0 means "use the waypoint-nav speed". |
+| `RTL_LOIT_TIME` | `5000` (5 s) | Loiter time over home before descent. |
+| `RTL_ALT_FINAL` | `0` (land) | 0 = land at home. |
+
+### Changing parameters from the Jetson (no Mission Planner needed)
+
+For the two new mandatory failsafe params:
+```bash
+sudo systemctl stop wasp-tracker        # release the serial port
+~/Documents/Interceptor/.env/yolo/bin/python3 \
+  ~/Documents/Interceptor/scripts/set-fc-failsafe.py
+sudo systemctl start wasp-tracker
+```
+
+For everything else — easiest is Mission Planner over USB from a laptop.
+
+### After writing parameters
+
+1. Verify in Mission Planner: Refresh Params → search for each name → confirm the value.
+2. Restart the app on the Jetson so it re-reads the new values:
+   ```bash
+   sudo systemctl --user restart wasp-tracker
+   ```
+3. On the phone, try to ARM. If a mandatory param is missing or wrong, the ARM button
+   stays grey and shows the specific parameter that failed under it.

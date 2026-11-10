@@ -959,6 +959,12 @@ class ArduPilotAcro(FcBackend):
         self.fltmode_ch = 5
         self.flight_modes = None
         self._mode_switch = None
+
+        # Pilot-throttle takeover: latched True once RC_CHANNELS_RAW shows
+        # the pilot's physical throttle stick above PILOT_THR_TAKEOVER_FRAC
+        # of full travel while WASP is driving.  Resets on fresh arm.
+        self._pilot_throttle_takeover = False
+
         # Seeker missions (seeker_missions.py): GUIDED telemetry, every ACK,
         # message counts, and a mute that stops everything the Jetson sends
         # to the FC (the link-loss test).
@@ -1055,6 +1061,8 @@ class ArduPilotAcro(FcBackend):
             self._baro_ref = self._baro[1]
         if self.armed and not self._was_armed:
             self._armed_t = self._heartbeat_t
+            # Fresh arm: clear any latched takeover from a previous flight.
+            self._pilot_throttle_takeover = False
         elif not self.armed:
             self._armed_t = None
         self._was_armed = self.armed
@@ -1179,7 +1187,8 @@ class ArduPilotAcro(FcBackend):
         self._param("FLTMODE_GCSBLOCK")
         for _p in ("RC_OVERRIDE_TIME", "ATC_INPUT_TC", "ATC_ACCEL_R_MAX",
                    "ATC_ACCEL_P_MAX", "LOG_BACKEND_TYPE", "LOG_BITMASK",
-                   "INS_LOG_BAT_MASK", "FS_GCS_ENABLE"):
+                   "INS_LOG_BAT_MASK", "FS_GCS_ENABLE", "FS_GCS_TIMEOUT",
+                   "FS_OPTIONS"):
             self._param(_p)
         # The arm switch (the app arms through its function) and the compass.
         for _p in [f"RC{ch}_OPTION" for ch in range(5, 13)] + ["COMPASS_ENABLE"]:
@@ -1265,14 +1274,16 @@ class ArduPilotAcro(FcBackend):
 
 
     def _request_rc_channels_stream(self, hz=10.0):
-        try:
-            self.master.mav.command_long_send(
-                self.master.target_system, self.master.target_component,
-                mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
-                mavutil.mavlink.MAVLINK_MSG_ID_RC_CHANNELS,
-                int(1e6 / max(1.0, hz)), 0, 0, 0, 0, 0)
-        except Exception:
-            pass
+        interval_us = int(1e6 / max(1.0, hz))
+        for msg_id in (mavutil.mavlink.MAVLINK_MSG_ID_RC_CHANNELS,
+                       mavutil.mavlink.MAVLINK_MSG_ID_RC_CHANNELS_RAW):
+            try:
+                self.master.mav.command_long_send(
+                    self.master.target_system, self.master.target_component,
+                    mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
+                    msg_id, interval_us, 0, 0, 0, 0, 0)
+            except Exception:
+                pass
         try:
             self.master.mav.request_data_stream_send(
                 self.master.target_system, self.master.target_component,
@@ -1373,6 +1384,12 @@ class ArduPilotAcro(FcBackend):
                 self._check_echo(msg)
                 self._apply_pilot_throttle(msg)
                 self._apply_commit(msg)
+            elif t == "RC_CHANNELS_RAW":
+                # ArduPilot streams this alongside RC_CHANNELS; unlike RC_CHANNELS
+                # it reports the receiver's raw PWM even while our override is
+                # active.  Used to detect the pilot taking back control by
+                # pushing throttle past PILOT_THR_TAKEOVER_FRAC.
+                self._apply_pilot_throttle_raw(msg)
             elif t == "ATTITUDE":
                 now = perf_counter()
                 with self._lock:
@@ -1457,6 +1474,33 @@ class ArduPilotAcro(FcBackend):
         with self._lock:
             self._throttle_chan = chan
             self._throttle_frac = _clamp(frac, 0.0, 1.0)
+
+    def _apply_pilot_throttle_raw(self, rc_msg):
+        # RC_CHANNELS_RAW bypasses GCS overrides on ArduPilot, so this value
+        # is always the physical receiver reading.  Any time the pilot pushes
+        # their throttle past PILOT_THR_TAKEOVER_FRAC of full travel while
+        # WASP is driving, the latch fires and the mission releases.
+        if self._pilot_throttle_takeover:
+            return
+        cfg = self.rc.get("throttle")
+        if cfg is None or "throttle" not in self.axes:
+            return
+        chan = cfg["chan"]
+        if not (1 <= chan <= 18):
+            return
+        raw = getattr(rc_msg, f"chan{chan}_raw", 0)
+        if not raw or raw == 65535:
+            return
+        lo, hi = float(cfg["min"]), float(cfg["max"])
+        if hi - lo < 1.0:
+            return
+        if cfg.get("reversed"):
+            frac = (hi - raw) / (hi - lo)
+        else:
+            frac = (raw - lo) / (hi - lo)
+        frac = _clamp(frac, 0.0, 1.0)
+        if frac >= self.PILOT_THR_TAKEOVER_FRAC:
+            self._pilot_throttle_takeover = True
 
     def pitch_rad(self, max_age=0.5):
         with self._lock:
@@ -1556,10 +1600,10 @@ class ArduPilotAcro(FcBackend):
             return why
         if self.wasp_attitude() is None:
             return "no fresh attitude for WASP"
-        if self.SAFEDOWN_NEEDS_GPS and not self.gps_fix_ok():
-            return "waiting for a GPS fix: SafeDown flies back to the launch point"
-        if self.SAFEDOWN_NEEDS_GPS and not self.position_ok():
-            return "waiting for GPS: SafeDown needs a position to bring it home (compass calibrated?)"
+        # GPS / compass are NOT required to launch WASP.  The geofence arm
+        # path (mission.py) refuses arm when the fence is on without a GPS
+        # position, and only the fence-violation handler needs RTL.  The UI
+        # SAFEDOWN button lands in place and needs no position.
         return ""
 
     def wasp_setup_error(self):
@@ -1580,6 +1624,16 @@ class ArduPilotAcro(FcBackend):
         block = int(self.params.get("FLTMODE_GCSBLOCK") or 0)
         if block & (self.GCSBLOCK_STABILIZE | self.GCSBLOCK_ALT_HOLD):
             return "SafeDown needs FLTMODE_GCSBLOCK to allow STABILIZE and ALT_HOLD"
+        # Jetson-failsafe: if the Jetson dies the FC must act on its own.
+        # Values: 1=RTL, 2=LAND, 3=SmartRTL, 4=SmartRTL-or-LAND, 5=TerminateLAND.
+        fs_gcs = int(self.params.get("FS_GCS_ENABLE") or 0)
+        if fs_gcs not in (1, 2, 3, 4, 5):
+            return ("WASP needs FS_GCS_ENABLE=1 (RTL) or 2 (LAND) so the FC "
+                    "catches a Jetson failure in flight and brings it down")
+        fs_timeout = self.params.get("FS_GCS_TIMEOUT")
+        if fs_timeout is not None and fs_timeout > 5.0:
+            return (f"FS_GCS_TIMEOUT={fs_timeout:g} s is too long; set it to "
+                    "2-5 s so the FC reacts quickly to a Jetson failure")
         if self.blockers:
             return self.blockers[0]
         channels = []
@@ -2028,6 +2082,11 @@ class ArduPilotAcro(FcBackend):
             return self.release()
         return self._steer_calibrated_pwm(pwm_by_axis)
 
+    # Pilot-throttle takeover: 0.70 means the pilot must push their stick
+    # clearly above mid (stock ArduPilot cuts motors below ~0.15 and hovers
+    # around 0.50, so 0.70 is a deliberate "I want control" input).
+    PILOT_THR_TAKEOVER_FRAC = 0.70
+
     def _steer_calibrated_pwm(self, pwm_by_axis):
         chans = [0] * 8
         sent = {}
@@ -2039,6 +2098,15 @@ class ArduPilotAcro(FcBackend):
             chans[cfg["chan"]-1] = int(pwm)
             sent[cfg["chan"]] = int(pwm)
         return self._commit_override(chans, sent)
+
+    def pilot_throttle_wants_takeover(self):
+        """Latched True once RC_CHANNELS_RAW (bypasses override) reports the
+        pilot's throttle stick above PILOT_THR_TAKEOVER_FRAC of full travel.
+        Resets on fresh arm."""
+        return self._pilot_throttle_takeover
+
+    def reset_pilot_throttle_takeover(self):
+        self._pilot_throttle_takeover = False
 
     def commit(self):
         with self._lock:
@@ -3331,23 +3399,19 @@ class AcroCommander:
         fresh = (now - ai_t) <= self.target_timeout and off is not None
         idle_why = b.idle_ready(allow_acro=True) if isinstance(b, ArduPilotAcro) else "Idle requires MAVLink"
         idle_ack = b._idle_mode_ack if isinstance(b, ArduPilotAcro) else None
-        # The pilot flipping the switch up to ALT_HOLD mid-launch hands WASP
-        # to SafeDown; any other position (STABILIZE) is the pilot flying.
+        # Takeover is now driven purely by the pilot's throttle stick: the
+        # peek mechanism in ArduPilotAcro samples the raw stick periodically,
+        # and `pilot_throttle_wants_takeover` latches True once it crosses
+        # the near-max threshold.  The pilot stays in ACRO throughout.
         switch = b.pilot_mode_switch() if isinstance(b, ArduPilotAcro) else None
         mav = isinstance(b, ArduPilotAcro)
-        want = SafeDown.SWITCH_MODE
-        pilot_safedown = bool(mav and b.linked and b.armed
-                              and (b.mode_name == want or (switch and switch[1] == want)))
-        takeover = bool(not ok and pilot_safedown and self.mission.wasp.enabled
-                        and self.mission.wasp.started is not None)
-        # STABILIZE: the catch, then the pilot's own flight.  Read from the
-        # switch: SafeDown's own fallbacks put the FC in STABILIZE too.
-        pilot_catch = bool(mav and b.linked and b.armed and (
-            (switch and switch[1] == SafeDown.CATCH_MODE)
-            or (switch is None and b.mode_name == SafeDown.CATCH_MODE
-                and not self.mission.safedown.active)))
-        catch_takeover = bool(not ok and pilot_catch and self.mission.wasp.enabled
-                              and self.mission.wasp.started is not None)
+        pilot_safedown = False
+        pilot_catch = False
+        catch_takeover = False
+        takeover = bool(mav and b.linked and b.armed
+                        and self.mission.wasp.enabled
+                        and self.mission.wasp.started is not None
+                        and b.pilot_throttle_wants_takeover())
         safedown_ok = bool(mav and self.mission.wasp.enabled and not b.safedown_flight_ready())
         ctx = dict(gate_ok=ok, gate_why=why, pilot_takeover=takeover, pilot_safedown=pilot_safedown,
                    pilot_catch=pilot_catch, catch_takeover=catch_takeover,
