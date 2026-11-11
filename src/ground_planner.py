@@ -133,11 +133,10 @@ header h1{font-size:16px;letter-spacing:.3px}
 .row .unit{font-size:11px;color:var(--muted);min-width:24px}
 .drone-info{font-size:11px;color:var(--muted);line-height:1.5}
 .drone-info b{color:var(--text)}
-.camera{height:200px;border-top:1px solid var(--border);position:relative;overflow:hidden;flex:0 0 auto}
-.camera img{width:100%;height:100%;object-fit:contain;background:#000}
-.camera .label{position:absolute;top:4px;left:8px;font:600 11px sans-serif;color:var(--muted);
-  background:rgba(0,0,0,.6);padding:2px 6px;border-radius:4px}
 .empty-hint{font-size:12px;color:var(--muted);text-align:center;padding:16px 8px;line-height:1.6}
+.go-btn{background:var(--ok);color:#04121c;border:none;border-radius:6px;padding:5px 12px;
+  font:700 12px/1 sans-serif;cursor:pointer;letter-spacing:.5px}
+.go-btn:hover{opacity:.85}
 @media(max-width:700px){
   .main{flex-direction:column}
   .sidebar{width:100%;max-height:50vh;border-left:none;border-top:1px solid var(--border)}
@@ -168,10 +167,6 @@ header h1{font-size:16px;letter-spacing:.3px}
     <div id="target_list"></div>
     <div class="empty-hint" id="empty_hint">Click <b>Circle</b> or <b>Line</b> on the map toolbar, then click the map to draw targets.<br>Targets send to the Jetson automatically.</div>
   </div>
-</div>
-<div class="camera">
-  <span class="label">Camera</span>
-  <img id="cam" src="" alt="camera feed">
 </div>
 
 <script>
@@ -295,6 +290,7 @@ function renderCards() {
     }
     card.innerHTML = '<h3><span class="dot" style="background:'+c+'"></span>T'+t.id+' '+typeLabel
       + '<span class="spacer"></span>'
+      + '<button class="go-btn" data-goidx="'+idx+'" title="Select this target on the drone">GO</button>'
       + '<input type="checkbox" '+(t.enabled?"checked":"")+ ' data-idx="'+idx+'" data-f="enabled" title="Enable/disable">'
       + '<button class="del-btn" data-delidx="'+idx+'" title="Delete">&times;</button></h3>'
       + '<div class="row"><label>Alt</label><input type="number" value="'+t.alt+'" step="5" data-idx="'+idx+'" data-f="alt"><span class="unit">m</span></div>'
@@ -313,6 +309,16 @@ function renderCards() {
   });
   list.querySelectorAll("[data-delidx]").forEach(function(btn){
     btn.addEventListener("click", function(){ removeTarget(parseInt(btn.dataset.delidx)); });
+  });
+  list.querySelectorAll("[data-goidx]").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var idx = parseInt(btn.dataset.goidx);
+      var t = targets[idx];
+      fetch("/drone/cmd?q=msn%3Dcue%3Aselect%3ATRK" + t.id).then(function(r){ return r.json(); }).then(function(j){
+        btn.textContent = j.ok === "" ? "SENT" : j.ok || "err";
+        setTimeout(function(){ btn.textContent = "GO"; }, 1500);
+      }).catch(function(){ btn.textContent = "offline"; setTimeout(function(){ btn.textContent = "GO"; }, 1500); });
+    });
   });
 }
 
@@ -429,7 +435,6 @@ function animateTargets() {
 }
 requestAnimationFrame(animateTargets);
 
-document.getElementById("cam").src = "/drone/stream";
 setInterval(pollDrone, 2000);
 pollDrone();
 setInterval(function(){
@@ -460,8 +465,9 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         elif path == "/drone/state":
             self._proxy_json(f"http://{JETSON_IP}:{JETSON_HTTP}/state")
-        elif path == "/drone/stream":
-            self._proxy_stream(f"http://{JETSON_IP}:{JETSON_HTTP}/stream.mjpg")
+        elif path == "/drone/cmd":
+            qs = urlparse(self.path).query
+            self._proxy_json(f"http://{JETSON_IP}:{JETSON_HTTP}/cmd?{qs}")
         elif path == "/api/status":
             with LOCK:
                 ntgt = len([t for t in STATE["targets"] if t.get("enabled") and (t.get("lat") or t.get("lon"))])
@@ -502,25 +508,6 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         except Exception as e:
             self._json({"error": str(e)})
-
-    def _proxy_stream(self, url):
-        try:
-            req = urllib.request.Request(url)
-            resp = urllib.request.urlopen(req, timeout=10)
-            ct = resp.headers.get("Content-Type", "multipart/x-mixed-replace; boundary=frame")
-            self.send_response(200)
-            self.send_header("Content-Type", ct)
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            while True:
-                chunk = resp.read(4096)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                self.wfile.flush()
-        except Exception:
-            self.send_error(502, "camera not reachable")
-
 
 _PKT_COUNT = [0]
 
@@ -588,7 +575,6 @@ def main():
     server = HTTPServer(("0.0.0.0", args.port), Handler)
     print(f"[GROUND PLANNER] http://localhost:{args.port}")
     print(f"[GROUND PLANNER] Jetson: {JETSON_IP}:{JETSON_HTTP} (HTTP), :{JETSON_AST} (ASTERIX UDP)")
-    print(f"[GROUND PLANNER] Camera: http://{JETSON_IP}:{JETSON_HTTP}/stream.mjpg")
     print(f"[GROUND PLANNER] Draw targets on the map — they send automatically.")
     try:
         server.serve_forever()
