@@ -96,7 +96,7 @@ class AsterixCue:
         self.port, self.mcast, self.iface = int(port), mcast or "", iface or "0.0.0.0"
         self.fresh_s = float(fresh_s)
         self.selected = None          # track key, or None: the nearest
-        self.error = "" if asterix is not None else "asterix_decoder not installed (pip install asterix_decoder)"
+        self.error = ""
         self.packets = self.records = self.bad = 0
         self.rx_t = None
         self._tracks = {}
@@ -188,7 +188,7 @@ class AsterixCue:
     def start(self):
         self._stop.clear()
         self.start_rfd()
-        if self._thread is not None or asterix is None:
+        if self._thread is not None:
             return self
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
