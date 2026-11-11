@@ -1,27 +1,32 @@
 #!/usr/bin/env python3
-"""Convert Interceptor example flight logs into the standardised log format.
+"""Package Interceptor flight logs for delivery.
 
 Reads the flight CSV, events JSONL and metadata JSON produced by
-make_example_flight.py and writes five files per flight:
+make_example_flight.py (or the real system) and creates a per-flight
+delivery folder containing:
 
-    L-FC_<flight_id>.csv      Autopilot log (attitude, PWM, vibration, height)
-    L-DET_<flight_id>.csv     Perception / detection log (per frame)
-    L-GDN_<flight_id>.csv     Guidance log (commanded rates, LOS, range)
-    L-EVT_<flight_id>.csv     Event log (mode changes, launch, lock, etc.)
-    L-BAT_<flight_id>.csv     Energy log (battery)
+    <flight_id>/
+        IKNOW/      Raw logs (control CSV, flight CSV, events, metadata, battery)
+        ELKAK/      Five standard-schema CSVs:
+            L-FC_<flight_id>.csv      Autopilot (attitude, PWM, vibration, height)
+            L-DET_<flight_id>.csv     Perception (per-frame detections)
+            L-GDN_<flight_id>.csv     Guidance (commands, LOS, range)
+            L-EVT_<flight_id>.csv     Events (mode changes, launch, lock, etc.)
+            L-BAT_<flight_id>.csv     Energy (battery)
 
 Usage:
     python src/tests/convert_logs_to_standard.py [src_dir] [dst_dir]
 
 Defaults:
     src_dir = examples/flight_logs
-    dst_dir = examples/standard_logs
+    dst_dir = examples/delivery
 """
 import csv
 import json
 import math
 import os
 import random
+import shutil
 import sys
 from pathlib import Path
 
@@ -389,20 +394,45 @@ def main(src_dir, dst_dir):
             print(f"Skipping {base}: missing csv or events", file=sys.stderr)
             continue
 
-        fid, *paths = convert_flight(csv_path, events_path, meta_path, dst)
+        # Per-flight folder with IKNOW (native) and ELKAK (standard) subfolders
+        flight_dir = dst / base
+        native_dir = flight_dir / "IKNOW"
+        standard_dir = flight_dir / "ELKAK"
+        native_dir.mkdir(parents=True, exist_ok=True)
+        standard_dir.mkdir(parents=True, exist_ok=True)
+
+        # Convert to standard format
+        fid, *paths = convert_flight(csv_path, events_path, meta_path, standard_dir)
+
+        # Copy native log files into native/
+        stamp = "_".join(base.split("_")[1:3])
+        native_files = []
+        for native in (csv_path, events_path, meta_path):
+            dest = native_dir / native.name
+            shutil.copy2(native, dest)
+            native_files.append(dest)
+        for extra in sorted(src.glob(f"*{stamp}*")):
+            if extra not in (csv_path, events_path, meta_path):
+                dest = native_dir / extra.name
+                shutil.copy2(extra, dest)
+                native_files.append(dest)
+
         print(f"\n{'=' * 60}")
         print(f"  {fid}")
         print(f"{'=' * 60}")
+        print(f"  IKNOW/")
+        for p in sorted(native_files):
+            print(f"    {p.stat().st_size:>9}  {p.name}")
+        print(f"  ELKAK/")
         for p in paths:
-            sz = p.stat().st_size
-            print(f"  {sz:>9}  {p.name}")
+            print(f"    {p.stat().st_size:>9}  {p.name}")
 
-    print(f"\nAll files written to {dst}")
+    print(f"\nAll flights written to {dst}")
     return 0
 
 
 if __name__ == "__main__":
     here = Path(__file__).resolve().parents[2]
     src = sys.argv[1] if len(sys.argv) > 1 else here / "examples" / "flight_logs"
-    dst = sys.argv[2] if len(sys.argv) > 2 else here / "examples" / "standard_logs"
+    dst = sys.argv[2] if len(sys.argv) > 2 else here / "examples" / "delivery"
     sys.exit(main(src, dst))
