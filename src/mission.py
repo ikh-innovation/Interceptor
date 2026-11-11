@@ -968,6 +968,26 @@ class Mission:
         self._pilot_catch = middle
         if abort:
             self._stop_test_target(now)
+        # Pilot throttle-up ALWAYS wins — in any phase, any mode, any
+        # SafeDown stage.  Checked here, before safedown/idle dispatch,
+        # so even a geofence-triggered or UI-button LAND is overridden.
+        if ctx.get("pilot_takeover"):
+            if self.safedown.active:
+                self.safedown.stop()
+                self._note("WASP: pilot took the throttle during SAFEDOWN — released", now)
+            elif self.idle.active:
+                self.idle.stop()
+                self._note("WASP: pilot took the throttle during IDLE — released", now)
+            else:
+                self._note("WASP: pilot took the throttle — every channel returned to the pilot", now)
+            w = self.wasp
+            if w.started is not None:
+                w.used = True
+            w.started = None
+            w.launch_t = None
+            self._run_t = None
+            self._set_phase("PILOT", now)
+            return {}
         if self.safedown.active:
             return self._safedown_cycle(now, ctx)
         if self.idle.active:
@@ -1140,16 +1160,8 @@ class Mission:
             else:
                 self._note("WASP SAFEDOWN: not in the air, every channel returned to the pilot", now)
             return {}
-        if w.started is not None and ctx.get("pilot_takeover"):
-            # Throttle-up takeover: release every override and leave the
-            # pilot flying in ACRO.  No SafeDown (that stays a UI button).
-            w.used = True
-            w.started = None
-            w.launch_t = None
-            self._run_t = None
-            self._set_phase("PILOT", now)
-            self._note("WASP: pilot took the throttle — every channel returned to the pilot", now)
-            return {}
+        # Note: pilot_takeover is handled at the top of cycle() (above the
+        # safedown/idle dispatch), so it works even when SafeDown is active.
         if not ctx.get("gate_ok"):
             self._stop_test_target(now)
             if self.phase not in ("PILOT", "WASP_DONE"):

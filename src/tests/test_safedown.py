@@ -189,6 +189,31 @@ class ShapeOfSafeDown(SafeDownFlight):
         self.assertIn("pilot took the throttle", self.m.event)
         self.assertIsNone(self.m.wasp.started)
 
+    def test_pilot_throttle_takeover_during_safedown_ui_button(self):
+        self.abort()
+        self.run_for(.5)
+        self.assertTrue(self.r.active)
+        self.tick(pilot_takeover=True)
+        self.assertFalse(self.r.active, "SafeDown must stop")
+        self.assertEqual(self.m.phase, "PILOT")
+        self.assertIn("pilot took the throttle during SAFEDOWN", self.m.event)
+
+    def test_pilot_throttle_takeover_during_safedown_geofence(self):
+        self.abort_rtl()
+        self.run_for(.5)
+        self.assertTrue(self.r.active)
+        self.tick(pilot_takeover=True)
+        self.assertFalse(self.r.active, "SafeDown must stop")
+        self.assertEqual(self.m.phase, "PILOT")
+        self.assertIn("pilot took the throttle during SAFEDOWN", self.m.event)
+
+    def test_pilot_throttle_takeover_during_descend_stage(self):
+        self.abort()
+        self.assertTrue(self.run_for(5, lambda: self.r.stage == "DESCEND"))
+        self.tick(pilot_takeover=True)
+        self.assertFalse(self.r.active, "SafeDown must stop even mid-DESCEND")
+        self.assertEqual(self.m.phase, "PILOT")
+
     def test_the_pilots_stabilize_is_his_own_flight(self):
         self.launch()
         self.fc.mode = self.fc.heartbeat = "STABILIZE"
