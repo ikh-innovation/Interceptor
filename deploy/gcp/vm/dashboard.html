@@ -94,7 +94,10 @@
     gap: 8px;
     word-break: break-all;
   }
-  .meta { font-size: 12px; color: var(--muted); }
+  .meta { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .status-ok { color: var(--ok); }
+  .status-err { color: var(--err); }
+  .status-wait { color: var(--muted); }
   .row { display: flex; gap: 8px; }
   .btn {
     flex: 1;
@@ -201,16 +204,35 @@
       card.className = "card";
       card.innerHTML = `
         <h2><span class="dot"></span>${p.name}</h2>
-        <div class="meta">
-          Host: ${host}<br/>
-          Since: ${new Date(p.last_start_time || Date.now()).toLocaleString()}<br/>
-          Conns: ${p.cur_conns ?? 0}
+        <div class="meta" id="meta-${sub}">
+          Camera: <span class="status-wait">checking…</span><br/>
+          Controller: <span class="status-wait">checking…</span>
         </div>
         <div class="row">
           <a class="btn" href="https://${host}/" target="_blank" rel="noopener">Open cockpit</a>
-          <a class="btn secondary" href="https://${host}/state" target="_blank" rel="noopener">State</a>
+          <a class="btn secondary" href="https://${host}/state" target="_blank" rel="noopener">Logs</a>
         </div>`;
+      fetchDroneStatus(host, sub);
       listEl.appendChild(card);
+    }
+  }
+
+  async function fetchDroneStatus(host, sub) {
+    const el = document.getElementById("meta-" + sub);
+    if (!el) return;
+    try {
+      const r = await fetch(`https://${host}/state`, { signal: AbortSignal.timeout(4000) });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const s = await r.json();
+      const camOk = s.cam_frame && !s.cam_error;
+      const ctrlOk = s.linked;
+      el.innerHTML =
+        `Camera: <span class="${camOk ? "status-ok" : "status-err"}">${camOk ? "connected" : (s.cam_error || "error")}</span><br/>` +
+        `Controller: <span class="${ctrlOk ? "status-ok" : "status-err"}">${ctrlOk ? "connected" : "error"}</span>`;
+    } catch {
+      el.innerHTML =
+        `Camera: <span class="status-err">unreachable</span><br/>` +
+        `Controller: <span class="status-err">unreachable</span>`;
     }
   }
 
