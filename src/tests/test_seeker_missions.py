@@ -519,17 +519,19 @@ def seek_run(answers=("yes",), lose_after=None, second_at=None, see_at=150.0, rf
 
 fc, sm, st = seek_run()
 h = sm.take_handover()
-check("SEEK: the camera sees it -> ALT_HOLD and the AI, no question", h is not None and fc.mode_name == "ALT_HOLD"
-      and fc.armed and st["asked"] == [], f"mode {fc.mode_name}, asked {st['asked']}")
+check("SEEK: the camera sees it -> engage question -> ALT_HOLD and the AI", h is not None and fc.mode_name == "ALT_HOLD"
+      and fc.armed and len(st["asked"]) == 1 and st["asked"][0][1] == "engage",
+      f"mode {fc.mode_name}, asked {st['asked']}")
 check("SEEK: no result screen over the video", sm.result is None)
 check("SEEK: stays on after the handover (AI state), not flying the drone", sm.active and not sm.blocking)
 check("SEEK: flew at the cue's height minus 'below'", abs(fc.alt - (80 - 15)) < 3, f"{fc.alt:.1f} m")
 
 fc, sm, st = seek_run(answers=("yes",), lose_after=25, second_at=60)
 kinds = [(x[1], x[2], x[3]) for x in st["asked"]]
-check("SEEK: cue lost -> waits; a new target asks once; YES flies to it and the AI takes it",
-      sm.take_handover() is not None and len(kinds) == 1 and kinds[0][0] in ("follow", "switch")
-      and kinds[0][1] == "TRK99" and sm.cue.selected == "TRK99", str(kinds))
+check("SEEK: cue lost -> waits; a new target asks once; YES flies to it; engage -> AI",
+      sm.take_handover() is not None and len(kinds) == 2
+      and kinds[0][0] in ("follow", "switch") and kinds[0][1] == "TRK99"
+      and kinds[1][0] == "engage" and sm.cue.selected == "TRK99", str(kinds))
 
 fc, sm, st = seek_run(answers=("yes", "yes"), second_at=8, see_at=-1, abort_after=120)
 kinds = [(x[1], x[2]) for x in st["asked"]]
@@ -544,7 +546,13 @@ check("SEEK: cue lost -> holds and waits (no RTL by itself)", sm.active and fc.a
 
 fc, sm, st = seek_run(rfd=True)
 check("SEEK: the cue over the RFD radio ($RFD lines) works the same", sm.take_handover() is not None
-      and fc.mode_name == "ALT_HOLD", f"mode {fc.mode_name}, asked {st['asked']}")
+      and fc.mode_name == "ALT_HOLD" and any(x[1] == "engage" for x in st["asked"]),
+      f"mode {fc.mode_name}, asked {st['asked']}")
+
+fc, sm, st = seek_run(answers=("no",), until=200)
+check("SEEK: engage NO -> reject target, hold and wait", sm.active and fc.armed and fc.mode_name == "GUIDED"
+      and any(x[1] == "engage" and x[3] == "no" for x in st["asked"])
+      and sm.run.get("seek") == "WAIT", f"seek {sm.run.get('seek')}, asked {st['asked']}")
 
 fc, sm, st = seek_run(stop_at_ai=False, abort_after=200, see_at=200.0, until=600)
 check("SEEK: ABORT while the AI flies -> RTL home", st.get("aborted") and not fc.armed and math.hypot(fc.n, fc.e) < 2,

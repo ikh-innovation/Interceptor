@@ -206,7 +206,8 @@ def describe(mid, p, lim):
                         f"Climb and turn to the ASTERIX target, follow it at {_fmt(p['speed'])} m/s, "
                         f"{_fmt(p['below'])} m under it, {_fmt(p['standoff'])} m short, nose on it "
                         "(a new target on the feed: asks to switch)",
-                        f"Camera on the target {_fmt(p['det_s'])} s: ALT_HOLD, the AI takes it. "
+                        f"Camera on the target {_fmt(p['det_s'])} s: asks ENGAGE? "
+                        "YES → ALT_HOLD, the AI takes it. NO → hold, wait for another target. "
                         "ABORT or the geofence: RTL"]
     return []
 
@@ -1848,16 +1849,17 @@ class SeekerMissions:
                 if self.now - sent >= self.RESEND_S:
                     sent = self.now
                     b.guided_goto(hold[0], hold[1], r["target_alt"] or p["cruise_alt"])
-            # The camera: a detection the AI would act on, held det_s: the AI
-            # takes it, no question (the questions are about the ASTERIX target).
             det_t, conf = self.ctx.get("det_t"), self.ctx.get("det_conf")
             seen = det_t is not None and self.now - det_t < 0.3 and conf is not None and conf >= mission.min_conf
             det_since = (det_since or self.now) if seen and r["seek"] == "FOLLOW" else None
             if det_since is not None and self.now - det_since >= p["det_s"]:
-                if r["offer"] is not None:
-                    self._event("camera has the target: the open question is dropped")
-                    r["offer"], r["answer"] = None, None
-                break
+                if r["offer"] is None or r["offer"]["kind"] != "engage":
+                    if r["offer"] is not None:
+                        r["offer"], r["answer"] = None, None
+                    cue_label = (r["cue"] or {}).get("label", "target")
+                    self._offer("engage", r["cue"],
+                                f"Camera locked on {cue_label}: ENGAGE the AI?")
+                    det_since = None
             yield
         self._at(5)
         cue = r["cue"] or {}

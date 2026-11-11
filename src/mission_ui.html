@@ -655,6 +655,9 @@
   .mo-yes{background:var(--acc);color:var(--acc-ink)}
   .msn-offer.engage .mo-yes{background:#dc2626;color:#fff}
   @keyframes msnflash{from{background:#dc2626}to{background:#7f1d1d}}
+  .cue-bubbles{position:absolute;top:8px;right:8px;z-index:3;display:flex;gap:6px}
+  .cue-bubble{padding:5px 10px;border-radius:10px;background:rgba(245,158,11,.88);color:#1a1200;
+    font:700 13px/1 var(--mono);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.4);white-space:nowrap}
   @media (prefers-reduced-motion:reduce){.msn-alert,.mh-warn{animation:none}}
   .msn-sheet .body{padding-bottom:12px}
   .msn-limits{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 14px}
@@ -850,6 +853,7 @@
     <div class="test-prompt" id="test_prompt" role="status" hidden>Test mode is on.<br>Tap anywhere in the image to place a target.</div>
     <canvas class="tape" id="tape"></canvas>
     <div class="badge" id="badge" style="display:none"></div>
+    <div class="cue-bubbles" id="cue_bubbles"></div>
     <div class="nocam" id="nocam" hidden><b>No camera</b><span>The app is running. Video stays off until a camera delivers frames.</span></div>
     <button class="mount-flash" id="mount_flash" hidden><b>90°</b><span id="mount_flash_txt"></span></button>
     <div class="toast" id="toast"></div>
@@ -1112,7 +1116,7 @@
       <div class="mc-p"><span>Multicast group (empty: unicast)</span><span class="in"><input id="cue_mcast" type="text" spellcheck="false" placeholder="239.1.1.1"></span></div>
       <div class="mc-p"><span>Interface IP (multicast)</span><span class="in"><input id="cue_iface" type="text" spellcheck="false" placeholder="0.0.0.0"></span></div>
       <button class="fbtn" id="cue_apply">Apply</button></details>
-    <p class="test-help">The cue comes over the RFD radio (asterix062_bridge.py --rfd-dev on the laptop sends the followed track as $RFD lines) or as CAT062 over UDP. SEEK climbs and turns to it, follows it in GUIDED at the speed above with the nose on it and stops short of it. A new target on the feed asks to switch. When the camera holds the target it stops and asks: YES = ALT_HOLD and the AI (AUTO if AUTO is on), NO = wait here for another target. ABORT or the geofence: RTL. The pilot's mode switch takes over at any time.</p>
+    <p class="test-help">The cue comes over the RFD radio (asterix062_bridge.py --rfd-dev on the laptop sends the followed track as $RFD lines) or as CAT062 over UDP. SEEK climbs and turns to it, follows it in GUIDED at the speed above with the nose on it and stops short of it. A new target on the feed asks to switch. When the camera holds the target it asks ENGAGE? YES = ALT_HOLD and the AI takes over, NO = hold position and wait for another target. On the ground, a dismissed target stays as a yellow bubble on the video — tap it to re-ask. ABORT or the geofence: RTL. The pilot's mode switch takes over at any time.</p>
   </div>
 </div></div>
 <div class="sheet sub msn-sheet" id="sh_missions">
@@ -2101,6 +2105,7 @@
     }
     paintAlert(sk.alert);
     paintOffer(run ? run.offer : groundOffer(sk, j, busy), busy);
+    paintCueBubbles(sk, j);
     // A mission started from its own screen runs, and ends, on that screen.
     var here = $("sh_mission").classList.contains("open") && SK.view;
     if ($("sh_missions").classList.contains("open")) paintList(sk, j);
@@ -2169,7 +2174,26 @@
   }
   // On the ground: an ASTERIX target that arrives asks to LOCK it and SEEK; several
   // ask to choose one. Each target asks once (NO, or a tap, remembers it).
-  SK.known = {};
+  SK.known = {}; SK.dismissed = {};
+  function paintCueBubbles(sk, j) {
+    var box = $("cue_bubbles"); box.textContent = "";
+    if (j.armed || (sk.run && sk.run.id === "SEEK")) return;
+    var tracks = (sk.cue || {}).tracks || [];
+    tracks.forEach(function (t) {
+      if (!t.fresh || !SK.dismissed[t.key]) return;
+      var b = document.createElement("div");
+      b.className = "cue-bubble";
+      b.textContent = t.label;
+      b.onclick = function () {
+        delete SK.dismissed[t.key];
+        delete SK.known[t.key];
+      };
+      box.appendChild(b);
+    });
+    Object.keys(SK.dismissed).forEach(function (k) {
+      if (!tracks.some(function (t) { return t.key === k && t.fresh; })) delete SK.dismissed[k];
+    });
+  }
   function groundOffer(sk, j, busy) {
     var cue = sk.cue || {}, fresh = (cue.tracks || []).filter(function (t) { return t.fresh; });
     if (j.armed || busy || sk.run) return null;
@@ -2201,7 +2225,10 @@
     var o = OFFER; $("msn_offer").hidden = true; OFFER = null;
     if (o.kind === "lock" || o.kind === "pick") {
       (o.keys || [o.key]).forEach(function (k) { SK.known[k] = true; });
-      if (!yes) return;
+      if (!yes) {
+        (o.keys || [o.key]).forEach(function (k) { SK.dismissed[k] = true; });
+        return;
+      }
       SK.pick = true;
       if (o.kind === "lock") pick("msn=cue:select:" + o.key);
       else { openPop("pop_cue"); paintCue(seekerOf(LAST), LAST, false); }
