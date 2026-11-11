@@ -4,11 +4,11 @@ import math
 import os
 import struct
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter, sleep
 from wasp import WaspGuidance, interpolate_rotation
-from flight_logging import FlightLogs
+from flight_logging import BatteryLog, FlightLogs
 from safedown import SafeDown
 
 try:
@@ -952,6 +952,7 @@ class ArduPilotAcro(FcBackend):
         self._imu = None
         self._ekf = None
         self._home = self._gpos = self._gps = self._launch = None
+        self._gps_time_usec = None
         self._sensors = None
         self._armed_t = None
         self._arm_ack = None
@@ -1355,6 +1356,9 @@ class ArduPilotAcro(FcBackend):
                 with self._lock:
                     self._gps = (perf_counter(), int(msg.fix_type), int(msg.satellites_visible),
                                  msg.lat*1e-7, msg.lon*1e-7, msg.alt*1e-3)
+                    usec = getattr(msg, "time_usec", 0)
+                    if usec and usec > 1_000_000_000_000_000:
+                        self._gps_time_usec = (perf_counter(), usec)
             elif t == "EKF_STATUS_REPORT":
                 with self._lock:
                     self._ekf = (perf_counter(), int(msg.flags))
@@ -1881,6 +1885,14 @@ class ArduPilotAcro(FcBackend):
         if s is None or perf_counter() - s[0] > max_age or not self.params.get("COMPASS_ENABLE", 1):
             return False
         return all(v & self.MAG_SENSOR for v in s[1:])
+
+    def gps_utc(self, max_age=2.0):
+        """GNSS-derived UTC datetime, or None if stale/unavailable."""
+        with self._lock:
+            g = self._gps_time_usec
+        if g is None or perf_counter() - g[0] > max_age:
+            return None
+        return datetime.fromtimestamp(g[1] / 1e6, tz=timezone.utc)
 
     def gps_status(self, max_age=2.0):
         with self._lock:
@@ -2797,8 +2809,10 @@ class AcroCommander:
         self._log_fh = None
         self.log_path = None
         self._flight_logs = None
+        self._battery_log = None
         self.log_context = {}
         self._log_error = None
+        self._was_armed_log = False
         self._last_stt = 0.0
         self._t0 = perf_counter()
         self._warned_disarmed = False
@@ -2995,7 +3009,6 @@ class AcroCommander:
 
         if self.mission_enabled:
             self._build_mission()
-        self._open_log()
         self._stop.clear()
         self._tx = threading.Thread(target=self._tx_loop, daemon=True)
         self._tx.start()
@@ -3597,11 +3610,7 @@ class AcroCommander:
             except Exception:
                 pass
             self.backend.close()
-        if self._flight_logs is not None:
-            self._flight_logs.close(perf_counter())
-        if self._log_fh is not None:
-            self._log_fh.close()
-            self._log_fh = None
+        self._close_log()
 
     def _open_log(self):
         if not self.log_dir:
@@ -3624,13 +3633,33 @@ class AcroCommander:
                      "meas_roll_deg,meas_pitch_deg,meas_yaw_deg,"
                      "rollspeed_dps,pitchspeed_dps,yawspeed_dps,"
                      "height_m,climb_mps,vibe_x,vibe_y,vibe_z,clip,"
+                     "lat,lon,gps_fix,gps_sats,"
                      "det_age_s,det_conf,bbox_w,bbox_h,cap_age_s")
-            self._flight_logs = FlightLogs(self.log_dir, stamp, cols)
+            self._flight_logs = FlightLogs(self.log_dir, stamp, cols,
+                                                utc_fn=self._utc)
             cols = self._flight_logs.header
         self._log_fh.write(cols + "\n")
+        try:
+            self._battery_log = BatteryLog(self.log_dir, stamp,
+                                                utc_fn=self._utc)
+        except Exception:
+            self._battery_log = None
 
+    def _close_log(self):
+        if self._flight_logs is not None:
+            self._flight_logs.close(perf_counter())
+        if self._battery_log is not None:
+            self._battery_log.close()
+            self._battery_log = None
+        if self._log_fh is not None:
+            self._log_fh.close()
+            self._log_fh = None
 
     def _log_row(self, now, cmd, off, steer, written):
+        armed = self.armed
+        if armed and not self._was_armed_log:
+            self._open_log()
+        self._was_armed_log = armed
         if self._log_fh is None:
             return
         ex = "" if off is None else off[0]
@@ -3675,7 +3704,15 @@ class AcroCommander:
         except Exception as exc:
             if str(exc) != self._log_error:
                 self._log_error = str(exc)
-
+        if self._battery_log is not None:
+            b = self.backend
+            if isinstance(b, ArduPilotAcro):
+                tel = b.telemetry(max_age=2.0)
+                self._battery_log.record(now - self._t0, tel.get("battery_v"),
+                                         tel.get("current_a"),
+                                         tel.get("battery_pct"))
+        if not armed:
+            self._close_log()
 
     def _flight_log_state(self, now):
         m = self.mission
@@ -3720,7 +3757,27 @@ class AcroCommander:
 
     def logging_state(self):
         return dict(control_csv=self.log_path, control_error=self._log_error,
-                    flight=None if self._flight_logs is None else self._flight_logs.snapshot())
+                    flight=None if self._flight_logs is None else self._flight_logs.snapshot(),
+                    battery=None if self._battery_log is None else self._battery_log.snapshot())
+
+    def _utc(self):
+        """(iso_string, time_ref): prefer GNSS UTC, fall back to system clock."""
+        b = self.backend
+        gnss = b.gps_utc() if isinstance(b, ArduPilotAcro) else None
+        if gnss is not None:
+            return gnss.isoformat(timespec="milliseconds"), "GNSS"
+        return (datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                "SYS_UTC")
+
+    def _gps_csv(self):
+        b = self.backend
+        if not isinstance(b, ArduPilotAcro):
+            return ",,,,"
+        pos = b.position(max_age=2.0)
+        gps = b.gps_status(max_age=2.0)
+        lat = "" if pos is None else f"{pos[0]:.7f}"
+        lon = "" if pos is None else f"{pos[1]:.7f}"
+        return f",{lat},{lon},{gps['fix']},{gps['sats']}"
 
     def _mission_csv(self, now):
         b = self.backend
@@ -3749,6 +3806,7 @@ class AcroCommander:
                 + f",{'' if h is None else '%+.2f' % h[1]}"
                 + (",,,," if vib is None else
                    f",{vib['x']:.2f},{vib['y']:.2f},{vib['z']:.2f},{vib['clip']}")
+                + self._gps_csv()
                 + f",{'' if det_t is None else '%.3f' % (now - det_t)}"
                 + f",{f(conf, '%.3f')},{f(bw, '%d')},{f(bh, '%d')}"
                 + f",{f(age, '%.4f')}")

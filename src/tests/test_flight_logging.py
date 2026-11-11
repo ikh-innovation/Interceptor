@@ -53,8 +53,8 @@ class FlightLoggingTests(unittest.TestCase):
         self.t = perf_counter()
         self.c.update_log_context(cam_fps=60, processing_fps=60.2,
                                   detector="TensorRT", video_recording=False)
-        with patch.dict(os.environ, WASP_RUN_STAMP="test_run"), redirect_stdout(io.StringIO()):
-            self.c._open_log()
+        os.environ["WASP_RUN_STAMP"] = "test_run"
+        self.addCleanup(lambda: os.environ.pop("WASP_RUN_STAMP", None))
         self.tick()
 
     def tick(self, dt=.02):
@@ -259,6 +259,68 @@ class FlightLoggingTests(unittest.TestCase):
         self.tick()
         self.assertEqual(len(self.rows(Path(self.c.log_path))), before+1)
         self.assertEqual(self.rows(Path(self.c.log_path))[-1]["flight_mode"], "semi_auto")
+
+
+class BatteryLogTests(unittest.TestCase):
+    def test_battery_log_writes_at_1hz_and_integrates_energy(self):
+        from flight_logging import BatteryLog
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        bl = BatteryLog(tmp.name, "test_batt")
+        # Feed 50 Hz for 5 seconds at 25.0 V, 10 A
+        n = 250
+        dt = 0.02
+        for i in range(n):
+            bl.record(i * dt, 25.0, 10.0)
+        # The snapshot reports the live accumulated Wh
+        expected_wh = 25.0 * 10.0 * (n - 1) * dt / 3600.0
+        snap = bl.snapshot()
+        self.assertAlmostEqual(snap["consumed_wh"], expected_wh, delta=0.005)
+        bl.close()
+        rows = list(csv.DictReader(open(bl.path)))
+        # At 1 Hz over ~5 s we expect 5 rows
+        self.assertGreaterEqual(len(rows), 4)
+        self.assertLessEqual(len(rows), 6)
+        # The last written row's Wh is a bit behind the snapshot (next write
+        # hadn't fired yet), but it must be within one second of energy
+        last_wh = float(rows[-1]["consumed_wh"])
+        one_second_wh = 25.0 * 10.0 / 3600.0
+        self.assertAlmostEqual(last_wh, expected_wh, delta=one_second_wh + 0.001)
+        # Every row has the right columns
+        for r in rows:
+            for col in ("voltage_v", "current_a", "consumed_wh",
+                        "utc_time", "time_ref", "battery_pct"):
+                self.assertIn(col, r)
+            self.assertAlmostEqual(float(r["voltage_v"]), 25.0, places=1)
+            self.assertAlmostEqual(float(r["current_a"]), 10.0, places=0)
+            self.assertTrue(r["utc_time"].endswith("Z") or "+" in r["utc_time"])
+            self.assertEqual(r["time_ref"], "SYS_UTC")
+
+    def test_battery_log_skips_none_values(self):
+        from flight_logging import BatteryLog
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        bl = BatteryLog(tmp.name, "test_none")
+        bl.record(0.0, None, 10.0)
+        bl.record(0.02, 25.0, None)
+        bl.record(0.04, 25.0, 10.0)  # first valid row
+        bl.close()
+        rows = list(csv.DictReader(open(bl.path)))
+        self.assertEqual(len(rows), 1)
+        self.assertAlmostEqual(float(rows[0]["consumed_wh"]), 0.0, places=3)
+
+    def test_battery_log_snapshot(self):
+        from flight_logging import BatteryLog
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        bl = BatteryLog(tmp.name, "test_snap")
+        bl.record(0.0, 24.0, 15.0, battery_pct=85)
+        bl.record(1.0, 24.0, 15.0, battery_pct=84)
+        snap = bl.snapshot()
+        self.assertEqual(snap["rows"], 2)
+        self.assertGreater(snap["consumed_wh"], 0)
+        self.assertIsNone(snap["error"])
+        bl.close()
 
 
 if __name__ == "__main__":
