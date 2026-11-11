@@ -616,7 +616,21 @@ def main():
     t = threading.Thread(target=_emitter_loop_wrapped, daemon=True)
     t.start()
 
-    HTTPServer.allow_reuse_address = True
+    # Kill any previous instance on this port
+    import signal, subprocess as _sp
+    try:
+        out = _sp.check_output(["lsof", "-ti", f":{args.port}"], text=True).strip()
+        for pid in out.split():
+            pid = int(pid)
+            if pid != os.getpid():
+                os.kill(pid, signal.SIGTERM)
+                print(f"[GROUND PLANNER] Killed old process {pid} on port {args.port}")
+                time.sleep(0.3)
+    except Exception:
+        pass
+
+    import socketserver
+    socketserver.TCPServer.allow_reuse_address = True
     server = HTTPServer(("0.0.0.0", args.port), Handler)
     print(f"[GROUND PLANNER] http://localhost:{args.port}")
     print(f"[GROUND PLANNER] Jetson: {JETSON_IP}:{JETSON_HTTP} (HTTP), :{JETSON_AST} (ASTERIX UDP)")
