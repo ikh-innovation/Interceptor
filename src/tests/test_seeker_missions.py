@@ -431,7 +431,7 @@ for mid in ("M1", "M3"):
     check(f"{mid} without a geofence: runs (not needed)", res["verdict"] == "PASS", res["verdict"] + " " + res["why"])
 
 # ---- SEEK: fly the ASTERIX cue, ask, hand over to the AI -------------------------
-from asterix_cue import encode_cat062, rfd_line
+from asterix_cue import encode_cat062, encode_eketa_cat062, rfd_line
 
 
 def seek_run(answers=("yes",), lose_after=None, second_at=None, see_at=150.0, rfd=False, abort_after=None,
@@ -456,12 +456,16 @@ def seek_run(answers=("yes",), lose_after=None, second_at=None, see_at=150.0, rf
                 if rfd:
                     sm.cue.ingest_rfd(rfd_line(lat, lon, 180.0, "MSL"), now=k.t)
                 else:
-                    tr.append(dict(icao=0x3C0A55, track_no=12, lat=lat, lon=lon, alt_ft=180.0/0.3048, vx=0, vy=3))
+                    tr.append(dict(track_no=12, lat=lat, lon=lon, h_msl_m=180.0, vx=0, vy=3))
             if second_at is not None and k.t - t0 >= second_at:
                 lat, lon = track(2)
-                tr.append(dict(icao=0xF00099, track_no=99, lat=lat, lon=lon, alt_ft=170.0/0.3048))
+                tr.append(dict(track_no=99, lat=lat, lon=lon, h_msl_m=170.0))
             if tr:
-                sm.cue.ingest(encode_cat062(tr), now=k.t)
+                for _t in tr:
+                    _t.setdefault("vx", 0.0); _t.setdefault("vy", 0.0)
+                    _t.setdefault("azimuth_deg", 0.0); _t.setdefault("elevation_deg", 0.0)
+                    _t.setdefault("slant_range_m", 0.0); _t.setdefault("hrel_m", 0.0)
+                sm.cue.ingest(encode_eketa_cat062(tr), now=k.t)
         r = sm.run
         live = r and r.get("cue")
         if live:
@@ -525,12 +529,12 @@ fc, sm, st = seek_run(answers=("yes",), lose_after=25, second_at=60)
 kinds = [(x[1], x[2], x[3]) for x in st["asked"]]
 check("SEEK: cue lost -> waits; a new target asks once; YES flies to it and the AI takes it",
       sm.take_handover() is not None and len(kinds) == 1 and kinds[0][0] in ("follow", "switch")
-      and kinds[0][1] == "F00099" and sm.cue.selected == "F00099", str(kinds))
+      and kinds[0][1] == "TRK99" and sm.cue.selected == "TRK99", str(kinds))
 
 fc, sm, st = seek_run(answers=("yes", "yes"), second_at=8, see_at=-1, abort_after=120)
 kinds = [(x[1], x[2]) for x in st["asked"]]
 check("SEEK: a new target while following asks to switch; YES switches",
-      kinds[:1] == [("switch", "F00099")] and sm.cue.selected == "F00099", f"{kinds} selected {sm.cue.selected}")
+      kinds[:1] == [("switch", "TRK99")] and sm.cue.selected == "TRK99", f"{kinds} selected {sm.cue.selected}")
 check("SEEK: ABORT flies home (RTL)", not fc.armed and math.hypot(fc.n, fc.e) < 2 and sm.result
       and sm.result["verdict"] == "FAIL", (sm.result or {}).get("why"))
 

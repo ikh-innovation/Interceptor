@@ -396,17 +396,32 @@ def open_udp(port, mcast=None, iface="0.0.0.0"):
 
 
 def asterix_tracks(args):
+    from asterix_cue import parse_eketa_block
+
     try:
         import asterix
     except ImportError:
-        sys.exit("asterix_decoder is not installed: pip install asterix_decoder")
+        asterix = None
+
+    if asterix is None:
+        print("[ASTERIX] asterix_decoder not installed — using EKETA raw parser only")
 
     sock = open_udp(args.udp_port, args.mcast, args.iface)
     while True:
         data, addr = sock.recvfrom(65535)
+        # Try EKETA raw parser first (works without asterix_decoder).
+        eketa = parse_eketa_block(data)
+        if eketa:
+            for t in eketa:
+                if args.dump:
+                    pprint.pprint(t, width=120)
+                yield t
+            continue
+        if asterix is None:
+            continue
         try:
             records = asterix.parse(data)
-        except Exception as e:  # malformed or unsupported data block
+        except Exception as e:
             print(f"[ASTERIX] Parse error from {addr[0]}: {e}")
             continue
         for rec in records:

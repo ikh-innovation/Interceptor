@@ -234,8 +234,23 @@ class AsterixCue:
             self.ingest(data)
 
     def ingest(self, data, now=None):
-        """One UDP datagram of ASTERIX data blocks."""
+        """One UDP datagram of ASTERIX data blocks.  Tries the EKETA raw
+        parser first (no dependency); falls back to asterix_decoder."""
         now = perf_counter() if now is None else now
+        tracks = parse_eketa_block(data)
+        if tracks:
+            with self._lock:
+                for t in tracks:
+                    self._tracks[self.key(t)] = (now, t)
+                self.packets += 1
+                self.records += len(tracks)
+                self.rx_t = now
+                for k in [k for k, (t0, _) in self._tracks.items() if now - t0 > KEEP_S]:
+                    del self._tracks[k]
+            return len(tracks)
+        if asterix is None:
+            self.bad += 1
+            return 0
         try:
             records = asterix.parse(data)
         except Exception:
@@ -330,4 +345,137 @@ def encode_cat062(tracks, sac=0, sic=1):
         body += struct.pack(">H", int(t["track_no"]) & 0xFFFF)
         body += struct.pack(">h", int(round(t["alt_ft"]/100.0*4)))
         recs += fspec + body
+    return struct.pack(">BH", 62, 3 + len(recs)) + recs
+
+
+# ---- EKETA-EAB CAT062 with SP CH v1 (raw parser, no asterix_decoder needed) ----
+
+EKETA_FSPEC = b"\x9B\x0D\x01\x01\x02"
+_DEG25 = 180.0 / 2**25
+
+_CLASSIF = {0: "not_evaluated", 1: "unknown", 2: "friendly"}
+
+
+def parse_eketa_record(buf, off):
+    """Parse one EKETA CAT062 record starting at *off* (just past the data-block
+    header).  Returns (track_dict, next_offset) or (None, next_offset) on error.
+    The track_dict is compatible with the existing extract_track() output."""
+    start = off
+    if len(buf) - off < len(EKETA_FSPEC):
+        return None, len(buf)
+    fspec = buf[off:off + len(EKETA_FSPEC)]
+    off += len(EKETA_FSPEC)
+    if fspec != EKETA_FSPEC:
+        return None, off
+
+    need = 2 + 3 + 8 + 4 + 2 + 1   # I010 + I070 + I105 + I185 + I040 + I080
+    if len(buf) - off < need:
+        return None, len(buf)
+
+    sac, sic = buf[off], buf[off + 1]; off += 2
+    tod = int.from_bytes(buf[off:off + 3], "big"); off += 3
+    lat_raw, lon_raw = struct.unpack_from(">ii", buf, off); off += 8
+    vx_raw, vy_raw = struct.unpack_from(">hh", buf, off); off += 4
+    track_no = struct.unpack_from(">H", buf, off)[0]; off += 2
+    status = buf[off]; off += 1
+
+    lat = lat_raw * _DEG25
+    lon = lon_raw * _DEG25
+    vx = vx_raw * 0.25
+    vy = vy_raw * 0.25
+    tod_s = tod / 128.0
+
+    t = dict(
+        key=f"TRK{track_no}", icao=0xF00000 | (track_no & 0xFFFF),
+        synthetic_icao=True, callsign=f"TRK{track_no}",
+        track_no=track_no, sac=sac, sic=sic,
+        lat=lat, lon=lon,
+        gs_kt=math.hypot(vx, vy) * KT_PER_MS,
+        track_deg=math.degrees(math.atan2(vx, vy)) % 360.0 if (vx or vy) else 0.0,
+        vx=vx, vy=vy,
+        tod_s=tod_s, status=status,
+        alt_ft=None, roc_fpm=None, squawk=None,
+    )
+
+    # SP field
+    if off < len(buf):
+        sp_len = buf[off]
+        sp_end = off + sp_len
+        if sp_len >= 21 and sp_end <= len(buf) and buf[off + 1:off + 3] == b"CH":
+            sp = buf[off:sp_end]
+            ver = sp[3]
+            classif_byte = sp[4]
+            classif_code = (classif_byte >> 6) & 0x03
+            theta = struct.unpack_from(">H", sp, 5)[0] * 0.01
+            phi = struct.unpack_from(">h", sp, 7)[0] * 0.01
+            R = struct.unpack_from(">I", sp, 9)[0] * 0.01
+            hrel = struct.unpack_from(">i", sp, 13)[0] * 0.01
+            h_msl = struct.unpack_from(">i", sp, 17)[0] * 0.01
+
+            t["alt_ft"] = h_msl / FT_TO_M
+            t["sp"] = dict(
+                ver=ver, classif=_CLASSIF.get(classif_code, classif_code),
+                azimuth_deg=theta, elevation_deg=phi,
+                slant_range_m=R, hrel_m=hrel, h_msl_m=h_msl,
+            )
+        off = sp_end if sp_len > 0 else off + 1
+    return t, off
+
+
+def parse_eketa_block(data):
+    """Parse one ASTERIX data block in EKETA CAT062 format.
+    Returns a list of track dicts (may be empty)."""
+    if len(data) < 3:
+        return []
+    cat = data[0]
+    block_len = struct.unpack_from(">H", data, 1)[0]
+    if cat != 62 or block_len > len(data):
+        return []
+    tracks = []
+    off = 3
+    while off < block_len:
+        t, off = parse_eketa_record(data, off)
+        if t is not None:
+            tracks.append(t)
+    return tracks
+
+
+def encode_eketa_cat062(tracks, sac=0, sic=1, tod_s=None):
+    """Encode tracks in EKETA CAT062 format (FSPEC 9B 0D 01 01 02 + SP CH v1).
+    Each track dict: lat, lon, vx (m/s east), vy (m/s north), track_no,
+    h_msl_m, and optionally azimuth_deg, elevation_deg, slant_range_m, hrel_m,
+    classif ('not_evaluated'|'unknown'|'friendly')."""
+    from datetime import datetime, timezone
+    if tod_s is None:
+        now = datetime.now(timezone.utc)
+        tod_s = now.hour * 3600 + now.minute * 60 + now.second + now.microsecond / 1e6
+    tod_raw = int(round(tod_s * 128)) & 0xFFFFFF
+
+    recs = b""
+    for t in tracks:
+        body = EKETA_FSPEC
+        body += struct.pack(">BB", sac & 0xFF, sic & 0xFF)
+        body += tod_raw.to_bytes(3, "big")
+        lat_raw = int(round(t["lat"] / _DEG25))
+        lon_raw = int(round(t["lon"] / _DEG25))
+        body += struct.pack(">ii", lat_raw, lon_raw)
+        body += struct.pack(">hh", int(round(t.get("vx", 0.0) / 0.25)),
+                                   int(round(t.get("vy", 0.0) / 0.25)))
+        body += struct.pack(">H", int(t["track_no"]) & 0xFFFF)
+        body += b"\x80"   # I062/080: MON=1
+
+        # SP CH v1
+        classif_str = t.get("classif", "unknown")
+        classif_code = {"not_evaluated": 0, "unknown": 1, "friendly": 2}.get(classif_str, 1)
+        theta = int(round(t.get("azimuth_deg", 0.0) / 0.01)) & 0xFFFF
+        phi = int(round(t.get("elevation_deg", 0.0) / 0.01))
+        R = int(round(t.get("slant_range_m", 0.0) / 0.01)) & 0xFFFFFFFF
+        hrel = int(round(t.get("hrel_m", 0.0) / 0.01))
+        h_msl = int(round(t["h_msl_m"] / 0.01))
+        sp = struct.pack(">B2sB B HhI ii",
+                         21, b"CH", 1,
+                         (classif_code << 6) & 0xFF,
+                         theta, phi, R, hrel, h_msl)
+        body += sp
+        recs += body
     return struct.pack(">BH", 62, 3 + len(recs)) + recs
