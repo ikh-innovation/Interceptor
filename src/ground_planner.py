@@ -616,6 +616,7 @@ def main():
     t = threading.Thread(target=_emitter_loop_wrapped, daemon=True)
     t.start()
 
+    HTTPServer.allow_reuse_address = True
     server = HTTPServer(("0.0.0.0", args.port), Handler)
     print(f"[GROUND PLANNER] http://localhost:{args.port}")
     print(f"[GROUND PLANNER] Jetson: {JETSON_IP}:{JETSON_HTTP} (HTTP), :{JETSON_AST} (ASTERIX UDP)")
