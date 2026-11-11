@@ -1818,7 +1818,8 @@ class DroneTracker:
                                           fps=self.stream_fps,
                                           state_get=self.state_snapshot,
                                           command=self._command,
-                                          console_get=console_since).start()
+                                          console_get=console_since,
+                                          data_dir=str(_DATA_DIR)).start()
             except OSError as exc:
 
 
@@ -2278,7 +2279,18 @@ if __name__ == "__main__":
 
     os.environ.setdefault("TARGET_KIND", "DRONE")
 
+    _uploader = None
+    if os.environ.get("GCP_PROJECT"):
+        try:
+            from log_uploader import LogUploader
+            _uploader = LogUploader()
+            _uploader.start()
+        except Exception as _ue:
+            print(f"Log uploader disabled: {_ue}")
 
+    _commander = commander_from_env(log_dir=str(_DATA_DIR))
+    if _uploader is not None:
+        _commander.set_log_uploader(_uploader)
 
     DroneTracker(
         model_path   = model_pth,
@@ -2298,5 +2310,5 @@ if __name__ == "__main__":
                           if env_bool("STREAM", True) else None),
         stream_quality = int(os.environ.get("STREAM_QUALITY", "70")),
         stream_fps     = float(os.environ.get("STREAM_FPS", "15")),
-        commander    = commander_from_env(log_dir=str(_DATA_DIR)),
+        commander    = _commander,
     ).run()

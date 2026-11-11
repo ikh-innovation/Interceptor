@@ -374,19 +374,68 @@ def convert_flight(flight_csv, events_jsonl, metadata_json, dst_dir):
     return flight_id, fc_path, det_path, gdn_path, evt_path, bat_path
 
 
-def main(src_dir, dst_dir):
+def convert_in_place(flight_dir):
+    """Convert a single flight directory (new layout: data/flights/<flight_id>/).
+
+    Reads the raw files already in the directory and writes ELKAK/
+    alongside them.  Returns (flight_id, [standard paths]) or None.
+    """
+    flight_dir = Path(flight_dir)
+    base = flight_dir.name
+    meta_path = flight_dir / f"{base}.json"
+    csv_path = flight_dir / f"{base}.csv"
+    events_path = flight_dir / f"{base}.events.jsonl"
+    if not meta_path.exists() or not csv_path.exists() or not events_path.exists():
+        return None
+    standard_dir = flight_dir / "ELKAK"
+    standard_dir.mkdir(parents=True, exist_ok=True)
+    fid, *paths = convert_flight(csv_path, events_path, meta_path, standard_dir)
+    return fid, paths
+
+
+def main(src_dir, dst_dir=None):
     src = Path(src_dir)
-    dst = Path(dst_dir)
+
+    # New layout: src_dir is data/ containing flights/ subdirectory
+    flights_subdir = src / "flights"
+    if flights_subdir.is_dir():
+        count = 0
+        for flight_dir in sorted(flights_subdir.iterdir()):
+            if not flight_dir.is_dir() or not flight_dir.name.startswith("flight_"):
+                continue
+            if (flight_dir / "ELKAK").is_dir():
+                continue
+            result = convert_in_place(flight_dir)
+            if result is None:
+                print(f"Skipping {flight_dir.name}: missing files", file=sys.stderr)
+                continue
+            fid, paths = result
+            count += 1
+            print(f"\n{'=' * 60}")
+            print(f"  {fid}")
+            print(f"{'=' * 60}")
+            raw = [f.name for f in flight_dir.iterdir() if f.is_file()]
+            print(f"  RAW: {', '.join(sorted(raw))}")
+            print(f"  ELKAK/")
+            for p in paths:
+                print(f"    {p.stat().st_size:>9}  {p.name}")
+        if count == 0:
+            print("No unconverted flights found.", file=sys.stderr)
+        else:
+            print(f"\n{count} flight(s) converted in place.")
+        return 0
+
+    # Legacy flat layout: src_dir has flight_*.json directly
+    dst = Path(dst_dir) if dst_dir else src.parent / "delivery"
     dst.mkdir(parents=True, exist_ok=True)
 
-    # Find all flight metadata JSONs in the source
     metas = sorted(src.glob("flight_*.json"))
     if not metas:
         print(f"No flight_*.json found in {src}", file=sys.stderr)
         return 1
 
     for meta_path in metas:
-        base = meta_path.stem  # e.g. flight_20261110_101500_001_wasp
+        base = meta_path.stem
         csv_path = meta_path.with_suffix(".csv")
         events_path = meta_path.parent / (base + ".events.jsonl")
 
@@ -394,17 +443,14 @@ def main(src_dir, dst_dir):
             print(f"Skipping {base}: missing csv or events", file=sys.stderr)
             continue
 
-        # Per-flight folder with IKNOW (native) and ELKAK (standard) subfolders
         flight_dir = dst / base
         native_dir = flight_dir / "IKNOW"
         standard_dir = flight_dir / "ELKAK"
         native_dir.mkdir(parents=True, exist_ok=True)
         standard_dir.mkdir(parents=True, exist_ok=True)
 
-        # Convert to standard format
         fid, *paths = convert_flight(csv_path, events_path, meta_path, standard_dir)
 
-        # Copy native log files into native/
         stamp = "_".join(base.split("_")[1:3])
         native_files = []
         for native in (csv_path, events_path, meta_path):
@@ -434,5 +480,5 @@ def main(src_dir, dst_dir):
 if __name__ == "__main__":
     here = Path(__file__).resolve().parents[2]
     src = sys.argv[1] if len(sys.argv) > 1 else here / "examples" / "flight_logs"
-    dst = sys.argv[2] if len(sys.argv) > 2 else here / "examples" / "delivery"
+    dst = sys.argv[2] if len(sys.argv) > 2 else None
     sys.exit(main(src, dst))

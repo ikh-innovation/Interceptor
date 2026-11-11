@@ -184,7 +184,8 @@ class FlightLoggingTests(unittest.TestCase):
         self.assertNotIn("IDLE", {r["phase"] for r in self.rows(second)})
 
     def test_standby_does_not_create_a_flight_and_headers_are_unique(self):
-        self.assertFalse(list(self.directory.glob("flight_*")))
+        self.assertFalse(list((self.directory / "flights").glob("flight_*"))
+                         if (self.directory / "flights").exists() else [])
         with Path(self.c.log_path).open() as handle:
             reader = csv.DictReader(handle)
             self.assertEqual(len(reader.fieldnames), len(set(reader.fieldnames)))

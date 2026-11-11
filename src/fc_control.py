@@ -2880,6 +2880,7 @@ class AcroCommander:
         self.log_path = None
         self._flight_logs = None
         self._battery_log = None
+        self._log_uploader = None
         self.log_context = {}
         self._log_error = None
         self._was_armed_log = False
@@ -3702,7 +3703,8 @@ class AcroCommander:
                      "lat,lon,gps_fix,gps_sats,"
                      "det_age_s,det_conf,bbox_w,bbox_h,cap_age_s")
             self._flight_logs = FlightLogs(self.log_dir, stamp, cols,
-                                                utc_fn=self._utc)
+                                                utc_fn=self._utc,
+                                                uploader=self._log_uploader)
             cols = self._flight_logs.header
         self._log_fh.write(cols + "\n")
         try:
@@ -3821,10 +3823,14 @@ class AcroCommander:
         with self._lock:
             self.log_context.update(values)
 
+    def set_log_uploader(self, uploader):
+        self._log_uploader = uploader
+
     def logging_state(self):
         return dict(control_csv=self.log_path, control_error=self._log_error,
                     flight=None if self._flight_logs is None else self._flight_logs.snapshot(),
-                    battery=None if self._battery_log is None else self._battery_log.snapshot())
+                    battery=None if self._battery_log is None else self._battery_log.snapshot(),
+                    upload=None if self._log_uploader is None else self._log_uploader.snapshot())
 
     def _utc(self):
         """(iso_string, time_ref): prefer GNSS UTC, fall back to system clock."""

@@ -46,11 +46,7 @@
     max-width: 920px;
     margin: 0 auto;
   }
-  h1 {
-    font-size: 20px;
-    margin: 0;
-    letter-spacing: 0.3px;
-  }
+  h1 { font-size: 20px; margin: 0; letter-spacing: 0.3px; }
   .sub { color: var(--muted); font-size: 13px; }
   main {
     max-width: 920px;
@@ -139,6 +135,80 @@
     font-size: 11px;
     padding: 24px 16px 40px;
   }
+  /* Logs modal */
+  .modal-bg {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.6);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-bg.open { display: flex; }
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    max-width: 640px;
+    width: 90%;
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: 20px;
+  }
+  .modal h3 { margin: 0 0 12px; font-size: 17px; }
+  .modal .close {
+    float: right;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 22px;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .flight-card {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin: 8px 0;
+  }
+  .flight-card .fh {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .flight-card .fh b { font-size: 13px; }
+  .flight-card .fmeta { font-size: 11px; color: var(--muted); margin: 4px 0; }
+  .flight-card .fbtns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .flight-card .fbtns button,
+  .flight-card .fbtns a {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+  }
+  .flight-card .fbtns button:hover,
+  .flight-card .fbtns a:hover { background: var(--accent); color: #04121c; }
+  .flight-card .fbtns .converted { background: var(--ok); color: #04121c; border-color: var(--ok); }
+  .badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .05em;
+  }
+  .badge.recording { background: var(--err); color: #fff; animation: pulse 1.2s infinite; }
+  .badge.complete { background: var(--ok); color: #04121c; }
+  .badge.incomplete { background: var(--warn); color: #2b1d00; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+  .no-flights { color: var(--muted); font-size: 13px; padding: 16px 0; text-align: center; }
 </style>
 </head>
 <body>
@@ -159,6 +229,14 @@
   <div id="list" class="grid"></div>
 </main>
 
+<div class="modal-bg" id="logmodal">
+  <div class="modal">
+    <button class="close" onclick="closeLogModal()">&times;</button>
+    <h3 id="logmodal_title">Flight Logs</h3>
+    <div id="logmodal_body"><div class="no-flights">Loading…</div></div>
+  </div>
+</div>
+
 <footer>Interceptor relay · <span id="host"></span></footer>
 
 <script>
@@ -167,7 +245,6 @@
   const statusEl = document.getElementById("status");
   const pulseEl = document.getElementById("pulse");
   document.getElementById("host").textContent = location.host;
-
   const DOMAIN = location.host;
 
   async function fetchTunnels() {
@@ -210,7 +287,10 @@
         </div>
         <div class="row">
           <a class="btn" href="https://${host}/" target="_blank" rel="noopener">Open cockpit</a>
-          <a class="btn secondary" href="https://${host}/state" target="_blank" rel="noopener">Logs</a>
+          <button class="btn secondary" onclick="openLogModal('${p.name}','${host}')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:4px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            Logs
+          </button>
         </div>`;
       fetchDroneStatus(host, sub);
       listEl.appendChild(card);
@@ -233,6 +313,116 @@
       el.innerHTML =
         `Camera: <span class="status-err">unreachable</span><br/>` +
         `Controller: <span class="status-err">unreachable</span>`;
+    }
+  }
+
+  let currentLogHost = "";
+
+  function openLogModal(name, host) {
+    currentLogHost = host;
+    document.getElementById("logmodal_title").textContent = name + " — Flight Logs";
+    document.getElementById("logmodal_body").innerHTML = '<div class="no-flights">Loading…</div>';
+    document.getElementById("logmodal").classList.add("open");
+    loadFlightLogs(host);
+  }
+
+  function closeLogModal() {
+    document.getElementById("logmodal").classList.remove("open");
+  }
+
+  document.getElementById("logmodal").addEventListener("click", function(e) {
+    if (e.target === this) closeLogModal();
+  });
+
+  async function loadFlightLogs(host) {
+    const body = document.getElementById("logmodal_body");
+    try {
+      const r = await fetch(`https://${host}/logs`, { signal: AbortSignal.timeout(6000) });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      const flights = data.flights || [];
+      if (flights.length === 0) {
+        body.innerHTML = '<div class="no-flights">No flight logs recorded yet.</div>';
+        return;
+      }
+      body.innerHTML = "";
+      for (const f of flights) {
+        const card = document.createElement("div");
+        card.className = "flight-card";
+        const status = f.status || "unknown";
+        const badgeClass = status === "recording" ? "recording" : status === "complete" ? "complete" : "incomplete";
+        const dur = f.duration_s != null ? Math.round(f.duration_s) + "s" : "—";
+        const mode = f.flight_mode || "—";
+        const started = f.started_utc ? new Date(f.started_utc).toLocaleString() : "—";
+        const reason = f.end_reason || "";
+        const rawFiles = (f.raw_files || []).filter(n => !n.startsWith("ELKAK"));
+        const hasConverted = f.has_converted;
+
+        let btnsHtml = '';
+        for (const fn of rawFiles) {
+          btnsHtml += `<a href="https://${host}/logs/download/${f.flight_id}/${fn}" target="_blank" title="Download raw: ${fn}">${fn.split('.').pop().toUpperCase()}</a>`;
+        }
+        if (hasConverted) {
+          btnsHtml += `<button class="converted" onclick="showConverted('${host}','${f.flight_id}')">View converted</button>`;
+        } else if (status !== "recording") {
+          btnsHtml += `<button onclick="convertFlight(this,'${host}','${f.flight_id}')">Convert</button>`;
+        }
+
+        card.innerHTML = `
+          <div class="fh">
+            <b>${mode.toUpperCase()} #${f.flight_id.split('_').pop()}</b>
+            <span class="badge ${badgeClass}">${status.toUpperCase()}</span>
+          </div>
+          <div class="fmeta">
+            ${started} · ${dur} ${f.rows != null ? " · " + f.rows + " rows" : ""}
+            ${reason ? " · " + reason : ""}
+          </div>
+          <div class="fbtns">${btnsHtml}</div>`;
+        body.appendChild(card);
+      }
+    } catch (e) {
+      body.innerHTML = `<div class="no-flights" style="color:var(--err)">Failed to load logs: ${e.message}</div>`;
+    }
+  }
+
+  async function convertFlight(btn, host, flightId) {
+    btn.disabled = true;
+    btn.textContent = "Converting…";
+    try {
+      const r = await fetch(`https://${host}/logs/convert?id=${flightId}`, { signal: AbortSignal.timeout(15000) });
+      if (!r.ok) { const d = await r.json(); throw new Error(d.error || "HTTP " + r.status); }
+      const data = await r.json();
+      btn.className = "converted";
+      btn.textContent = "View converted";
+      btn.disabled = false;
+      btn.onclick = function() { showConverted(host, flightId); };
+    } catch (e) {
+      btn.textContent = "Error: " + e.message;
+      btn.disabled = false;
+    }
+  }
+
+  async function showConverted(host, flightId) {
+    const body = document.getElementById("logmodal_body");
+    body.innerHTML = '<div class="no-flights">Loading converted files…</div>';
+    try {
+      const r = await fetch(`https://${host}/logs`, { signal: AbortSignal.timeout(6000) });
+      const data = await r.json();
+      const f = (data.flights || []).find(x => x.flight_id === flightId);
+      if (!f) { body.innerHTML = '<div class="no-flights">Flight not found</div>'; return; }
+      let html = `<div style="margin-bottom:8px"><button class="btn secondary" style="flex:none;font-size:12px;padding:6px 12px" onclick="loadFlightLogs('${host}')">← Back to all flights</button></div>`;
+      html += `<div class="flight-card"><div class="fh"><b>Converted: ${flightId}</b></div>`;
+      html += '<div class="fbtns" style="margin-top:8px">';
+      const convFiles = (f.raw_files || []).filter(n => false);
+      const elkakFiles = ["L-FC_", "L-DET_", "L-GDN_", "L-EVT_", "L-BAT_"];
+      for (const prefix of elkakFiles) {
+        const fn = prefix + flightId + ".csv";
+        html += `<a href="https://${host}/logs/download/${flightId}/ELKAK/${fn}" target="_blank">${prefix.replace('_','')}</a>`;
+      }
+      html += '</div></div>';
+      body.innerHTML = html;
+    } catch (e) {
+      body.innerHTML = `<div class="no-flights" style="color:var(--err)">${e.message}</div>`;
     }
   }
 

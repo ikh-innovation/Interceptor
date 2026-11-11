@@ -17,7 +17,7 @@ class FlightLogs:
                "wasp_target_acquired", "cmd_roll_rate_dps",
                "cmd_pitch_rate_dps", "cmd_yaw_rate_dps", "cam_fps", "processing_fps")
 
-    def __init__(self, directory, stamp, header, utc_fn=None):
+    def __init__(self, directory, stamp, header, utc_fn=None, uploader=None):
         self.directory = Path(directory)
         self.stamp = stamp
         self.header = header + "," + ",".join(self.COLUMNS)
@@ -29,21 +29,27 @@ class FlightLogs:
         self._previous = {}
         self._last_now = None
         self._utc_fn = utc_fn
+        self._uploader = uploader
 
     def _start(self, now, state, metadata):
         kind = ("wasp" if state["wasp_enabled"] else
                 "auto" if state["auto_run"] or state["phase"].startswith("AUTO_")
                 else "semi_auto")
+        flights_dir = self.directory / "flights"
+        flights_dir.mkdir(parents=True, exist_ok=True)
         while True:
             self.counter += 1
             name = f"flight_{self.stamp}_{self.counter:03d}_{kind}"
-            path = self.directory / f"{name}.csv"
-            if not any(self.directory.glob(name + ".*")):
+            flight_dir = flights_dir / name
+            if not flight_dir.exists():
                 break
+        flight_dir.mkdir(parents=True, exist_ok=True)
+        path = flight_dir / f"{name}.csv"
         self._csv = path.open("x", buffering=1)
         self._csv.write(self.header + "\n")
         self._events = path.with_suffix(".events.jsonl").open("x", buffering=1)
         self.active = dict(flight_id=name, flight_mode=kind, started=now,
+                           flight_dir=str(flight_dir),
                            csv=str(path), events=str(path.with_suffix(".events.jsonl")),
                            metadata=str(path.with_suffix(".json")))
         self._previous = {}
@@ -52,6 +58,8 @@ class FlightLogs:
                               start_t_s=state["t_s"], rows=0,
                               settings=metadata())
         self._save_metadata()
+        if self._uploader is not None:
+            self._uploader.push_metadata(name, self._metadata)
         self._event(now, "start", phase=state["phase"])
 
 
@@ -75,6 +83,8 @@ class FlightLogs:
                      flight_mode=self.active["flight_mode"],
                      elapsed_s=round(max(0.0, now-self.active["started"]), 3), **data)
         self._events.write(json.dumps(event, allow_nan=False) + "\n")
+        if self._uploader is not None:
+            self._uploader.push_event(self.active["flight_id"], event)
 
     def _changes(self, now, state):
         for field in ("phase", "detection_fresh", "wasp_stage", "idle_stage"):
@@ -114,6 +124,8 @@ class FlightLogs:
                 self._changes(now, state)
                 self._csv.write(row + "\n")
                 self._metadata["rows"] += 1
+                if self._uploader is not None and self._metadata["rows"] % 50 == 0:
+                    self._uploader.push_row(self.active["flight_id"], values)
                 if not running:
                     reason = ("disarmed" if not state["armed"] else
                               "FC link lost" if not state["linked"] else
@@ -152,6 +164,8 @@ class FlightLogs:
                                   duration_s=round(max(0.0, now-self.active["started"]), 3),
                                   end_reason=reason, end_phase=phase)
             self._save_metadata()
+            if self._uploader is not None:
+                self._uploader.push_metadata(self.active["flight_id"], self._metadata)
         except Exception as exc:
             self.error = str(exc)
 
@@ -163,9 +177,39 @@ class FlightLogs:
         flight = self.active or self.last
         return dict(active=self.active is not None and self.error is None,
                     flight_mode=None if flight is None else flight["flight_mode"],
+                    flight_dir=None if flight is None else flight.get("flight_dir"),
                     csv=None if flight is None else flight["csv"],
                     events=None if flight is None else flight["events"],
                     metadata=None if flight is None else flight["metadata"], error=self.error)
+
+    @staticmethod
+    def list_flights(data_dir):
+        flights_dir = Path(data_dir) / "flights"
+        if not flights_dir.is_dir():
+            return []
+        result = []
+        for d in sorted(flights_dir.iterdir(), reverse=True):
+            if not d.is_dir() or not d.name.startswith("flight_"):
+                continue
+            meta_path = d / f"{d.name}.json"
+            info = dict(flight_id=d.name, flight_dir=str(d))
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text())
+                    info.update(flight_mode=meta.get("flight_mode"),
+                                status=meta.get("status"),
+                                started_utc=meta.get("started_utc"),
+                                ended_utc=meta.get("ended_utc"),
+                                duration_s=meta.get("duration_s"),
+                                rows=meta.get("rows"),
+                                end_reason=meta.get("end_reason"))
+                except Exception:
+                    info["status"] = "metadata_error"
+            raw_files = [f.name for f in d.iterdir() if f.is_file()]
+            info["raw_files"] = raw_files
+            info["has_converted"] = (d / "ELKAK").is_dir()
+            result.append(info)
+        return result
 
 
 class BatteryLog:

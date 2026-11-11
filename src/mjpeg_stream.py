@@ -42,10 +42,12 @@ class MJPEGServer:
 
     def __init__(self, port: int = 8080, quality: int = 70,
                  fps: float = 15.0, host: str = "0.0.0.0",
-                 state_get=None, command=None, console_get=None):
+                 state_get=None, command=None, console_get=None,
+                 data_dir=None):
         self.state_get = state_get
         self.command = command
         self.console_get = console_get
+        self.data_dir = data_dir
         self._lease = None
         self._lease_lock = threading.Lock()
         self.port    = int(port)
@@ -92,6 +94,12 @@ class MJPEGServer:
                     self._send_font(path[6:])
                 elif path.startswith("/img/") and path[5:] in _IMGS:
                     self._send_img(path[5:])
+                elif path == "/logs":
+                    self._logs_list()
+                elif path == "/logs/convert":
+                    self._logs_convert()
+                elif path.startswith("/logs/download/"):
+                    self._logs_download(path[len("/logs/download/"):])
                 else:
                     self.send_error(404)
 
@@ -131,6 +139,81 @@ class MJPEGServer:
                     since = 0
                 rows = server.console_get(since) if server.console_get else []
                 self._json([list(r) for r in rows])
+
+            def _logs_list(self):
+                if server.data_dir is None:
+                    self._json(dict(flights=[]))
+                    return
+                try:
+                    from flight_logging import FlightLogs
+                    flights = FlightLogs.list_flights(server.data_dir)
+                except Exception as exc:
+                    self._json(dict(flights=[], error=str(exc)))
+                    return
+                self._json(dict(flights=flights))
+
+            def _logs_convert(self):
+                if server.data_dir is None:
+                    self._json(dict(error="no data dir"), code=503)
+                    return
+                q = parse_qs(urlparse(self.path).query)
+                flight_id = (q.get("id") or [""])[0]
+                if not flight_id:
+                    self._json(dict(error="missing id parameter"), code=400)
+                    return
+                flight_dir = Path(server.data_dir) / "flights" / flight_id
+                if not flight_dir.is_dir():
+                    self._json(dict(error="flight not found"), code=404)
+                    return
+                try:
+                    import sys as _sys
+                    _sys.path.insert(0, str(Path(__file__).resolve().parent / "tests"))
+                    from convert_logs_to_standard import convert_in_place
+                    result = convert_in_place(flight_dir)
+                    if result is None:
+                        self._json(dict(error="missing raw log files"), code=404)
+                        return
+                    fid, paths = result
+                    self._json(dict(flight_id=fid,
+                                    files=[p.name for p in paths]))
+                except Exception as exc:
+                    self._json(dict(error=str(exc)), code=500)
+
+            def _logs_download(self, rest):
+                if server.data_dir is None:
+                    self.send_error(503, "no data dir")
+                    return
+                parts = rest.split("/", 2)
+                if len(parts) < 2:
+                    self.send_error(400, "use /logs/download/<flight_id>/<file>")
+                    return
+                flight_id, filename = parts[0], parts[1]
+                flight_dir = Path(server.data_dir) / "flights" / flight_id
+                # Allow files from flight dir or ELKAK subdir
+                fpath = flight_dir / filename
+                if not fpath.exists():
+                    fpath = flight_dir / "ELKAK" / filename
+                if not fpath.exists() or not fpath.is_file():
+                    self.send_error(404, "file not found")
+                    return
+                # Prevent directory traversal
+                try:
+                    fpath.resolve().relative_to(flight_dir.resolve())
+                except ValueError:
+                    self.send_error(403, "forbidden")
+                    return
+                data = fpath.read_bytes()
+                self.send_response(200)
+                ct = "text/csv" if fpath.suffix == ".csv" else (
+                     "application/json" if fpath.suffix in (".json", ".jsonl")
+                     else "application/octet-stream")
+                self.send_header("Content-Type", ct)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Content-Disposition",
+                                 f'attachment; filename="{fpath.name}"')
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(data)
 
             def _cmd(self):
                 if server.command is None:
