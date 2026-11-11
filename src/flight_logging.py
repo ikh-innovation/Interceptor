@@ -9,14 +9,15 @@ class FlightLogs:
     ACTIVE_PHASES = frozenset(("AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN",
                               "PUSH", "AI", "STOP", "WASP_FLIGHT", "IDLE",
                               "SAFEDOWN"))
-    COLUMNS = ("utc_time", "flight_mode", "flight_id", "flight_elapsed_s",
+    COLUMNS = ("utc_time", "time_ref", "flight_mode", "flight_id",
+               "flight_elapsed_s",
                "idle_limit_s", "idle_remaining_s", "idle_stage",
                "idle_height_target_m", "idle_heading_target_deg",
                "detection_fresh", "wasp_stage", "wasp_steering_blend",
                "wasp_target_acquired", "cmd_roll_rate_dps",
                "cmd_pitch_rate_dps", "cmd_yaw_rate_dps", "cam_fps", "processing_fps")
 
-    def __init__(self, directory, stamp, header):
+    def __init__(self, directory, stamp, header, utc_fn=None):
         self.directory = Path(directory)
         self.stamp = stamp
         self.header = header + "," + ",".join(self.COLUMNS)
@@ -27,6 +28,7 @@ class FlightLogs:
         self._csv = self._events = None
         self._previous = {}
         self._last_now = None
+        self._utc_fn = utc_fn
 
     def _start(self, now, state, metadata):
         kind = ("wasp" if state["wasp_enabled"] else
@@ -53,8 +55,12 @@ class FlightLogs:
         self._event(now, "start", phase=state["phase"])
 
 
-    @staticmethod
-    def _utc():
+    def _utc(self):
+        if self._utc_fn is not None:
+            utc_str, ref = self._utc_fn()
+            self._last_time_ref = ref
+            return utc_str
+        self._last_time_ref = "SYS_UTC"
         return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
     def _save_metadata(self):
@@ -91,7 +97,9 @@ class FlightLogs:
             except Exception as exc:
                 self._fail(exc)
         elapsed = "" if self.active is None else round(max(0.0, now-self.active["started"]), 3)
-        values = dict(state, utc_time=self._utc(),
+        utc_now = self._utc()
+        values = dict(state, utc_time=utc_now,
+                      time_ref=getattr(self, "_last_time_ref", "SYS_UTC"),
                       flight_mode="standby" if self.active is None else self.active["flight_mode"],
                       flight_id="" if self.active is None else self.active["flight_id"],
                       flight_elapsed_s=elapsed,
@@ -158,3 +166,65 @@ class FlightLogs:
                     csv=None if flight is None else flight["csv"],
                     events=None if flight is None else flight["events"],
                     metadata=None if flight is None else flight["metadata"], error=self.error)
+
+
+class BatteryLog:
+    """L-BAT: session-wide battery CSV at >= 1 Hz.
+
+    Columns: t_s, utc_time, voltage_v, current_a, battery_pct, consumed_wh
+    The file is opened once per session (same stamp as the control CSV)
+    and closed when the commander shuts down.
+    """
+    HEADER = "t_s,utc_time,time_ref,voltage_v,current_a,battery_pct,consumed_wh\n"
+    MIN_INTERVAL_S = 1.0          # write at most once per second
+
+    def __init__(self, directory, stamp, utc_fn=None):
+        self.path = str(Path(directory) / f"battery_{stamp}.csv")
+        self._fh = open(self.path, "w", buffering=1)
+        self._fh.write(self.HEADER)
+        self._utc_fn = utc_fn
+        self._prev_t = None
+        self._next_write = None
+        self._wh = 0.0
+        self.error = None
+        self.rows = 0
+
+    def record(self, t_s, voltage_v, current_a, battery_pct=None):
+        """Call every cycle (~50 Hz).  Integrates energy continuously,
+        writes a row at >= 1 Hz.  ``voltage_v`` or ``current_a`` may be
+        None when the FC hasn't reported yet; the row is skipped."""
+        if self._fh is None or self.error is not None:
+            return
+        if voltage_v is None or current_a is None:
+            return
+        try:
+            dt = 0.0 if self._prev_t is None else max(0.0, t_s - self._prev_t)
+            self._prev_t = t_s
+            self._wh += voltage_v * current_a * dt / 3600.0
+            if self._next_write is None or t_s >= self._next_write:
+                self._next_write = (t_s + self.MIN_INTERVAL_S
+                                    if self._next_write is None
+                                    else self._next_write + self.MIN_INTERVAL_S)
+                if self._utc_fn is not None:
+                    utc, ref = self._utc_fn()
+                else:
+                    utc = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+                    ref = "SYS_UTC"
+                pct = "" if battery_pct is None else f"{battery_pct}"
+                self._fh.write(f"{t_s:.3f},{utc},{ref},{voltage_v:.2f},"
+                               f"{current_a:.1f},{pct},{self._wh:.3f}\n")
+                self.rows += 1
+        except Exception as exc:
+            self.error = str(exc)
+
+    def close(self):
+        if self._fh is not None:
+            try:
+                self._fh.close()
+            except OSError:
+                pass
+            self._fh = None
+
+    def snapshot(self):
+        return dict(csv=self.path, rows=self.rows, consumed_wh=round(self._wh, 3),
+                    error=self.error)
