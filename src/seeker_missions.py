@@ -982,6 +982,16 @@ class SeekerMissions:
         sw = b.pilot_mode_switch()
         moved = sw is not None and r["switch0"] is not None and sw[0] != r["switch0"]
         mode = b.mode_name
+        if (not r.get("hands_off") and mode == "ACRO"
+                and r["cmd_mode"] and mode != r["cmd_mode"]):
+            thr = self._throttle()
+            if thr is not None and thr >= 0.70:
+                r["hands_off"] = True
+                self._event(f"PILOT TAKEOVER (ACRO + throttle {thr:.0%}): full manual control")
+                self.check("ACRO takeover", None, f"throttle {thr:.0%}")
+                r["state"], r["why"] = "PILOT", "the pilot has control"
+                self._replace(self._watch())
+                return
         late = self.now - r["cmd_t"] > 2.5
         if moved or (r["cmd_mode"] and mode != r["cmd_mode"] and late and mode not in FAILSAFE_MODES):
             r["hands_off"] = True
@@ -1780,6 +1790,7 @@ class SeekerMissions:
             b.change_speed(b.SPEED_CLIMB, cap)
         r["cue"], r["seek"] = None, "FOLLOW"
         hold, sent, det_since, lost_note = None, -1e9, None, False
+        cue_lost_since = None
         while True:
             t = r["tel"]
             pos = t["position"] or r["pos_last"]
@@ -1790,8 +1801,13 @@ class SeekerMissions:
                 r["offer"], r["answer"] = None, None
                 self._event(f"ANSWER {'YES' if ans[1] else 'NO'}: {o['text']}")
                 if o["kind"] in ("switch", "follow") and ans[1]:
+                    was_hold = r["seek"] == "HOLD"
                     self.cue.select(o["key"])
                     r["seek"], hold, det_since, lost_note = "FOLLOW", None, None, False
+                    cue_lost_since = None
+                    if was_hold:
+                        yield from self._mode("GUIDED")
+                        b.change_speed(b.SPEED_GROUND, p["speed"])
                 elif o["kind"] == "engage":
                     if ans[1]:
                         break
@@ -1811,9 +1827,21 @@ class SeekerMissions:
                         else:
                             self._offer("follow", x, f"New target {x['label']} ({x['dist_m']} m, {x['bearing']}°): follow it?")
                         break
-            tgt = self.cue.target(self.now, pos, home_amsl) if r["seek"] != "WAIT" else None
+            tgt = self.cue.target(self.now, pos, home_amsl) if r["seek"] not in ("WAIT", "HOLD") else None
             if tgt is not None and tgt["key"] in r["rejected"]:
                 tgt = None
+            if tgt is not None:
+                cue_lost_since = None
+                if r["seek"] == "HOLD":
+                    self._event(f"Target {tgt['label']} reacquired: resuming SEEK in GUIDED")
+                    self.check("Resume", True, f"target {tgt['label']}")
+                    self.cue.select(tgt["key"])
+                    yield from self._mode("GUIDED")
+                    b.change_speed(b.SPEED_GROUND, p["speed"])
+                    r["seek"], lost_note = "FOLLOW", False
+                    hold, sent, det_since = None, -1e9, None
+            elif r["seek"] == "FOLLOW" and cue_lost_since is None:
+                cue_lost_since = self.now
             # The camera has it: frame it as the AI wants it before YES, nose on
             # it and the target ON the aim mark (below the dashed line), so that
             # PUSH's lean brings it to the centre.
@@ -1839,16 +1867,24 @@ class SeekerMissions:
                 if self.now - sent >= 0.25:
                     sent = self.now
                     b.guided_goto(hold[0], hold[1], cam["alt"], yaw_deg=cam["yaw"])
-            elif pos is not None:
-                # No cue (lost, rejected or waiting): hold here and wait.
+            elif pos is not None and r["seek"] != "HOLD":
+                # No cue (lost, rejected or waiting): hold here in GUIDED briefly.
                 if hold is None:
                     hold = pos
                 if r["seek"] == "FOLLOW" and not lost_note:
                     lost_note = True
-                    self._event("ASTERIX cue lost: holding here until it comes back or a new target")
+                    self._event("ASTERIX cue lost: ALT_HOLD in 10 s if it doesn't return")
                 if self.now - sent >= self.RESEND_S:
                     sent = self.now
                     b.guided_goto(hold[0], hold[1], r["target_alt"] or p["cruise_alt"])
+                # Target lost > 10 s: switch to ALT_HOLD and hold altitude in place
+                if (cue_lost_since is not None and r["seek"] == "FOLLOW"
+                        and self.now - cue_lost_since >= 10.0):
+                    self._event("ASTERIX target lost > 10 s: ALT_HOLD, holding altitude")
+                    yield from self._mode("ALT_HOLD")
+                    r["state"], r["why"] = "HOLD", "target lost — holding altitude"
+                    r["seek"] = "HOLD"
+                    self.check("Hold", None, "ALT_HOLD, waiting for pilot or new target")
             det_t, conf = self.ctx.get("det_t"), self.ctx.get("det_conf")
             seen = det_t is not None and self.now - det_t < 0.3 and conf is not None and conf >= mission.min_conf
             det_since = (det_since or self.now) if seen and r["seek"] == "FOLLOW" else None
@@ -1871,8 +1907,6 @@ class SeekerMissions:
                    f"{cue.get('dist_m')} m away by ASTERIX")
         r["handover"] = True
         self.handover = self.now
-        # The AI flies now (mission.py); SEEK sends nothing but keeps the
-        # geofence, the altitude limit and ABORT (RTL) until it lands.
         r["state"], r["why"] = "AI", "the AI has the target"
         while self.b.armed:
             yield
@@ -1882,7 +1916,7 @@ class SeekerMissions:
     def blocking(self):
         """A run that flies the drone (the AI's own flight after a SEEK handover is not)."""
         r = self.run
-        return r is not None and r.get("state") != "AI"
+        return r is not None and r.get("state") not in ("AI", None)
 
     CAM_GAIN = 0.12          # m/s of climb per degree the target sits above the aim mark
     CAM_CLIMB_MAX = 2.5

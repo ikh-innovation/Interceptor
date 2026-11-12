@@ -271,6 +271,42 @@ header h1{font-size:16px;letter-spacing:.3px}
 .modal .btn-send:disabled{opacity:.35;cursor:not-allowed}
 .modal .btn-cancel{background:var(--bg);color:var(--err);border:1px solid var(--border)}
 .modal .btn-cancel:hover{border-color:var(--err)}
+/* SEEK button overlay */
+.seek-btn{position:absolute;bottom:20px;right:20px;z-index:1000;width:80px;height:80px;
+  border-radius:50%;border:3px solid var(--border);background:var(--panel);color:var(--muted);
+  font:700 14px/1 sans-serif;cursor:not-allowed;transition:all .3s;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:2px;box-shadow:0 4px 16px rgba(0,0,0,.4);
+  user-select:none;opacity:.7}
+.seek-btn .seek-icon{font-size:22px}
+.seek-btn.ready{background:#1b5e20;border-color:var(--ok);color:var(--ok);cursor:pointer;
+  opacity:1;animation:seekPulse 2s ease-in-out infinite}
+.seek-btn.ready:hover{background:#2e7d32;transform:scale(1.05)}
+.seek-btn.active{background:#7f1d1d;border-color:var(--err);color:var(--err);cursor:pointer;
+  opacity:1;animation:none}
+.seek-btn.active:hover{background:#991b1b}
+@keyframes seekPulse{0%,100%{box-shadow:0 0 8px rgba(74,222,128,.3)}
+  50%{box-shadow:0 0 24px rgba(74,222,128,.6)}}
+.seek-panel{padding:0 12px 12px;display:flex;flex-direction:column;gap:6px;
+  border-top:1px solid var(--border)}
+.seek-panel h3{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;
+  margin:8px 0 2px;cursor:pointer;user-select:none}
+.seek-panel h3:hover{color:var(--accent)}
+.fparam{display:flex;gap:6px;align-items:center;margin:2px 0}
+.fparam label{font-size:11px;color:var(--muted);min-width:70px}
+.fparam input{flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);
+  border-radius:6px;padding:3px 6px;font-size:12px;max-width:80px}
+.fparam input:disabled{opacity:.4}
+.fparam .unit{font-size:10px;color:var(--muted);min-width:28px}
+.msn-box{padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);
+  font-size:11px;line-height:1.6}
+.msn-box b{color:var(--text)}
+.msn-box .c-ok{color:var(--ok)}.msn-box .c-warn{color:var(--warn)}.msn-box .c-err{color:var(--err)}
+.offer-box{padding:10px 12px;border-radius:8px;background:#1a1a2e;border:1px solid var(--accent);margin:4px 0}
+.offer-box .offer-text{font-size:12px;margin:0 0 8px;line-height:1.4}
+.offer-btns{display:flex;gap:8px}
+.offer-btns button{flex:1;padding:8px;border:none;border-radius:6px;font:600 12px/1 sans-serif;cursor:pointer}
+.offer-yes{background:var(--ok);color:#000}
+.offer-no{background:var(--err);color:#fff}
 @media(max-width:700px){
   .main{flex-direction:column}
   .sidebar{width:100%;max-height:50vh;border-left:none;border-top:1px solid var(--border)}
@@ -291,6 +327,7 @@ header h1{font-size:16px;letter-spacing:.3px}
       <button id="draw_line">&#9586; Line</button>
     </div>
     <div class="draw-hint" id="draw_hint"></div>
+    <button class="seek-btn" id="seek_btn" disabled><span class="seek-icon">&#9678;</span><span id="seek_label">SEEK</span></button>
   </div>
   <div class="sidebar">
     <div class="mode-tabs">
@@ -307,6 +344,11 @@ header h1{font-size:16px;letter-spacing:.3px}
       </div>
       <div id="target_list"></div>
       <div id="mode_hint"></div>
+    </div>
+    <div id="seek_panel" class="seek-panel" style="display:none">
+      <h3 id="fp_toggle">&#9656; SEEKER FLIGHT PARAMETERS</h3>
+      <div id="fp_body" style="display:none"></div>
+      <div id="msn_status"></div>
     </div>
   </div>
 </div>
@@ -629,7 +671,7 @@ document.addEventListener("keydown",function(e){
 // ---- drone polling ----
 function pollDrone(){
   fetch("/drone/state").then(function(r){return r.ok?r.json():null;}).then(function(j){
-    if(!j){document.getElementById("drone_st").className="off";document.getElementById("drone_st").textContent="offline";return;}
+    if(!j){document.getElementById("drone_st").className="off";document.getElementById("drone_st").textContent="offline";updateSeek(null);return;}
     document.getElementById("d_mode").textContent=j.fc_mode||"--";
     document.getElementById("d_armed").textContent=j.armed?"YES":"no";
     document.getElementById("drone_st").className=j.linked?"":"off";
@@ -642,9 +684,11 @@ function pollDrone(){
     if(currentMode!=="elkak"){
       if(cue.packets!=null) document.getElementById("tx_n").textContent=cue.packets+" rx";
     }
+    updateSeek(m.seeker||null, m);
   }).catch(function(){
     document.getElementById("drone_st").className="off";
     document.getElementById("drone_st").textContent="offline";
+    updateSeek(null);
   });
 }
 function updateDrone(lat,lon,alt){
@@ -696,6 +740,135 @@ setInterval(function(){
     document.getElementById("tx_st").className=j.targets>0?"":"off";
   }).catch(function(){});
 },1000);
+
+// ---- SEEKER integration ----
+var seekReady=false, seekRunning=false, seekLastOfferN=null, fpOpen=false;
+
+function seekCmd(v){
+  return fetch("/drone/cmd?key=msn&value="+encodeURIComponent(v))
+    .then(function(r){return r.json();})
+    .catch(function(){return {};});
+}
+
+document.getElementById("fp_toggle").onclick=function(){
+  fpOpen=!fpOpen;
+  document.getElementById("fp_body").style.display=fpOpen?"":"none";
+  this.innerHTML=(fpOpen?"&#9662;":"&#9656;")+" SEEKER FLIGHT PARAMETERS";
+};
+
+document.getElementById("seek_btn").onclick=function(){
+  if(seekRunning){
+    seekCmd("abort");
+  } else if(seekReady){
+    modalOpen=true;
+    var root=document.getElementById("modal_root");
+    root.innerHTML='<div class="modal-overlay" id="modal_overlay"><div class="modal">'
+      +'<h2>&#9678; Confirm SEEK</h2>'
+      +'<p style="font-size:13px;color:var(--muted);margin:0 0 16px;line-height:1.5">'
+      +'Arm the drone and fly to the ASTERIX target?<br>The drone will take off autonomously in <b>GUIDED</b> mode.</p>'
+      +'<div class="btn-row">'
+      +'<button class="btn-cancel" id="m_cancel">Cancel</button>'
+      +'<button class="btn-send" id="m_send">&#9678; Start SEEK</button>'
+      +'</div></div></div>';
+    document.getElementById("m_cancel").onclick=function(){closeModal();};
+    document.getElementById("m_send").onclick=function(){closeModal();seekCmd("start:SEEK");};
+    document.getElementById("modal_overlay").onclick=function(e){if(e.target===this)closeModal();};
+  }
+};
+
+function updateSeek(sk, m){
+  var panel=document.getElementById("seek_panel");
+  var btn=document.getElementById("seek_btn");
+  var lbl=document.getElementById("seek_label");
+  if(!sk){
+    panel.style.display="none";
+    btn.className="seek-btn"; btn.disabled=true; lbl.textContent="SEEK";
+    return;
+  }
+  panel.style.display="";
+  var seek=sk.seek||{}, run=sk.run||null, cue=sk.cue||{};
+  var hasTgt=cue.target!=null;
+  var phase=(m||{}).phase||"";
+  seekRunning=run!=null && run.id==="SEEK";
+  seekReady=!!(seek.ready && hasTgt && !run && (phase==="PILOT") && !(m||{}).armed);
+
+  if(seekRunning){
+    btn.className="seek-btn active"; btn.disabled=false; lbl.textContent="ABORT";
+  } else if(seekReady){
+    btn.className="seek-btn ready"; btn.disabled=false; lbl.textContent="SEEK";
+  } else {
+    btn.className="seek-btn"; btn.disabled=true; lbl.textContent="SEEK";
+  }
+
+  renderFP(seek.params||[], !!run);
+  renderMsnStatus(run, cue, seek);
+}
+
+function renderFP(params, dis){
+  var body=document.getElementById("fp_body");
+  if(!params.length)return;
+  var key=params.map(function(p){return p.k+":"+p.v;}).join(",");
+  if(body.dataset.key===key && body.dataset.dis===String(dis))return;
+  body.dataset.key=key; body.dataset.dis=String(dis);
+  body.innerHTML="";
+  params.forEach(function(p){
+    var row=document.createElement("div"); row.className="fparam";
+    row.innerHTML='<label>'+p.t+'</label>'
+      +'<input type="number" value="'+p.v+'" step="'+(p.step||1)+'" min="'+(p.lo||0)+'" max="'+(p.hi||999)+'"'
+      +(dis?' disabled':'')+' data-pk="'+p.k+'">'
+      +'<span class="unit">'+p.u+'</span>';
+    body.appendChild(row);
+  });
+  if(!dis){
+    body.querySelectorAll("input").forEach(function(inp){
+      inp.addEventListener("change",function(){
+        seekCmd("set:SEEK:"+inp.dataset.pk+":"+inp.value);
+      });
+    });
+  }
+}
+
+function renderMsnStatus(run, cue, seek){
+  var el=document.getElementById("msn_status");
+  if(!run){
+    var tgt=cue.target;
+    if(tgt){
+      var info='<div class="msn-box"><span class="c-ok">&#9679;</span> Target: <b>'+tgt.label+'</b><br>'
+        +'Lat: '+tgt.lat.toFixed(5)+' Lon: '+tgt.lon.toFixed(5)+'<br>';
+      if(tgt.dist_m!=null) info+='Dist: '+tgt.dist_m+' m &nbsp; ';
+      if(tgt.speed!=null) info+='Spd: '+tgt.speed.toFixed(1)+' m/s';
+      if(seek.ready) info+='<br><span class="c-ok">&#10003; Ready to SEEK</span>';
+      else if(seek.why) info+='<br><span class="c-warn">'+seek.why+'</span>';
+      el.innerHTML=info+'</div>';
+    } else {
+      var n=(cue.tracks||[]).length;
+      if(n) el.innerHTML='<div class="msn-box"><span class="c-warn">&#9679;</span> '+n+' track(s), none fresh</div>';
+      else el.innerHTML='<div class="msn-box"><span class="c-err">&#9679;</span> No ASTERIX targets</div>';
+    }
+    return;
+  }
+  var sc=run.state==="PILOT"||run.state==="ABORTED"?"c-err"
+    :run.state==="AI"||run.state==="HOVER"||run.state==="DONE"?"c-ok":"c-warn";
+  var h='<div class="msn-box"><b class="'+sc+'">'+run.state+'</b> &mdash; '+(run.why||"")+'<br>';
+  if(run.alt!=null) h+='Alt: <b>'+run.alt+' m</b> &nbsp; ';
+  if(run.gs!=null) h+='GS: <b>'+run.gs+' m/s</b> &nbsp; ';
+  if(run.home_m!=null) h+='Home: <b>'+run.home_m+' m</b><br>';
+  if(run.elapsed_s!=null) h+='Time: '+run.elapsed_s+'s &nbsp; ';
+  if(run.battery_pct!=null) h+='Batt: '+run.battery_pct+'%';
+  h+='</div>';
+  el.innerHTML=h;
+  if(run.offer){
+    var on=run.offer.n;
+    if(seekLastOfferN!==on){
+      seekLastOfferN=on;
+    }
+    el.innerHTML+='<div class="offer-box"><div class="offer-text">'+run.offer.text+'</div>'
+      +'<div class="offer-btns">'
+      +'<button class="offer-no" onclick="seekCmd(\'offer:no:'+on+'\')">No</button>'
+      +'<button class="offer-yes" onclick="seekCmd(\'offer:yes:'+on+'\')">Yes</button>'
+      +'</div></div>';
+  } else { seekLastOfferN=null; }
+}
 
 renderMode();
 </script></body></html>"""
