@@ -961,10 +961,15 @@ class ArduPilotAcro(FcBackend):
         self.flight_modes = None
         self._mode_switch = None
 
-        # Pilot-throttle takeover: latched True once RC_CHANNELS_RAW shows
-        # the pilot's physical throttle stick above PILOT_THR_TAKEOVER_FRAC
-        # of full travel while WASP is driving.  Resets on fresh arm.
+        # Pilot takeover: latched True when the pilot signals intent.
+        # Primary: a dedicated button on TAKEOVER_CH goes LOW (<=1200 PWM).
+        # Fallback: RC_CHANNELS_RAW throttle above PILOT_THR_TAKEOVER_FRAC.
+        # Resets on fresh arm.
         self._pilot_throttle_takeover = False
+        self._rcraw_count = 0
+        self._rcraw_request_t = 0.0
+        self.takeover_ch = int(os.environ.get("WASP_TAKEOVER_CH", 8))
+        self.TAKEOVER_PWM_LOW = 1200
 
         # Seeker missions (seeker_missions.py): GUIDED telemetry, every ACK,
         # message counts, and a mute that stops everything the Jetson sends
@@ -1394,6 +1399,7 @@ class ArduPilotAcro(FcBackend):
                 # active.  Used to detect the pilot taking back control by
                 # pushing throttle past PILOT_THR_TAKEOVER_FRAC.
                 self._apply_pilot_throttle_raw(msg)
+                self._rcraw_count += 1
             elif t == "ATTITUDE":
                 now = perf_counter()
                 with self._lock:
@@ -1480,6 +1486,12 @@ class ArduPilotAcro(FcBackend):
         with self._lock:
             self._throttle_chan = chan
             self._throttle_frac = _clamp(frac, 0.0, 1.0)
+        if not self._pilot_throttle_takeover and self._rcraw_count == 0:
+            sent = self._sent_pwm.get(chan)
+            if sent is not None:
+                full_frac = (raw - lo) / (hi - lo) if not cfg.get("reversed") else (hi - raw) / (hi - lo)
+                if abs(int(raw) - int(sent)) > 100 and full_frac >= self.PILOT_THR_TAKEOVER_FRAC:
+                    self._pilot_throttle_takeover = True
 
     def _apply_pilot_throttle_raw(self, rc_msg):
         # RC_CHANNELS_RAW bypasses GCS overrides on ArduPilot, so this value
@@ -2122,6 +2134,30 @@ class ArduPilotAcro(FcBackend):
     def reset_pilot_throttle_takeover(self):
         self._pilot_throttle_takeover = False
 
+    def ensure_rc_channels_raw(self):
+        """If RC_CHANNELS_RAW has never arrived, aggressively request it."""
+        now = perf_counter()
+        if self._rcraw_count > 0 or now - self._rcraw_request_t < 0.2:
+            return
+        self._rcraw_request_t = now
+        try:
+            self.master.mav.command_long_send(
+                self.master.target_system, self.master.target_component,
+                mavutil.mavlink.MAV_CMD_REQUEST_MESSAGE, 0,
+                mavutil.mavlink.MAVLINK_MSG_ID_RC_CHANNELS_RAW,
+                0, 0, 0, 0, 0, 0)
+        except Exception:
+            pass
+        if self._rcraw_count == 0 and now - self._rcraw_request_t < 3.0:
+            try:
+                self.master.mav.command_long_send(
+                    self.master.target_system, self.master.target_component,
+                    mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
+                    mavutil.mavlink.MAVLINK_MSG_ID_RC_CHANNELS_RAW,
+                    50000, 0, 0, 0, 0, 0)
+            except Exception:
+                pass
+
     def commit(self):
         with self._lock:
             return self._commit
@@ -2252,6 +2288,10 @@ class ArduPilotAcro(FcBackend):
             raw = getattr(rc_msg, f"chan{self.fltmode_ch}_raw", 0)
             if raw and raw != 65535:
                 self._mode_switch = (now, int(raw))
+            if self.takeover_ch and not self._pilot_throttle_takeover:
+                traw = getattr(rc_msg, f"chan{self.takeover_ch}_raw", 0)
+                if traw and traw != 65535 and traw <= self.TAKEOVER_PWM_LOW:
+                    self._pilot_throttle_takeover = True
             for axis, cfg in self.rc.items():
                 if axis not in ("roll", "pitch", "yaw", "throttle"):
                     continue
@@ -3406,6 +3446,8 @@ class AcroCommander:
         ok, why = self._mission_gate()
         self._mission_why = why
         b = self.backend
+        if isinstance(b, ArduPilotAcro) and self.mission.wasp.started is not None:
+            b.ensure_rc_channels_raw()
         h = b.height(max_age=.5) if isinstance(b, ArduPilotAcro) else b.height() if hasattr(b, "height") else None
         with self._lock:
             cmd = dict(self._cmd)

@@ -985,10 +985,12 @@ class SeekerMissions:
         if (not r.get("hands_off") and mode == "ACRO"
                 and r["cmd_mode"] and mode != r["cmd_mode"]):
             thr = self._throttle()
-            if thr is not None and thr >= 0.70:
+            ch8 = callable(getattr(b, "pilot_throttle_wants_takeover", None)) and b.pilot_throttle_wants_takeover()
+            if ch8 or (thr is not None and thr >= 0.70):
+                reason = "CH8 button" if ch8 else f"throttle {thr:.0%}"
                 r["hands_off"] = True
-                self._event(f"PILOT TAKEOVER (ACRO + throttle {thr:.0%}): full manual control")
-                self.check("ACRO takeover", None, f"throttle {thr:.0%}")
+                self._event(f"PILOT TAKEOVER (ACRO + {reason}): full manual control")
+                self.check("ACRO takeover", None, reason)
                 r["state"], r["why"] = "PILOT", "the pilot has control"
                 self._replace(self._watch())
                 return
