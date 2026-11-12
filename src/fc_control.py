@@ -1489,7 +1489,7 @@ class ArduPilotAcro(FcBackend):
         if self._pilot_throttle_takeover:
             return
         cfg = self.rc.get("throttle")
-        if cfg is None or "throttle" not in self.axes:
+        if cfg is None:
             return
         chan = cfg["chan"]
         if not (1 <= chan <= 18):
