@@ -742,7 +742,7 @@ setInterval(function(){
 },1000);
 
 // ---- SEEKER integration ----
-var seekReady=false, seekRunning=false, seekLastOfferN=null, fpOpen=false;
+var seekReady=false, seekRunning=false, seekChecksOk=false, seekWhy="", seekLastOfferN=null, fpOpen=false;
 
 function seekCmd(v){
   return fetch("/drone/cmd?key=msn&value="+encodeURIComponent(v))
@@ -762,17 +762,29 @@ document.getElementById("seek_btn").onclick=function(){
   } else if(seekReady){
     modalOpen=true;
     var root=document.getElementById("modal_root");
-    root.innerHTML='<div class="modal-overlay" id="modal_overlay"><div class="modal">'
-      +'<h2>&#9678; Confirm SEEK</h2>'
-      +'<p style="font-size:13px;color:var(--muted);margin:0 0 16px;line-height:1.5">'
-      +'Arm the drone and fly to the ASTERIX target?<br>The drone will take off autonomously in <b>GUIDED</b> mode.</p>'
-      +'<div class="btn-row">'
-      +'<button class="btn-cancel" id="m_cancel">Cancel</button>'
-      +'<button class="btn-send" id="m_send">&#9678; Start SEEK</button>'
-      +'</div></div></div>';
-    document.getElementById("m_cancel").onclick=function(){closeModal();};
-    document.getElementById("m_send").onclick=function(){closeModal();seekCmd("start:SEEK");};
-    document.getElementById("modal_overlay").onclick=function(e){if(e.target===this)closeModal();};
+    if(!seekChecksOk){
+      root.innerHTML='<div class="modal-overlay" id="modal_overlay"><div class="modal">'
+        +'<h2 style="color:var(--err)">&#9888; Cannot SEEK</h2>'
+        +'<p style="font-size:13px;color:var(--muted);margin:0 0 16px;line-height:1.5">'
+        +'Pre-flight checks failed:<br><b style="color:var(--err)">'+seekWhy+'</b></p>'
+        +'<div class="btn-row">'
+        +'<button class="btn-cancel" id="m_cancel" style="flex:1">OK</button>'
+        +'</div></div></div>';
+      document.getElementById("m_cancel").onclick=function(){closeModal();};
+      document.getElementById("modal_overlay").onclick=function(e){if(e.target===this)closeModal();};
+    } else {
+      root.innerHTML='<div class="modal-overlay" id="modal_overlay"><div class="modal">'
+        +'<h2>&#9678; Confirm SEEK</h2>'
+        +'<p style="font-size:13px;color:var(--muted);margin:0 0 16px;line-height:1.5">'
+        +'Arm the drone and fly to the ASTERIX target?<br>The drone will take off autonomously in <b>GUIDED</b> mode.</p>'
+        +'<div class="btn-row">'
+        +'<button class="btn-cancel" id="m_cancel">Cancel</button>'
+        +'<button class="btn-send" id="m_send">&#9678; Start SEEK</button>'
+        +'</div></div></div>';
+      document.getElementById("m_cancel").onclick=function(){closeModal();};
+      document.getElementById("m_send").onclick=function(){closeModal();seekCmd("start:SEEK");};
+      document.getElementById("modal_overlay").onclick=function(e){if(e.target===this)closeModal();};
+    }
   }
 };
 
@@ -790,7 +802,9 @@ function updateSeek(sk, m){
   var hasTgt=cue.target!=null;
   var phase=(m||{}).phase||"";
   seekRunning=run!=null && run.id==="SEEK";
-  seekReady=!!(seek.ready && hasTgt && !run && (phase==="PILOT") && !(m||{}).armed);
+  seekReady=!!(hasTgt && !run);
+  seekChecksOk=!!seek.ready;
+  seekWhy=seek.why||"";
 
   if(seekRunning){
     btn.className="seek-btn active"; btn.disabled=false; lbl.textContent="ABORT";
@@ -838,7 +852,7 @@ function renderMsnStatus(run, cue, seek){
       if(tgt.dist_m!=null) info+='Dist: '+tgt.dist_m+' m &nbsp; ';
       if(tgt.speed!=null) info+='Spd: '+tgt.speed.toFixed(1)+' m/s';
       if(seek.ready) info+='<br><span class="c-ok">&#10003; Ready to SEEK</span>';
-      else if(seek.why) info+='<br><span class="c-warn">'+seek.why+'</span>';
+      else info+='<br><span class="c-warn">&#9679; Target acquired</span>';
       el.innerHTML=info+'</div>';
     } else {
       var n=(cue.tracks||[]).length;
