@@ -36,7 +36,7 @@ STATE = {
     "elkak_packets": 0,
     "elkak_last_rx": 0,
     "ref": None,
-    "hz": 2.0,
+    "hz": 2.0,               # 2 Hz per ICD
 }
 LOCK = threading.Lock()
 JETSON_IP = "192.168.205.160"
@@ -62,12 +62,14 @@ def _polar(lat0, lon0, h0, lat, lon, h_msl):
 
 def _target_pos(t, elapsed):
     if t.get("type") == "circle":
-        a = 2 * math.pi * (elapsed / max(1, t.get("period", 60)))
         r = t.get("radius", 200)
+        spd = max(0.1, t.get("speed", 10))
+        period = (2 * math.pi * r) / spd
+        a = 2 * math.pi * (elapsed / max(0.01, period))
         lat0, lon0 = t["lat"], t["lon"]
         dlat = r * math.cos(a) / 111320.0
         dlon = r * math.sin(a) / (111320.0 * math.cos(math.radians(lat0)))
-        w = 2 * math.pi / max(1, t.get("period", 60))
+        w = 2 * math.pi / max(0.01, period)
         vx = r * w * math.cos(a)
         vy = -r * w * math.sin(a)
         return lat0 + dlat, lon0 + dlon, t.get("alt", 50), vx, vy
@@ -223,11 +225,11 @@ header h1{font-size:16px;letter-spacing:.3px}
 .card .del-btn{background:none;border:none;color:var(--err);cursor:pointer;font-size:16px;
   padding:0 4px;opacity:.6}
 .card .del-btn:hover{opacity:1}
+.card .info{font-size:11px;color:var(--muted);line-height:1.5}
 .row{display:flex;gap:6px;align-items:center;margin:3px 0}
 .row label{font-size:11px;color:var(--muted);min-width:46px}
 .row input,.row select{flex:1;background:var(--panel);border:1px solid var(--border);color:var(--text);
   border-radius:6px;padding:4px 6px;font-size:12px}
-.row input[type=checkbox]{flex:0;width:16px;height:16px}
 .row .unit{font-size:11px;color:var(--muted);min-width:24px}
 .drone-info{font-size:11px;color:var(--muted);line-height:1.5}
 .drone-info b{color:var(--text)}
@@ -245,10 +247,35 @@ header h1{font-size:16px;letter-spacing:.3px}
 .elkak-track .tk-classif.unknown{background:var(--warn);color:#000}
 .elkak-track .tk-classif.friendly{background:var(--ok);color:#000}
 .elkak-track .tk-classif.not_evaluated{background:var(--muted);color:#000}
+/* modal overlay */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2000;display:flex;
+  align-items:center;justify-content:center}
+.modal{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px 24px;
+  min-width:320px;max-width:400px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+.modal h2{font-size:15px;margin:0 0 14px;display:flex;align-items:center;gap:8px}
+.modal h2 .badge{font-size:10px;padding:2px 6px;border-radius:4px}
+.modal h2 .badge.circle{background:var(--accent);color:#04121c}
+.modal h2 .badge.line{background:var(--warn);color:#000}
+.modal h2 .badge.static{background:var(--ok);color:#000}
+.modal .mrow{display:flex;gap:8px;align-items:center;margin:8px 0}
+.modal .mrow label{font-size:12px;color:var(--muted);min-width:56px}
+.modal .mrow input{flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);
+  border-radius:6px;padding:6px 8px;font-size:13px}
+.modal .mrow .unit{font-size:11px;color:var(--muted);min-width:30px}
+.modal .mrow-info{font-size:11px;color:var(--muted);margin:2px 0 2px 64px}
+.modal .btn-row{display:flex;gap:10px;margin-top:18px}
+.modal .btn-row button{flex:1;padding:10px;border:none;border-radius:8px;font:600 13px/1 sans-serif;
+  cursor:pointer;transition:all .15s}
+.modal .btn-send{background:var(--accent);color:#04121c}
+.modal .btn-send:hover{opacity:.85}
+.modal .btn-send:disabled{opacity:.35;cursor:not-allowed}
+.modal .btn-cancel{background:var(--bg);color:var(--err);border:1px solid var(--border)}
+.modal .btn-cancel:hover{border-color:var(--err)}
 @media(max-width:700px){
   .main{flex-direction:column}
   .sidebar{width:100%;max-height:50vh;border-left:none;border-top:1px solid var(--border)}
   .map-wrap{min-height:40vh}
+  .modal{min-width:280px;max-width:90vw}
 }
 </style></head><body>
 <header>
@@ -283,6 +310,7 @@ header h1{font-size:16px;letter-spacing:.3px}
     </div>
   </div>
 </div>
+<div id="modal_root"></div>
 
 <script>
 var JETSON = "JETSON_PLACEHOLDER";
@@ -296,6 +324,7 @@ var droneMarker = null, centered = false;
 var targets = [], elkakMarkers = {};
 var drawMode = null, drawStep = null, animStart = Date.now();
 var currentMode = "draw";
+var modalOpen = false;
 
 function hint(msg){ var el=document.getElementById("draw_hint"); el.textContent=msg||""; el.style.display=msg?"":"none"; }
 function tgtColor(i){ return COLORS[i%COLORS.length]; }
@@ -307,6 +336,67 @@ function tgtIcon(color){
 }
 function elkakIcon(){
   return L.divIcon({className:"",html:'<svg width="24" height="24" viewBox="-12 -12 24 24"><polygon points="0,-10 7,7 -7,7" fill="#e040fb" stroke="#fff" stroke-width="1.5"/></svg>',iconSize:[24,24],iconAnchor:[12,12]});
+}
+
+// ---- modal system ----
+function showModal(type, geo, onConfirm){
+  modalOpen = true;
+  var root = document.getElementById("modal_root");
+  var fields = "";
+  if(type === "circle"){
+    fields = '<div class="mrow"><label>Radius</label><input id="m_radius" type="number" value="200" min="10" step="10"><span class="unit">m</span></div>'
+      +'<div class="mrow"><label>Speed</label><input id="m_speed" type="number" value="10" min="0.1" step="1"><span class="unit">m/s</span></div>'
+      +'<div class="mrow-info">Orbit time = 2&pi; &times; radius / speed</div>'
+      +'<div class="mrow"><label>Altitude</label><input id="m_alt" type="number" value="50" min="0" step="5"><span class="unit">m</span></div>';
+  } else if(type === "line"){
+    fields = '<div class="mrow"><label>Speed</label><input id="m_speed" type="number" value="10" min="0.1" step="1"><span class="unit">m/s</span></div>'
+      +'<div class="mrow"><label>Altitude</label><input id="m_alt" type="number" value="50" min="0" step="5"><span class="unit">m</span></div>';
+  } else {
+    fields = '<div class="mrow"><label>Latitude</label><input id="m_lat" type="number" value="" step="0.00001" placeholder="e.g. 37.80700"></div>'
+      +'<div class="mrow"><label>Longitude</label><input id="m_lon" type="number" value="" step="0.00001" placeholder="e.g. 23.78500"></div>'
+      +'<div class="mrow"><label>Altitude</label><input id="m_alt" type="number" value="50" min="0" step="5"><span class="unit">m</span></div>';
+  }
+  var badge = '<span class="badge '+type+'">'+type.toUpperCase()+'</span>';
+  var title = type === "circle" ? "New Circle Target" : type === "line" ? "New Line Target" : "New Static Target";
+  root.innerHTML = '<div class="modal-overlay" id="modal_overlay">'
+    +'<div class="modal">'
+    +'<h2>'+badge+' '+title+'</h2>'
+    + fields
+    +'<div class="btn-row">'
+    +'<button class="btn-cancel" id="m_cancel">Cancel</button>'
+    +'<button class="btn-send" id="m_send">Send to Jetson</button>'
+    +'</div>'
+    +'</div></div>';
+  document.getElementById("m_cancel").onclick = function(){ closeModal(); };
+  document.getElementById("m_send").onclick = function(){
+    var params = {alt: parseFloat(document.getElementById("m_alt").value)||50};
+    if(type === "circle"){
+      params.radius = parseFloat(document.getElementById("m_radius").value);
+      params.speed = parseFloat(document.getElementById("m_speed").value);
+      if(!params.radius || params.radius <= 0 || !params.speed || params.speed <= 0) return;
+    } else if(type === "line"){
+      params.speed = parseFloat(document.getElementById("m_speed").value);
+      if(!params.speed || params.speed <= 0) return;
+    } else {
+      params.lat = parseFloat(document.getElementById("m_lat").value);
+      params.lon = parseFloat(document.getElementById("m_lon").value);
+      if(!params.lat || !params.lon) return;
+    }
+    closeModal();
+    onConfirm(params);
+  };
+  document.getElementById("modal_overlay").onclick = function(e){
+    if(e.target === this) closeModal();
+  };
+  setTimeout(function(){
+    var first = root.querySelector(".modal input");
+    if(first) first.focus();
+  }, 50);
+}
+
+function closeModal(){
+  modalOpen = false;
+  document.getElementById("modal_root").innerHTML = "";
 }
 
 // ---- mode switching ----
@@ -333,52 +423,55 @@ function renderMode(){
   else renderElkakMode(list, mh);
 }
 
-// ---- MODE 1: DRAW ----
+// ---- MODE 1: DRAW (read-only cards after confirmation) ----
 function renderDrawMode(list, mh){
-  if(!targets.length) mh.innerHTML = '<div class="empty-hint">Click <b>Circle</b> or <b>Line</b> on the map toolbar, then click the map to draw targets.<br>Targets send to the Jetson automatically.</div>';
+  if(!targets.length) mh.innerHTML = '<div class="empty-hint">Click <b>Circle</b> or <b>Line</b> on the map toolbar, then click the map to place a target.<br>You\'ll set parameters and confirm before sending.</div>';
   targets.forEach(function(t, idx){
     var c = tgtColor(idx), card = document.createElement("div");
     card.className = "card";
-    var typeLabel = t.type === "circle" ? "Circle" : "Line";
-    var extra = "";
+    var typeLabel = t.type === "circle" ? "Circle" : t.type === "line" ? "Line" : "Static";
+    var details = "";
     if(t.type === "circle"){
-      extra = '<div class="row"><label>Radius</label><input type="number" value="'+t.radius+'" step="10" data-idx="'+idx+'" data-f="radius"><span class="unit">m</span></div>'
-            + '<div class="row"><label>Period</label><input type="number" value="'+t.period+'" step="5" data-idx="'+idx+'" data-f="period"><span class="unit">s</span></div>'
-            + '<div class="row"><label>Speed</label><input type="number" value="'+t.speed+'" step="1" data-idx="'+idx+'" data-f="speed"><span class="unit">m/s</span></div>';
-    } else {
-      extra = '<div class="row"><label>Speed</label><input type="number" value="'+t.speed+'" step="1" data-idx="'+idx+'" data-f="speed"><span class="unit">m/s</span></div>';
+      var period = (2*Math.PI*t.radius / Math.max(0.1,t.speed)).toFixed(1);
+      details = 'Radius: '+t.radius+' m &nbsp; Speed: '+t.speed+' m/s &nbsp; Orbit: '+period+' s<br>';
+    } else if(t.type === "line"){
+      details = 'Speed: '+t.speed+' m/s<br>';
     }
+    details += 'Alt: '+t.alt+' m';
     card.innerHTML = '<h3><span class="dot" style="background:'+c+'"></span>T'+t.id+' '+typeLabel
       +'<span class="spacer"></span>'
-      +'<input type="checkbox" '+(t.enabled?"checked":"")+ ' data-idx="'+idx+'" data-f="enabled">'
-      +'<button class="del-btn" data-delidx="'+idx+'">&times;</button></h3>'
-      +'<div class="row"><label>Alt</label><input type="number" value="'+t.alt+'" step="5" data-idx="'+idx+'" data-f="alt"><span class="unit">m</span></div>'
-      + extra;
+      +'<button class="del-btn" data-delidx="'+idx+'" title="Remove target">&times;</button></h3>'
+      +'<div class="info">'+details+'</div>';
     list.appendChild(card);
   });
-  wireCardInputs(list);
+  list.querySelectorAll("[data-delidx]").forEach(function(btn){
+    btn.addEventListener("click",function(){removeTarget(parseInt(btn.dataset.delidx));});
+  });
 }
 
-// ---- MODE 2: MANUAL ----
+// ---- MODE 2: MANUAL (add via modal) ----
 function renderManualMode(list, mh){
   targets.forEach(function(t, idx){
     var c = tgtColor(idx), card = document.createElement("div");
     card.className = "card";
     card.innerHTML = '<h3><span class="dot" style="background:'+c+'"></span>T'+t.id+' Static'
       +'<span class="spacer"></span>'
-      +'<input type="checkbox" '+(t.enabled?"checked":"")+ ' data-idx="'+idx+'" data-f="enabled">'
-      +'<button class="del-btn" data-delidx="'+idx+'">&times;</button></h3>'
-      +'<div class="row"><label>Lat</label><input type="number" value="'+(t.lat||"")+'" step="0.00001" data-idx="'+idx+'" data-f="lat"></div>'
-      +'<div class="row"><label>Lon</label><input type="number" value="'+(t.lon||"")+'" step="0.00001" data-idx="'+idx+'" data-f="lon"></div>'
-      +'<div class="row"><label>Alt</label><input type="number" value="'+t.alt+'" step="5" data-idx="'+idx+'" data-f="alt"><span class="unit">m</span></div>';
+      +'<button class="del-btn" data-delidx="'+idx+'" title="Remove target">&times;</button></h3>'
+      +'<div class="info">Lat: '+(t.lat?t.lat.toFixed(6):"--")+' &nbsp; Lon: '+(t.lon?t.lon.toFixed(6):"--")+'<br>Alt: '+t.alt+' m</div>';
     list.appendChild(card);
   });
   var addBtn = document.createElement("button");
   addBtn.className = "add-btn"; addBtn.textContent = "+ Add static target";
-  addBtn.onclick = function(){ addTarget("static",0,0,0,0); renderMode(); };
+  addBtn.onclick = function(){
+    showModal("static", {}, function(params){
+      commitTarget("static", params.lat, params.lon, 0, 0, params);
+    });
+  };
   list.appendChild(addBtn);
-  wireCardInputs(list);
-  if(!targets.length) mh.innerHTML = '<div class="empty-hint">Click <b>+ Add static target</b> and enter coordinates.</div>';
+  list.querySelectorAll("[data-delidx]").forEach(function(btn){
+    btn.addEventListener("click",function(){removeTarget(parseInt(btn.dataset.delidx));});
+  });
+  if(!targets.length) mh.innerHTML = '<div class="empty-hint">Click <b>+ Add static target</b> to enter coordinates and send.</div>';
 }
 
 // ---- MODE 3: ELKAK ----
@@ -416,7 +509,6 @@ function pollElkak(){
       list.appendChild(card);
       updateElkakMarker(t);
     });
-    // remove stale markers
     var keys = {};
     j.tracks.forEach(function(t){keys[t.key]=true;});
     Object.keys(elkakMarkers).forEach(function(k){
@@ -443,31 +535,14 @@ function clearElkakMarkers(){
   elkakMarkers = {};
 }
 
-// ---- shared card logic ----
-function wireCardInputs(list){
-  list.querySelectorAll("input[data-f]").forEach(function(inp){
-    inp.addEventListener("change", function(){
-      var idx=parseInt(inp.dataset.idx), f=inp.dataset.f;
-      if(f==="enabled") targets[idx].enabled=inp.checked;
-      else if(f==="lat"||f==="lon"||f==="lat2"||f==="lon2") targets[idx][f]=parseFloat(inp.value)||0;
-      else targets[idx][f]=parseFloat(inp.value)||0;
-      drawTargetLayers(idx);
-      syncToServer();
-    });
-  });
-  list.querySelectorAll("[data-delidx]").forEach(function(btn){
-    btn.addEventListener("click",function(){removeTarget(parseInt(btn.dataset.delidx));});
-  });
-}
-
 // ---- target data model (modes 1+2) ----
-function addTarget(type, lat, lon, lat2, lon2){
+function commitTarget(type, lat, lon, lat2, lon2, params){
   var id = targets.length+1;
-  targets.push({id:id,enabled:true,type:type,lat:lat,lon:lon,alt:50,
-    lat2:lat2||0,lon2:lon2||0,speed:10,radius:200,period:60,layers:{}});
+  targets.push({id:id, enabled:true, type:type, lat:lat, lon:lon, alt:params.alt||50,
+    lat2:lat2||0, lon2:lon2||0, speed:params.speed||10, radius:params.radius||200, layers:{}});
   drawTargetLayers(targets.length-1);
   syncToServer();
-  return targets[targets.length-1];
+  renderMode();
 }
 function removeTarget(idx){
   clearLayers(idx); targets.splice(idx,1);
@@ -485,17 +560,9 @@ function drawTargetLayers(idx){
   if(ly.m)ly.m.remove(); if(ly.m2)ly.m2.remove();
   if(ly.path)ly.path.remove(); if(ly.circle)ly.circle.remove();
   if(!t.lat&&!t.lon)return;
-  ly.m=L.marker([t.lat,t.lon],{icon:tgtIcon(c),draggable:true}).addTo(map);
-  ly.m.on("dragend",function(e){
-    t.lat=e.target.getLatLng().lat;t.lon=e.target.getLatLng().lng;
-    drawTargetLayers(idx);renderMode();syncToServer();
-  });
+  ly.m=L.marker([t.lat,t.lon],{icon:tgtIcon(c),draggable:false}).addTo(map);
   if(t.type==="line"&&t.lat2&&t.lon2){
-    ly.m2=L.marker([t.lat2,t.lon2],{icon:tgtIcon(c),draggable:true}).addTo(map);
-    ly.m2.on("dragend",function(e){
-      t.lat2=e.target.getLatLng().lat;t.lon2=e.target.getLatLng().lng;
-      drawTargetLayers(idx);renderMode();syncToServer();
-    });
+    ly.m2=L.marker([t.lat2,t.lon2],{icon:tgtIcon(c),draggable:false}).addTo(map);
     ly.path=L.polyline([[t.lat,t.lon],[t.lat2,t.lon2]],{color:c,weight:2,dashArray:"6 4"}).addTo(map);
   }
   if(t.type==="circle") ly.circle=L.circle([t.lat,t.lon],{radius:t.radius,color:c,weight:2,fill:false,dashArray:"6 4"}).addTo(map);
@@ -504,14 +571,14 @@ function redrawAllLayers(){targets.forEach(function(_,i){drawTargetLayers(i);});
 
 function syncToServer(){
   var data=targets.map(function(t){
-    return {id:t.id,enabled:t.enabled,type:t.type,lat:t.lat,lon:t.lon,alt:t.alt,
-            lat2:t.lat2,lon2:t.lon2,speed:t.speed,radius:t.radius,period:t.period};
+    return {id:t.id, enabled:t.enabled, type:t.type, lat:t.lat, lon:t.lon, alt:t.alt,
+            lat2:t.lat2, lon2:t.lon2, speed:t.speed, radius:t.radius};
   });
   fetch("/api/targets",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({targets:data})});
 }
 
-// ---- drawing (mode 1) ----
+// ---- drawing (mode 1) — click map then confirm in modal ----
 document.getElementById("draw_circle").onclick=function(){
   if(drawMode==="circle"){drawMode=null;drawStep=null;hint("");this.classList.remove("active");return;}
   drawMode="circle";drawStep=null;
@@ -528,26 +595,35 @@ document.getElementById("draw_line").onclick=function(){
 };
 
 map.on("click",function(e){
-  if(currentMode!=="draw"||!drawMode)return;
+  if(modalOpen) return;
+  if(currentMode!=="draw"||!drawMode) return;
   if(drawMode==="circle"){
-    addTarget("circle",e.latlng.lat,e.latlng.lng,0,0);
-    renderMode();
-    hint("Circle placed. Click again for another, or click Circle to stop.");
+    var clat=e.latlng.lat, clon=e.latlng.lng;
+    showModal("circle", {lat:clat,lon:clon}, function(params){
+      commitTarget("circle", clat, clon, 0, 0, params);
+      hint("Circle sent. Click again for another, or click Circle to stop.");
+    });
   } else if(drawMode==="line"){
     if(!drawStep){
       drawStep={lat:e.latlng.lat,lon:e.latlng.lng};
       hint("Click map for line end point");
     } else {
-      addTarget("line",drawStep.lat,drawStep.lon,e.latlng.lat,e.latlng.lng);
-      drawStep=null; renderMode();
-      hint("Line placed. Click again for another, or click Line to stop.");
+      var lat1=drawStep.lat, lon1=drawStep.lon, lat2=e.latlng.lat, lon2=e.latlng.lng;
+      drawStep=null;
+      showModal("line", {lat:lat1,lon:lon1,lat2:lat2,lon2:lon2}, function(params){
+        commitTarget("line", lat1, lon1, lat2, lon2, params);
+        hint("Line sent. Click again for another, or click Line to stop.");
+      });
     }
   }
 });
 document.addEventListener("keydown",function(e){
-  if(e.key==="Escape"){drawMode=null;drawStep=null;hint("");
+  if(e.key==="Escape"){
+    if(modalOpen){closeModal();return;}
+    drawMode=null;drawStep=null;hint("");
     document.getElementById("draw_circle").classList.remove("active");
-    document.getElementById("draw_line").classList.remove("active");}
+    document.getElementById("draw_line").classList.remove("active");
+  }
 });
 
 // ---- drone polling ----
@@ -590,7 +666,8 @@ function animateTargets(){
     if(!t.enabled||(!t.lat&&!t.lon)){if(t.layers.anim){t.layers.anim.remove();t.layers.anim=null;}return;}
     var lat,lon;
     if(t.type==="circle"){
-      var a=2*Math.PI*(elapsed/Math.max(1,t.period));
+      var period=2*Math.PI*t.radius/Math.max(0.1,t.speed);
+      var a=2*Math.PI*(elapsed/Math.max(0.01,period));
       lat=t.lat+t.radius*Math.cos(a)/111320;
       lon=t.lon+t.radius*Math.sin(a)/(111320*Math.cos(t.lat*Math.PI/180));
     } else if(t.type==="line"&&t.lat2&&t.lon2){
@@ -738,6 +815,7 @@ def main():
     print(f"[GROUND PLANNER] Jetson: {JETSON_IP}:{JETSON_HTTP} (HTTP), :{JETSON_AST} (ASTERIX UDP)")
     print(f"[GROUND PLANNER] ELKAK listener: UDP :{LISTEN_PORT}")
     print(f"[GROUND PLANNER] Modes: Draw (test), Manual (test), ELKAK (live)")
+    print(f"[GROUND PLANNER] TX rate: 2 Hz (per EKETA ICD)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
