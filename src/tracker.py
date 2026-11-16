@@ -318,6 +318,7 @@ class DroneTracker:
         self.use_sky_mask = use_sky_mask
         self.record_dir      = record_dir
         self.record_pad_sec  = float(record_pad_sec)
+        self.record_continuous = os.environ.get("WASP_RECORD_CONTINUOUS", "0") == "1"
         self.run_stamp = run_stamp or datetime.now().strftime("%Y%m%d_%H%M%S")
         self.headless     = headless
         self.max_frames   = max_frames
@@ -1983,7 +1984,7 @@ class DroneTracker:
             _tp = self._lap("stream", _tp)
 
             if rec_on:
-               if fused:
+               if fused or self.record_continuous:
                    if post_left == 0:
                        self._rec_windows += 1
                        if self._writer is None:
@@ -2302,7 +2303,7 @@ if __name__ == "__main__":
         skip_frames  = 0,
         show_sky     = False,
         use_sky_mask = True,
-        record_dir      = None,
+        record_dir      = os.environ.get("WASP_RECORD_DIR") or None,
         log_dir         = str(_DATA_DIR),
         run_stamp       = RUN_STAMP,
         headless     = os.environ.get("TRACKER_HEADLESS") == "1",

@@ -98,6 +98,8 @@ class MJPEGServer:
                     self._logs_list()
                 elif path == "/logs/convert":
                     self._logs_convert()
+                elif path == "/logs/delete":
+                    self._logs_delete()
                 elif path.startswith("/logs/download/"):
                     self._logs_download(path[len("/logs/download/"):])
                 else:
@@ -179,12 +181,66 @@ class MJPEGServer:
                 except Exception as exc:
                     self._json(dict(error=str(exc)), code=500)
 
+            def _logs_delete(self):
+                if server.data_dir is None:
+                    self._json(dict(error="no data dir"), code=503)
+                    return
+                import shutil
+                q = parse_qs(urlparse(self.path).query)
+                flight_id = (q.get("id") or [""])[0]
+                if not flight_id or "/" in flight_id or flight_id in (".", ".."):
+                    self._json(dict(error="missing or invalid id parameter"),
+                               code=400)
+                    return
+                flight_dir = Path(server.data_dir) / "flights" / flight_id
+                deleted = dict(flight_id=flight_id, local=False,
+                               firestore=False, errors=[])
+                if flight_dir.is_dir():
+                    try:
+                        resolved = flight_dir.resolve()
+                        root     = (Path(server.data_dir) / "flights").resolve()
+                        resolved.relative_to(root)   # traversal guard
+                        shutil.rmtree(resolved)
+                        deleted["local"] = True
+                    except Exception as exc:
+                        deleted["errors"].append(f"local: {exc}")
+                else:
+                    deleted["errors"].append("local: not found")
+                project = os.environ.get("GCP_PROJECT")
+                jetson  = os.environ.get("JETSON_ID")
+                if project and jetson:
+                    try:
+                        from google.cloud import firestore
+                        db = firestore.Client(project=project)
+                        fdoc = (db.collection("flight_logs").document(jetson)
+                                  .collection("flights").document(flight_id))
+                        for sub in ("rows", "events"):
+                            batch = db.batch()
+                            n = 0
+                            for d in fdoc.collection(sub).list_documents():
+                                batch.delete(d)
+                                n += 1
+                                if n % 400 == 0:
+                                    batch.commit()
+                                    batch = db.batch()
+                            if n % 400 != 0:
+                                batch.commit()
+                        fdoc.delete()
+                        deleted["firestore"] = True
+                    except Exception as exc:
+                        deleted["errors"].append(f"firestore: {exc}")
+                else:
+                    deleted["errors"].append(
+                        "firestore: GCP_PROJECT/JETSON_ID not set (skipped)")
+                code = 200 if (deleted["local"] or deleted["firestore"]) else 404
+                self._json(deleted, code=code)
+
             def _logs_download(self, rest):
                 if server.data_dir is None:
                     self.send_error(503, "no data dir")
                     return
-                parts = rest.split("/", 2)
-                if len(parts) < 2:
+                parts = rest.split("/", 1)
+                if len(parts) < 2 or not parts[1]:
                     self.send_error(400, "use /logs/download/<flight_id>/<file>")
                     return
                 flight_id, filename = parts[0], parts[1]

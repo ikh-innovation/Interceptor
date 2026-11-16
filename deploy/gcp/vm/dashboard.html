@@ -367,6 +367,9 @@
         } else if (status !== "recording") {
           btnsHtml += `<button onclick="convertFlight(this,'${host}','${f.flight_id}')">Convert</button>`;
         }
+        if (status !== "recording") {
+          btnsHtml += `<button style="border-color:var(--err);color:var(--err)" onclick="deleteFlight(this,'${host}','${f.flight_id}')">Remove</button>`;
+        }
 
         card.innerHTML = `
           <div class="fh">
@@ -382,6 +385,21 @@
       }
     } catch (e) {
       body.innerHTML = `<div class="no-flights" style="color:var(--err)">Failed to load logs: ${e.message}</div>`;
+    }
+  }
+
+  async function deleteFlight(btn, host, flightId) {
+    if (!confirm(`Delete flight '${flightId}' permanently from this drone AND the cloud?\n\nThis cannot be undone.`)) return;
+    btn.disabled = true;
+    btn.textContent = "Removing…";
+    try {
+      const r = await fetch(`https://${host}/logs/delete?id=${encodeURIComponent(flightId)}`, { signal: AbortSignal.timeout(20000) });
+      const d = await r.json();
+      if (!r.ok && !d.local && !d.firestore) throw new Error(d.error || (d.errors || []).join("; ") || ("HTTP " + r.status));
+      loadFlightLogs(host);
+    } catch (e) {
+      btn.textContent = "Error: " + e.message;
+      btn.disabled = false;
     }
   }
 
