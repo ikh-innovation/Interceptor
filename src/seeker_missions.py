@@ -105,11 +105,12 @@ CATALOG = [
 # top speed until the camera sees the target, then ALT_HOLD and the AI.
 SEEK = dict(id="SEEK", name="Seek the ASTERIX target", short="Fly to the cue, the AI takes over on sight",
             params=[_num("speed", "Speed (FC max ≈ WPNAV_SPEED)", "m/s", 20, 2, 25, 0.5),
-                    _num("below", "Fly this far below the target", "m", 15, 0, 100),
+                    _num("below", "Fly this far below the target", "m", 20, 0, 100),
                     _num("standoff", "Stop short of the target", "m", 50, 0, 1000, 5),
                     _num("min_alt", "Minimum height", "m", 20, 5, 500),
                     _num("cruise_alt", "Height when the track has none", "m", 40, 5, 500),
-                    _num("det_s", "Camera lock before the AI takes over", "s", 0.5, 0, 5, 0.1)])
+                    _num("det_s", "Camera lock before the AI takes over", "s", 0.5, 0, 5, 0.1),
+                    _num("det_range", "Max distance for detection to count", "m", 150, 50, 2000, 10)])
 BY_ID = {m["id"]: m for m in CATALOG + [SEEK]}
 
 
@@ -1790,6 +1791,32 @@ class SeekerMissions:
         cap = self._climb_cap()
         if cap:
             b.change_speed(b.SPEED_CLIMB, cap)
+        # Climb to min_alt before navigating — 5 m is too low.
+        init_alt = p["min_alt"]
+        pos0 = r["tel"]["position"] or r["pos_last"]
+        if pos0 is not None and r["tel"]["rel_alt"] is not None and r["tel"]["rel_alt"] < init_alt - 1.0:
+            r["target_alt"] = init_alt
+            t_climb = self.now
+            while True:
+                h = r["tel"]["rel_alt"]
+                if h is not None and h >= init_alt - 1.0:
+                    break
+                if self.now - t_climb > 60:
+                    raise MissionFail(f"did not reach {init_alt:g} m before SEEK nav")
+                cur = r["tel"]["position"] or pos0
+                b.guided_goto(cur[0], cur[1], init_alt)
+                yield
+            self._event(f"Climbed to {init_alt:g} m")
+        # Yaw toward the first target before starting to fly.
+        tgt0 = self.cue.target(self.now, pos0, self._home_amsl(r["tel"]))
+        if tgt0 is not None and pos0 is not None:
+            brg0 = _bearing(pos0, (tgt0["lat"], tgt0["lon"]))
+            self._event(f"Yawing to {brg0:.0f}° toward {tgt0.get('label', 'target')}")
+            t_yaw = self.now
+            while self.now - t_yaw < 3.0:
+                cur = r["tel"]["position"] or pos0
+                b.guided_goto(cur[0], cur[1], init_alt, yaw_deg=brg0)
+                yield
         r["cue"], r["seek"] = None, "FOLLOW"
         hold, sent, det_since, lost_note = None, -1e9, None, False
         cue_lost_since = None
@@ -1888,7 +1915,9 @@ class SeekerMissions:
                     r["seek"] = "HOLD"
                     self.check("Hold", None, "ALT_HOLD, waiting for pilot or new target")
             det_t, conf = self.ctx.get("det_t"), self.ctx.get("det_conf")
-            seen = det_t is not None and self.now - det_t < 0.3 and conf is not None and conf >= mission.min_conf
+            close = tgt is not None and pos is not None and d <= p["det_range"]
+            seen = (det_t is not None and self.now - det_t < 0.3
+                    and conf is not None and conf >= mission.min_conf and close)
             det_since = (det_since or self.now) if seen and r["seek"] == "FOLLOW" else None
             if det_since is not None and self.now - det_since >= p["det_s"]:
                 if r["offer"] is None or r["offer"]["kind"] != "engage":
@@ -1896,7 +1925,7 @@ class SeekerMissions:
                         r["offer"], r["answer"] = None, None
                     cue_label = (r["cue"] or {}).get("label", "target")
                     self._offer("engage", r["cue"],
-                                f"Camera locked on {cue_label}: ENGAGE the AI?")
+                                f"Camera locked on {cue_label} ({d:.0f} m): ENGAGE the AI?")
                     det_since = None
             yield
         self._at(5)
