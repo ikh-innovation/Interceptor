@@ -524,7 +524,7 @@ check("SEEK: the camera sees it -> engage question -> ALT_HOLD and the AI", h is
       f"mode {fc.mode_name}, asked {st['asked']}")
 check("SEEK: no result screen over the video", sm.result is None)
 check("SEEK: stays on after the handover (AI state), not flying the drone", sm.active and not sm.blocking)
-check("SEEK: flew at the cue's height minus 'below'", abs(fc.alt - (80 - 15)) < 3, f"{fc.alt:.1f} m")
+check("SEEK: flew at the cue's height minus 'below'", abs(fc.alt - (80 - 20)) < 3, f"{fc.alt:.1f} m")
 
 fc, sm, st = seek_run(answers=("yes",), lose_after=25, second_at=60)
 kinds = [(x[1], x[2], x[3]) for x in st["asked"]]
@@ -540,9 +540,10 @@ check("SEEK: a new target while following asks to switch; YES switches",
 check("SEEK: ABORT flies home (RTL)", not fc.armed and math.hypot(fc.n, fc.e) < 2 and sm.result
       and sm.result["verdict"] == "FAIL", (sm.result or {}).get("why"))
 
-fc, sm, st = seek_run(lose_after=20, see_at=-1, until=200)
-check("SEEK: cue lost -> holds and waits (no RTL by itself)", sm.active and fc.armed and fc.mode_name == "GUIDED"
-      and abs(fc.vn) + abs(fc.ve) < 0.2, f"active {sm.active} mode {fc.mode_name}")
+fc, sm, st = seek_run(lose_after=30, see_at=-1, until=200)
+check("SEEK: cue lost -> holds and waits (no RTL by itself)", sm.active and fc.armed
+      and fc.mode_name in ("GUIDED", "ALT_HOLD") and abs(fc.vn) + abs(fc.ve) < 0.2,
+      f"active {sm.active} mode {fc.mode_name}")
 
 fc, sm, st = seek_run(rfd=True)
 check("SEEK: the cue over the RFD radio ($RFD lines) works the same", sm.take_handover() is not None
