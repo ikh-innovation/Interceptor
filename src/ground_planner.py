@@ -2,10 +2,9 @@
 """
 ground_planner.py — Laptop-side ground station for ASTERIX testing and operations.
 
-Three modes:
-  1. Draw (Test)   — draw circles/lines on the map, emits fake ASTERIX to Jetson
-  2. Manual (Test)  — type lat/lon/alt for a static target, emits fake ASTERIX
-  3. ELKAK (Live)   — listens for real ASTERIX CAT062 from EKETA-EAB, relays to Jetson
+Two tabs:
+  1. TEST  — Circle / Line / Draw path on the map, emits fake ASTERIX to Jetson
+  2. ELKAK — Listens for real ASTERIX CAT062 from EKETA-EAB + manual target input
 
     python ground_planner.py --jetson 192.168.205.160
 
@@ -30,13 +29,14 @@ from asterix_cue import encode_eketa_cat062, parse_eketa_block
 # ---- state ------------------------------------------------------------------
 
 STATE = {
-    "mode": "draw",          # "draw" | "manual" | "elkak"
-    "targets": [],            # mode 1+2: user-defined targets
-    "elkak_tracks": [],       # mode 3: live tracks from EKETA
+    "mode": "test",           # "test" | "elkak"
+    "targets": [],            # test targets
+    "elkak_tracks": [],       # live tracks from EKETA
     "elkak_packets": 0,
     "elkak_last_rx": 0,
+    "elkak_manual": None,     # {lat, lon, alt, enabled}
     "ref": None,
-    "hz": 2.0,               # 2 Hz per ICD
+    "hz": 2.0,
 }
 LOCK = threading.Lock()
 JETSON_IP = "192.168.205.160"
@@ -86,14 +86,45 @@ def _target_pos(t, elapsed):
                          t.get("lat2", 0) - t["lat"])
         sign = 1.0 if frac_t < 0.5 else -1.0
         return lat, lon, t.get("alt", 50), sign * spd * math.sin(brg), sign * spd * math.cos(brg)
+    elif t.get("type") == "path":
+        wps = t.get("waypoints", [])
+        if not wps or len(wps) < 2:
+            return t.get("lat", 0), t.get("lon", 0), t.get("alt", 50), 0.0, 0.0
+        total = 0
+        segs = []
+        for i in range(len(wps) - 1):
+            p1, p2 = wps[i], wps[i + 1]
+            dx = (p2[0] - p1[0]) * 111320
+            dy = (p2[1] - p1[1]) * 111320 * math.cos(math.radians(p1[0]))
+            sl = math.hypot(dx, dy)
+            segs.append(sl)
+            total += sl
+        if total < 0.1:
+            return wps[0][0], wps[0][1], t.get("alt", 50), 0.0, 0.0
+        spd = max(0.1, t.get("speed", 10))
+        period = (total / spd) * 2
+        frac_t = (elapsed % period) / period
+        frac = 2 * frac_t if frac_t < 0.5 else 2 * (1 - frac_t)
+        dist = frac * total
+        cum = 0
+        for i, sl in enumerate(segs):
+            if cum + sl >= dist:
+                sf = (dist - cum) / max(0.001, sl)
+                p1, p2 = wps[i], wps[i + 1]
+                lat = p1[0] + sf * (p2[0] - p1[0])
+                lon = p1[1] + sf * (p2[1] - p1[1])
+                brg = math.atan2((p2[1] - p1[1]) * math.cos(math.radians(p1[0])), p2[0] - p1[0])
+                sign = 1.0 if frac_t < 0.5 else -1.0
+                return lat, lon, t.get("alt", 50), sign * spd * math.sin(brg), sign * spd * math.cos(brg)
+            cum += sl
+        return wps[-1][0], wps[-1][1], t.get("alt", 50), 0.0, 0.0
     else:
         return t["lat"], t["lon"], t.get("alt", 50), 0.0, 0.0
 
 
-# ---- ELKAK listener (Mode 3) -----------------------------------------------
+# ---- ELKAK listener ---------------------------------------------------------
 
 def _elkak_listener():
-    """Listen for real ASTERIX CAT062 from EKETA-EAB, decode and relay to Jetson."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
@@ -139,7 +170,7 @@ def _elkak_listener():
             pass
 
 
-# ---- emitter (Mode 1+2) ----------------------------------------------------
+# ---- emitter ----------------------------------------------------------------
 
 def _emitter_loop():
     start = time.time()
@@ -149,8 +180,24 @@ def _emitter_loop():
             tgt_list = [dict(t) for t in STATE["targets"]]
             ref = STATE["ref"]
             hz = STATE["hz"]
+            elkak_man = STATE.get("elkak_manual")
         if mode == "elkak":
-            time.sleep(0.5)
+            if elkak_man and elkak_man.get("enabled"):
+                lat, lon, alt = elkak_man["lat"], elkak_man["lon"], elkak_man.get("alt", 50)
+                if ref is None:
+                    ref = (lat, lon, alt)
+                    with LOCK:
+                        STATE["ref"] = ref
+                polar = _polar(ref[0], ref[1], ref[2], lat, lon, alt)
+                tracks = [dict(lat=lat, lon=lon, h_msl_m=alt, vx=0, vy=0,
+                               track_no=9999, classif="unknown", **polar)]
+                data = encode_eketa_cat062(tracks)
+                try:
+                    SOCK.sendto(data, (JETSON_IP, JETSON_AST))
+                except Exception:
+                    pass
+                _PKT_COUNT[0] += 1
+            time.sleep(1.0 / hz)
             continue
         elapsed = time.time() - start
         tracks = []
@@ -184,51 +231,53 @@ HTML_PAGE = r"""<!doctype html>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
-:root{--bg:#0b0f14;--panel:#121820;--text:#e7eef7;--muted:#8ea0b5;--accent:#4fc3f7;
-  --ok:#4ade80;--warn:#f59e0b;--err:#f87171;--border:#233041;--op:#e040fb}
+:root{--bg:#ffffff;--panel:#f8f9fb;--text:#1e293b;--muted:#64748b;--accent:#2563eb;
+  --ok:#16a34a;--warn:#d97706;--err:#dc2626;--border:#e2e8f0;--op:#7c3aed}
 *{box-sizing:border-box;margin:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   background:var(--bg);color:var(--text);display:flex;flex-direction:column;height:100vh}
-header{padding:10px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border)}
-header h1{font-size:16px;letter-spacing:.3px}
+header{padding:10px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border);
+  background:var(--panel)}
+header h1{font-size:16px;letter-spacing:.3px;font-weight:700}
 .status{margin-left:auto;font-size:12px;color:var(--muted)}
-.status b{color:var(--ok)}
+.status b{color:var(--ok);font-weight:600}
 .status b.off{color:var(--err)}
 .main{flex:1;display:flex;min-height:0}
 .map-wrap{flex:1;min-width:0;position:relative}
-#map{width:100%;height:100%;background:#111}
+#map{width:100%;height:100%;background:#e5e7eb}
 .toolbar{position:absolute;top:10px;left:56px;z-index:1000;display:flex;gap:6px}
 .toolbar button{padding:8px 14px;border:none;border-radius:8px;font:600 13px/1 sans-serif;
-  cursor:pointer;background:var(--panel);color:var(--text);border:1px solid var(--border);
-  transition:all .15s}
-.toolbar button:hover{border-color:var(--accent)}
-.toolbar button.active{background:var(--accent);color:#04121c;border-color:var(--accent)}
+  cursor:pointer;background:#fff;color:var(--text);border:1px solid var(--border);
+  box-shadow:0 1px 3px rgba(0,0,0,.1);transition:all .15s}
+.toolbar button:hover{border-color:var(--accent);box-shadow:0 2px 6px rgba(37,99,235,.15)}
+.toolbar button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 .draw-hint{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);z-index:1000;
-  background:rgba(0,0,0,.8);color:var(--warn);padding:8px 16px;border-radius:8px;
+  background:rgba(30,41,59,.9);color:#fff;padding:8px 16px;border-radius:8px;
   font:600 13px/1 sans-serif;pointer-events:none;display:none}
-.sidebar{width:320px;overflow-y:auto;padding:0;display:flex;flex-direction:column;
+.sidebar{width:340px;overflow-y:auto;padding:0;display:flex;flex-direction:column;
   border-left:1px solid var(--border);background:var(--panel)}
-.mode-tabs{display:flex;border-bottom:1px solid var(--border)}
-.mode-tabs button{flex:1;padding:10px 4px;border:none;background:transparent;color:var(--muted);
-  font:600 12px/1 sans-serif;cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
-.mode-tabs button.active{color:var(--text);border-bottom-color:var(--accent)}
+.mode-tabs{display:flex;border-bottom:1px solid var(--border);background:#fff}
+.mode-tabs button{flex:1;padding:12px 4px;border:none;background:transparent;color:var(--muted);
+  font:700 13px/1 sans-serif;cursor:pointer;border-bottom:3px solid transparent;transition:all .15s;
+  letter-spacing:.3px}
+.mode-tabs button.active{color:var(--accent);border-bottom-color:var(--accent)}
 .mode-tabs button.op-active{color:var(--op);border-bottom-color:var(--op)}
-.mode-tabs .test-badge{font-size:9px;background:var(--warn);color:#000;padding:1px 4px;
-  border-radius:3px;margin-left:4px;vertical-align:middle}
-.mode-tabs .op-badge{font-size:9px;background:var(--op);color:#fff;padding:1px 4px;
-  border-radius:3px;margin-left:4px;vertical-align:middle}
+.mode-tabs .badge{font-size:9px;padding:2px 5px;border-radius:3px;margin-left:5px;
+  vertical-align:middle;font-weight:700}
+.mode-tabs .test-badge{background:#dbeafe;color:var(--accent)}
+.mode-tabs .op-badge{background:#ede9fe;color:var(--op)}
 .mode-content{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px}
-.card{padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg)}
+.card{padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:#fff}
 .card h3{font-size:13px;margin:0 0 6px;display:flex;align-items:center;gap:8px}
 .card h3 .dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto}
 .card h3 .spacer{flex:1}
 .card .del-btn{background:none;border:none;color:var(--err);cursor:pointer;font-size:16px;
-  padding:0 4px;opacity:.6}
+  padding:0 4px;opacity:.5}
 .card .del-btn:hover{opacity:1}
 .card .info{font-size:11px;color:var(--muted);line-height:1.5}
 .row{display:flex;gap:6px;align-items:center;margin:3px 0}
 .row label{font-size:11px;color:var(--muted);min-width:46px}
-.row input,.row select{flex:1;background:var(--panel);border:1px solid var(--border);color:var(--text);
+.row input,.row select{flex:1;background:#fff;border:1px solid var(--border);color:var(--text);
   border-radius:6px;padding:4px 6px;font-size:12px}
 .row .unit{font-size:11px;color:var(--muted);min-width:24px}
 .drone-info{font-size:11px;color:var(--muted);line-height:1.5}
@@ -236,56 +285,81 @@ header h1{font-size:16px;letter-spacing:.3px}
 .empty-hint{font-size:12px;color:var(--muted);text-align:center;padding:16px 8px;line-height:1.6}
 .add-btn{width:100%;padding:10px;border:1px dashed var(--border);border-radius:8px;
   background:transparent;color:var(--accent);font:600 13px/1 sans-serif;cursor:pointer}
-.add-btn:hover{border-color:var(--accent)}
-.elkak-status{padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--bg);
+.add-btn:hover{border-color:var(--accent);background:#f0f7ff}
+/* ELKAK */
+.elkak-status{padding:12px;border-radius:10px;border:1px solid var(--border);background:#fff;
   font-size:12px;line-height:1.6}
 .elkak-status b{color:var(--op)}
-.elkak-track{padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);
+.elkak-track{padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:#fff;
   font-size:11px;line-height:1.5}
 .elkak-track .tk-label{font-weight:700;font-size:12px}
 .elkak-track .tk-classif{font-size:10px;padding:1px 5px;border-radius:3px;margin-left:6px}
-.elkak-track .tk-classif.unknown{background:var(--warn);color:#000}
-.elkak-track .tk-classif.friendly{background:var(--ok);color:#000}
-.elkak-track .tk-classif.not_evaluated{background:var(--muted);color:#000}
+.elkak-track .tk-classif.unknown{background:#fef3c7;color:#92400e}
+.elkak-track .tk-classif.friendly{background:#dcfce7;color:#166534}
+.elkak-track .tk-classif.not_evaluated{background:#f1f5f9;color:#475569}
+.elkak-manual{padding:12px;border-radius:10px;border:1px solid var(--border);background:#fff}
+.elkak-manual h3{font-size:13px;margin:0 0 8px;font-weight:700}
+.elkak-manual .mrow{display:flex;gap:6px;align-items:center;margin:4px 0}
+.elkak-manual .mrow label{font-size:11px;color:var(--muted);min-width:36px}
+.elkak-manual .mrow input{flex:1;background:#fff;border:1px solid var(--border);color:var(--text);
+  border-radius:6px;padding:5px 8px;font-size:12px}
+.elkak-manual .mrow .unit{font-size:11px;color:var(--muted);min-width:24px}
+.send-btn{width:100%;padding:10px;border:none;border-radius:8px;background:var(--op);color:#fff;
+  font:700 13px/1 sans-serif;cursor:pointer;margin-top:8px;transition:all .15s}
+.send-btn:hover{opacity:.85}
+.send-btn:disabled{opacity:.35;cursor:not-allowed}
+.stop-btn{width:100%;padding:10px;border:none;border-radius:8px;background:var(--err);color:#fff;
+  font:700 13px/1 sans-serif;cursor:pointer;margin-top:6px;transition:all .15s}
+.stop-btn:hover{opacity:.85}
 /* modal overlay */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2000;display:flex;
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:2000;display:flex;
   align-items:center;justify-content:center}
-.modal{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px 24px;
-  min-width:320px;max-width:400px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+.modal{background:#fff;border:1px solid var(--border);border-radius:14px;padding:20px 24px;
+  min-width:320px;max-width:400px;box-shadow:0 8px 30px rgba(0,0,0,.12)}
 .modal h2{font-size:15px;margin:0 0 14px;display:flex;align-items:center;gap:8px}
-.modal h2 .badge{font-size:10px;padding:2px 6px;border-radius:4px}
-.modal h2 .badge.circle{background:var(--accent);color:#04121c}
-.modal h2 .badge.line{background:var(--warn);color:#000}
-.modal h2 .badge.static{background:var(--ok);color:#000}
+.modal h2 .mbadge{font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700}
+.modal h2 .mbadge.circle{background:#dbeafe;color:var(--accent)}
+.modal h2 .mbadge.line{background:#fef3c7;color:#92400e}
+.modal h2 .mbadge.path{background:#dcfce7;color:#166534}
 .modal .mrow{display:flex;gap:8px;align-items:center;margin:8px 0}
 .modal .mrow label{font-size:12px;color:var(--muted);min-width:56px}
-.modal .mrow input{flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);
+.modal .mrow input{flex:1;background:var(--panel);border:1px solid var(--border);color:var(--text);
   border-radius:6px;padding:6px 8px;font-size:13px}
 .modal .mrow .unit{font-size:11px;color:var(--muted);min-width:30px}
 .modal .mrow-info{font-size:11px;color:var(--muted);margin:2px 0 2px 64px}
 .modal .btn-row{display:flex;gap:10px;margin-top:18px}
 .modal .btn-row button{flex:1;padding:10px;border:none;border-radius:8px;font:600 13px/1 sans-serif;
   cursor:pointer;transition:all .15s}
-.modal .btn-send{background:var(--accent);color:#04121c}
+.modal .btn-send{background:var(--accent);color:#fff}
 .modal .btn-send:hover{opacity:.85}
 .modal .btn-send:disabled{opacity:.35;cursor:not-allowed}
-.modal .btn-cancel{background:var(--bg);color:var(--err);border:1px solid var(--border)}
+.modal .btn-cancel{background:var(--panel);color:var(--err);border:1px solid var(--border)}
 .modal .btn-cancel:hover{border-color:var(--err)}
-/* SEEK button overlay */
+/* SEEK button */
 .seek-btn{position:absolute;bottom:20px;right:20px;z-index:1000;width:80px;height:80px;
-  border-radius:50%;border:3px solid var(--border);background:var(--panel);color:var(--muted);
+  border-radius:50%;border:3px solid var(--border);background:#fff;color:var(--muted);
   font:700 14px/1 sans-serif;cursor:not-allowed;transition:all .3s;display:flex;flex-direction:column;
-  align-items:center;justify-content:center;gap:2px;box-shadow:0 4px 16px rgba(0,0,0,.4);
+  align-items:center;justify-content:center;gap:2px;box-shadow:0 4px 16px rgba(0,0,0,.1);
   user-select:none;opacity:.7}
 .seek-btn .seek-icon{font-size:22px}
-.seek-btn.ready{background:#1b5e20;border-color:var(--ok);color:var(--ok);cursor:pointer;
+.seek-btn.ready{background:#dcfce7;border-color:var(--ok);color:var(--ok);cursor:pointer;
   opacity:1;animation:seekPulse 2s ease-in-out infinite}
-.seek-btn.ready:hover{background:#2e7d32;transform:scale(1.05)}
-.seek-btn.active{background:#7f1d1d;border-color:var(--err);color:var(--err);cursor:pointer;
+.seek-btn.ready:hover{background:#bbf7d0;transform:scale(1.05)}
+.seek-btn.active{background:#fee2e2;border-color:var(--err);color:var(--err);cursor:pointer;
   opacity:1;animation:none}
-.seek-btn.active:hover{background:#991b1b}
-@keyframes seekPulse{0%,100%{box-shadow:0 0 8px rgba(74,222,128,.3)}
-  50%{box-shadow:0 0 24px rgba(74,222,128,.6)}}
+.seek-btn.active:hover{background:#fecaca}
+@keyframes seekPulse{0%,100%{box-shadow:0 0 8px rgba(22,163,74,.2)}
+  50%{box-shadow:0 0 24px rgba(22,163,74,.4)}}
+/* glowing target blob */
+.tgt-blob{width:20px;height:20px;border-radius:50%;position:relative;
+  transition:transform .05s linear}
+.tgt-blob .core{width:20px;height:20px;border-radius:50%;position:relative;z-index:2}
+.tgt-blob .glow{position:absolute;inset:-8px;border-radius:50%;opacity:.35;
+  animation:blobPulse 1.2s ease-in-out infinite}
+.tgt-blob .ring{position:absolute;inset:-4px;border-radius:50%;border:2px solid;opacity:.5;
+  animation:blobRing 1.2s ease-in-out infinite}
+@keyframes blobPulse{0%,100%{transform:scale(1);opacity:.35}50%{transform:scale(1.6);opacity:.1}}
+@keyframes blobRing{0%,100%{transform:scale(1);opacity:.5}50%{transform:scale(1.3);opacity:.2}}
 .seek-panel{padding:0 12px 12px;display:flex;flex-direction:column;gap:6px;
   border-top:1px solid var(--border)}
 .seek-panel h3{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;
@@ -293,19 +367,19 @@ header h1{font-size:16px;letter-spacing:.3px}
 .seek-panel h3:hover{color:var(--accent)}
 .fparam{display:flex;gap:6px;align-items:center;margin:2px 0}
 .fparam label{font-size:11px;color:var(--muted);min-width:70px}
-.fparam input{flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);
+.fparam input{flex:1;background:var(--panel);border:1px solid var(--border);color:var(--text);
   border-radius:6px;padding:3px 6px;font-size:12px;max-width:80px}
 .fparam input:disabled{opacity:.4}
 .fparam .unit{font-size:10px;color:var(--muted);min-width:28px}
-.msn-box{padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);
+.msn-box{padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:#fff;
   font-size:11px;line-height:1.6}
 .msn-box b{color:var(--text)}
 .msn-box .c-ok{color:var(--ok)}.msn-box .c-warn{color:var(--warn)}.msn-box .c-err{color:var(--err)}
-.offer-box{padding:10px 12px;border-radius:8px;background:#1a1a2e;border:1px solid var(--accent);margin:4px 0}
+.offer-box{padding:10px 12px;border-radius:8px;background:#eff6ff;border:1px solid var(--accent);margin:4px 0}
 .offer-box .offer-text{font-size:12px;margin:0 0 8px;line-height:1.4}
 .offer-btns{display:flex;gap:8px}
 .offer-btns button{flex:1;padding:8px;border:none;border-radius:6px;font:600 12px/1 sans-serif;cursor:pointer}
-.offer-yes{background:var(--ok);color:#000}
+.offer-yes{background:var(--ok);color:#fff}
 .offer-no{background:var(--err);color:#fff}
 @media(max-width:700px){
   .main{flex-direction:column}
@@ -325,15 +399,15 @@ header h1{font-size:16px;letter-spacing:.3px}
     <div class="toolbar" id="draw_toolbar">
       <button id="draw_circle">&#9711; Circle</button>
       <button id="draw_line">&#9586; Line</button>
+      <button id="draw_path">&#9998; Draw</button>
     </div>
     <div class="draw-hint" id="draw_hint"></div>
     <button class="seek-btn" id="seek_btn" disabled><span class="seek-icon">&#9678;</span><span id="seek_label">SEEK</span></button>
   </div>
   <div class="sidebar">
     <div class="mode-tabs">
-      <button id="tab_draw" class="active" data-mode="draw">Draw<span class="test-badge">TEST</span></button>
-      <button id="tab_manual" data-mode="manual">Manual<span class="test-badge">TEST</span></button>
-      <button id="tab_elkak" data-mode="elkak">ELKAK<span class="op-badge">LIVE</span></button>
+      <button id="tab_test" class="active" data-mode="test">TEST<span class="badge test-badge">SIM</span></button>
+      <button id="tab_elkak" data-mode="elkak">ELKAK<span class="badge op-badge">LIVE</span></button>
     </div>
     <div class="mode-content" id="mode_content">
       <div class="card drone-info" id="drone_card">
@@ -361,23 +435,30 @@ L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/
   maxZoom:19, attribution:"Esri"
 }).addTo(map);
 
-var COLORS = ["#4fc3f7","#f59e0b","#f87171","#a78bfa","#4ade80","#fb923c","#38bdf8","#e879f9"];
+var COLORS = ["#2563eb","#d97706","#dc2626","#7c3aed","#16a34a","#ea580c","#0891b2","#c026d3"];
 var droneMarker = null, centered = false;
 var targets = [], elkakMarkers = {};
 var drawMode = null, drawStep = null, animStart = Date.now();
-var currentMode = "draw";
+var currentMode = "test";
 var modalOpen = false;
+var drawWaypoints = [], drawTempLayers = [];
+var elkakManualActive = false;
 
 function hint(msg){ var el=document.getElementById("draw_hint"); el.textContent=msg||""; el.style.display=msg?"":"none"; }
 function tgtColor(i){ return COLORS[i%COLORS.length]; }
 function droneIcon(){
-  return L.divIcon({className:"",html:'<svg width="28" height="28" viewBox="-14 -14 28 28"><circle r="10" fill="#4ade80" stroke="#fff" stroke-width="2"/><circle r="3" fill="#fff"/></svg>',iconSize:[28,28],iconAnchor:[14,14]});
+  return L.divIcon({className:"",html:'<svg width="28" height="28" viewBox="-14 -14 28 28"><circle r="10" fill="#16a34a" stroke="#fff" stroke-width="2"/><circle r="3" fill="#fff"/></svg>',iconSize:[28,28],iconAnchor:[14,14]});
 }
 function tgtIcon(color){
   return L.divIcon({className:"",html:'<svg width="20" height="20" viewBox="-10 -10 20 20"><polygon points="0,-8 6,6 -6,6" fill="'+color+'" stroke="#fff" stroke-width="1.5"/></svg>',iconSize:[20,20],iconAnchor:[10,10]});
 }
 function elkakIcon(){
-  return L.divIcon({className:"",html:'<svg width="24" height="24" viewBox="-12 -12 24 24"><polygon points="0,-10 7,7 -7,7" fill="#e040fb" stroke="#fff" stroke-width="1.5"/></svg>',iconSize:[24,24],iconAnchor:[12,12]});
+  return L.divIcon({className:"",html:'<svg width="24" height="24" viewBox="-12 -12 24 24"><polygon points="0,-10 7,7 -7,7" fill="#7c3aed" stroke="#fff" stroke-width="1.5"/></svg>',iconSize:[24,24],iconAnchor:[12,12]});
+}
+function blobIcon(color){
+  return L.divIcon({className:"",
+    html:'<div class="tgt-blob"><div class="glow" style="background:'+color+'"></div><div class="ring" style="border-color:'+color+'"></div><div class="core" style="background:'+color+';box-shadow:0 0 8px '+color+'"></div></div>',
+    iconSize:[20,20],iconAnchor:[10,10]});
 }
 
 // ---- modal system ----
@@ -393,16 +474,17 @@ function showModal(type, geo, onConfirm){
   } else if(type === "line"){
     fields = '<div class="mrow"><label>Speed</label><input id="m_speed" type="number" value="10" min="0.1" step="1"><span class="unit">m/s</span></div>'
       +'<div class="mrow"><label>Altitude</label><input id="m_alt" type="number" value="50" min="0" step="5"><span class="unit">m</span></div>';
-  } else {
-    fields = '<div class="mrow"><label>Latitude</label><input id="m_lat" type="number" value="" step="0.00001" placeholder="e.g. 37.80700"></div>'
-      +'<div class="mrow"><label>Longitude</label><input id="m_lon" type="number" value="" step="0.00001" placeholder="e.g. 23.78500"></div>'
+  } else if(type === "path"){
+    var n = (geo.waypoints||[]).length;
+    fields = '<div class="mrow-info">Path with <b>'+n+'</b> waypoints</div>'
+      +'<div class="mrow"><label>Speed</label><input id="m_speed" type="number" value="10" min="0.1" step="1"><span class="unit">m/s</span></div>'
       +'<div class="mrow"><label>Altitude</label><input id="m_alt" type="number" value="50" min="0" step="5"><span class="unit">m</span></div>';
   }
-  var badge = '<span class="badge '+type+'">'+type.toUpperCase()+'</span>';
-  var title = type === "circle" ? "New Circle Target" : type === "line" ? "New Line Target" : "New Static Target";
+  var badge = '<span class="mbadge '+type+'">'+type.toUpperCase()+'</span>';
+  var titles = {circle:"New Circle Target", line:"New Line Target", path:"New Path Target"};
   root.innerHTML = '<div class="modal-overlay" id="modal_overlay">'
     +'<div class="modal">'
-    +'<h2>'+badge+' '+title+'</h2>'
+    +'<h2>'+badge+' '+(titles[type]||"New Target")+'</h2>'
     + fields
     +'<div class="btn-row">'
     +'<button class="btn-cancel" id="m_cancel">Cancel</button>'
@@ -416,14 +498,11 @@ function showModal(type, geo, onConfirm){
       params.radius = parseFloat(document.getElementById("m_radius").value);
       params.speed = parseFloat(document.getElementById("m_speed").value);
       if(!params.radius || params.radius <= 0 || !params.speed || params.speed <= 0) return;
-    } else if(type === "line"){
+    } else if(type === "line" || type === "path"){
       params.speed = parseFloat(document.getElementById("m_speed").value);
       if(!params.speed || params.speed <= 0) return;
-    } else {
-      params.lat = parseFloat(document.getElementById("m_lat").value);
-      params.lon = parseFloat(document.getElementById("m_lon").value);
-      if(!params.lat || !params.lon) return;
     }
+    if(type === "path") params.waypoints = geo.waypoints;
     closeModal();
     onConfirm(params);
   };
@@ -447,8 +526,8 @@ document.querySelectorAll(".mode-tabs button").forEach(function(btn){
     currentMode = btn.dataset.mode;
     document.querySelectorAll(".mode-tabs button").forEach(function(b){ b.className = ""; });
     btn.className = currentMode === "elkak" ? "op-active" : "active";
-    document.getElementById("draw_toolbar").style.display = currentMode === "draw" ? "" : "none";
-    drawMode = null; drawStep = null; hint("");
+    document.getElementById("draw_toolbar").style.display = currentMode === "test" ? "" : "none";
+    drawMode = null; drawStep = null; hint(""); clearDrawTemp();
     fetch("/api/mode",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({mode:currentMode})});
     renderMode();
@@ -460,24 +539,25 @@ function renderMode(){
   var mh = document.getElementById("mode_hint");
   list.innerHTML = ""; mh.innerHTML = "";
   clearElkakMarkers();
-  if(currentMode === "draw") renderDrawMode(list, mh);
-  else if(currentMode === "manual") renderManualMode(list, mh);
+  if(currentMode === "test") renderTestMode(list, mh);
   else renderElkakMode(list, mh);
 }
 
-// ---- MODE 1: DRAW (read-only cards after confirmation) ----
-function renderDrawMode(list, mh){
-  if(!targets.length) mh.innerHTML = '<div class="empty-hint">Click <b>Circle</b> or <b>Line</b> on the map toolbar, then click the map to place a target.<br>You\'ll set parameters and confirm before sending.</div>';
+// ---- TEST tab ----
+function renderTestMode(list, mh){
+  if(!targets.length) mh.innerHTML = '<div class="empty-hint">Use the map toolbar to add targets:<br><b>Circle</b> &mdash; orbiting target<br><b>Line</b> &mdash; back-and-forth between two points<br><b>Draw</b> &mdash; click waypoints to draw a path</div>';
   targets.forEach(function(t, idx){
     var c = tgtColor(idx), card = document.createElement("div");
     card.className = "card";
-    var typeLabel = t.type === "circle" ? "Circle" : t.type === "line" ? "Line" : "Static";
+    var typeLabel = t.type === "circle" ? "Circle" : t.type === "line" ? "Line" : t.type === "path" ? "Path" : "Static";
     var details = "";
     if(t.type === "circle"){
       var period = (2*Math.PI*t.radius / Math.max(0.1,t.speed)).toFixed(1);
       details = 'Radius: '+t.radius+' m &nbsp; Speed: '+t.speed+' m/s &nbsp; Orbit: '+period+' s<br>';
     } else if(t.type === "line"){
       details = 'Speed: '+t.speed+' m/s<br>';
+    } else if(t.type === "path"){
+      details = (t.waypoints?t.waypoints.length:0)+' waypoints &nbsp; Speed: '+t.speed+' m/s<br>';
     }
     details += 'Alt: '+t.alt+' m';
     card.innerHTML = '<h3><span class="dot" style="background:'+c+'"></span>T'+t.id+' '+typeLabel
@@ -491,39 +571,51 @@ function renderDrawMode(list, mh){
   });
 }
 
-// ---- MODE 2: MANUAL (add via modal) ----
-function renderManualMode(list, mh){
-  targets.forEach(function(t, idx){
-    var c = tgtColor(idx), card = document.createElement("div");
-    card.className = "card";
-    card.innerHTML = '<h3><span class="dot" style="background:'+c+'"></span>T'+t.id+' Static'
-      +'<span class="spacer"></span>'
-      +'<button class="del-btn" data-delidx="'+idx+'" title="Remove target">&times;</button></h3>'
-      +'<div class="info">Lat: '+(t.lat?t.lat.toFixed(6):"--")+' &nbsp; Lon: '+(t.lon?t.lon.toFixed(6):"--")+'<br>Alt: '+t.alt+' m</div>';
-    list.appendChild(card);
-  });
-  var addBtn = document.createElement("button");
-  addBtn.className = "add-btn"; addBtn.textContent = "+ Add static target";
-  addBtn.onclick = function(){
-    showModal("static", {}, function(params){
-      commitTarget("static", params.lat, params.lon, 0, 0, params);
-    });
-  };
-  list.appendChild(addBtn);
-  list.querySelectorAll("[data-delidx]").forEach(function(btn){
-    btn.addEventListener("click",function(){removeTarget(parseInt(btn.dataset.delidx));});
-  });
-  if(!targets.length) mh.innerHTML = '<div class="empty-hint">Click <b>+ Add static target</b> to enter coordinates and send.</div>';
-}
-
-// ---- MODE 3: ELKAK ----
+// ---- ELKAK tab ----
 var elkakPollTimer = null;
 function renderElkakMode(list, mh){
-  mh.innerHTML = '<div class="elkak-status"><b>ELKAK OPERATIONAL MODE</b><br>'
-    +'Listening on UDP :LISTEN_PORT_PH for ASTERIX CAT062 from EKETA-EAB.<br>'
-    +'Packets are decoded and relayed to the Jetson in real time.<br><br>'
-    +'<span id="elkak_st">Waiting for data...</span></div>';
-  mh.innerHTML = mh.innerHTML.replace("LISTEN_PORT_PH", "LISTEN_PORT_VAL");
+  mh.innerHTML = '<div class="elkak-status"><b>ELKAK — Operational Mode</b><br>'
+    +'Listening for ASTERIX CAT062 on UDP <b>:LISTEN_PORT_PH</b><br>'
+    +'Packets are decoded and relayed to Jetson <b>JETSON_PLACEHOLDER:JETSON_AST_PH</b><br><br>'
+    +'<span id="elkak_st">Waiting for data...</span></div>'
+    +'<div class="elkak-manual" style="margin-top:8px">'
+    +'<h3>Manual Target Input</h3>'
+    +'<div style="font-size:11px;color:var(--muted);margin-bottom:6px">Enter target coordinates manually (e.g. from ELKAK verbal or text)</div>'
+    +'<div class="mrow"><label>Lat</label><input id="elkak_lat" type="number" step="0.00001" placeholder="e.g. 37.80700"></div>'
+    +'<div class="mrow"><label>Lon</label><input id="elkak_lon" type="number" step="0.00001" placeholder="e.g. 23.78500"></div>'
+    +'<div class="mrow"><label>Alt</label><input id="elkak_alt" type="number" value="50" min="0" step="5"><span class="unit">m MSL</span></div>'
+    +'<button class="send-btn" id="elkak_send">Send Target to Drone</button>'
+    +'<button class="stop-btn" id="elkak_stop" style="display:none">Stop Manual Target</button>'
+    +'</div>';
+  mh.innerHTML = mh.innerHTML.replace(/LISTEN_PORT_PH/g, "LISTEN_PORT_VAL");
+  mh.innerHTML = mh.innerHTML.replace(/JETSON_PLACEHOLDER/g, JETSON);
+  mh.innerHTML = mh.innerHTML.replace(/JETSON_AST_PH/g, "JETSON_AST_VAL");
+  document.getElementById("elkak_send").onclick = function(){
+    var lat = parseFloat(document.getElementById("elkak_lat").value);
+    var lon = parseFloat(document.getElementById("elkak_lon").value);
+    var alt = parseFloat(document.getElementById("elkak_alt").value) || 50;
+    if(!lat || !lon || lat < -90 || lat > 90 || lon < -180 || lon > 180){ alert("Invalid coordinates"); return; }
+    fetch("/api/elkak-manual",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({lat:lat,lon:lon,alt:alt,enabled:true})})
+      .then(function(r){return r.json();}).then(function(){
+        elkakManualActive = true;
+        document.getElementById("elkak_send").style.display = "none";
+        document.getElementById("elkak_stop").style.display = "";
+      });
+  };
+  document.getElementById("elkak_stop").onclick = function(){
+    fetch("/api/elkak-manual",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({enabled:false})})
+      .then(function(r){return r.json();}).then(function(){
+        elkakManualActive = false;
+        document.getElementById("elkak_send").style.display = "";
+        document.getElementById("elkak_stop").style.display = "none";
+      });
+  };
+  if(elkakManualActive){
+    document.getElementById("elkak_send").style.display = "none";
+    document.getElementById("elkak_stop").style.display = "";
+  }
   pollElkak();
   if(elkakPollTimer) clearInterval(elkakPollTimer);
   elkakPollTimer = setInterval(pollElkak, 1000);
@@ -536,6 +628,12 @@ function pollElkak(){
     if(!el) return;
     var age = j.age !== null ? j.age.toFixed(1) + " s ago" : "never";
     el.innerHTML = "Packets: <b>"+j.packets+"</b> &nbsp; Last RX: <b>"+age+"</b> &nbsp; Tracks: <b>"+j.tracks.length+"</b>";
+    if(j.manual_active && !elkakManualActive){
+      elkakManualActive = true;
+      var sb = document.getElementById("elkak_send"), stb = document.getElementById("elkak_stop");
+      if(sb) sb.style.display = "none";
+      if(stb) stb.style.display = "";
+    }
     var list = document.getElementById("target_list");
     list.innerHTML = "";
     j.tracks.forEach(function(t){
@@ -577,11 +675,13 @@ function clearElkakMarkers(){
   elkakMarkers = {};
 }
 
-// ---- target data model (modes 1+2) ----
+// ---- target data model ----
 function commitTarget(type, lat, lon, lat2, lon2, params){
   var id = targets.length+1;
-  targets.push({id:id, enabled:true, type:type, lat:lat, lon:lon, alt:params.alt||50,
-    lat2:lat2||0, lon2:lon2||0, speed:params.speed||10, radius:params.radius||200, layers:{}});
+  var t = {id:id, enabled:true, type:type, lat:lat, lon:lon, alt:params.alt||50,
+    lat2:lat2||0, lon2:lon2||0, speed:params.speed||10, radius:params.radius||200, layers:{}};
+  if(params.waypoints) t.waypoints = params.waypoints;
+  targets.push(t);
   drawTargetLayers(targets.length-1);
   syncToServer();
   renderMode();
@@ -595,76 +695,117 @@ function clearLayers(idx){
   var ly=targets[idx].layers;
   if(ly.m)ly.m.remove(); if(ly.m2)ly.m2.remove();
   if(ly.path)ly.path.remove(); if(ly.circle)ly.circle.remove();
-  if(ly.anim)ly.anim.remove(); targets[idx].layers={};
+  if(ly.anim)ly.anim.remove();
+  if(ly.wps){ ly.wps.forEach(function(w){w.remove();}); }
+  targets[idx].layers={};
 }
 function drawTargetLayers(idx){
   var t=targets[idx],c=tgtColor(idx),ly=t.layers;
   if(ly.m)ly.m.remove(); if(ly.m2)ly.m2.remove();
   if(ly.path)ly.path.remove(); if(ly.circle)ly.circle.remove();
-  if(!t.lat&&!t.lon)return;
-  ly.m=L.marker([t.lat,t.lon],{icon:tgtIcon(c),draggable:false}).addTo(map);
-  if(t.type==="line"&&t.lat2&&t.lon2){
-    ly.m2=L.marker([t.lat2,t.lon2],{icon:tgtIcon(c),draggable:false}).addTo(map);
-    ly.path=L.polyline([[t.lat,t.lon],[t.lat2,t.lon2]],{color:c,weight:2,dashArray:"6 4"}).addTo(map);
+  if(ly.wps){ ly.wps.forEach(function(w){w.remove();}); }
+  if(!t.lat&&!t.lon&&!(t.waypoints&&t.waypoints.length))return;
+  if(t.type==="path"&&t.waypoints&&t.waypoints.length>=2){
+    ly.path=L.polyline(t.waypoints,{color:c,weight:2,dashArray:"6 4"}).addTo(map);
+    ly.wps=t.waypoints.map(function(wp){
+      return L.circleMarker(wp,{radius:3,color:c,fillColor:c,fillOpacity:1,weight:0}).addTo(map);
+    });
+  } else {
+    if(t.lat||t.lon) ly.m=L.marker([t.lat,t.lon],{icon:tgtIcon(c),draggable:false}).addTo(map);
+    if(t.type==="line"&&t.lat2&&t.lon2){
+      ly.m2=L.marker([t.lat2,t.lon2],{icon:tgtIcon(c),draggable:false}).addTo(map);
+      ly.path=L.polyline([[t.lat,t.lon],[t.lat2,t.lon2]],{color:c,weight:2,dashArray:"6 4"}).addTo(map);
+    }
+    if(t.type==="circle") ly.circle=L.circle([t.lat,t.lon],{radius:t.radius,color:c,weight:2,fill:false,dashArray:"6 4"}).addTo(map);
   }
-  if(t.type==="circle") ly.circle=L.circle([t.lat,t.lon],{radius:t.radius,color:c,weight:2,fill:false,dashArray:"6 4"}).addTo(map);
 }
 function redrawAllLayers(){targets.forEach(function(_,i){drawTargetLayers(i);});}
 
 function syncToServer(){
   var data=targets.map(function(t){
-    return {id:t.id, enabled:t.enabled, type:t.type, lat:t.lat, lon:t.lon, alt:t.alt,
+    var obj={id:t.id, enabled:t.enabled, type:t.type, lat:t.lat, lon:t.lon, alt:t.alt,
             lat2:t.lat2, lon2:t.lon2, speed:t.speed, radius:t.radius};
+    if(t.waypoints) obj.waypoints=t.waypoints;
+    return obj;
   });
   fetch("/api/targets",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({targets:data})});
 }
 
-// ---- drawing (mode 1) — click map then confirm in modal ----
-document.getElementById("draw_circle").onclick=function(){
-  if(drawMode==="circle"){drawMode=null;drawStep=null;hint("");this.classList.remove("active");return;}
-  drawMode="circle";drawStep=null;
-  document.getElementById("draw_circle").classList.add("active");
-  document.getElementById("draw_line").classList.remove("active");
-  hint("Click map to place circle center");
-};
-document.getElementById("draw_line").onclick=function(){
-  if(drawMode==="line"){drawMode=null;drawStep=null;hint("");this.classList.remove("active");return;}
-  drawMode="line";drawStep=null;
-  document.getElementById("draw_line").classList.add("active");
-  document.getElementById("draw_circle").classList.remove("active");
-  hint("Click map for line start point");
-};
+// ---- drawing tools ----
+function clearDrawTemp(){
+  drawTempLayers.forEach(function(l){l.remove();}); drawTempLayers=[];
+  drawWaypoints=[];
+}
+function setDrawMode(mode){
+  if(drawMode===mode){drawMode=null;drawStep=null;hint("");clearDrawTemp();
+    document.querySelectorAll(".toolbar button").forEach(function(b){b.classList.remove("active");}); return;}
+  drawMode=mode;drawStep=null;clearDrawTemp();
+  document.querySelectorAll(".toolbar button").forEach(function(b){b.classList.remove("active");});
+  document.getElementById("draw_"+mode).classList.add("active");
+  if(mode==="circle") hint("Click map to place circle center");
+  else if(mode==="line") hint("Click map for line start point");
+  else if(mode==="path") hint("Click map to add waypoints. Double-click last point to finish.");
+}
+
+document.getElementById("draw_circle").onclick=function(){ setDrawMode("circle"); };
+document.getElementById("draw_line").onclick=function(){ setDrawMode("line"); };
+document.getElementById("draw_path").onclick=function(){ setDrawMode("path"); };
 
 map.on("click",function(e){
   if(modalOpen) return;
-  if(currentMode!=="draw"||!drawMode) return;
+  if(currentMode!=="test"||!drawMode) return;
   if(drawMode==="circle"){
     var clat=e.latlng.lat, clon=e.latlng.lng;
     showModal("circle", {lat:clat,lon:clon}, function(params){
       commitTarget("circle", clat, clon, 0, 0, params);
-      hint("Circle sent. Click again for another, or click Circle to stop.");
+      hint("Circle sent. Click again or press Esc to stop.");
     });
   } else if(drawMode==="line"){
     if(!drawStep){
       drawStep={lat:e.latlng.lat,lon:e.latlng.lng};
+      var m=L.circleMarker([e.latlng.lat,e.latlng.lng],{radius:5,color:"#d97706",fillColor:"#d97706",fillOpacity:1}).addTo(map);
+      drawTempLayers.push(m);
       hint("Click map for line end point");
     } else {
       var lat1=drawStep.lat, lon1=drawStep.lon, lat2=e.latlng.lat, lon2=e.latlng.lng;
-      drawStep=null;
-      showModal("line", {lat:lat1,lon:lon1,lat2:lat2,lon2:lon2}, function(params){
+      drawStep=null; clearDrawTemp();
+      showModal("line", {}, function(params){
         commitTarget("line", lat1, lon1, lat2, lon2, params);
-        hint("Line sent. Click again for another, or click Line to stop.");
+        hint("Line sent. Click again or press Esc to stop.");
       });
     }
+  } else if(drawMode==="path"){
+    drawWaypoints.push([e.latlng.lat, e.latlng.lng]);
+    var dot=L.circleMarker(e.latlng,{radius:4,color:"#16a34a",fillColor:"#16a34a",fillOpacity:1,weight:0}).addTo(map);
+    drawTempLayers.push(dot);
+    if(drawWaypoints.length>1){
+      var seg=L.polyline([drawWaypoints[drawWaypoints.length-2],drawWaypoints[drawWaypoints.length-1]],
+        {color:"#16a34a",weight:2,dashArray:"4 4"}).addTo(map);
+      drawTempLayers.push(seg);
+    }
+    hint("Point "+drawWaypoints.length+" added. Click more, or double-click to finish.");
   }
 });
+
+map.on("dblclick",function(e){
+  if(modalOpen) return;
+  if(currentMode==="test"&&drawMode==="path"&&drawWaypoints.length>=2){
+    L.DomEvent.stopPropagation(e);
+    var wps=drawWaypoints.slice();
+    clearDrawTemp();
+    showModal("path", {waypoints:wps}, function(params){
+      commitTarget("path", wps[0][0], wps[0][1], 0, 0, params);
+      hint("Path sent. Click to draw another or press Esc to stop.");
+    });
+  }
+});
+
 document.addEventListener("keydown",function(e){
   if(e.key==="Escape"){
     if(modalOpen){closeModal();return;}
-    drawMode=null;drawStep=null;hint("");
-    document.getElementById("draw_circle").classList.remove("active");
-    document.getElementById("draw_line").classList.remove("active");
+    drawMode=null;drawStep=null;hint("");clearDrawTemp();
+    document.querySelectorAll(".toolbar button").forEach(function(b){b.classList.remove("active");});
   }
 });
 
@@ -702,12 +843,12 @@ function updateDrone(lat,lon,alt){
   } else droneMarker.setLatLng([lat,lon]);
 }
 
-// ---- animate moving targets (modes 1+2) ----
+// ---- animate moving targets ----
 function animateTargets(){
   if(currentMode==="elkak"){requestAnimationFrame(animateTargets);return;}
   var elapsed=(Date.now()-animStart)/1000;
   targets.forEach(function(t,i){
-    if(!t.enabled||(!t.lat&&!t.lon)){if(t.layers.anim){t.layers.anim.remove();t.layers.anim=null;}return;}
+    if(!t.enabled){if(t.layers.anim){t.layers.anim.remove();t.layers.anim=null;}return;}
     var lat,lon;
     if(t.type==="circle"){
       var period=2*Math.PI*t.radius/Math.max(0.1,t.speed);
@@ -720,11 +861,35 @@ function animateTargets(){
       var ft=(elapsed%period)/period;
       var frac=ft<0.5?2*ft:2*(1-ft);
       lat=t.lat+frac*(t.lat2-t.lat);lon=t.lon+frac*(t.lon2-t.lon);
+    } else if(t.type==="path"&&t.waypoints&&t.waypoints.length>=2){
+      var totalLen=0, segs=[];
+      for(var k=0;k<t.waypoints.length-1;k++){
+        var p1=t.waypoints[k],p2=t.waypoints[k+1];
+        var dx=(p2[0]-p1[0])*111320, dy=(p2[1]-p1[1])*111320*Math.cos(p1[0]*Math.PI/180);
+        var sl=Math.hypot(dx,dy); segs.push(sl); totalLen+=sl;
+      }
+      if(totalLen>0.1){
+        var period2=(totalLen/Math.max(0.1,t.speed))*2;
+        var ft2=(elapsed%period2)/period2;
+        var frac2=ft2<0.5?2*ft2:2*(1-ft2);
+        var dist=frac2*totalLen, cum=0;
+        for(var k=0;k<segs.length;k++){
+          if(cum+segs[k]>=dist){
+            var sf=(dist-cum)/Math.max(0.001,segs[k]);
+            lat=t.waypoints[k][0]+sf*(t.waypoints[k+1][0]-t.waypoints[k][0]);
+            lon=t.waypoints[k][1]+sf*(t.waypoints[k+1][1]-t.waypoints[k][1]);
+            break;
+          }
+          cum+=segs[k];
+        }
+      }
     }
     if(lat&&lon){
       var c=tgtColor(i);
-      if(!t.layers.anim) t.layers.anim=L.circleMarker([lat,lon],{radius:6,color:c,fillColor:c,fillOpacity:.9,weight:2}).addTo(map);
+      if(!t.layers.anim) t.layers.anim=L.marker([lat,lon],{icon:blobIcon(c),zIndexOffset:800}).addTo(map);
       else t.layers.anim.setLatLng([lat,lon]);
+    } else {
+      if(t.layers.anim){t.layers.anim.remove();t.layers.anim=null;}
     }
   });
   requestAnimationFrame(animateTargets);
@@ -800,7 +965,6 @@ function updateSeek(sk, m){
   panel.style.display="";
   var seek=sk.seek||{}, run=sk.run||null, cue=sk.cue||{};
   var hasTgt=cue.target!=null;
-  var phase=(m||{}).phase||"";
   seekRunning=run!=null && run.id==="SEEK";
   seekReady=!!(hasTgt && !run);
   seekChecksOk=!!seek.ready;
@@ -899,6 +1063,7 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             page = HTML_PAGE.replace("JETSON_PLACEHOLDER", JETSON_IP)
             page = page.replace("LISTEN_PORT_VAL", str(LISTEN_PORT))
+            page = page.replace("JETSON_AST_VAL", str(JETSON_AST))
             body = page.encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
@@ -919,8 +1084,10 @@ class Handler(BaseHTTPRequestHandler):
                 tracks = list(STATE["elkak_tracks"])
                 pkts = STATE["elkak_packets"]
                 last = STATE["elkak_last_rx"]
+                man = STATE.get("elkak_manual")
             age = round(time.time() - last, 1) if last > 0 else None
-            self._json({"packets": pkts, "age": age, "tracks": tracks})
+            self._json({"packets": pkts, "age": age, "tracks": tracks,
+                        "manual_active": bool(man and man.get("enabled"))})
         else:
             self.send_error(404)
 
@@ -936,10 +1103,24 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/mode":
             length = int(self.headers.get("Content-Length", 0))
             data = json.loads(self.rfile.read(length)) if length else {}
-            mode = data.get("mode", "draw")
+            mode = data.get("mode", "test")
             with LOCK:
                 STATE["mode"] = mode
             self._json({"ok": True, "mode": mode})
+        elif path == "/api/elkak-manual":
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(self.rfile.read(length)) if length else {}
+            with LOCK:
+                if data.get("enabled", False):
+                    STATE["elkak_manual"] = {
+                        "lat": data.get("lat", 0),
+                        "lon": data.get("lon", 0),
+                        "alt": data.get("alt", 50),
+                        "enabled": True,
+                    }
+                else:
+                    STATE["elkak_manual"] = None
+            self._json({"ok": True})
         else:
             self.send_error(404)
 
@@ -968,7 +1149,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     global JETSON_IP, JETSON_HTTP, JETSON_AST, LISTEN_PORT
-    p = argparse.ArgumentParser(description="Ground planner: 3-mode ASTERIX ground station")
+    p = argparse.ArgumentParser(description="Ground planner: TEST + ELKAK ground station")
     p.add_argument("--jetson", default="192.168.205.160", help="Jetson IP (default 192.168.205.160)")
     p.add_argument("--jetson-http", type=int, default=8080, help="Jetson HTTP port (default 8080)")
     p.add_argument("--jetson-ast", type=int, default=8600, help="Jetson ASTERIX UDP port (default 8600)")
@@ -1001,7 +1182,7 @@ def main():
     print(f"[GROUND PLANNER] http://localhost:{args.port}")
     print(f"[GROUND PLANNER] Jetson: {JETSON_IP}:{JETSON_HTTP} (HTTP), :{JETSON_AST} (ASTERIX UDP)")
     print(f"[GROUND PLANNER] ELKAK listener: UDP :{LISTEN_PORT}")
-    print(f"[GROUND PLANNER] Modes: Draw (test), Manual (test), ELKAK (live)")
+    print(f"[GROUND PLANNER] Tabs: TEST (Circle/Line/Draw), ELKAK (live + manual)")
     print(f"[GROUND PLANNER] TX rate: 2 Hz (per EKETA ICD)")
     try:
         server.serve_forever()
