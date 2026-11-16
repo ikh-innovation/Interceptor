@@ -254,6 +254,28 @@ header h1{font-size:16px;letter-spacing:.3px;font-weight:700}
 .draw-hint{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);z-index:1000;
   background:rgba(30,41,59,.9);color:#fff;padding:8px 16px;border-radius:8px;
   font:600 13px/1 sans-serif;pointer-events:none;display:none}
+.draw-panel{position:absolute;bottom:16px;left:16px;z-index:1000;
+  background:#fff;border:1px solid var(--border);border-radius:12px;
+  padding:14px 16px;min-width:260px;max-width:300px;box-shadow:0 4px 20px rgba(0,0,0,.12)}
+.dp-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.dp-header span{font:700 14px/1 sans-serif}
+.dp-close{background:none;border:none;font-size:18px;color:var(--muted);cursor:pointer;padding:0 2px}
+.dp-close:hover{color:var(--err)}
+.dprow{display:flex;gap:6px;align-items:center;margin:6px 0}
+.dprow label{font-size:12px;color:var(--muted);min-width:54px}
+.dprow input{flex:1;background:var(--panel);border:1px solid var(--border);color:var(--text);
+  border-radius:6px;padding:5px 8px;font-size:12px}
+.dprow .unit{font-size:11px;color:var(--muted);min-width:24px}
+.dp-status{font-size:11px;color:var(--muted);margin:8px 0;line-height:1.4}
+.dp-status b{color:var(--text)}
+.dp-actions{display:flex;gap:8px;margin-top:10px}
+.dp-actions button{flex:1;padding:9px;border:none;border-radius:8px;font:600 12px/1 sans-serif;
+  cursor:pointer;transition:all .15s}
+.dp-cancel{background:var(--panel);color:var(--muted);border:1px solid var(--border)!important}
+.dp-cancel:hover{color:var(--err);border-color:var(--err)!important}
+.dp-send{background:var(--accent);color:#fff}
+.dp-send:hover:not(:disabled){opacity:.85}
+.dp-send:disabled{opacity:.35;cursor:not-allowed}
 .sidebar{width:340px;overflow-y:auto;padding:0;display:flex;flex-direction:column;
   border-left:1px solid var(--border);background:var(--panel)}
 .mode-tabs{display:flex;border-bottom:1px solid var(--border);background:#fff}
@@ -402,6 +424,15 @@ header h1{font-size:16px;letter-spacing:.3px;font-weight:700}
       <button id="draw_path">&#9998; Draw</button>
     </div>
     <div class="draw-hint" id="draw_hint"></div>
+    <div class="draw-panel" id="draw_panel" style="display:none">
+      <div class="dp-header"><span id="dp_title"></span><button class="dp-close" id="dp_close">&times;</button></div>
+      <div id="dp_fields"></div>
+      <div id="dp_status" class="dp-status"></div>
+      <div class="dp-actions">
+        <button class="dp-cancel" id="dp_cancel">Cancel</button>
+        <button class="dp-send" id="dp_send" disabled>Send to Jetson</button>
+      </div>
+    </div>
     <button class="seek-btn" id="seek_btn" disabled><span class="seek-icon">&#9678;</span><span id="seek_label">SEEK</span></button>
   </div>
   <div class="sidebar">
@@ -438,10 +469,11 @@ L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/
 var COLORS = ["#2563eb","#d97706","#dc2626","#7c3aed","#16a34a","#ea580c","#0891b2","#c026d3"];
 var droneMarker = null, centered = false;
 var targets = [], elkakMarkers = {};
-var drawMode = null, drawStep = null, animStart = Date.now();
+var animStart = Date.now();
 var currentMode = "test";
 var modalOpen = false;
-var drawWaypoints = [], drawTempLayers = [];
+var drawState = {mode:null, center:null, start:null, end:null, waypoints:[]};
+var drawTempLayers = [];
 var elkakManualActive = false;
 
 function hint(msg){ var el=document.getElementById("draw_hint"); el.textContent=msg||""; el.style.display=msg?"":"none"; }
@@ -527,7 +559,7 @@ document.querySelectorAll(".mode-tabs button").forEach(function(btn){
     document.querySelectorAll(".mode-tabs button").forEach(function(b){ b.className = ""; });
     btn.className = currentMode === "elkak" ? "op-active" : "active";
     document.getElementById("draw_toolbar").style.display = currentMode === "test" ? "" : "none";
-    drawMode = null; drawStep = null; hint(""); clearDrawTemp();
+    hideDrawPanel();
     fetch("/api/mode",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({mode:currentMode})});
     renderMode();
@@ -732,80 +764,153 @@ function syncToServer(){
     body:JSON.stringify({targets:data})});
 }
 
-// ---- drawing tools ----
+// ---- drawing tools (panel-based) ----
 function clearDrawTemp(){
   drawTempLayers.forEach(function(l){l.remove();}); drawTempLayers=[];
-  drawWaypoints=[];
+  drawState.center=null; drawState.start=null; drawState.end=null; drawState.waypoints=[];
 }
+
+function showDrawPanel(mode){
+  drawState.mode=mode;
+  clearDrawTemp();
+  var panel=document.getElementById("draw_panel");
+  var title=document.getElementById("dp_title");
+  var fields=document.getElementById("dp_fields");
+  var status=document.getElementById("dp_status");
+  var send=document.getElementById("dp_send");
+  panel.style.display="";
+  send.disabled=true;
+  if(mode==="circle"){
+    title.textContent="New Circle Target";
+    fields.innerHTML='<div class="dprow"><label>Radius</label><input id="dp_radius" type="number" value="200" min="10" step="10"><span class="unit">m</span></div>'
+      +'<div class="dprow"><label>Speed</label><input id="dp_speed" type="number" value="10" min="0.1" step="1"><span class="unit">m/s</span></div>'
+      +'<div class="dprow"><label>Altitude</label><input id="dp_alt" type="number" value="50" min="0" step="5"><span class="unit">m</span></div>';
+    status.textContent="Click map to place circle center";
+  } else if(mode==="line"){
+    title.textContent="New Line Target";
+    fields.innerHTML='<div class="dprow"><label>Speed</label><input id="dp_speed" type="number" value="10" min="0.1" step="1"><span class="unit">m/s</span></div>'
+      +'<div class="dprow"><label>Altitude</label><input id="dp_alt" type="number" value="50" min="0" step="5"><span class="unit">m</span></div>';
+    status.textContent="Click map for start point";
+  } else if(mode==="path"){
+    title.textContent="New Path Target";
+    fields.innerHTML='<div class="dprow"><label>Speed</label><input id="dp_speed" type="number" value="10" min="0.1" step="1"><span class="unit">m/s</span></div>'
+      +'<div class="dprow"><label>Altitude</label><input id="dp_alt" type="number" value="50" min="0" step="5"><span class="unit">m</span></div>';
+    status.textContent="Click map to add waypoints (0 points)";
+  }
+}
+
+function hideDrawPanel(){
+  document.getElementById("draw_panel").style.display="none";
+  drawState.mode=null;
+  clearDrawTemp();
+  document.querySelectorAll(".toolbar button").forEach(function(b){b.classList.remove("active");});
+  hint("");
+}
+
+function updateDrawStatus(){
+  var status=document.getElementById("dp_status");
+  var send=document.getElementById("dp_send");
+  if(drawState.mode==="circle"){
+    if(drawState.center){
+      status.innerHTML="Center: <b>"+drawState.center[0].toFixed(5)+", "+drawState.center[1].toFixed(5)+"</b>";
+      send.disabled=false;
+    }
+  } else if(drawState.mode==="line"){
+    if(drawState.start&&drawState.end){
+      status.innerHTML="Start &rarr; End placed";
+      send.disabled=false;
+    } else if(drawState.start){
+      status.innerHTML="Start: <b>"+drawState.start[0].toFixed(5)+"</b> &mdash; click for end";
+      send.disabled=true;
+    }
+  } else if(drawState.mode==="path"){
+    var n=drawState.waypoints.length;
+    if(n>=2){
+      status.innerHTML="<b>"+n+"</b> waypoints. Click more or send.";
+      send.disabled=false;
+    } else {
+      status.textContent="Click map to add waypoints ("+n+" point"+(n!==1?"s":"")+")";
+      send.disabled=true;
+    }
+  }
+}
+
+function sendDrawTarget(){
+  var alt=parseFloat((document.getElementById("dp_alt")||{}).value)||50;
+  var speed=parseFloat((document.getElementById("dp_speed")||{}).value)||10;
+  var radius=parseFloat((document.getElementById("dp_radius")||{}).value)||200;
+  if(drawState.mode==="circle"&&drawState.center){
+    commitTarget("circle",drawState.center[0],drawState.center[1],0,0,{alt:alt,speed:speed,radius:radius});
+  } else if(drawState.mode==="line"&&drawState.start&&drawState.end){
+    commitTarget("line",drawState.start[0],drawState.start[1],drawState.end[0],drawState.end[1],{alt:alt,speed:speed});
+  } else if(drawState.mode==="path"&&drawState.waypoints.length>=2){
+    var wps=drawState.waypoints.slice();
+    commitTarget("path",wps[0][0],wps[0][1],0,0,{alt:alt,speed:speed,waypoints:wps});
+  } else return;
+  clearDrawTemp();
+  updateDrawStatus();
+  hint("Sent! Click map to add another target.");
+}
+
 function setDrawMode(mode){
-  if(drawMode===mode){drawMode=null;drawStep=null;hint("");clearDrawTemp();
-    document.querySelectorAll(".toolbar button").forEach(function(b){b.classList.remove("active");}); return;}
-  drawMode=mode;drawStep=null;clearDrawTemp();
+  var wasActive=drawState.mode===mode;
+  hideDrawPanel();
+  if(wasActive) return;
   document.querySelectorAll(".toolbar button").forEach(function(b){b.classList.remove("active");});
   document.getElementById("draw_"+mode).classList.add("active");
-  if(mode==="circle") hint("Click map to place circle center");
-  else if(mode==="line") hint("Click map for line start point");
-  else if(mode==="path") hint("Click map to add waypoints. Double-click last point to finish.");
+  showDrawPanel(mode);
 }
 
 document.getElementById("draw_circle").onclick=function(){ setDrawMode("circle"); };
 document.getElementById("draw_line").onclick=function(){ setDrawMode("line"); };
 document.getElementById("draw_path").onclick=function(){ setDrawMode("path"); };
+document.getElementById("dp_close").onclick=function(){ hideDrawPanel(); };
+document.getElementById("dp_cancel").onclick=function(){ hideDrawPanel(); };
+document.getElementById("dp_send").onclick=function(){ sendDrawTarget(); };
 
 map.on("click",function(e){
   if(modalOpen) return;
-  if(currentMode!=="test"||!drawMode) return;
-  if(drawMode==="circle"){
-    var clat=e.latlng.lat, clon=e.latlng.lng;
-    showModal("circle", {lat:clat,lon:clon}, function(params){
-      commitTarget("circle", clat, clon, 0, 0, params);
-      hint("Circle sent. Click again or press Esc to stop.");
-    });
-  } else if(drawMode==="line"){
-    if(!drawStep){
-      drawStep={lat:e.latlng.lat,lon:e.latlng.lng};
-      var m=L.circleMarker([e.latlng.lat,e.latlng.lng],{radius:5,color:"#d97706",fillColor:"#d97706",fillOpacity:1}).addTo(map);
-      drawTempLayers.push(m);
-      hint("Click map for line end point");
-    } else {
-      var lat1=drawStep.lat, lon1=drawStep.lon, lat2=e.latlng.lat, lon2=e.latlng.lng;
-      drawStep=null; clearDrawTemp();
-      showModal("line", {}, function(params){
-        commitTarget("line", lat1, lon1, lat2, lon2, params);
-        hint("Line sent. Click again or press Esc to stop.");
-      });
+  if(currentMode!=="test"||!drawState.mode) return;
+  if(drawState.mode==="circle"){
+    clearDrawTemp();
+    drawState.center=[e.latlng.lat,e.latlng.lng];
+    var dot=L.circleMarker(e.latlng,{radius:5,color:"#2563eb",fillColor:"#2563eb",fillOpacity:1}).addTo(map);
+    drawTempLayers.push(dot);
+    var r=parseFloat((document.getElementById("dp_radius")||{}).value)||200;
+    var circ=L.circle(e.latlng,{radius:r,color:"#2563eb",weight:2,fill:false,dashArray:"6 4"}).addTo(map);
+    drawTempLayers.push(circ);
+    updateDrawStatus();
+  } else if(drawState.mode==="line"){
+    if(!drawState.start){
+      drawState.start=[e.latlng.lat,e.latlng.lng];
+      var dot=L.circleMarker(e.latlng,{radius:5,color:"#d97706",fillColor:"#d97706",fillOpacity:1}).addTo(map);
+      drawTempLayers.push(dot);
+      updateDrawStatus();
+    } else if(!drawState.end){
+      drawState.end=[e.latlng.lat,e.latlng.lng];
+      var dot=L.circleMarker(e.latlng,{radius:5,color:"#d97706",fillColor:"#d97706",fillOpacity:1}).addTo(map);
+      drawTempLayers.push(dot);
+      var line=L.polyline([drawState.start,drawState.end],{color:"#d97706",weight:2,dashArray:"6 4"}).addTo(map);
+      drawTempLayers.push(line);
+      updateDrawStatus();
     }
-  } else if(drawMode==="path"){
-    drawWaypoints.push([e.latlng.lat, e.latlng.lng]);
+  } else if(drawState.mode==="path"){
+    drawState.waypoints.push([e.latlng.lat,e.latlng.lng]);
     var dot=L.circleMarker(e.latlng,{radius:4,color:"#16a34a",fillColor:"#16a34a",fillOpacity:1,weight:0}).addTo(map);
     drawTempLayers.push(dot);
-    if(drawWaypoints.length>1){
-      var seg=L.polyline([drawWaypoints[drawWaypoints.length-2],drawWaypoints[drawWaypoints.length-1]],
-        {color:"#16a34a",weight:2,dashArray:"4 4"}).addTo(map);
+    if(drawState.waypoints.length>1){
+      var wps=drawState.waypoints;
+      var seg=L.polyline([wps[wps.length-2],wps[wps.length-1]],{color:"#16a34a",weight:2,dashArray:"4 4"}).addTo(map);
       drawTempLayers.push(seg);
     }
-    hint("Point "+drawWaypoints.length+" added. Click more, or double-click to finish.");
-  }
-});
-
-map.on("dblclick",function(e){
-  if(modalOpen) return;
-  if(currentMode==="test"&&drawMode==="path"&&drawWaypoints.length>=2){
-    L.DomEvent.stopPropagation(e);
-    var wps=drawWaypoints.slice();
-    clearDrawTemp();
-    showModal("path", {waypoints:wps}, function(params){
-      commitTarget("path", wps[0][0], wps[0][1], 0, 0, params);
-      hint("Path sent. Click to draw another or press Esc to stop.");
-    });
+    updateDrawStatus();
   }
 });
 
 document.addEventListener("keydown",function(e){
   if(e.key==="Escape"){
     if(modalOpen){closeModal();return;}
-    drawMode=null;drawStep=null;hint("");clearDrawTemp();
-    document.querySelectorAll(".toolbar button").forEach(function(b){b.classList.remove("active");});
+    if(drawState.mode){hideDrawPanel();return;}
   }
 });
 
