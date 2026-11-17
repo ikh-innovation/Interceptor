@@ -440,8 +440,9 @@ async function openFlightDetail(jetsonId, flightId) {
   html += '<div class="detail-actions">' +
     '<button onclick="downloadCSV(\'' + esc(jetsonId) + '\',\'' + esc(flightId) + '\')">Download CSV</button>' +
     '<button onclick="downloadEvents(\'' + esc(jetsonId) + '\',\'' + esc(flightId) + '\')">Download Events</button>' +
+    '<button onclick="downloadELKAK(\'' + esc(jetsonId) + '\',\'' + esc(flightId) + '\')">Download ELKAK</button>' +
     (reportText ? '<button onclick="downloadReport(\'' + esc(flightId) + '\')">Download Report (TXT)</button>' : '') +
-    (drone && drone.online ? '<a href="https://' + esc(jetsonId) + '.' + DOMAIN + '/logs/download/' + esc(flightId) + '/' + esc(flightId) + '.csv" target="_blank">Raw CSV (from drone)</a>' : '') +
+    (drone && drone.online ? '<a href="https://' + esc(jetsonId) + '.' + DOMAIN + '/logs/download/' + esc(flightId) + '/' + esc(flightId) + '.csv" target="_blank">Full CSV (from drone)</a>' : '') +
     '</div>';
 
   body.innerHTML = html;
@@ -477,18 +478,17 @@ function switchMode(el) {
 }
 
 async function downloadCSV(jetsonId, flightId) {
-  var drone = droneData.find(function(d) { return d.jetson_id === jetsonId; });
-  if (drone && drone.online) {
-    window.open("https://" + esc(jetsonId) + "." + DOMAIN + "/logs/download/" + esc(flightId) + "/" + esc(flightId) + ".csv", "_blank");
-  } else {
-    alert("CSV data download requires the drone to be online.\nUse events download for offline data.");
-  }
+  window.open("/cloud/csv?jetson=" + esc(jetsonId) + "&id=" + esc(flightId), "_blank");
 }
 
 async function downloadEvents(jetsonId, flightId) {
   var events = await fetchFlightEvents(jetsonId, flightId);
   var text = events.map(function(e) { return JSON.stringify(e); }).join("\n");
   downloadBlob(text, flightId + "_events.jsonl", "application/jsonl");
+}
+
+async function downloadELKAK(jetsonId, flightId) {
+  window.open("/cloud/elkak?jetson=" + esc(jetsonId) + "&id=" + esc(flightId), "_blank");
 }
 
 async function requestReport(jetsonId, flightId) {
