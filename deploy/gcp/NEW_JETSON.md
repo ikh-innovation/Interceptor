@@ -25,6 +25,12 @@ same name goes into **two places**:
 If these two names disagree, the dashboard lists the drone but the "Cockpit"
 button opens the wrong subdomain (404). **Keep them identical.**
 
+> **Already-installed Jetson with the wrong name?** The frpc tunnel is
+> idempotent — just re-run with the correct `--name` and it rebinds:
+> ```bash
+> sudo ~/Documents/Interceptor/deploy/gcp/jetson/install-frpc.sh --name <CORRECT_NAME>
+> ```
+
 ---
 
 ## Checklist
