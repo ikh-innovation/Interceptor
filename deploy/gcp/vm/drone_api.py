@@ -51,20 +51,31 @@ def get_db():
     return _db
 
 
+ONLINE_STALE_S = 90  # 3x the Jetson's 30s heartbeat; above this => offline
+
+
 def list_drones():
     db = get_db()
     if db is None:
         return []
     docs = db.collection(COLLECTION).stream()
     drones = []
+    now = datetime.now(timezone.utc)
     for doc in docs:
         d = doc.to_dict()
         if "jetson_id" not in d and "online" not in d:
             continue
         d["jetson_id"] = doc.id
         last = d.get("last_seen")
+        last_dt = last if hasattr(last, "timestamp") else None
+        if last_dt is not None and last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=timezone.utc)
         if last is not None:
             d["last_seen"] = last.isoformat() if hasattr(last, "isoformat") else str(last)
+        age_s = (now - last_dt).total_seconds() if last_dt is not None else None
+        fresh = age_s is not None and age_s <= ONLINE_STALE_S
+        d["online"] = bool(d.get("online")) and fresh
+        d["heartbeat_age_s"] = None if age_s is None else round(age_s, 1)
         flights_col = db.collection(COLLECTION).document(doc.id).collection("flights")
         d["flight_count"] = sum(1 for _ in flights_col.limit(500).stream())
         drones.append(d)
