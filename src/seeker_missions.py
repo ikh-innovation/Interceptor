@@ -105,8 +105,8 @@ CATALOG = [
 # top speed until the camera sees the target, then ALT_HOLD and the AI.
 SEEK = dict(id="SEEK", name="Seek the ASTERIX target", short="Fly to the cue, the AI takes over on sight",
             params=[_num("speed", "Speed (FC max ≈ WPNAV_SPEED)", "m/s", 20, 2, 25, 0.5),
-                    _num("below", "Fly this far below the target", "m", 20, 0, 100),
-                    _num("standoff", "Stop short of the target", "m", 50, 0, 1000, 5),
+                    _num("below", "Fly this far below the target", "m", 10, 0, 100),
+                    _num("standoff", "Stop short of the target (0 = follow directly)", "m", 0, 0, 1000, 5),
                     _num("min_alt", "Minimum height", "m", 20, 5, 500),
                     _num("cruise_alt", "Height when the track has none", "m", 40, 5, 500),
                     _num("det_s", "Camera lock before the AI takes over", "s", 0.5, 0, 5, 0.1),
@@ -205,11 +205,16 @@ def describe(mid, p, lim):
     if mid == "SEEK":
         return ["Pre-flight checks", "GUIDED + ARM", "Wait 3 s", "Take off to 5 m",
                         f"Climb and turn to the ASTERIX target, follow it at {_fmt(p['speed'])} m/s, "
-                        f"{_fmt(p['below'])} m under it, {_fmt(p['standoff'])} m short, nose on it "
-                        "(a new target on the feed: asks to switch)",
-                        f"Camera on the target {_fmt(p['det_s'])} s: asks ENGAGE? "
-                        "YES → ALT_HOLD, the AI takes it. NO → hold, wait for another target. "
-                        "ABORT or the geofence: RTL"]
+                        f"{_fmt(p['below'])} m under it"
+                        + (f", {_fmt(p['standoff'])} m short, nose on it "
+                           "(a new target on the feed: asks to switch)"
+                           if p["standoff"] > 0 else
+                           ", directly underneath (a new target on the feed: asks to switch)"),
+                        (f"Camera on the target {_fmt(p['det_s'])} s: asks ENGAGE? "
+                         "YES → ALT_HOLD, the AI takes it. NO → hold, wait for another target. "
+                         "ABORT or the geofence: RTL"
+                         if p["standoff"] > 0 else
+                         "Follows the target continuously until ABORT or the geofence: RTL")]
     return []
 
 
@@ -1874,17 +1879,19 @@ class SeekerMissions:
             # The camera has it: frame it as the AI wants it before YES, nose on
             # it and the target ON the aim mark (below the dashed line), so that
             # PUSH's lean brings it to the centre.
-            cam = self._camera_track(mission, t, p) if r["seek"] == "FOLLOW" else None
+            cam = self._camera_track(mission, t, p) if r["seek"] == "FOLLOW" and p["standoff"] > 0 else None
             if tgt is not None and pos is not None:
                 r["cue"], lost_note = tgt, False
                 alt = tgt["alt_rel"] - p["below"] if tgt.get("alt_rel") is not None else p["cruise_alt"]
                 alt = max(p["min_alt"], min(alt, r["lim"]["alt_limit"] - 2.0))
                 d, brg = _dist(pos, (tgt["lat"], tgt["lon"])), _bearing(pos, (tgt["lat"], tgt["lon"]))
-                # A moving target: keep the standoff, also while asking.
                 hold = None
-                point = _toward(pos, brg, d - p["standoff"]) if d > p["standoff"] else pos
-                if cam is not None:
-                    alt, brg = cam["alt"], cam["yaw"]
+                if p["standoff"] > 0:
+                    point = _toward(pos, brg, d - p["standoff"]) if d > p["standoff"] else pos
+                    if cam is not None:
+                        alt, brg = cam["alt"], cam["yaw"]
+                else:
+                    point = (tgt["lat"], tgt["lon"])
                 r["target_alt"] = alt
                 if self.now - sent >= 0.25:
                     sent = self.now
@@ -1914,19 +1921,20 @@ class SeekerMissions:
                     r["state"], r["why"] = "HOLD", "target lost — holding altitude"
                     r["seek"] = "HOLD"
                     self.check("Hold", None, "ALT_HOLD, waiting for pilot or new target")
-            det_t, conf = self.ctx.get("det_t"), self.ctx.get("det_conf")
-            close = tgt is not None and pos is not None and d <= p["det_range"]
-            seen = (det_t is not None and self.now - det_t < 0.3
-                    and conf is not None and conf >= mission.min_conf and close)
-            det_since = (det_since or self.now) if seen and r["seek"] == "FOLLOW" else None
-            if det_since is not None and self.now - det_since >= p["det_s"]:
-                if r["offer"] is None or r["offer"]["kind"] != "engage":
-                    if r["offer"] is not None:
-                        r["offer"], r["answer"] = None, None
-                    cue_label = (r["cue"] or {}).get("label", "target")
-                    self._offer("engage", r["cue"],
-                                f"Camera locked on {cue_label} ({d:.0f} m): ENGAGE the AI?")
-                    det_since = None
+            if p["standoff"] > 0:
+                det_t, conf = self.ctx.get("det_t"), self.ctx.get("det_conf")
+                close = tgt is not None and pos is not None and d <= p["det_range"]
+                seen = (det_t is not None and self.now - det_t < 0.3
+                        and conf is not None and conf >= mission.min_conf and close)
+                det_since = (det_since or self.now) if seen and r["seek"] == "FOLLOW" else None
+                if det_since is not None and self.now - det_since >= p["det_s"]:
+                    if r["offer"] is None or r["offer"]["kind"] != "engage":
+                        if r["offer"] is not None:
+                            r["offer"], r["answer"] = None, None
+                        cue_label = (r["cue"] or {}).get("label", "target")
+                        self._offer("engage", r["cue"],
+                                    f"Camera locked on {cue_label} ({d:.0f} m): ENGAGE the AI?")
+                        det_since = None
             yield
         self._at(5)
         cue = r["cue"] or {}

@@ -318,7 +318,7 @@ class DroneTracker:
         self.use_sky_mask = use_sky_mask
         self.record_dir      = record_dir
         self.record_pad_sec  = float(record_pad_sec)
-        self.record_continuous = os.environ.get("WASP_RECORD_CONTINUOUS", "0") == "1"
+        self.record_continuous = False
         self.run_stamp = run_stamp or datetime.now().strftime("%Y%m%d_%H%M%S")
         self.headless     = headless
         self.max_frames   = max_frames
@@ -1878,6 +1878,7 @@ class DroneTracker:
         self._rec_path    = out_path.resolve() if out_path else None
         last_written      = -1
         post_left         = 0
+        self._rec_was_armed = False
         self._cap         = cap
 
         while self._cap.isOpened():
@@ -1984,36 +1985,31 @@ class DroneTracker:
             _tp = self._lap("stream", _tp)
 
             if rec_on:
-               if fused or self.record_continuous:
-                   if post_left == 0:
-                       self._rec_windows += 1
-                       if self._writer is None:
-                           self._rec_base, self._rec_fourcc = Path(out_path), fourcc
-                           self._rec_part, self._rec_seg_n = 1, 0
-                           self._writer = cv2.VideoWriter(
-                               str(out_path), fourcc, src_fps,
-                               (frame_disp.shape[1], frame_disp.shape[0]))
-                           self._rec_size = (frame_disp.shape[1], frame_disp.shape[0])
-                           if not self._writer.isOpened():
-
-
-
-                               self._rec_on = rec_on = False
-                       if rec_on:
-                           for i, f in pre_buf:
-                               if i > last_written:
-                                   self._rec_submit(f); last_written = i
-                                   self._rec_frames += 1
-
-
-
-                   post_left = pad
-               if rec_on and post_left > 0:
+               armed = bool(getattr(self.ap, "armed", False))
+               if armed and not self._rec_was_armed:
+                   flight_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                   out_path = out_dir / f"flight_{flight_stamp}.mp4"
+                   self._rec_path = out_path.resolve()
+                   self._rec_base = Path(out_path)
+                   self._rec_fourcc = fourcc
+                   self._rec_part = 1
+                   self._rec_seg_n = 0
+                   self._rec_frames = 0
+                   self._rec_windows = 1
+                   self._writer = cv2.VideoWriter(
+                       str(out_path), fourcc, src_fps,
+                       (frame_disp.shape[1], frame_disp.shape[0]))
+                   self._rec_size = (frame_disp.shape[1], frame_disp.shape[0])
+                   if not self._writer.isOpened():
+                       self._rec_on = rec_on = False
+               elif not armed and self._rec_was_armed:
+                   if self._writer is not None:
+                       self._writer.release()
+                       self._writer = None
+               self._rec_was_armed = armed
+               if armed and self._writer is not None:
                    self._rec_submit(frame_disp.copy())
-                   last_written = self._frame_idx; self._rec_frames += 1
-                   post_left -= 1
-               elif rec_on:
-                   pre_buf.append((self._frame_idx, frame_disp.copy()))
+                   self._rec_frames += 1
 
             _tp = self._lap("record", _tp)
 
