@@ -15,7 +15,12 @@ class FlightLogs:
                "idle_height_target_m", "idle_heading_target_deg",
                "detection_fresh", "wasp_stage", "wasp_steering_blend",
                "wasp_target_acquired", "cmd_roll_rate_dps",
-               "cmd_pitch_rate_dps", "cmd_yaw_rate_dps", "cam_fps", "processing_fps")
+               "cmd_pitch_rate_dps", "cmd_yaw_rate_dps", "cam_fps", "processing_fps",
+               "seeker_active", "seeker_mission", "seeker_phase",
+               "fc_mode",
+               "gps_lat", "gps_lon", "rel_alt_m", "heading_deg", "ground_speed_mps",
+               "battery_v", "battery_pct",
+               "det_confidence", "det_distance_m")
 
     def __init__(self, directory, stamp, header, utc_fn=None, uploader=None):
         self.directory = Path(directory)
@@ -32,7 +37,8 @@ class FlightLogs:
         self._uploader = uploader
 
     def _start(self, now, state, metadata):
-        kind = ("wasp" if state["wasp_enabled"] else
+        kind = ("seeker" if state.get("seeker_active") else
+                "wasp" if state["wasp_enabled"] else
                 "auto" if state["auto_run"] or state["phase"].startswith("AUTO_")
                 else "semi_auto")
         flights_dir = self.directory / "flights"
@@ -87,7 +93,8 @@ class FlightLogs:
             self._uploader.push_event(self.active["flight_id"], event)
 
     def _changes(self, now, state):
-        for field in ("phase", "detection_fresh", "wasp_stage", "idle_stage"):
+        for field in ("phase", "detection_fresh", "wasp_stage", "idle_stage",
+                      "seeker_phase", "fc_mode"):
             value = state.get(field)
             if value != self._previous.get(field):
                 self._event(now, field, previous=self._previous.get(field), value=value)
@@ -124,7 +131,7 @@ class FlightLogs:
                 self._changes(now, state)
                 self._csv.write(row + "\n")
                 self._metadata["rows"] += 1
-                if self._uploader is not None and self._metadata["rows"] % 50 == 0:
+                if self._uploader is not None and self._metadata["rows"] % 10 == 0:
                     self._uploader.push_row(self.active["flight_id"], values)
                 if not running:
                     reason = ("disarmed" if not state["armed"] else

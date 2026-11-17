@@ -20,7 +20,9 @@ if [ ! -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg ]; then
     | tee /etc/apt/sources.list.d/caddy-stable.list
 fi
 apt-get update
-apt-get install -y caddy
+apt-get install -y caddy python3-pip
+pip3 install --break-system-packages google-cloud-firestore google-cloud-aiplatform 2>/dev/null \
+  || pip3 install google-cloud-firestore google-cloud-aiplatform
 
 # --- frp server -------------------------------------------------------------
 FRP_VERSION="0.61.1"
@@ -80,6 +82,27 @@ FRPS_UNIT
 install -d -m 0755 /var/www/drones
 echo '${dashboard_html_b64}' | base64 -d > /var/www/drones/index.html
 chmod 0644 /var/www/drones/index.html
+
+# --- API server (Firestore proxy for the dashboard) -------------------------
+echo '${drone_api_b64}' | base64 -d > /usr/local/bin/drones-api.py
+chmod 0755 /usr/local/bin/drones-api.py
+
+cat > /etc/systemd/system/drones-api.service <<'API_UNIT'
+[Unit]
+Description=Drones dashboard API (Firestore proxy)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment="GCP_PROJECT=${gcp_project}"
+Environment="DRONE_API_PORT=8090"
+ExecStart=/usr/bin/python3 /usr/local/bin/drones-api.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+API_UNIT
 
 # --- frp token served over HTTPS (behind basic auth) -----------------------
 # The Jetson installer fetches this with the dashboard password, so operators
@@ -147,6 +170,12 @@ ${domain} {
         }
     }
 
+    # Firestore API for the dashboard (drones, flights, reports).
+    handle /cloud/* {
+        uri strip_prefix /cloud
+        reverse_proxy 127.0.0.1:8090
+    }
+
     root * /var/www/drones
     file_server
 }
@@ -174,6 +203,9 @@ CADDY_EOF
 systemctl daemon-reload
 systemctl enable --now frps.service
 systemctl restart frps.service
+
+systemctl enable --now drones-api.service
+systemctl restart drones-api.service
 
 systemctl enable --now caddy
 systemctl restart caddy

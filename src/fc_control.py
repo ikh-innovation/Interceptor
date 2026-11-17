@@ -3836,9 +3836,46 @@ class AcroCommander:
         fresh = (det_t is not None and 0 <= now-det_t <= timeout
                  and confidence is not None and confidence >= m.min_conf)
         rates = m.wasp._rates if m.phase == "WASP_FLIGHT" else (None, None, None)
+        sr = m.seeker.run
+        tel = {}
+        b = self.backend
+        if isinstance(b, ArduPilotAcro):
+            try:
+                tel = b.telemetry(max_age=2.0)
+            except Exception:
+                tel = {}
+        pos = tel.get("position")
+        lat = pos[0] if pos else None
+        lon = pos[1] if pos else None
+        det_dist = None
+        if sr and pos is not None:
+            try:
+                tgt = sr.get("cue")
+                if tgt and tgt.get("lat") is not None:
+                    dlat = math.radians(tgt["lat"] - pos[0])
+                    dlon = math.radians(tgt["lon"] - pos[1])
+                    a = (math.sin(dlat/2)**2
+                         + math.cos(math.radians(pos[0])) * math.cos(math.radians(tgt["lat"]))
+                         * math.sin(dlon/2)**2)
+                    det_dist = 6371000.0 * 2 * math.asin(min(1.0, math.sqrt(a)))
+            except Exception:
+                det_dist = None
         return dict(t_s=round(now-self._t0, 3), phase=m.phase,
                     armed=self.armed, linked=self.linked,
                     wasp_enabled=m.wasp.enabled, auto_run=m.auto_run,
+                    seeker_active=sr is not None,
+                    seeker_mission=sr["id"] if sr else "",
+                    seeker_phase=sr.get("seek", "") if sr else "",
+                    fc_mode=self.mode_name,
+                    gps_lat=None if lat is None else round(lat, 7),
+                    gps_lon=None if lon is None else round(lon, 7),
+                    rel_alt_m=None if tel.get("rel_alt") is None else round(tel["rel_alt"], 2),
+                    heading_deg=None if tel.get("heading") is None else round(tel["heading"], 1),
+                    ground_speed_mps=None if tel.get("gs") is None else round(tel["gs"], 2),
+                    battery_v=tel.get("battery_v"),
+                    battery_pct=tel.get("battery_pct"),
+                    det_confidence=None if confidence is None else round(confidence, 3),
+                    det_distance_m=None if det_dist is None else round(det_dist, 1),
                     idle_limit_s=m.idle_s,
                     idle_stage=("SAFEDOWN_" + m.safedown.stage) if m.safedown.active else idle["stage"],
                     idle_height_target_m=idle["height_m"],

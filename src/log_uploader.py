@@ -36,6 +36,7 @@ log = logging.getLogger("log_uploader")
 
 _BATCH_SIZE = 50
 _FLUSH_INTERVAL_S = 2.0
+_HEARTBEAT_INTERVAL_S = 30.0
 
 
 class LogUploader:
@@ -73,10 +74,23 @@ class LogUploader:
             self.error = str(exc)
             log.error("LogUploader: Firestore connection failed: %s", exc)
 
+    def _heartbeat(self):
+        try:
+            doc = self._db.collection(self.collection_prefix).document(self.jetson_id)
+            from google.cloud.firestore import SERVER_TIMESTAMP
+            doc.set({"jetson_id": self.jetson_id,
+                     "last_seen": SERVER_TIMESTAMP,
+                     "online": True}, merge=True)
+            log.info("LogUploader: heartbeat sent for %s", self.jetson_id)
+        except Exception as exc:
+            log.warning("LogUploader: heartbeat failed: %s", exc)
+
     def _run(self):
         self._connect()
         if self._db is None:
             return
+        self._heartbeat()
+        last_hb = time.monotonic()
         batch = []
         while not self._stop.is_set():
             try:
@@ -92,6 +106,10 @@ class LogUploader:
             if batch:
                 self._flush(batch)
                 batch = []
+            if time.monotonic() - last_hb >= _HEARTBEAT_INTERVAL_S:
+                self._heartbeat()
+                last_hb = time.monotonic()
+        self._set_offline()
         while not self._q.empty():
             try:
                 batch.append(self._q.get_nowait())
@@ -99,6 +117,14 @@ class LogUploader:
                 break
         if batch:
             self._flush(batch)
+
+    def _set_offline(self):
+        try:
+            doc = self._db.collection(self.collection_prefix).document(self.jetson_id)
+            from google.cloud.firestore import SERVER_TIMESTAMP
+            doc.set({"online": False, "last_seen": SERVER_TIMESTAMP}, merge=True)
+        except Exception:
+            pass
 
     def _flush(self, items):
         try:

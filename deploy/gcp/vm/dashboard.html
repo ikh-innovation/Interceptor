@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="el">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Drones Online</title>
+<title>IKH Drone Fleet</title>
 <style>
   :root {
     color-scheme: dark light;
@@ -17,435 +17,531 @@
     --warn: #f59e0b;
     --err: #f87171;
     --border: #233041;
+    --seeker: #a78bfa;
+    --wasp: #f59e0b;
   }
   @media (prefers-color-scheme: light) {
     :root:not([data-theme="dark"]) {
-      --bg: #f6f8fb;
-      --panel: #ffffff;
-      --panel-2: #f0f3f8;
-      --text: #0f1b2b;
-      --muted: #5a6b80;
-      --accent: #0369a1;
-      --border: #d6deea;
+      --bg: #f6f8fb; --panel: #ffffff; --panel-2: #f0f3f8;
+      --text: #0f1b2b; --muted: #5a6b80; --accent: #0369a1; --border: #d6deea;
+      --seeker: #7c3aed; --wasp: #d97706;
     }
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: var(--bg);
-    color: var(--text);
+    background: var(--bg); color: var(--text);
     min-height: 100dvh;
   }
   header {
     padding: 20px 16px 8px;
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
-    max-width: 920px;
-    margin: 0 auto;
+    max-width: 1100px; margin: 0 auto;
+    display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
   }
-  h1 { font-size: 20px; margin: 0; letter-spacing: 0.3px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: 0.3px; }
   .sub { color: var(--muted); font-size: 13px; }
-  main {
-    max-width: 920px;
-    margin: 0 auto;
-    padding: 12px 16px 48px;
+  main { max-width: 1100px; margin: 0 auto; padding: 12px 16px 48px; }
+
+  .tabs { display: flex; gap: 0; margin: 16px 0 0; border-bottom: 2px solid var(--border); }
+  .tab {
+    padding: 10px 20px; cursor: pointer; font-size: 14px; font-weight: 600;
+    color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -2px;
+    transition: color .15s, border-color .15s;
   }
-  .toolbar {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    margin: 8px 0 16px;
-    color: var(--muted);
-    font-size: 13px;
-  }
-  .dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--ok);
-    box-shadow: 0 0 8px var(--ok);
-    display: inline-block;
-  }
-  .dot.err { background: var(--err); box-shadow: 0 0 8px var(--err); }
-  .grid {
-    display: grid;
-    gap: 12px;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); margin-top: 16px; }
   .card {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 14px 14px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px; display: flex; flex-direction: column; gap: 8px; cursor: pointer;
+    transition: border-color .15s;
   }
-  .card h2 {
-    font-size: 16px;
-    margin: 0;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    word-break: break-all;
-  }
+  .card:hover { border-color: var(--accent); }
+  .card h2 { font-size: 16px; margin: 0; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot.off { background: var(--muted); }
   .meta { font-size: 12px; color: var(--muted); line-height: 1.6; }
-  .status-ok { color: var(--ok); }
-  .status-err { color: var(--err); }
-  .status-wait { color: var(--muted); }
   .row { display: flex; gap: 8px; }
   .btn {
-    flex: 1;
-    text-align: center;
-    background: var(--accent);
-    color: #04121c;
-    font-weight: 600;
-    border: none;
-    border-radius: 8px;
-    padding: 10px 12px;
-    text-decoration: none;
-    font-size: 14px;
-    cursor: pointer;
+    flex: 1; text-align: center; background: var(--accent); color: #04121c;
+    font-weight: 600; border: none; border-radius: 8px; padding: 10px 12px;
+    text-decoration: none; font-size: 14px; cursor: pointer;
   }
-  .btn.secondary {
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border);
-    font-weight: 500;
-  }
+  .btn.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); font-weight: 500; }
   .empty {
-    padding: 48px 20px;
-    text-align: center;
-    color: var(--muted);
-    border: 1px dashed var(--border);
-    border-radius: 12px;
-    background: var(--panel);
+    padding: 48px 20px; text-align: center; color: var(--muted);
+    border: 1px dashed var(--border); border-radius: 12px; background: var(--panel);
   }
-  .empty code {
-    display: inline-block;
-    background: var(--panel-2);
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-size: 12px;
+
+  #flight-view { display: none; }
+  .back-btn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 14px; padding: 0; margin-bottom: 12px; }
+  .back-btn:hover { text-decoration: underline; }
+
+  .mode-tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 2px solid var(--border); }
+  .mode-tab {
+    padding: 8px 16px; cursor: pointer; font-size: 13px; font-weight: 600;
+    color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -2px;
   }
-  footer {
-    text-align: center;
-    color: var(--muted);
-    font-size: 11px;
-    padding: 24px 16px 40px;
-  }
-  /* Logs modal */
-  .modal-bg {
-    display: none;
-    position: fixed; inset: 0;
-    background: rgba(0,0,0,.6);
-    z-index: 100;
-    align-items: center;
-    justify-content: center;
-  }
-  .modal-bg.open { display: flex; }
-  .modal {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    max-width: 640px;
-    width: 90%;
-    max-height: 80vh;
-    overflow-y: auto;
-    padding: 20px;
-  }
-  .modal h3 { margin: 0 0 12px; font-size: 17px; }
-  .modal .close {
-    float: right;
-    background: none;
-    border: none;
-    color: var(--muted);
-    font-size: 22px;
-    cursor: pointer;
-    line-height: 1;
-  }
+  .mode-tab:hover { color: var(--text); }
+  .mode-tab.active { border-bottom-color: var(--accent); color: var(--accent); }
+  .mode-tab.seeker { color: var(--seeker); border-bottom-color: var(--seeker); }
+  .mode-tab.wasp-active { color: var(--wasp); border-bottom-color: var(--wasp); }
+
+  .flight-list { display: flex; flex-direction: column; gap: 8px; }
   .flight-card {
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 12px;
-    margin: 8px 0;
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; cursor: pointer; transition: border-color .15s;
   }
-  .flight-card .fh {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .flight-card .fh b { font-size: 13px; }
-  .flight-card .fmeta { font-size: 11px; color: var(--muted); margin: 4px 0; }
-  .flight-card .fbtns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
-  .flight-card .fbtns button,
-  .flight-card .fbtns a {
-    font-size: 11px;
-    padding: 4px 10px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: var(--panel);
-    color: var(--text);
-    cursor: pointer;
-    text-decoration: none;
-    display: inline-block;
-  }
-  .flight-card .fbtns button:hover,
-  .flight-card .fbtns a:hover { background: var(--accent); color: #04121c; }
-  .flight-card .fbtns .converted { background: var(--ok); color: #04121c; border-color: var(--ok); }
+  .flight-card:hover { border-color: var(--accent); }
+  .flight-card .fh { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .flight-card .fh b { font-size: 14px; }
+  .flight-card .fmeta { font-size: 12px; color: var(--muted); margin: 4px 0; }
+
   .badge {
-    display: inline-block;
-    padding: 2px 7px;
-    border-radius: 999px;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: .05em;
+    display: inline-block; padding: 2px 7px; border-radius: 999px;
+    font-size: 10px; font-weight: 700; letter-spacing: .05em;
   }
   .badge.recording { background: var(--err); color: #fff; animation: pulse 1.2s infinite; }
   .badge.complete { background: var(--ok); color: #04121c; }
   .badge.incomplete { background: var(--warn); color: #2b1d00; }
+  .badge.seeker-badge { background: var(--seeker); color: #fff; }
+  .badge.wasp-badge { background: var(--wasp); color: #1a0a00; }
+  .badge.auto-badge { background: var(--accent); color: #04121c; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
-  .no-flights { color: var(--muted); font-size: 13px; padding: 16px 0; text-align: center; }
+
+  .modal-bg {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6);
+    z-index: 100; align-items: center; justify-content: center;
+  }
+  .modal-bg.open { display: flex; }
+  .modal {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    max-width: 800px; width: 95%; max-height: 85vh; overflow-y: auto; padding: 24px;
+  }
+  .modal h3 { margin: 0 0 16px; font-size: 18px; }
+  .modal .close { float: right; background: none; border: none; color: var(--muted); font-size: 22px; cursor: pointer; }
+
+  .detail-section { margin: 16px 0; }
+  .detail-section h4 { font-size: 14px; color: var(--accent); margin: 0 0 8px; letter-spacing: .05em; }
+  .detail-section pre {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; font-size: 12px; line-height: 1.6; white-space: pre-wrap;
+    max-height: 400px; overflow-y: auto;
+  }
+  .detail-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .detail-actions button, .detail-actions a {
+    font-size: 12px; padding: 6px 14px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
+    cursor: pointer; text-decoration: none;
+  }
+  .detail-actions button:hover, .detail-actions a:hover { background: var(--accent); color: #04121c; }
+  .report-box {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px; font-size: 13px; line-height: 1.8; white-space: pre-wrap;
+  }
+
+  .summary-bar {
+    display: flex; gap: 16px; align-items: center; margin: 12px 0;
+    padding: 10px 14px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; font-size: 13px; color: var(--muted); flex-wrap: wrap;
+  }
+  .summary-bar .stat { display: flex; align-items: center; gap: 6px; }
+  .summary-bar .stat b { color: var(--text); font-size: 16px; }
+
+  .no-data { color: var(--muted); font-size: 13px; padding: 24px 0; text-align: center; }
+  footer { text-align: center; color: var(--muted); font-size: 11px; padding: 24px 16px 40px; }
 </style>
 </head>
 <body>
 <header>
   <div>
-    <h1>Drones Online</h1>
-    <div class="sub">Interceptor fleet · pick a drone to open its cockpit</div>
+    <h1>IKH Drone Fleet</h1>
+    <div class="sub">Interceptor fleet management &amp; flight logs</div>
   </div>
-  <div class="sub"><span id="count">—</span> online</div>
+  <div class="sub"><span id="online-count">-</span> online · <span id="total-count">-</span> total</div>
 </header>
 
 <main>
-  <div class="toolbar">
-    <span class="dot" id="pulse"></span>
-    <span id="status">Fetching…</span>
-    <span style="margin-left:auto">Auto-refresh 5s</span>
+  <div id="drone-view">
+    <div class="tabs">
+      <div class="tab active" data-tab="all" onclick="switchTab(this)">All Drones</div>
+      <div class="tab" data-tab="online" onclick="switchTab(this)">Online</div>
+      <div class="tab" data-tab="offline" onclick="switchTab(this)">Offline</div>
+    </div>
+    <div class="summary-bar" id="summary-bar"></div>
+    <div id="drone-list" class="grid"></div>
   </div>
-  <div id="list" class="grid"></div>
+
+  <div id="flight-view">
+    <button class="back-btn" onclick="showDroneView()">&larr; Back to fleet</button>
+    <h2 id="fv-title"></h2>
+    <div class="meta" id="fv-status"></div>
+    <div class="mode-tabs" id="mode-tabs">
+      <div class="mode-tab active" data-mode="all" onclick="switchMode(this)">All</div>
+      <div class="mode-tab" data-mode="seeker" onclick="switchMode(this)">Seeker</div>
+      <div class="mode-tab" data-mode="wasp" onclick="switchMode(this)">WASP</div>
+      <div class="mode-tab" data-mode="auto" onclick="switchMode(this)">Auto</div>
+    </div>
+    <div id="flight-list" class="flight-list"></div>
+  </div>
 </main>
 
-<div class="modal-bg" id="logmodal">
+<div class="modal-bg" id="detail-modal">
   <div class="modal">
-    <button class="close" onclick="closeLogModal()">&times;</button>
-    <h3 id="logmodal_title">Flight Logs</h3>
-    <div id="logmodal_body"><div class="no-flights">Loading…</div></div>
+    <button class="close" onclick="closeDetail()">&times;</button>
+    <h3 id="dm-title">Flight Detail</h3>
+    <div id="dm-body"></div>
   </div>
 </div>
 
-<footer>Interceptor relay · <span id="host"></span></footer>
+<footer>IKH Defence Labs · Interceptor fleet · <span id="host"></span></footer>
 
 <script>
-  const listEl = document.getElementById("list");
-  const countEl = document.getElementById("count");
-  const statusEl = document.getElementById("status");
-  const pulseEl = document.getElementById("pulse");
-  document.getElementById("host").textContent = location.host;
-  const DOMAIN = location.host;
+const DOMAIN = location.host;
+document.getElementById("host").textContent = DOMAIN;
 
-  async function fetchTunnels() {
-    try {
-      const r = await fetch("/api/proxy/http", { credentials: "same-origin" });
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      const data = await r.json();
-      pulseEl.classList.remove("err");
-      statusEl.textContent = "Connected";
-      render(data.proxies || []);
-    } catch (e) {
-      pulseEl.classList.add("err");
-      statusEl.textContent = "Relay unreachable: " + e.message;
-    }
+let droneData = [];
+let currentDrone = null;
+let currentFlights = [];
+let currentModeFilter = "all";
+let currentTabFilter = "all";
+
+async function fetchDrones() {
+  try {
+    const r = await fetch("/cloud/drones");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    droneData = Array.isArray(data) ? data : (data.drones || []);
+  } catch (e) {
+    droneData = [];
+  }
+  renderDrones();
+}
+
+async function fetchFlights(jetsonId) {
+  try {
+    const r = await fetch("/cloud/flights?jetson=" + encodeURIComponent(jetsonId));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    return Array.isArray(data) ? data : (data.flights || []);
+  } catch (e) {
+    return [];
+  }
+}
+
+async function fetchFlightDetail(jetsonId, flightId) {
+  try {
+    const r = await fetch("/cloud/flight?jetson=" + encodeURIComponent(jetsonId) + "&id=" + encodeURIComponent(flightId));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return await r.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+async function fetchFlightEvents(jetsonId, flightId) {
+  var detail = await fetchFlightDetail(jetsonId, flightId);
+  return detail ? (detail.events || []) : [];
+}
+
+async function generateReport(jetsonId, flightId) {
+  try {
+    var r = await fetch("/cloud/report?jetson=" + encodeURIComponent(jetsonId) + "&id=" + encodeURIComponent(flightId), { method: "POST" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return await r.json();
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+function renderDrones() {
+  const list = document.getElementById("drone-list");
+  const onlineCount = droneData.filter(d => d.online).length;
+  document.getElementById("online-count").textContent = onlineCount;
+  document.getElementById("total-count").textContent = droneData.length;
+
+  let filtered = droneData;
+  if (currentTabFilter === "online") filtered = droneData.filter(d => d.online);
+  if (currentTabFilter === "offline") filtered = droneData.filter(d => !d.online);
+
+  const totalFlights = droneData.reduce((s, d) => s + (d.flight_count || 0), 0);
+  document.getElementById("summary-bar").innerHTML =
+    '<div class="stat"><span>Drones:</span> <b>' + droneData.length + '</b></div>' +
+    '<div class="stat"><span>Online:</span> <b style="color:var(--ok)">' + onlineCount + '</b></div>' +
+    '<div class="stat"><span>Total flights:</span> <b>' + totalFlights + '</b></div>';
+
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="empty">' +
+      (droneData.length === 0
+        ? "No drones registered yet. Connect a Jetson to see it here."
+        : "No drones match this filter.") +
+      '</div>';
+    return;
   }
 
-  function render(proxies) {
-    const online = proxies.filter(p => p.status === "online");
-    countEl.textContent = online.length;
-    if (online.length === 0) {
-      listEl.innerHTML = `
-        <div class="empty">
-          <div style="font-size:15px;color:var(--text);margin-bottom:8px">No drones online yet.</div>
-          On each Jetson, run:<br/>
-          <code>sudo deploy/gcp/jetson/install-frpc.sh --name wasp-01 --server ${DOMAIN} --token &lt;token&gt;</code>
-        </div>`;
-      return;
-    }
-    listEl.innerHTML = "";
-    for (const p of online) {
-      const sub = p.conf && p.conf.subdomain ? p.conf.subdomain : p.name;
-      const host = `${sub}.${DOMAIN}`;
-      const card = document.createElement("div");
-      card.className = "card";
-      card.innerHTML = `
-        <h2><span class="dot"></span>${p.name}</h2>
-        <div class="meta" id="meta-${sub}">
-          Camera: <span class="status-wait">checking…</span><br/>
-          Controller: <span class="status-wait">checking…</span>
-        </div>
-        <div class="row">
-          <a class="btn" href="https://${host}/" target="_blank" rel="noopener">Open cockpit</a>
-          <button class="btn secondary" onclick="openLogModal('${p.name}','${host}')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:4px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-            Logs
-          </button>
-        </div>`;
-      fetchDroneStatus(host, sub);
-      listEl.appendChild(card);
-    }
+  list.innerHTML = "";
+  for (const d of filtered) {
+    const card = document.createElement("div");
+    card.className = "card";
+    const lastSeen = d.last_seen ? timeAgo(new Date(d.last_seen)) : "never";
+    card.innerHTML =
+      '<h2><span class="dot ' + (d.online ? 'on' : 'off') + '"></span>' + esc(d.jetson_id) + '</h2>' +
+      '<div class="meta">' +
+        'Status: <b style="color:var(' + (d.online ? '--ok' : '--muted') + ')">' + (d.online ? 'ONLINE' : 'OFFLINE') + '</b><br>' +
+        'Last seen: ' + lastSeen + '<br>' +
+        'Flights: ' + (d.flight_count || 0) +
+      '</div>' +
+      '<div class="row">' +
+        '<button class="btn" onclick="event.stopPropagation(); openDroneFlights(\'' + esc(d.jetson_id) + '\')">View Flights</button>' +
+        (d.online ? '<a class="btn secondary" href="https://' + esc(d.jetson_id) + '.' + DOMAIN + '/" target="_blank" rel="noopener" onclick="event.stopPropagation()">Cockpit</a>' : '') +
+      '</div>';
+    card.onclick = function() { openDroneFlights(d.jetson_id); };
+    list.appendChild(card);
   }
+}
 
-  async function fetchDroneStatus(host, sub) {
-    const el = document.getElementById("meta-" + sub);
-    if (!el) return;
-    try {
-      const r = await fetch(`https://${host}/state`, { signal: AbortSignal.timeout(4000) });
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      const s = await r.json();
-      const camOk = s.cam_frame && !s.cam_error;
-      const ctrlOk = s.linked;
-      el.innerHTML =
-        `Camera: <span class="${camOk ? "status-ok" : "status-err"}">${camOk ? "connected" : (s.cam_error || "error")}</span><br/>` +
-        `Controller: <span class="${ctrlOk ? "status-ok" : "status-err"}">${ctrlOk ? "connected" : "error"}</span>`;
-    } catch {
-      el.innerHTML =
-        `Camera: <span class="status-err">unreachable</span><br/>` +
-        `Controller: <span class="status-err">unreachable</span>`;
-    }
-  }
+async function openDroneFlights(jetsonId) {
+  currentDrone = jetsonId;
+  document.getElementById("drone-view").style.display = "none";
+  document.getElementById("flight-view").style.display = "block";
 
-  let currentLogHost = "";
+  const drone = droneData.find(function(d) { return d.jetson_id === jetsonId; });
+  document.getElementById("fv-title").textContent = jetsonId;
+  document.getElementById("fv-status").innerHTML = drone
+    ? '<span class="dot ' + (drone.online ? 'on' : 'off') + '"></span> ' +
+      (drone.online ? 'Online' : 'Offline') + ' · ' + (drone.flight_count || 0) + ' flights'
+    : "";
 
-  function openLogModal(name, host) {
-    currentLogHost = host;
-    document.getElementById("logmodal_title").textContent = name + " — Flight Logs";
-    document.getElementById("logmodal_body").innerHTML = '<div class="no-flights">Loading…</div>';
-    document.getElementById("logmodal").classList.add("open");
-    loadFlightLogs(host);
-  }
-
-  function closeLogModal() {
-    document.getElementById("logmodal").classList.remove("open");
-  }
-
-  document.getElementById("logmodal").addEventListener("click", function(e) {
-    if (e.target === this) closeLogModal();
+  currentModeFilter = "all";
+  document.querySelectorAll(".mode-tab").forEach(function(t) {
+    t.classList.toggle("active", t.dataset.mode === "all");
+    t.classList.remove("seeker", "wasp-active");
   });
 
-  async function loadFlightLogs(host) {
-    const body = document.getElementById("logmodal_body");
-    try {
-      const r = await fetch(`https://${host}/logs`, { signal: AbortSignal.timeout(6000) });
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      const data = await r.json();
-      const flights = data.flights || [];
-      if (flights.length === 0) {
-        body.innerHTML = '<div class="no-flights">No flight logs recorded yet.</div>';
-        return;
-      }
-      body.innerHTML = "";
-      for (const f of flights) {
-        const card = document.createElement("div");
-        card.className = "flight-card";
-        const status = f.status || "unknown";
-        const badgeClass = status === "recording" ? "recording" : status === "complete" ? "complete" : "incomplete";
-        const dur = f.duration_s != null ? Math.round(f.duration_s) + "s" : "—";
-        const mode = f.flight_mode || "—";
-        const started = f.started_utc ? new Date(f.started_utc).toLocaleString() : "—";
-        const reason = f.end_reason || "";
-        const rawFiles = (f.raw_files || []).filter(n => !n.startsWith("ELKAK"));
-        const hasConverted = f.has_converted;
+  document.getElementById("flight-list").innerHTML = '<div class="no-data">Loading flights...</div>';
+  currentFlights = await fetchFlights(currentDrone);
+  renderFlights();
+}
 
-        let btnsHtml = '';
-        for (const fn of rawFiles) {
-          btnsHtml += `<a href="https://${host}/logs/download/${f.flight_id}/${fn}" target="_blank" title="Download raw: ${fn}">${fn.split('.').pop().toUpperCase()}</a>`;
-        }
-        if (hasConverted) {
-          btnsHtml += `<button class="converted" onclick="showConverted('${host}','${f.flight_id}')">View converted</button>`;
-        } else if (status !== "recording") {
-          btnsHtml += `<button onclick="convertFlight(this,'${host}','${f.flight_id}')">Convert</button>`;
-        }
-        if (status !== "recording") {
-          btnsHtml += `<button style="border-color:var(--err);color:var(--err)" onclick="deleteFlight(this,'${host}','${f.flight_id}')">Remove</button>`;
-        }
-
-        card.innerHTML = `
-          <div class="fh">
-            <b>${mode.toUpperCase()} #${f.flight_id.split('_').pop()}</b>
-            <span class="badge ${badgeClass}">${status.toUpperCase()}</span>
-          </div>
-          <div class="fmeta">
-            ${started} · ${dur} ${f.rows != null ? " · " + f.rows + " rows" : ""}
-            ${reason ? " · " + reason : ""}
-          </div>
-          <div class="fbtns">${btnsHtml}</div>`;
-        body.appendChild(card);
-      }
-    } catch (e) {
-      body.innerHTML = `<div class="no-flights" style="color:var(--err)">Failed to load logs: ${e.message}</div>`;
-    }
+function renderFlights() {
+  var listEl = document.getElementById("flight-list");
+  var flights = currentFlights;
+  if (currentModeFilter !== "all") {
+    flights = flights.filter(function(f) { return f.flight_mode === currentModeFilter; });
   }
 
-  async function deleteFlight(btn, host, flightId) {
-    if (!confirm(`Delete flight '${flightId}' permanently from this drone AND the cloud?\n\nThis cannot be undone.`)) return;
-    btn.disabled = true;
-    btn.textContent = "Removing…";
-    try {
-      const r = await fetch(`https://${host}/logs/delete?id=${encodeURIComponent(flightId)}`, { signal: AbortSignal.timeout(20000) });
-      const d = await r.json();
-      if (!r.ok && !d.local && !d.firestore) throw new Error(d.error || (d.errors || []).join("; ") || ("HTTP " + r.status));
-      loadFlightLogs(host);
-    } catch (e) {
-      btn.textContent = "Error: " + e.message;
-      btn.disabled = false;
-    }
+  var counts = { all: currentFlights.length, seeker: 0, wasp: 0, auto: 0 };
+  for (var i = 0; i < currentFlights.length; i++) {
+    var fm = currentFlights[i].flight_mode;
+    if (fm === "seeker") counts.seeker++;
+    else if (fm === "wasp") counts.wasp++;
+    else counts.auto++;
+  }
+  document.querySelectorAll(".mode-tab").forEach(function(t) {
+    var m = t.dataset.mode;
+    var c = counts[m] || 0;
+    var label = m === "all" ? "All" : m.charAt(0).toUpperCase() + m.slice(1);
+    t.innerHTML = label + ' <span class="cnt">(' + c + ')</span>';
+  });
+
+  if (flights.length === 0) {
+    listEl.innerHTML = '<div class="no-data">No flights recorded for this filter.</div>';
+    return;
   }
 
-  async function convertFlight(btn, host, flightId) {
-    btn.disabled = true;
-    btn.textContent = "Converting…";
-    try {
-      const r = await fetch(`https://${host}/logs/convert?id=${flightId}`, { signal: AbortSignal.timeout(15000) });
-      if (!r.ok) { const d = await r.json(); throw new Error(d.error || "HTTP " + r.status); }
-      const data = await r.json();
-      btn.className = "converted";
-      btn.textContent = "View converted";
-      btn.disabled = false;
-      btn.onclick = function() { showConverted(host, flightId); };
-    } catch (e) {
-      btn.textContent = "Error: " + e.message;
-      btn.disabled = false;
-    }
+  listEl.innerHTML = "";
+  for (var j = 0; j < flights.length; j++) {
+    (function(f) {
+      var card = document.createElement("div");
+      card.className = "flight-card";
+      var status = f.status || "unknown";
+      var badgeCls = status === "recording" ? "recording" : status === "complete" ? "complete" : "incomplete";
+      var modeBadge = f.flight_mode === "seeker" ? "seeker-badge"
+                    : f.flight_mode === "wasp" ? "wasp-badge" : "auto-badge";
+      var dur = f.duration_s != null ? formatDuration(f.duration_s) : "-";
+      var started = f.started_utc ? new Date(f.started_utc).toLocaleString("el-GR") : "-";
+      card.innerHTML =
+        '<div class="fh">' +
+          '<div><span class="badge ' + modeBadge + '">' + (f.flight_mode || "?").toUpperCase() + '</span>' +
+          '<b style="margin-left:6px">' + esc(f.flight_id) + '</b></div>' +
+          '<div>' + (f.has_report ? '<span class="badge complete" style="margin-right:4px">REPORT</span>' : '') +
+          '<span class="badge ' + badgeCls + '">' + status.toUpperCase() + '</span></div>' +
+        '</div>' +
+        '<div class="fmeta">' + started + ' · ' + dur +
+          (f.rows != null ? " · " + f.rows + " rows" : "") +
+          (f.end_reason ? " · " + f.end_reason : "") +
+        '</div>';
+      card.onclick = function() { openFlightDetail(currentDrone, f.flight_id); };
+      listEl.appendChild(card);
+    })(flights[j]);
+  }
+}
+
+async function openFlightDetail(jetsonId, flightId) {
+  var modal = document.getElementById("detail-modal");
+  var body = document.getElementById("dm-body");
+  document.getElementById("dm-title").textContent = flightId;
+  body.innerHTML = '<div class="no-data">Loading...</div>';
+  modal.classList.add("open");
+
+  var detail = await fetchFlightDetail(jetsonId, flightId);
+  var events = detail ? (detail.events || []) : [];
+
+  if (!detail) {
+    body.innerHTML = '<div class="no-data" style="color:var(--err)">Failed to load flight data.</div>';
+    return;
   }
 
-  async function showConverted(host, flightId) {
-    const body = document.getElementById("logmodal_body");
-    body.innerHTML = '<div class="no-flights">Loading converted files…</div>';
-    try {
-      const r = await fetch(`https://${host}/logs`, { signal: AbortSignal.timeout(6000) });
-      const data = await r.json();
-      const f = (data.flights || []).find(x => x.flight_id === flightId);
-      if (!f) { body.innerHTML = '<div class="no-flights">Flight not found</div>'; return; }
-      let html = `<div style="margin-bottom:8px"><button class="btn secondary" style="flex:none;font-size:12px;padding:6px 12px" onclick="loadFlightLogs('${host}')">← Back to all flights</button></div>`;
-      html += `<div class="flight-card"><div class="fh"><b>Converted: ${flightId}</b></div>`;
-      html += '<div class="fbtns" style="margin-top:8px">';
-      const convFiles = (f.raw_files || []).filter(n => false);
-      const elkakFiles = ["L-FC_", "L-DET_", "L-GDN_", "L-EVT_", "L-BAT_"];
-      for (const prefix of elkakFiles) {
-        const fn = prefix + flightId + ".csv";
-        html += `<a href="https://${host}/logs/download/${flightId}/ELKAK/${fn}" target="_blank">${prefix.replace('_','')}</a>`;
-      }
-      html += '</div></div>';
-      body.innerHTML = html;
-    } catch (e) {
-      body.innerHTML = `<div class="no-flights" style="color:var(--err)">${e.message}</div>`;
-    }
+  var html = '';
+  var modeBadge = detail.flight_mode === "seeker" ? "seeker-badge"
+                : detail.flight_mode === "wasp" ? "wasp-badge" : "auto-badge";
+  var statusBadge = detail.status === "complete" ? "complete" : "incomplete";
+  html += '<div style="margin-bottom:16px">' +
+    '<span class="badge ' + modeBadge + '">' + (detail.flight_mode || "?").toUpperCase() + '</span>' +
+    '<span class="badge ' + statusBadge + '" style="margin-left:4px">' + (detail.status || "?").toUpperCase() + '</span>' +
+    '<span style="margin-left:12px;font-size:13px;color:var(--muted)">' +
+      (detail.started_utc ? new Date(detail.started_utc).toLocaleString("el-GR") : "-") + ' · ' +
+      (detail.duration_s != null ? formatDuration(detail.duration_s) : "-") + ' · ' +
+      (detail.rows || 0) + ' rows · ' +
+      (detail.end_reason || "-") +
+    '</span></div>';
+
+  var reportText = detail.report_el || (detail.report && detail.report.text) || "";
+  if (reportText) {
+    html += '<div class="detail-section"><h4>ΑΝΑΦΟΡΑ ΠΤΗΣΗΣ</h4>' +
+      '<div class="report-box">' + esc(reportText) + '</div></div>';
+  } else {
+    html += '<div class="detail-section"><h4>ΑΝΑΦΟΡΑ ΠΤΗΣΗΣ</h4>' +
+      '<div class="no-data">No report yet. ' +
+      '<button onclick="requestReport(\'' + esc(jetsonId) + '\',\'' + esc(flightId) + '\')" ' +
+      'style="margin-left:8px;padding:4px 12px;border-radius:6px;border:1px solid var(--accent);background:var(--panel);color:var(--accent);cursor:pointer">' +
+      'Generate Report</button></div></div>';
   }
 
-  fetchTunnels();
-  setInterval(fetchTunnels, 5000);
+  if (events.length > 0) {
+    var evtLines = events.map(function(e) {
+      var val = e.value || e.message || e.reason || "";
+      var prev = e.previous || "";
+      var display = prev && val ? prev + " → " + val : val;
+      return "[" + pad(e.elapsed_s) + "s] " + (e.event || "?") + ": " + display;
+    }).join("\n");
+    html += '<div class="detail-section"><h4>TIMELINE</h4><pre>' + esc(evtLines) + '</pre></div>';
+  }
+
+  if (detail.settings) {
+    html += '<div class="detail-section"><h4>SETTINGS</h4>' +
+      '<pre>' + esc(JSON.stringify(detail.settings, null, 2)) + '</pre></div>';
+  }
+
+  var drone = droneData.find(function(d) { return d.jetson_id === jetsonId; });
+  html += '<div class="detail-actions">' +
+    '<button onclick="downloadCSV(\'' + esc(jetsonId) + '\',\'' + esc(flightId) + '\')">Download CSV</button>' +
+    '<button onclick="downloadEvents(\'' + esc(jetsonId) + '\',\'' + esc(flightId) + '\')">Download Events</button>' +
+    (reportText ? '<button onclick="downloadReport(\'' + esc(flightId) + '\')">Download Report (TXT)</button>' : '') +
+    (drone && drone.online ? '<a href="https://' + esc(jetsonId) + '.' + DOMAIN + '/logs/download/' + esc(flightId) + '/' + esc(flightId) + '.csv" target="_blank">Raw CSV (from drone)</a>' : '') +
+    '</div>';
+
+  body.innerHTML = html;
+}
+
+function closeDetail() { document.getElementById("detail-modal").classList.remove("open"); }
+document.getElementById("detail-modal").addEventListener("click", function(e) {
+  if (e.target === this) closeDetail();
+});
+
+function showDroneView() {
+  document.getElementById("flight-view").style.display = "none";
+  document.getElementById("drone-view").style.display = "block";
+  currentDrone = null;
+}
+
+function switchTab(el) {
+  document.querySelectorAll(".tabs .tab").forEach(function(t) { t.classList.remove("active"); });
+  el.classList.add("active");
+  currentTabFilter = el.dataset.tab;
+  renderDrones();
+}
+
+function switchMode(el) {
+  document.querySelectorAll(".mode-tab").forEach(function(t) {
+    t.classList.remove("active", "seeker", "wasp-active");
+  });
+  el.classList.add("active");
+  if (el.dataset.mode === "seeker") el.classList.add("seeker");
+  if (el.dataset.mode === "wasp") el.classList.add("wasp-active");
+  currentModeFilter = el.dataset.mode;
+  renderFlights();
+}
+
+async function downloadCSV(jetsonId, flightId) {
+  var drone = droneData.find(function(d) { return d.jetson_id === jetsonId; });
+  if (drone && drone.online) {
+    window.open("https://" + esc(jetsonId) + "." + DOMAIN + "/logs/download/" + esc(flightId) + "/" + esc(flightId) + ".csv", "_blank");
+  } else {
+    alert("CSV data download requires the drone to be online.\nUse events download for offline data.");
+  }
+}
+
+async function downloadEvents(jetsonId, flightId) {
+  var events = await fetchFlightEvents(jetsonId, flightId);
+  var text = events.map(function(e) { return JSON.stringify(e); }).join("\n");
+  downloadBlob(text, flightId + "_events.jsonl", "application/jsonl");
+}
+
+async function requestReport(jetsonId, flightId) {
+  var btn = event.target;
+  btn.disabled = true; btn.textContent = "Generating...";
+  var result = await generateReport(jetsonId, flightId);
+  if (result.error) {
+    btn.textContent = "Error: " + result.error;
+    btn.disabled = false;
+  } else {
+    openFlightDetail(jetsonId, flightId);
+  }
+}
+
+function downloadReport(flightId) {
+  var el = document.querySelector(".report-box");
+  if (!el) return;
+  downloadBlob(el.textContent, flightId + "_report.txt", "text/plain");
+}
+
+function downloadBlob(content, filename, mime) {
+  var blob = new Blob([content], { type: mime });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function timeAgo(date) {
+  var s = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+}
+
+function formatDuration(s) {
+  if (s < 60) return Math.round(s) + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m " + Math.round(s % 60) + "s";
+  return Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m";
+}
+
+function pad(v) { return v != null ? Number(v).toFixed(1) : "?"; }
+
+function esc(s) {
+  if (s == null) return "";
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+fetchDrones();
+setInterval(fetchDrones, 15000);
 </script>
 </body>
 </html>

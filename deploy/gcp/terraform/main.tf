@@ -16,6 +16,26 @@ resource "google_project_service" "firestore" {
   disable_on_destroy = false
 }
 
+resource "google_project_service" "cloudfunctions" {
+  service            = "cloudfunctions.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "cloudbuild" {
+  service            = "cloudbuild.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "eventarc" {
+  service            = "eventarc.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "aiplatform" {
+  service            = "aiplatform.googleapis.com"
+  disable_on_destroy = false
+}
+
 # --- Static external IP -----------------------------------------------------
 
 resource "google_compute_address" "drones" {
@@ -104,6 +124,8 @@ resource "google_compute_instance" "relay" {
     frp_admin_password   = var.frp_admin_password
     frp_admin_basic_b64  = base64encode("${var.frp_admin_user}:${var.frp_admin_password}")
     dashboard_html_b64   = base64encode(file("${path.module}/../vm/dashboard.html"))
+    drone_api_b64        = base64encode(file("${path.module}/../vm/drone_api.py"))
+    gcp_project          = var.project_id
   }))
 
   shielded_instance_config {
@@ -111,6 +133,57 @@ resource "google_compute_instance" "relay" {
   }
 
   depends_on = [google_project_service.compute]
+}
+
+# --- Cloud Function: flight report generation (Vertex AI) -------------------
+
+resource "google_storage_bucket" "cf_source" {
+  name                        = "${var.project_id}-cf-source"
+  location                    = var.region
+  uniform_bucket_level_access = true
+  force_destroy               = true
+}
+
+data "archive_file" "flight_report_fn" {
+  type        = "zip"
+  source_dir  = "${path.module}/../cloud_function"
+  output_path = "${path.module}/.build/flight_report.zip"
+}
+
+resource "google_storage_bucket_object" "flight_report_fn" {
+  name   = "flight_report-${data.archive_file.flight_report_fn.output_md5}.zip"
+  bucket = google_storage_bucket.cf_source.name
+  source = data.archive_file.flight_report_fn.output_path
+}
+
+resource "google_cloudfunctions_function" "flight_report" {
+  name        = "flight-report-generator"
+  description = "Generate Greek flight reports using Vertex AI on flight completion"
+  runtime     = "python311"
+  region      = var.region
+
+  available_memory_mb   = 512
+  timeout               = 300
+  entry_point           = "generate_flight_report"
+  source_archive_bucket = google_storage_bucket.cf_source.name
+  source_archive_object = google_storage_bucket_object.flight_report_fn.name
+
+  event_trigger {
+    event_type = "providers/cloud.firestore/eventTypes/document.write"
+    resource   = "projects/${var.project_id}/databases/(default)/documents/flight_logs/{jetsonId}/flights/{flightId}"
+  }
+
+  environment_variables = {
+    GCP_PROJECT = var.project_id
+    GCP_REGION  = var.region
+  }
+
+  depends_on = [
+    google_project_service.cloudfunctions,
+    google_project_service.cloudbuild,
+    google_project_service.eventarc,
+    google_project_service.aiplatform,
+  ]
 }
 
 # --- Jetson-side config file (committed to git) -----------------------------
