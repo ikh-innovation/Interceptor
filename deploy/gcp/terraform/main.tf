@@ -16,6 +16,20 @@ resource "google_project_service" "firestore" {
   disable_on_destroy = false
 }
 
+data "google_project" "this" {}
+
+resource "google_project_iam_member" "vm_datastore_user" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${data.google_project.this.number}-compute@developer.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "vm_aiplatform_user" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${data.google_project.this.number}-compute@developer.gserviceaccount.com"
+}
+
 resource "google_project_service" "cloudfunctions" {
   service            = "cloudfunctions.googleapis.com"
   disable_on_destroy = false
@@ -112,6 +126,11 @@ resource "google_compute_instance" "relay" {
 
   metadata = {
     enable-oslogin = "TRUE"
+  }
+
+  service_account {
+    email  = "${data.google_project.this.number}-compute@developer.gserviceaccount.com"
+    scopes = ["cloud-platform"]
   }
 
   metadata_startup_script = nonsensitive(templatefile("${path.module}/startup.sh.tpl", {
