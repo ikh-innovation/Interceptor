@@ -132,9 +132,10 @@ class Run:
             # the pilot raises it to MIDDLE once it is in the air (_drive).
             sitl.rc.set(6, SWITCH["up"])
             sitl.rc.set_stick("throttle", 0)
+            cam_tilt = 90 if sc.mission == "SEEK" else 30
             self.c = c = AcroCommander(conn=sitl.mavlink_url, transport="mavlink",
                                        axes=("roll", "pitch", "yaw", "throttle"),
-                                       law=InterceptLaw(cam_tilt_deg=30), send_hz=20, mission=True,
+                                       law=InterceptLaw(cam_tilt_deg=cam_tilt), send_hz=20, mission=True,
                                        verbose=False, steer_modes={"ACRO", "ALT_HOLD"}, log_dir=str(work))
             with contextlib.redirect_stdout(io.StringIO()), patch("mission._read_json", return_value={}):
                 c.connect()
@@ -166,7 +167,7 @@ class Run:
                     self.note("APP BACK")
                 threading.Thread(target=back, daemon=True).start()
             m.seeker.restart_hook = restart
-            m.camera_mount_deg = 30.0
+            m.camera_mount_deg = 90.0 if sc.mission == "SEEK" else 30.0
             m.log = self.note
             cmd = lambda k, v: phone_command(m, k, v, time.perf_counter())
 
@@ -211,8 +212,9 @@ class Run:
             self._drive(m, cmd)
             if sc.mission == "SEEK" and m.seeker.result is None and m.seeker.handover is not None or \
                     sc.mission == "SEEK" and (m.seeker.run or {}).get("state") == "AI":
-                # Handed over: the AI should be flying it in ALT_HOLD now.
-                self.wait(lambda: m.phase in ("PUSH", "AI", "AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN"), 4, "the AI engaging")
+                # Handed over: the AI should be flying — WASP_FLIGHT (ACRO) for SEEK, old phases for others.
+                self.wait(lambda: m.phase in ("PUSH", "AI", "AUTO_CLIMB", "AUTO_HOLD", "AUTO_ALIGN",
+                                              "WASP_READY", "WASP_FLIGHT"), 4, "the AI engaging")
                 # Watch the AI fly it for a few seconds (the phases it goes through).
                 seen, t_ai = [], time.perf_counter()
                 while time.perf_counter() - t_ai < 6.0:
@@ -221,7 +223,7 @@ class Run:
                     time.sleep(0.05)
                 res["ai_phases"] = seen
                 self.note(f"the AI: {' -> '.join(seen)}")
-                res.update(verdict="HANDOVER" if c.mode_name == "ALT_HOLD" else "NO-AI",
+                res.update(verdict="HANDOVER" if c.mode_name in ("ALT_HOLD", "ACRO") else "NO-AI",
                            why=f"FC {c.mode_name}, mission phase {m.phase}",
                            closest_m=round(self.closest, 1), metrics={})
                 self.note(f"after the handover: FC {c.mode_name}, phase {m.phase}")
@@ -273,7 +275,7 @@ class Run:
         """A target track over real UDP CAT062 to the app's cue port, 450 m
         north-east and 60 m up, moving; camera detections once within 120 m."""
         import socket as _s
-        from asterix_cue import encode_cat062
+        from asterix_cue import encode_eketa_cat062 as encode_cat062
         port = 18600 + self.instance
         why = cmd("msn", f"cue:udp:{port}::")
         if why:
@@ -299,14 +301,14 @@ class Run:
             sock = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
             while not stop.wait(0.5):
                 lat, lon = pos()
-                sock.sendto(encode_cat062([dict(icao=0x3C0A55, track_no=7, lat=lat, lon=lon,
-                                                alt_ft=(amsl + 60.0)/0.3048, vx=0, vy=1.5),
-                                           dict(icao=0xF00099, track_no=99, lat=lat + 0.01, lon=lon + 0.01,
-                                                alt_ft=(amsl + 900)/0.3048)]), ("127.0.0.1", port))
+                sock.sendto(encode_cat062([dict(track_no=7, lat=lat, lon=lon,
+                                                h_msl_m=amsl + 60.0, vx=0, vy=1.5),
+                                           dict(track_no=99, lat=lat + 0.01, lon=lon + 0.01,
+                                                h_msl_m=amsl + 900)]), ("127.0.0.1", port))
                 if self.sc.second_target_s is not None and time.perf_counter() - t0 >= self.sc.second_target_s:
                     lat2, lon2 = pos2()
-                    sock.sendto(encode_cat062([dict(icao=0x4B1A2B, track_no=55, lat=lat2, lon=lon2,
-                                                    alt_ft=(amsl + 50.0)/0.3048)]), ("127.0.0.1", port))
+                    sock.sendto(encode_cat062([dict(track_no=55, lat=lat2, lon=lon2,
+                                                    h_msl_m=amsl + 50.0)]), ("127.0.0.1", port))
                 cue = (m.seeker.run or {}).get("cue")
                 if cue:
                     lat, lon = cue["lat"], cue["lon"]
@@ -332,15 +334,16 @@ class Run:
                     d = max(1.0, _d(t["position"], tgt[:2]))
                     att = c.backend.attitude() or {}
                     pitch = math.degrees(att.get("pitch", 0.0)) if isinstance(att, dict) else 0.0
+                    cam_offset = 90.0 if "SEEK" in self.sc.name else 30.0
                     cmd.update(az_deg=(_bearing(t["position"], tgt[:2]) - t["heading"] + 180) % 360 - 180,
-                               el_cam_deg=math.degrees(math.atan2(tgt[2] - (t["rel_alt"] or 0), d)) - 30.0 - pitch)
+                               el_cam_deg=math.degrees(math.atan2(tgt[2] - (t["rel_alt"] or 0), d)) - cam_offset - pitch)
                     self.cam_now = (cmd["az_deg"], cmd["el_cam_deg"], d)
                 c.update(cmd, (0.0, 0.0), have_target=True, detected=True, conf=0.8)
         self.in_view, self.view_target, self.cam_now = False, None, None
         threading.Thread(target=run, daemon=True).start()
         threading.Thread(target=camera, daemon=True).start()
         self.wait(lambda: m.seeker.cue.target(time.perf_counter()) is not None, 10, "ASTERIX track on UDP")
-        cmd("msn", "cue:select:3C0A55")
+        cmd("msn", "cue:select:TRK7")
 
     def _drive(self, m, cmd):
         sc, sitl = self.sc, self.sitl
@@ -403,7 +406,7 @@ class Run:
 
         def state():
             return dict(linked=c.linked, armed=c.armed, fc_mode=c.mode_name, detector="TensorRT", fps=30.0,
-                        lat_ms=12, tilt_deg=30.0, target="DRONE", console_seq=0, cam_aspect=4/3,
+                        lat_ms=12, tilt_deg=90.0 if self.sc.mission == "SEEK" else 30.0, target="DRONE", console_seq=0, cam_aspect=4/3,
                         mission=c.mission_state())
         with contextlib.redirect_stdout(io.StringIO()):
             srv = mjpeg_stream.MJPEGServer(port=self.serve, state_get=state,
