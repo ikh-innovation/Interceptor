@@ -760,6 +760,9 @@ class SeekerMissions:
         if not self._cue_started:
             self._cue_started = True
             self.cue.start()
+        if self.b is not None and not getattr(self.b, '_adsb_cue', False):
+            self.b._adsb_cue = True
+            self.b.adsb_callback = self.cue.ingest_adsb
         if self.run is None:
             if now - self._pre_t >= self.CHECK_S:
                 self._pre_t = now

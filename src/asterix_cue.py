@@ -163,6 +163,17 @@ class AsterixCue:
                     pass
             self._stop.wait(1.0)
 
+    def ingest_adsb(self, icao, lat, lon, alt_ft, gs_kt=None, track_deg=None, callsign=None, now=None):
+        """One ADSB_VEHICLE message routed through the FC from the laptop RFD."""
+        now = perf_counter() if now is None else now
+        key = f"ADSB_{icao:06X}"
+        t = dict(key=key, icao=icao, callsign=callsign or key, track_no=None,
+                 lat=lat, lon=lon, alt_ft=alt_ft, gs_kt=gs_kt, track_deg=track_deg)
+        with self._lock:
+            self._tracks[key] = (now, t)
+            self.rx_t = now
+        return True
+
     def ingest_rfd(self, line, now=None):
         """One $RFD line from the radio; the track 'RFD'."""
         now = perf_counter() if now is None else now
@@ -296,7 +307,7 @@ class AsterixCue:
                 rel = alt_m - home_amsl
             out.append(dict(key=k, label=t.get("callsign") or k, icao=k, track_no=t.get("track_no"),
                             lat=t["lat"], lon=t["lon"], age_s=round(age, 1), fresh=age <= self.fresh_s,
-                            source="RFD" if k == RFD_KEY else "UDP",
+                            source="RFD" if k == RFD_KEY else "ADSB" if k.startswith("ADSB_") else "UDP",
                             alt_amsl=None if alt_m is None else round(alt_m, 1),
                             alt_rel=None if rel is None else round(rel, 1),
                             speed=None if t.get("gs_kt") is None else round(t["gs_kt"]/KT_PER_MS, 1),

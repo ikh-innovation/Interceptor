@@ -1422,6 +1422,30 @@ class ArduPilotAcro(FcBackend):
                     cut = now - self.ATT_HISTORY_S
                     while self._att_hist and self._att_hist[0][0] < cut:
                         self._att_hist.pop(0)
+            elif t == "ADSB_VEHICLE":
+                self._rx_adsb(msg)
+
+    def _rx_adsb(self, msg):
+        cb = getattr(self, "adsb_callback", None)
+        if cb is None:
+            return
+        lat = msg.lat * 1e-7
+        lon = msg.lon * 1e-7
+        if lat == 0 and lon == 0:
+            return
+        alt_ft = msg.altitude / 1000.0 / 0.3048
+        hor = msg.hor_velocity
+        gs_kt = (hor / 100.0 * 1.943844) if hor and hor != 0xFFFF else None
+        hdg = msg.heading
+        track_deg = (hdg / 100.0) if hdg and hdg != 0xFFFF else None
+        cs = getattr(msg, "callsign", b"")
+        if isinstance(cs, bytes):
+            cs = cs.decode("ascii", "replace")
+        callsign = cs.strip("\x00").strip() or None
+        try:
+            cb(msg.ICAO_address, lat, lon, alt_ft, gs_kt, track_deg, callsign)
+        except Exception:
+            pass
 
     def _rx_seeker(self, t, msg):
         now = perf_counter()
