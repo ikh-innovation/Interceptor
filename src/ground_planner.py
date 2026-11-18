@@ -28,7 +28,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(__file__) or ".")
-from asterix_cue import encode_eketa_cat062, parse_eketa_block, rfd_line, rfd_sync_line
+from asterix_cue import encode_eketa_cat062, parse_eketa_block, rfd_line, rfd_sync_line, rfd_cmd_line
 from asterix062_bridge import FT_TO_M, KT_PER_MS
 
 # ---- state ------------------------------------------------------------------
@@ -73,6 +73,13 @@ class _RfdWriter:
     def update_tracks(self, tracks):
         with self._lock:
             self._tracks = {t["tid"]: t for t in tracks}
+
+    def send_cmd(self, cmd):
+        line = rfd_cmd_line(cmd) + "\r\n"
+        try:
+            self.port.write(line.encode())
+        except Exception:
+            pass
 
     def _run(self):
         while not self._stop.is_set():
@@ -1054,9 +1061,19 @@ document.addEventListener("keydown",function(e){
 });
 
 // ---- drone polling ----
+var _localCue = {tracks:[]};
+var _seekSent = null;
 function pollDrone(){
-  fetch("/drone/state?c="+_gpClient).then(function(r){return r.ok?r.json():null;}).then(function(j){
-    if(!j){document.getElementById("drone_st").className="off";document.getElementById("drone_st").textContent="offline";updateSeek(null);return;}
+  fetch("/api/local-cue").then(function(r){return r.json();}).then(function(j){
+    _localCue = j||{tracks:[]};
+  }).catch(function(){});
+  fetch("/drone/state").then(function(r){return r.ok?r.json():null;}).then(function(j){
+    if(!j){
+      document.getElementById("drone_st").className="off";
+      document.getElementById("drone_st").textContent="RFD only";
+      updateSeek(null);
+      return;
+    }
     document.getElementById("d_mode").textContent=j.fc_mode||"--";
     document.getElementById("d_armed").textContent=j.armed?"YES":"no";
     document.getElementById("drone_st").className=j.linked?"":"off";
@@ -1072,7 +1089,7 @@ function pollDrone(){
     updateSeek(m.seeker||null, m);
   }).catch(function(){
     document.getElementById("drone_st").className="off";
-    document.getElementById("drone_st").textContent="offline";
+    document.getElementById("drone_st").textContent="RFD only";
     updateSeek(null);
   });
 }
@@ -1166,9 +1183,8 @@ setInterval(function(){
 // ---- SEEKER integration ----
 var seekReady=false, seekRunning=false, seekChecksOk=false, seekWhy="", seekLastOfferN=null, fpOpen=false;
 
-var _gpClient = "gp_"+Math.random().toString(36).slice(2,8);
 function seekCmd(v){
-  return fetch("/drone/cmd?c="+_gpClient+"&msn="+encodeURIComponent(v))
+  return fetch("/api/cmd?msn="+encodeURIComponent(v))
     .then(function(r){return r.json();})
     .catch(function(){return {};});
 }
@@ -1217,8 +1233,11 @@ function updateSeek(sk, m){
   var lbl=document.getElementById("seek_label");
   if(!sk){
     btn.className="seek-btn"; btn.disabled=true; lbl.textContent="SEEK";
-    renderCueTracks({}, null);
-    document.getElementById("msn_status").innerHTML='<div class="msn-box"><span class="c-err">&#9679;</span> Jetson offline</div>';
+    var localCue = {tracks:_localCue.tracks||[], selected:_seekSent};
+    renderCueTracks(localCue, null);
+    var n=localCue.tracks.length;
+    if(n) document.getElementById("msn_status").innerHTML='<div class="msn-box"><span class="c-warn">&#9679;</span> '+n+' target(s) via RFD &mdash; commands sent over radio</div>';
+    else document.getElementById("msn_status").innerHTML='<div class="msn-box">No targets &mdash; create targets in TEST or ELKAK tab</div>';
     return;
   }
   var seek=sk.seek||{}, run=sk.run||null, cue=sk.cue||{};
@@ -1308,6 +1327,7 @@ function renderMsnStatus(run, cue, seek){
 }
 
 function goSeek(key){
+  _seekSent=key;
   seekCmd("cue:select:"+key).then(function(){
     if(seekRunning) return;
     seekCmd("start:SEEK");
@@ -1373,6 +1393,15 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/drone/cmd":
             qs = urlparse(self.path).query
             self._proxy_json(f"http://{JETSON_IP}:{JETSON_HTTP}/cmd?{qs}")
+        elif path == "/api/cmd":
+            from urllib.parse import parse_qs
+            q = parse_qs(urlparse(self.path).query)
+            msn = (q.get("msn") or [""])[0]
+            if _RFD and msn:
+                _RFD.send_cmd(msn)
+                self._json({"ok": True, "sent": msn})
+            else:
+                self._json({"ok": False, "error": "RFD not connected" if not _RFD else "no command"})
         elif path == "/api/rfd":
             with _MAV_STATUS_LOCK:
                 mst = dict(_MAV_STATUS)
@@ -1388,6 +1417,15 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 ntgt = len([t for t in STATE["targets"] if t.get("enabled") and (t.get("lat") or t.get("lon"))])
             self._json({"targets": ntgt, "packets": _PKT_COUNT[0]})
+        elif path == "/api/local-cue":
+            tracks = []
+            if _RFD:
+                with _RFD._lock:
+                    for t in _RFD._tracks.values():
+                        tracks.append(dict(key="RFD_"+str(t["tid"]), label="RFD-"+str(t["tid"]),
+                                           lat=t["lat"], lon=t["lon"], alt_m=t["alt_m"],
+                                           fresh=True, source="RFD"))
+            self._json({"tracks": tracks})
         elif path == "/api/elkak":
             with LOCK:
                 tracks = list(STATE["elkak_tracks"])

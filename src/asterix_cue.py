@@ -90,6 +90,23 @@ def parse_rfd_sync(line):
     return [p.strip() for p in body.split(",")[1:] if p.strip()]
 
 
+def rfd_cmd_line(cmd):
+    body = f"RFDCMD,{cmd}"
+    return f"${body}*{rfd_checksum(body)}"
+
+
+def parse_rfd_cmd(line):
+    line = str(line).strip()
+    if not line.startswith("$") or "*" not in line:
+        return None
+    body, _, cs = line[1:].partition("*")
+    if len(cs.strip()) < 2 or rfd_checksum(body) != cs.strip().upper()[:2]:
+        return None
+    if not body.startswith("RFDCMD,"):
+        return None
+    return body[7:]
+
+
 def find_rfd_device():
     """RFD_DEV, else the first USB serial adapter that is not the flight controller."""
     dev = os.environ.get("RFD_DEV", "").strip()
@@ -132,6 +149,7 @@ class AsterixCue:
         self.rfd_lines = self.rfd_bad = 0
         self.rfd_t = None
         self._rfd_thread = None
+        self.cmd_callback = None
 
     @staticmethod
     def key(t):
@@ -196,8 +214,17 @@ class AsterixCue:
         return True
 
     def ingest_rfd(self, line, now=None):
-        """One $RFD or $RFDSYNC line from the radio."""
+        """One $RFD, $RFDSYNC or $RFDCMD line from the radio."""
         now = perf_counter() if now is None else now
+        cmd = parse_rfd_cmd(line)
+        if cmd is not None:
+            cb = self.cmd_callback
+            if cb is not None:
+                try:
+                    cb(cmd)
+                except Exception:
+                    pass
+            return True
         sync = parse_rfd_sync(line)
         if sync is not None:
             alive = {RFD_PREFIX + tid for tid in sync}
