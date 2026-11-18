@@ -544,7 +544,7 @@ class Mission:
             self._req_engage = True
         return ""
 
-    SEEK_ENGAGE_S = 3.0
+    SEEK_ENGAGE_S = 10.0
 
     # ArduCopter holds the motors at idle for 2 s after arming: a launch
     # before that would jump to full throttle on the stand later.

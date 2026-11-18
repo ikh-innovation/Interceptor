@@ -109,8 +109,11 @@ SEEK = dict(id="SEEK", name="Seek the ASTERIX target", short="Fly to the cue, th
                     _num("standoff", "Stop short of the target (0 = follow directly)", "m", 0, 0, 1000, 5),
                     _num("min_alt", "Minimum height", "m", 20, 5, 500),
                     _num("cruise_alt", "Height when the track has none", "m", 40, 5, 500),
-                    _num("det_s", "Camera lock before the AI takes over", "s", 0.5, 0, 5, 0.1),
-                    _num("det_range", "Max distance for detection to count", "m", 150, 50, 2000, 10)])
+                    _num("det_s", "Camera lock before ENGAGE", "s", 0.5, 0, 5, 0.1),
+                    _num("det_range", "Max distance for detection to count", "m", 150, 50, 2000, 10),
+                    _num("throttle", "ENGAGE throttle", "", 1.0, 0.5, 1.0, 0.05),
+                    _num("wasp_rate", "ENGAGE max steering rate", "°/s", 60, 30, 120),
+                    _num("wasp_gain", "ENGAGE steering gain", "", 2.0, 1.0, 6.0, 0.5)])
 BY_ID = {m["id"]: m for m in CATALOG + [SEEK]}
 
 
@@ -210,11 +213,10 @@ def describe(mid, p, lim):
                            "(a new target on the feed: asks to switch)"
                            if p["standoff"] > 0 else
                            ", directly underneath (a new target on the feed: asks to switch)"),
-                        (f"Camera on the target {_fmt(p['det_s'])} s: asks ENGAGE? "
-                         "YES → ALT_HOLD, the AI takes it. NO → hold, wait for another target. "
-                         "ABORT or the geofence: RTL"
-                         if p["standoff"] > 0 else
-                         "Follows the target continuously until ABORT or the geofence: RTL")]
+                        f"Camera on the target {_fmt(p['det_s'])} s: asks ENGAGE? "
+                         f"YES → ACRO, WASP takes over (throttle {_fmt(p['throttle'])}, "
+                         f"rate {_fmt(p['wasp_rate'])}°/s). NO → hold, wait for another target. "
+                         "ABORT or the geofence: RTL"]
     return []
 
 
@@ -501,6 +503,12 @@ class SeekerMissions:
                     return "no mission running"
                 self._reqs.append(("offer", f"{ans.strip().lower()}:{n.strip()}"))
             return ""
+        if verb == "engage":
+            with self._lock:
+                if self.run is None or self.run["id"] != "SEEK":
+                    return "no SEEK running"
+                self._reqs.append(("engage", ""))
+            return ""
         if verb in ("start", "next", "abort", "after", "dismiss", "alertshown", "alertok", "restart"):
             with self._lock:
                 if verb == "start":
@@ -619,9 +627,9 @@ class SeekerMissions:
         if mid == "SEEK":
             law = getattr(self.c, "law", None)
             tilt = math.degrees(getattr(law, "cam_tilt", math.radians(30)))
-            cam_ok = abs(mission.camera_mount_deg - 30) < 0.1 and abs(tilt - 30) < 0.1
-            add("Camera 30°", cam_ok, "Seeker camera at 30°" if cam_ok else
-                f"camera set to {mission.camera_mount_deg:g}° / the AI expects {tilt:.0f}°")
+            cam_ok = abs(mission.camera_mount_deg - 90) < 0.1
+            add("Camera 90°", cam_ok, "Camera up (90°)" if cam_ok else
+                f"camera at {mission.camera_mount_deg:g}°: set to 90° for SEEK")
             pos = b.position()
             tgt = self.cue.target(self.now, pos, self._home_amsl(t))
             st = self.cue.status(self.now)
@@ -822,6 +830,15 @@ class SeekerMissions:
         elif verb == "after" and r is not None and arg in ("RTL", "LAND") and not r["hands_off"]:
             self._event(f"operator: {arg}")
             self._interrupt(f"operator {arg}", self._mode_then_watch(arg))
+        elif verb == "engage" and r is not None and r["id"] == "SEEK":
+            o = r.get("offer")
+            if o and o["kind"] == "engage":
+                r["answer"] = (o["n"], True)
+            else:
+                self._offer_n += 1
+                r["offer"] = dict(n=self._offer_n, kind="engage", key=None,
+                                  label="direct", text="ENGAGE (command)", t=self.now)
+                r["answer"] = (self._offer_n, True)
         elif verb == "offer" and r is not None:
             ans, _, n = arg.lower().partition(":")
             r["answer"] = (int(n), ans == "yes")
@@ -1925,32 +1942,39 @@ class SeekerMissions:
                     r["state"], r["why"] = "HOLD", "target lost — holding altitude"
                     r["seek"] = "HOLD"
                     self.check("Hold", None, "ALT_HOLD, waiting for pilot or new target")
-            if p["standoff"] > 0:
-                det_t, conf = self.ctx.get("det_t"), self.ctx.get("det_conf")
-                close = tgt is not None and pos is not None and d <= p["det_range"]
-                seen = (det_t is not None and self.now - det_t < 0.3
-                        and conf is not None and conf >= mission.min_conf and close)
-                det_since = (det_since or self.now) if seen and r["seek"] == "FOLLOW" else None
-                if det_since is not None and self.now - det_since >= p["det_s"]:
-                    if r["offer"] is None or r["offer"]["kind"] != "engage":
-                        if r["offer"] is not None:
-                            r["offer"], r["answer"] = None, None
-                        cue_label = (r["cue"] or {}).get("label", "target")
-                        self._offer("engage", r["cue"],
-                                    f"Camera locked on {cue_label} ({d:.0f} m): ENGAGE the AI?")
-                        det_since = None
+            det_t, conf = self.ctx.get("det_t"), self.ctx.get("det_conf")
+            close = tgt is not None and pos is not None and d <= p["det_range"]
+            seen = (det_t is not None and self.now - det_t < 0.3
+                    and conf is not None and conf >= mission.min_conf and close)
+            det_since = (det_since or self.now) if seen and r["seek"] == "FOLLOW" else None
+            if det_since is not None and self.now - det_since >= p["det_s"]:
+                if r["offer"] is None or r["offer"]["kind"] != "engage":
+                    if r["offer"] is not None:
+                        r["offer"], r["answer"] = None, None
+                    cue_label = (r["cue"] or {}).get("label", "target")
+                    self._offer("engage", r["cue"],
+                                f"Camera locked on {cue_label} ({d:.0f} m): ENGAGE?")
+                    det_since = None
             yield
         self._at(5)
         cue = r["cue"] or {}
-        self._event(f"TARGET IN THE CAMERA (conf {conf:.2f}), {cue.get('label')} {cue.get('dist_m')} m from the cue: "
-                    "ALT_HOLD, the AI takes it")
+        self._event(f"ENGAGE (conf {conf:.2f}), {cue.get('label')} {cue.get('dist_m')} m: "
+                    "ACRO, WASP takes over")
         r["expect_disarm"] = True
-        yield from self._mode("ALT_HOLD")
-        self.check("Handover to the AI", True, f"ALT_HOLD; target {cue.get('label', '?')} "
-                   f"{cue.get('dist_m')} m away by ASTERIX")
+        yield from self._mode("ACRO")
+        mission.wasp.enabled = True
+        mission.wasp.camera_confirmed = True
+        mission.camera_mount_deg = 90.0
+        mission.wasp.params["throttle"] = p.get("throttle", 1.0)
+        mission.wasp.params["rate"] = p.get("wasp_rate", 60.0)
+        mission.wasp.params["gain"] = p.get("wasp_gain", 2.0)
+        with mission._lock:
+            mission._req_engage = True
+        self.check("WASP engage", True, f"ACRO; target {cue.get('label', '?')} "
+                   f"{cue.get('dist_m')} m — WASP launched")
         r["handover"] = True
         self.handover = self.now
-        r["state"], r["why"] = "AI", "the AI has the target"
+        r["state"], r["why"] = "AI", "WASP engaged"
         while self.b.armed:
             yield
         self._landed("Landed", at_home=False)
