@@ -1235,7 +1235,7 @@
   document.querySelectorAll("[data-flightmode]").forEach(function (b) {
     b.onclick = function () {
       var mode = b.getAttribute("data-flightmode"), m = (LAST && LAST.mission) || {};
-      if (mode === UI_MODE && Number(m.camera_mount_deg) === (mode === "wasp" ? 90 : 30)
+      if (mode === UI_MODE && Number(m.camera_mount_deg) === 90
           && (mode !== "wasp" || m.wasp_camera_confirmed)) return;
       askMode(mode);
     };
@@ -1253,7 +1253,7 @@
     paint(LAST);
     cmd("flightmode=" + mode).then(function (j) {
       if (!j || j.refused) return j;
-      return cmd("mount=" + (mode === "wasp" ? 90 : 30));
+      return cmd("mount=90");
     }).then(function (j) {
       choosing = false;
       if (!j || j.refused) {
@@ -1941,7 +1941,7 @@
     var setup = m.wasp_setup_why || (m.wasp_attitude_fresh === false ? "Waiting for attitude" : "");
     if (setup.indexOf("RC_OVERRIDE_TIME") >= 0) setup = "RC timeout must be ≤1 s";
     T("waspfcstatus", setup); $("waspfcstatus").hidden = !setup;
-    var requiredMount = wasp ? 90 : 30;
+    var requiredMount = 90;   // the camera is fixed at 90 degrees in every mode
     var mountOK = Number(m.camera_mount_deg) === requiredMount && (!wasp || m.wasp_camera_confirmed);
     T("mountstatus", requiredMount + "°" + (mountOK ? " ✓" : " required"));
     $("mountstatus").classList.toggle("warn", !mountOK);

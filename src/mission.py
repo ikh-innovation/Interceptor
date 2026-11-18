@@ -98,6 +98,8 @@ FLIGHT_FILE = os.path.join(CONF_DIR, "flight.json")
 FENCE_FILE = os.path.join(CONF_DIR, "geofence.json")
 SEEKER_FILE = os.path.join(CONF_DIR, "seeker_missions.json")
 DETECT_SAVED = {"follow": bool, "cam": int, "sky": bool, "engine": int}
+CAMERA_MOUNT_DEG = 90.0   # the camera is physically fixed at 90 degrees, in every mode
+
 SAVED_COMMANDS = ("autop", "autoreset", "autoen", "waspen", "flightmode", "mount", "lvl")
 
 
@@ -180,8 +182,6 @@ def load_flight_settings(m):
         m.set_wasp_enabled(d["flightmode"] == "wasp", selection=True)
     if "mount" in d:
         m.confirm_mount(d["mount"])
-    if not m.wasp.enabled:
-        m.camera_mount_deg = 30.0
     if isinstance(d.get("auto"), bool):
         m.set_auto_enabled(d["auto"])
 
@@ -434,7 +434,7 @@ class Mission:
         self.idle_supported = callable(getattr(mapper, "idle_pwm", None))
         self._run_t = None
         self._wasp_last_out = {}
-        self.camera_mount_deg = float(getattr(mapper, "camera_mount_deg", 30.0))
+        self.camera_mount_deg = CAMERA_MOUNT_DEG
         for _k, attrs, _c in self.AUTO_SETTINGS:
             for a in attrs:
                 setattr(self, a, getattr(type(self), a))
@@ -640,8 +640,8 @@ class Mission:
                 self.test_mode = False
                 self.test_target = None
                 self._test_target_started = None
-                self.camera_mount_deg = 30.0      # the Seeker's camera is always at 30 degrees
-            self.wasp.camera_confirmed = False
+            self.camera_mount_deg = CAMERA_MOUNT_DEG
+            self.wasp.camera_confirmed = self.wasp.enabled
             self.wasp.started = None
             self.wasp.launch_t = None
             self.wasp.used = False
@@ -663,12 +663,9 @@ class Mission:
             error = self._configuration_error()
             if error:
                 return error
-            if self.wasp.enabled and value != 90.0:
-                return "WASP requires the fixed 90 degree camera"
-            if not self.wasp.enabled and value != 30.0:
-                return "the Seeker uses the fixed 30 degree camera"
-            self.camera_mount_deg = value
-            self.wasp.camera_confirmed = self.wasp.enabled and value == 90.0
+            # The camera is fixed at 90 degrees: any confirmation keeps it there.
+            self.camera_mount_deg = CAMERA_MOUNT_DEG
+            self.wasp.camera_confirmed = self.wasp.enabled
         return ""
 
     def set_wasp_param(self, key, value):

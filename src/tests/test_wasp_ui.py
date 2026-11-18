@@ -202,7 +202,7 @@ async function main(){
  q('#mode_cancel').click();
  await check('Cancel preserves mode and sends nothing',!visible('#modechange')&&!(await req('/state')).mission.wasp_enabled&&(await req('/commands')).length===start);
  await switchMode('normal');
- await check('normal confirmation sets 30 degrees',(await req('/state')).mission.camera_mount_deg===30&&q('#mountstatus').textContent==='30° ✓');
+ await check('normal confirmation keeps the fixed 90 degree camera',(await req('/state')).mission.camera_mount_deg===90&&q('#mountstatus').textContent==='90° ✓');
  q('#sh_speed [data-close]').click();q('#sh_menu [data-close]').click();
  await popLayout();
  q('#seeker_tools [data-pop="pop_flight"]').click();await until(()=>visible('#normal_params'));
