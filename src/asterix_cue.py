@@ -33,7 +33,7 @@ except ImportError:          # pip install asterix_decoder
     asterix = None
 
 KEEP_S = 15.0
-RFD_KEY = "RFD"
+RFD_PREFIX = "RFD_"
 
 
 def rfd_checksum(body):
@@ -44,7 +44,7 @@ def rfd_checksum(body):
 
 
 def parse_rfd(line):
-    """{lat, lon, alt_m, frame} from one $RFD line, or None (bad checksum or values)."""
+    """{id, lat, lon, alt_m, frame} from one $RFD line, or None."""
     line = str(line).strip()
     if not line.startswith("$") or "*" not in line:
         return None
@@ -52,20 +52,24 @@ def parse_rfd(line):
     if len(cs.strip()) < 2 or rfd_checksum(body) != cs.strip().upper()[:2] or not body.startswith("RFD,"):
         return None
     parts = body.split(",")
-    if len(parts) < 5:
+    if len(parts) == 6:
+        tid, lat_s, lon_s, alt_s, frame_s = parts[1], parts[2], parts[3], parts[4], parts[5]
+    elif len(parts) == 5:
+        tid, lat_s, lon_s, alt_s, frame_s = "0", parts[1], parts[2], parts[3], parts[4]
+    else:
         return None
     try:
-        lat, lon, alt = float(parts[1]), float(parts[2]), float(parts[3])
+        lat, lon, alt = float(lat_s), float(lon_s), float(alt_s)
     except ValueError:
         return None
-    frame = parts[4].strip().upper()
+    frame = frame_s.strip().upper()
     if frame not in ("REL", "MSL") or not (-90 <= lat <= 90 and -180 <= lon <= 180 and math.isfinite(alt)):
         return None
-    return dict(lat=lat, lon=lon, alt_m=alt, frame=frame)
+    return dict(id=tid.strip(), lat=lat, lon=lon, alt_m=alt, frame=frame)
 
 
-def rfd_line(lat, lon, alt_m, frame="MSL"):
-    body = f"RFD,{lat:.7f},{lon:.7f},{alt_m:.2f},{frame}"
+def rfd_line(lat, lon, alt_m, frame="MSL", tid="0"):
+    body = f"RFD,{tid},{lat:.7f},{lon:.7f},{alt_m:.2f},{frame}"
     return f"${body}*{rfd_checksum(body)}"
 
 
@@ -175,7 +179,7 @@ class AsterixCue:
         return True
 
     def ingest_rfd(self, line, now=None):
-        """One $RFD line from the radio; the track 'RFD'."""
+        """One $RFD line from the radio."""
         now = perf_counter() if now is None else now
         fix = parse_rfd(line)
         with self._lock:
@@ -185,13 +189,15 @@ class AsterixCue:
                 return False
             self.rfd_lines += 1
             self.rfd_t = self.rx_t = now
-            t = dict(key=RFD_KEY, icao=0, callsign="RFD", track_no=None, lat=fix["lat"], lon=fix["lon"],
-                     gs_kt=None, track_deg=None)
+            key = RFD_PREFIX + fix["id"]
+            label = f"RFD-{fix['id']}"
+            t = dict(key=key, icao=0, callsign=label, track_no=None,
+                     lat=fix["lat"], lon=fix["lon"], gs_kt=None, track_deg=None)
             if fix["frame"] == "MSL":
                 t["alt_ft"] = fix["alt_m"]/FT_TO_M
             else:
                 t["alt_ft"], t["rel_m"] = None, fix["alt_m"]
-            self._tracks[RFD_KEY] = (now, t)
+            self._tracks[key] = (now, t)
         return True
 
     # ---- the UDP listener ----------------------------------------------------
@@ -307,7 +313,7 @@ class AsterixCue:
                 rel = alt_m - home_amsl
             out.append(dict(key=k, label=t.get("callsign") or k, icao=k, track_no=t.get("track_no"),
                             lat=t["lat"], lon=t["lon"], age_s=round(age, 1), fresh=age <= self.fresh_s,
-                            source="RFD" if k == RFD_KEY else "ADSB" if k.startswith("ADSB_") else "UDP",
+                            source="RFD" if k.startswith(RFD_PREFIX) else "ADSB" if k.startswith("ADSB_") else "UDP",
                             alt_amsl=None if alt_m is None else round(alt_m, 1),
                             alt_rel=None if rel is None else round(rel, 1),
                             speed=None if t.get("gs_kt") is None else round(t["gs_kt"]/KT_PER_MS, 1),

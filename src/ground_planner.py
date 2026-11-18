@@ -65,21 +65,21 @@ class _RfdWriter:
         self.port = _serial.Serial(dev, baud, timeout=0.2)
         self.period = 1.0 / max(0.5, float(hz))
         self._lock = threading.Lock()
-        self._latest = None
+        self._tracks = {}
         self._stop = threading.Event()
         threading.Thread(target=self._run, daemon=True, name="rfd-tx").start()
         print(f"[RFD] Sending $RFD lines on {dev} @{baud} ({hz:.0f} Hz)")
 
-    def update(self, lat, lon, alt_m):
+    def update_tracks(self, tracks):
         with self._lock:
-            self._latest = (lat, lon, alt_m)
+            self._tracks = {t["tid"]: t for t in tracks}
 
     def _run(self):
         while not self._stop.is_set():
             with self._lock:
-                fix = self._latest
-            if fix:
-                line = rfd_line(fix[0], fix[1], fix[2], "MSL") + "\r\n"
+                snap = list(self._tracks.values())
+            for t in snap:
+                line = rfd_line(t["lat"], t["lon"], t["alt_m"], "MSL", tid=str(t["tid"])) + "\r\n"
                 try:
                     self.port.write(line.encode())
                     with _RFD_STATUS_LOCK:
@@ -113,11 +113,14 @@ def _mav_rx_loop():
 
 
 def _rfd_send_tracks(tracks):
-    """Send the first track as a $RFD line via serial."""
+    """Send all tracks as $RFD lines via serial."""
     if _RFD is None or not tracks:
         return
-    t = tracks[0]
-    _RFD.update(t["lat"], t["lon"], t.get("h_msl_m", 50))
+    rfd_tracks = []
+    for i, t in enumerate(tracks):
+        rfd_tracks.append(dict(tid=t.get("track_no", i), lat=t["lat"], lon=t["lon"],
+                               alt_m=t.get("h_msl_m", 50)))
+    _RFD.update_tracks(rfd_tracks)
 
 
 def _mav_send_tracks(tracks):
