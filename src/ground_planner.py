@@ -51,12 +51,36 @@ LISTEN_PORT = 8600
 SOCK = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 _PKT_COUNT = [0]
 _MAV = None
+_MAV_STATUS = {"fc_hb": 0, "fc_last": 0, "tx": 0, "tx_last": 0, "linked": False}
+_MAV_STATUS_LOCK = threading.Lock()
+
+
+def _mav_rx_loop():
+    """Read MAVLink from the RFD to detect FC heartbeats (proves the radio link)."""
+    while True:
+        try:
+            msg = _MAV.conn.recv_match(blocking=True, timeout=1)
+        except Exception:
+            time.sleep(0.5)
+            continue
+        if msg is None:
+            continue
+        t = msg.get_type()
+        if t == "HEARTBEAT" and msg.get_srcSystem() != 250:
+            with _MAV_STATUS_LOCK:
+                first = _MAV_STATUS["fc_hb"] == 0
+                _MAV_STATUS["fc_hb"] += 1
+                _MAV_STATUS["fc_last"] = time.time()
+                _MAV_STATUS["linked"] = True
+            if first:
+                print(f"[RFD] FC heartbeat received — radio link is ALIVE (sysid {msg.get_srcSystem()})")
 
 
 def _mav_send_tracks(tracks):
     """Send tracks as ADSB_VEHICLE via the MAVLink/RFD link."""
     if _MAV is None:
         return
+    sent = 0
     for t in tracks:
         alt_m = t.get("h_msl_m", 50)
         vx, vy = t.get("vx", 0), t.get("vy", 0)
@@ -70,8 +94,21 @@ def _mav_send_tracks(tracks):
                      synthetic_icao=True)
         try:
             _MAV.send(mav_t)
-        except Exception:
-            pass
+            sent += 1
+        except Exception as exc:
+            print(f"[RFD] send error: {exc}")
+    if sent:
+        with _MAV_STATUS_LOCK:
+            first_tx = _MAV_STATUS["tx"] == 0
+            _MAV_STATUS["tx"] += sent
+            _MAV_STATUS["tx_last"] = time.time()
+        if first_tx:
+            print(f"[RFD] First ADSB_VEHICLE sent ({sent} track(s))")
+    with _MAV_STATUS_LOCK:
+        linked = _MAV_STATUS["linked"]
+    if sent and not linked:
+        if _MAV_STATUS["tx"] % 10 == 1:
+            print("[RFD] WARNING: sending but no FC heartbeat received — check radio link")
 
 
 def _polar(lat0, lon0, h0, lat, lon, h_msl):
@@ -449,6 +486,7 @@ header h1{font-size:16px;letter-spacing:.3px;font-weight:700}
 <header>
   <h1>Ground Planner</h1>
   <span class="status">Drone: <b id="drone_st" class="off">no GPS</b></span>
+  <span class="status">RFD: <b id="rfd_st" class="off">off</b></span>
   <span class="status">TX: <b id="tx_st">idle</b> <span id="tx_n"></span></span>
 </header>
 <div class="main">
@@ -1039,6 +1077,15 @@ requestAnimationFrame(animateTargets);
 
 setInterval(pollDrone,2000); pollDrone();
 setInterval(function(){
+  fetch("/api/rfd").then(function(r){return r.json();}).then(function(j){
+    var el=document.getElementById("rfd_st");
+    if(!j.enabled){el.textContent="off";el.className="off";}
+    else if(j.linked){el.textContent="LINKED ("+j.tx+" tx, "+j.fc_hb+" rx)";el.className="";}
+    else if(j.tx>0){el.textContent="TX only (no FC reply)";el.className="off";}
+    else{el.textContent="waiting";el.className="off";}
+  }).catch(function(){});
+},2000);
+setInterval(function(){
   if(currentMode==="elkak")return;
   fetch("/api/status").then(function(r){return r.json();}).then(function(j){
     document.getElementById("tx_n").textContent=j.packets+" pkt";
@@ -1216,6 +1263,11 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/drone/cmd":
             qs = urlparse(self.path).query
             self._proxy_json(f"http://{JETSON_IP}:{JETSON_HTTP}/cmd?{qs}")
+        elif path == "/api/rfd":
+            with _MAV_STATUS_LOCK:
+                st = dict(_MAV_STATUS)
+            st["enabled"] = _MAV is not None
+            self._json(st)
         elif path == "/api/status":
             with LOCK:
                 ntgt = len([t for t in STATE["targets"] if t.get("enabled") and (t.get("lat") or t.get("lon"))])
@@ -1311,6 +1363,7 @@ def main():
         from asterix062_bridge import MavlinkSender
         _MAV = MavlinkSender(args.mavlink, args.mav_sysid)
         print(f"[GROUND PLANNER] RFD/MAVLink: sending ADSB_VEHICLE on {args.mavlink}")
+        threading.Thread(target=_mav_rx_loop, daemon=True, name="rfd-rx").start()
 
     threading.Thread(target=_emitter_loop, daemon=True).start()
     threading.Thread(target=_elkak_listener, daemon=True).start()
