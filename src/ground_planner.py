@@ -588,7 +588,7 @@ header h1{font-size:16px;letter-spacing:.3px;font-weight:700}
       <div id="target_list"></div>
       <div id="mode_hint"></div>
     </div>
-    <div id="seek_panel" class="seek-panel" style="display:none">
+    <div id="seek_panel" class="seek-panel">
       <h3 style="margin:8px 0 4px;font-size:12px;color:var(--accent);letter-spacing:.3px">CUE TARGETS</h3>
       <div id="cue_tracks"></div>
       <h3 id="fp_toggle">&#9656; SEEKER FLIGHT PARAMETERS</h3>
@@ -1216,11 +1216,11 @@ function updateSeek(sk, m){
   var btn=document.getElementById("seek_btn");
   var lbl=document.getElementById("seek_label");
   if(!sk){
-    panel.style.display="none";
     btn.className="seek-btn"; btn.disabled=true; lbl.textContent="SEEK";
+    renderCueTracks({}, null);
+    document.getElementById("msn_status").innerHTML='<div class="msn-box"><span class="c-err">&#9679;</span> Jetson offline</div>';
     return;
   }
-  panel.style.display="";
   var seek=sk.seek||{}, run=sk.run||null, cue=sk.cue||{};
   var hasTgt=cue.target!=null;
   seekRunning=run!=null && run.id==="SEEK";
