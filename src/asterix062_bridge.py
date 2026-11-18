@@ -250,14 +250,14 @@ class SbsServer:
 # --------------------------------------------------------------------------
 
 class MavlinkSender:
-    def __init__(self, url, sysid):
+    def __init__(self, url, sysid, baud=57600):
         from pymavlink import mavutil
         self.m = mavutil.mavlink
         comp = getattr(self.m, "MAV_COMP_ID_ADSB", 156)
-        self.conn = mavutil.mavlink_connection(url, source_system=sysid,
+        self.conn = mavutil.mavlink_connection(url, baud=baud, source_system=sysid,
                                                source_component=comp)
         self.last_hb = 0.0
-        print(f"[MAVLink] Sending ADSB_VEHICLE to {url} (sysid {sysid})")
+        print(f"[MAVLink] Sending ADSB_VEHICLE to {url} @{baud} (sysid {sysid})")
 
     def _heartbeat(self):
         now = time.time()
@@ -463,6 +463,7 @@ def main():
     p.add_argument("--sbs-port", type=int, default=30003)
     p.add_argument("--no-sbs", action="store_true", help="disable SBS output")
     p.add_argument("--mavlink", help="pymavlink URL, e.g. udpout:127.0.0.1:14550")
+    p.add_argument("--mav-baud", type=int, default=57600, help="baud rate for serial MAVLink (default 57600)")
     p.add_argument("--mav-sysid", type=int, default=250)
     p.add_argument("--rfd-dev",
                    help="serial device of the laptop's RFD radio (e.g. /dev/ttyUSB0); "
@@ -505,7 +506,7 @@ def main():
         state["nearest_center"] = (lat0, lon0)
 
     sbs = None if args.no_sbs else SbsServer(args.sbs_host, args.sbs_port)
-    mav = MavlinkSender(args.mavlink, args.mav_sysid) if args.mavlink else None
+    mav = MavlinkSender(args.mavlink, args.mav_sysid, args.mav_baud) if args.mavlink else None
     rfd = (RfdSender(args.rfd_dev, args.rfd_baud, args.rfd_frame, args.rfd_hz)
            if args.rfd_dev else None)
     if not sbs and not mav and not rfd:
