@@ -529,13 +529,17 @@ header h1{font-size:16px;letter-spacing:.3px;font-weight:700}
 .offer-yes{background:var(--ok);color:#fff}
 .offer-no{background:var(--err);color:#fff}
 .cue-btn{width:100%;text-align:left;padding:7px 10px;margin:3px 0;border:1px solid var(--border);
-  border-radius:6px;background:#fff;cursor:pointer;font-size:11px;line-height:1.4;color:var(--text);
-  transition:all .15s}
-.cue-btn:hover{border-color:var(--accent);background:#f0f7ff}
+  border-radius:6px;background:#fff;font-size:11px;line-height:1.4;color:var(--text);
+  transition:all .15s;display:flex;align-items:center;gap:6px}
 .cue-btn.selected{border-color:var(--ok);background:#dcfce7}
 .cue-btn.stale{opacity:.5}
 .cue-btn b{font-size:12px}
-.cue-btn .cue-info{color:var(--muted)}
+.cue-btn .cue-info{color:var(--muted);flex:1}
+.cue-go{padding:5px 12px;border:none;border-radius:6px;font:700 11px/1 sans-serif;cursor:pointer;
+  background:var(--ok);color:#fff;white-space:nowrap;transition:all .15s;flex:0 0 auto}
+.cue-go:hover{opacity:.85}
+.cue-go.swap{background:var(--accent)}
+.cue-go.abort{background:var(--err)}
 @media(max-width:700px){
   .main{flex-direction:column}
   .sidebar{width:100%;max-height:50vh;border-left:none;border-top:1px solid var(--border)}
@@ -1232,7 +1236,7 @@ function updateSeek(sk, m){
     btn.className="seek-btn"; btn.disabled=true; lbl.textContent="SEEK";
   }
 
-  renderCueTracks(cue);
+  renderCueTracks(cue, run);
   renderFP(seek.params||[], !!run);
   renderMsnStatus(run, cue, seek);
 }
@@ -1303,19 +1307,42 @@ function renderMsnStatus(run, cue, seek){
   } else { seekLastOfferN=null; }
 }
 
-function renderCueTracks(cue){
+function goSeek(key){
+  seekCmd("cue:select:"+key).then(function(){
+    if(seekRunning) return;
+    seekCmd("start:SEEK");
+  });
+}
+function renderCueTracks(cue, run){
   var box=document.getElementById("cue_tracks");
   var tracks=(cue||{}).tracks||[];
   var sel=(cue||{}).selected||"";
-  var html='<button class="cue-btn'+(sel?'':' selected')+'" onclick="seekCmd(\'cue:nearest\')"><b>NEAREST</b> <span class="cue-info">auto-select closest</span></button>';
+  var running=run!=null && run.id==="SEEK";
+  var html="";
   tracks.forEach(function(t){
-    var cls="cue-btn"+(sel===t.key?" selected":"")+(t.fresh?"":" stale");
+    var isSel=sel===t.key;
+    var cls="cue-btn"+(isSel?" selected":"")+(t.fresh?"":" stale");
     var info=(t.dist_m!=null?t.dist_m+"m ":"")+(t.alt_rel!=null?(t.alt_rel>=0?"+":"")+Math.round(t.alt_rel)+"m ":"")
-      +(t.speed!=null?t.speed+"m/s ":"")+t.age_s+"s "+t.source;
-    html+='<button class="'+cls+'" onclick="seekCmd(\'cue:select:'+t.key+'\')"><b>'+t.label+'</b> <span class="cue-info">'+info+'</span></button>';
+      +(t.speed!=null?t.speed+"m/s ":"")+t.age_s+"s";
+    var goLabel, goCls;
+    if(running && isSel){ goLabel="ABORT"; goCls="cue-go abort"; }
+    else if(running){ goLabel="SWAP"; goCls="cue-go swap"; }
+    else { goLabel="GO"; goCls="cue-go"; }
+    html+='<div class="'+cls+'">'
+      +'<div style="flex:1"><b>'+t.label+'</b><br><span class="cue-info">'+info+'</span></div>'
+      +'<button class="'+goCls+'" data-key="'+t.key+'" data-action="'+(running&&isSel?'abort':running?'swap':'go')+'">'+goLabel+'</button>'
+      +'</div>';
   });
-  if(!tracks.length) html+='<div style="font-size:11px;color:var(--muted);padding:4px 0">No targets on the cue</div>';
+  if(!tracks.length) html='<div style="font-size:11px;color:var(--muted);padding:4px 0">No targets on the cue — send targets from TEST or ELKAK tab</div>';
   box.innerHTML=html;
+  box.querySelectorAll(".cue-go").forEach(function(btn){
+    btn.onclick=function(){
+      var act=btn.dataset.action, k=btn.dataset.key;
+      if(act==="abort") seekCmd("abort");
+      else if(act==="swap") seekCmd("cue:select:"+k);
+      else goSeek(k);
+    };
+  });
 }
 
 renderMode();
