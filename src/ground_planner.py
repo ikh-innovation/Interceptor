@@ -28,7 +28,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(__file__) or ".")
-from asterix_cue import encode_eketa_cat062, parse_eketa_block
+from asterix_cue import encode_eketa_cat062, parse_eketa_block, rfd_line
 from asterix062_bridge import FT_TO_M, KT_PER_MS
 
 # ---- state ------------------------------------------------------------------
@@ -53,6 +53,42 @@ _PKT_COUNT = [0]
 _MAV = None
 _MAV_STATUS = {"fc_hb": 0, "fc_last": 0, "tx": 0, "tx_last": 0, "linked": False}
 _MAV_STATUS_LOCK = threading.Lock()
+_RFD = None
+_RFD_STATUS = {"tx": 0, "tx_last": 0, "error": ""}
+_RFD_STATUS_LOCK = threading.Lock()
+
+
+class _RfdWriter:
+    """Write $RFD lines on the laptop's RFD serial port at a steady rate."""
+    def __init__(self, dev, baud=57600, hz=5.0):
+        import serial as _serial
+        self.port = _serial.Serial(dev, baud, timeout=0.2)
+        self.period = 1.0 / max(0.5, float(hz))
+        self._lock = threading.Lock()
+        self._latest = None
+        self._stop = threading.Event()
+        threading.Thread(target=self._run, daemon=True, name="rfd-tx").start()
+        print(f"[RFD] Sending $RFD lines on {dev} @{baud} ({hz:.0f} Hz)")
+
+    def update(self, lat, lon, alt_m):
+        with self._lock:
+            self._latest = (lat, lon, alt_m)
+
+    def _run(self):
+        while not self._stop.is_set():
+            with self._lock:
+                fix = self._latest
+            if fix:
+                line = rfd_line(fix[0], fix[1], fix[2], "MSL") + "\r\n"
+                try:
+                    self.port.write(line.encode())
+                    with _RFD_STATUS_LOCK:
+                        _RFD_STATUS["tx"] += 1
+                        _RFD_STATUS["tx_last"] = time.time()
+                except Exception as exc:
+                    with _RFD_STATUS_LOCK:
+                        _RFD_STATUS["error"] = str(exc)[:80]
+            self._stop.wait(self.period)
 
 
 def _mav_rx_loop():
@@ -74,6 +110,14 @@ def _mav_rx_loop():
                 _MAV_STATUS["linked"] = True
             if first:
                 print(f"[RFD] FC heartbeat received — radio link is ALIVE (sysid {msg.get_srcSystem()})")
+
+
+def _rfd_send_tracks(tracks):
+    """Send the first track as a $RFD line via serial."""
+    if _RFD is None or not tracks:
+        return
+    t = tracks[0]
+    _RFD.update(t["lat"], t["lon"], t.get("h_msl_m", 50))
 
 
 def _mav_send_tracks(tracks):
@@ -239,6 +283,7 @@ def _elkak_listener():
                                    vx=t.get("vx", 0), vy=t.get("vy", 0),
                                    track_no=t.get("track_no", 0)))
         _mav_send_tracks(mav_tracks)
+        _rfd_send_tracks(mav_tracks)
 
 
 # ---- emitter ----------------------------------------------------------------
@@ -268,6 +313,7 @@ def _emitter_loop():
                 except Exception:
                     pass
                 _mav_send_tracks(tracks)
+                _rfd_send_tracks(tracks)
                 _PKT_COUNT[0] += 1
             time.sleep(1.0 / hz)
             continue
@@ -291,6 +337,7 @@ def _emitter_loop():
             except Exception:
                 pass
             _mav_send_tracks(tracks)
+            _rfd_send_tracks(tracks)
             _PKT_COUNT[0] += 1
         time.sleep(1.0 / hz)
 
@@ -1080,6 +1127,10 @@ setInterval(function(){
   fetch("/api/rfd").then(function(r){return r.json();}).then(function(j){
     var el=document.getElementById("rfd_st");
     if(!j.enabled){el.textContent="off";el.className="off";}
+    else if(j.rfd_enabled){
+      el.textContent=j.rfd_tx>0?"TX "+j.rfd_tx+" lines":"ready";
+      el.className=j.rfd_tx>0?"":"off";
+    }
     else if(j.linked){el.textContent="LINKED ("+j.tx+" tx, "+j.fc_hb+" rx)";el.className="";}
     else if(j.tx>0){el.textContent="TX only (no FC reply)";el.className="off";}
     else{el.textContent="waiting";el.className="off";}
@@ -1265,8 +1316,14 @@ class Handler(BaseHTTPRequestHandler):
             self._proxy_json(f"http://{JETSON_IP}:{JETSON_HTTP}/cmd?{qs}")
         elif path == "/api/rfd":
             with _MAV_STATUS_LOCK:
-                st = dict(_MAV_STATUS)
-            st["enabled"] = _MAV is not None
+                mst = dict(_MAV_STATUS)
+            with _RFD_STATUS_LOCK:
+                rst = dict(_RFD_STATUS)
+            st = {"mav_enabled": _MAV is not None, "rfd_enabled": _RFD is not None,
+                  "enabled": _MAV is not None or _RFD is not None}
+            st.update(mst)
+            st["rfd_tx"] = rst["tx"]
+            st["rfd_error"] = rst["error"]
             self._json(st)
         elif path == "/api/status":
             with LOCK:
@@ -1350,20 +1407,27 @@ def main():
     p.add_argument("--port", type=int, default=9000, help="Local HTTP port (default 9000)")
     p.add_argument("--mavlink",
                    help="Send targets as ADSB_VEHICLE over this MAVLink connection "
-                        "(e.g. /dev/ttyUSB0 for the RFD radio)")
+                        "(e.g. /dev/ttyUSB0 for the RFD radio through FC)")
     p.add_argument("--mav-sysid", type=int, default=250)
+    p.add_argument("--rfd-dev",
+                   help="Send $RFD lines on this serial device (e.g. /dev/ttyUSB0 for "
+                        "RFD radio directly connected to the Jetson)")
+    p.add_argument("--rfd-baud", type=int, default=57600)
+    p.add_argument("--rfd-hz", type=float, default=5.0)
     args = p.parse_args()
     JETSON_IP = args.jetson
     JETSON_HTTP = args.jetson_http
     JETSON_AST = args.jetson_ast
     LISTEN_PORT = args.listen
 
-    global _MAV
+    global _MAV, _RFD
     if args.mavlink:
         from asterix062_bridge import MavlinkSender
         _MAV = MavlinkSender(args.mavlink, args.mav_sysid)
         print(f"[GROUND PLANNER] RFD/MAVLink: sending ADSB_VEHICLE on {args.mavlink}")
         threading.Thread(target=_mav_rx_loop, daemon=True, name="rfd-rx").start()
+    if args.rfd_dev:
+        _RFD = _RfdWriter(args.rfd_dev, args.rfd_baud, args.rfd_hz)
 
     threading.Thread(target=_emitter_loop, daemon=True).start()
     threading.Thread(target=_elkak_listener, daemon=True).start()
@@ -1386,7 +1450,9 @@ def main():
     print(f"[GROUND PLANNER] http://localhost:{args.port}")
     print(f"[GROUND PLANNER] Jetson: {JETSON_IP}:{JETSON_HTTP} (HTTP), :{JETSON_AST} (ASTERIX UDP)")
     if _MAV:
-        print(f"[GROUND PLANNER] RFD link: targets also sent as ADSB_VEHICLE via {args.mavlink}")
+        print(f"[GROUND PLANNER] RFD link (MAVLink): ADSB_VEHICLE via {args.mavlink}")
+    if _RFD:
+        print(f"[GROUND PLANNER] RFD link (serial): $RFD lines via {args.rfd_dev}")
     print(f"[GROUND PLANNER] ELKAK listener: UDP :{LISTEN_PORT}")
     print(f"[GROUND PLANNER] Tabs: TEST (Circle/Line/Draw), ELKAK (live + manual)")
     print(f"[GROUND PLANNER] TX rate: 2 Hz (per EKETA ICD)")
