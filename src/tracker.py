@@ -2276,18 +2276,9 @@ if __name__ == "__main__":
 
     os.environ.setdefault("TARGET_KIND", "DRONE")
 
-    _uploader = None
-    if os.environ.get("GCP_PROJECT"):
-        try:
-            from log_uploader import LogUploader
-            _uploader = LogUploader()
-            _uploader.start()
-        except Exception as _ue:
-            print(f"Log uploader disabled: {_ue}")
-
+    # Flight logs are local CSV only: no cloud upload (it ran at ARM, next to
+    # the FC heartbeat, and the FC disarmed on GCS failsafe).
     _commander = commander_from_env(log_dir=str(_DATA_DIR))
-    if _uploader is not None:
-        _commander.set_log_uploader(_uploader)
 
     DroneTracker(
         model_path   = model_pth,
@@ -2299,7 +2290,7 @@ if __name__ == "__main__":
         skip_frames  = 0,
         show_sky     = False,
         use_sky_mask = True,
-        record_dir      = os.environ.get("WASP_RECORD_DIR") or None,
+        record_dir      = None,   # no onboard video recording (it started at ARM)
         log_dir         = str(_DATA_DIR),
         run_stamp       = RUN_STAMP,
         headless     = os.environ.get("TRACKER_HEADLESS") == "1",
