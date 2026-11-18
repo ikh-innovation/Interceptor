@@ -601,7 +601,6 @@ header h1{font-size:16px;letter-spacing:.3px;font-weight:700}
       <h3 style="margin:8px 0 4px;font-size:12px;color:var(--accent);letter-spacing:.3px">CUE TARGETS</h3>
       <div id="cue_tracks"></div>
       <div id="abort_bar" style="display:none;margin:6px 0;gap:6px">
-        <button class="stop-btn" id="btn_engage" style="flex:1;margin:0;background:#16a34a">ENGAGE</button>
         <button class="stop-btn" id="btn_abort" style="flex:1;margin:0">ABORT</button>
         <button class="stop-btn" id="btn_rtl" style="flex:1;margin:0;background:var(--warn)">RTL</button>
       </div>
@@ -1196,7 +1195,6 @@ function seekCmd(v){
     .then(function(r){return r.json();})
     .catch(function(){return {};});
 }
-document.getElementById("btn_engage").onclick=function(){ seekCmd("engage"); };
 document.getElementById("btn_abort").onclick=function(){ seekCmd("abort"); _seekActive=false; _seekSentKey=null; document.getElementById("abort_bar").style.display="none"; };
 document.getElementById("btn_rtl").onclick=function(){ seekCmd("after:RTL"); _seekActive=false; _seekSentKey=null; document.getElementById("abort_bar").style.display="none"; };
 

@@ -213,10 +213,11 @@ def describe(mid, p, lim):
                            "(a new target on the feed: asks to switch)"
                            if p["standoff"] > 0 else
                            ", directly underneath (a new target on the feed: asks to switch)"),
-                        f"Camera on the target {_fmt(p['det_s'])} s: asks ENGAGE? "
-                         f"YES → ACRO, WASP takes over (throttle {_fmt(p['throttle'])}, "
-                         f"rate {_fmt(p['wasp_rate'])}°/s). NO → hold, wait for another target. "
-                         "ABORT or the geofence: RTL"]
+                        f"Camera on the target {_fmt(p['det_s'])} s → AUTO ENGAGE: "
+                         f"ACRO, WASP takes over (throttle {_fmt(p['throttle'])}, "
+                         f"rate {_fmt(p['wasp_rate'])}°/s). "
+                         "ABORT or the geofence: RTL. "
+                         "Pilot takeover: ACRO + throttle + CH8"]
     return []
 
 
@@ -502,12 +503,6 @@ class SeekerMissions:
                 if self.run is None:
                     return "no mission running"
                 self._reqs.append(("offer", f"{ans.strip().lower()}:{n.strip()}"))
-            return ""
-        if verb == "engage":
-            with self._lock:
-                if self.run is None or self.run["id"] != "SEEK":
-                    return "no SEEK running"
-                self._reqs.append(("engage", ""))
             return ""
         if verb in ("start", "next", "abort", "after", "dismiss", "alertshown", "alertok", "restart"):
             with self._lock:
@@ -830,15 +825,6 @@ class SeekerMissions:
         elif verb == "after" and r is not None and arg in ("RTL", "LAND") and not r["hands_off"]:
             self._event(f"operator: {arg}")
             self._interrupt(f"operator {arg}", self._mode_then_watch(arg))
-        elif verb == "engage" and r is not None and r["id"] == "SEEK":
-            o = r.get("offer")
-            if o and o["kind"] == "engage":
-                r["answer"] = (o["n"], True)
-            else:
-                self._offer_n += 1
-                r["offer"] = dict(n=self._offer_n, kind="engage", key=None,
-                                  label="direct", text="ENGAGE (command)", t=self.now)
-                r["answer"] = (self._offer_n, True)
         elif verb == "offer" and r is not None:
             ans, _, n = arg.lower().partition(":")
             r["answer"] = (int(n), ans == "yes")
@@ -1863,13 +1849,8 @@ class SeekerMissions:
                     if was_hold:
                         yield from self._mode("GUIDED")
                         b.change_speed(b.SPEED_GROUND, p["speed"])
-                elif o["kind"] == "engage":
-                    if ans[1]:
-                        break
-                    r["rejected"].add(o["key"])
-                    self.cue.select("")
-                    r["seek"], r["cue"], det_since = "WAIT", None, None
-                    self._event("NO: target rejected, waiting here for another ASTERIX target")
+                elif o["kind"] == "engage" and ans[1]:
+                    break
             # A track new on the feed: ask.
             if r["offer"] is None:
                 for x in self.cue.tracks(self.now, pos, home_amsl):
@@ -1948,13 +1929,9 @@ class SeekerMissions:
                     and conf is not None and conf >= mission.min_conf and close)
             det_since = (det_since or self.now) if seen and r["seek"] == "FOLLOW" else None
             if det_since is not None and self.now - det_since >= p["det_s"]:
-                if r["offer"] is None or r["offer"]["kind"] != "engage":
-                    if r["offer"] is not None:
-                        r["offer"], r["answer"] = None, None
-                    cue_label = (r["cue"] or {}).get("label", "target")
-                    self._offer("engage", r["cue"],
-                                f"Camera locked on {cue_label} ({d:.0f} m): ENGAGE?")
-                    det_since = None
+                cue_label = (r["cue"] or {}).get("label", "target")
+                self._event(f"Camera locked on {cue_label} ({d:.0f} m): AUTO ENGAGE")
+                break
             yield
         self._at(5)
         cue = r["cue"] or {}
