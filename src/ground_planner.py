@@ -528,6 +528,14 @@ header h1{font-size:16px;letter-spacing:.3px;font-weight:700}
 .offer-btns button{flex:1;padding:8px;border:none;border-radius:6px;font:600 12px/1 sans-serif;cursor:pointer}
 .offer-yes{background:var(--ok);color:#fff}
 .offer-no{background:var(--err);color:#fff}
+.cue-btn{width:100%;text-align:left;padding:7px 10px;margin:3px 0;border:1px solid var(--border);
+  border-radius:6px;background:#fff;cursor:pointer;font-size:11px;line-height:1.4;color:var(--text);
+  transition:all .15s}
+.cue-btn:hover{border-color:var(--accent);background:#f0f7ff}
+.cue-btn.selected{border-color:var(--ok);background:#dcfce7}
+.cue-btn.stale{opacity:.5}
+.cue-btn b{font-size:12px}
+.cue-btn .cue-info{color:var(--muted)}
 @media(max-width:700px){
   .main{flex-direction:column}
   .sidebar{width:100%;max-height:50vh;border-left:none;border-top:1px solid var(--border)}
@@ -577,6 +585,8 @@ header h1{font-size:16px;letter-spacing:.3px;font-weight:700}
       <div id="mode_hint"></div>
     </div>
     <div id="seek_panel" class="seek-panel" style="display:none">
+      <h3 style="margin:8px 0 4px;font-size:12px;color:var(--accent);letter-spacing:.3px">CUE TARGETS</h3>
+      <div id="cue_tracks"></div>
       <h3 id="fp_toggle">&#9656; SEEKER FLIGHT PARAMETERS</h3>
       <div id="fp_body" style="display:none"></div>
       <div id="msn_status"></div>
@@ -1041,7 +1051,7 @@ document.addEventListener("keydown",function(e){
 
 // ---- drone polling ----
 function pollDrone(){
-  fetch("/drone/state").then(function(r){return r.ok?r.json():null;}).then(function(j){
+  fetch("/drone/state?c="+_gpClient).then(function(r){return r.ok?r.json():null;}).then(function(j){
     if(!j){document.getElementById("drone_st").className="off";document.getElementById("drone_st").textContent="offline";updateSeek(null);return;}
     document.getElementById("d_mode").textContent=j.fc_mode||"--";
     document.getElementById("d_armed").textContent=j.armed?"YES":"no";
@@ -1152,8 +1162,9 @@ setInterval(function(){
 // ---- SEEKER integration ----
 var seekReady=false, seekRunning=false, seekChecksOk=false, seekWhy="", seekLastOfferN=null, fpOpen=false;
 
+var _gpClient = "gp_"+Math.random().toString(36).slice(2,8);
 function seekCmd(v){
-  return fetch("/drone/cmd?key=msn&value="+encodeURIComponent(v))
+  return fetch("/drone/cmd?c="+_gpClient+"&msn="+encodeURIComponent(v))
     .then(function(r){return r.json();})
     .catch(function(){return {};});
 }
@@ -1221,6 +1232,7 @@ function updateSeek(sk, m){
     btn.className="seek-btn"; btn.disabled=true; lbl.textContent="SEEK";
   }
 
+  renderCueTracks(cue);
   renderFP(seek.params||[], !!run);
   renderMsnStatus(run, cue, seek);
 }
@@ -1291,6 +1303,21 @@ function renderMsnStatus(run, cue, seek){
   } else { seekLastOfferN=null; }
 }
 
+function renderCueTracks(cue){
+  var box=document.getElementById("cue_tracks");
+  var tracks=(cue||{}).tracks||[];
+  var sel=(cue||{}).selected||"";
+  var html='<button class="cue-btn'+(sel?'':' selected')+'" onclick="seekCmd(\'cue:nearest\')"><b>NEAREST</b> <span class="cue-info">auto-select closest</span></button>';
+  tracks.forEach(function(t){
+    var cls="cue-btn"+(sel===t.key?" selected":"")+(t.fresh?"":" stale");
+    var info=(t.dist_m!=null?t.dist_m+"m ":"")+(t.alt_rel!=null?(t.alt_rel>=0?"+":"")+Math.round(t.alt_rel)+"m ":"")
+      +(t.speed!=null?t.speed+"m/s ":"")+t.age_s+"s "+t.source;
+    html+='<button class="'+cls+'" onclick="seekCmd(\'cue:select:'+t.key+'\')"><b>'+t.label+'</b> <span class="cue-info">'+info+'</span></button>';
+  });
+  if(!tracks.length) html+='<div style="font-size:11px;color:var(--muted);padding:4px 0">No targets on the cue</div>';
+  box.innerHTML=html;
+}
+
 renderMode();
 </script></body></html>"""
 
@@ -1314,7 +1341,8 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         elif path == "/drone/state":
-            self._proxy_json(f"http://{JETSON_IP}:{JETSON_HTTP}/state")
+            qs = urlparse(self.path).query
+            self._proxy_json(f"http://{JETSON_IP}:{JETSON_HTTP}/state?{qs}")
         elif path == "/drone/cmd":
             qs = urlparse(self.path).query
             self._proxy_json(f"http://{JETSON_IP}:{JETSON_HTTP}/cmd?{qs}")

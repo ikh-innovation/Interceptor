@@ -105,7 +105,7 @@ CATALOG = [
 # top speed until the camera sees the target, then ALT_HOLD and the AI.
 SEEK = dict(id="SEEK", name="Seek the ASTERIX target", short="Fly to the cue, the AI takes over on sight",
             params=[_num("speed", "Speed (FC max ≈ WPNAV_SPEED)", "m/s", 20, 2, 25, 0.5),
-                    _num("below", "Fly this far below the target", "m", 10, 0, 100),
+                    _num("below", "Fly below target (negative = above)", "m", -10, -100, 100),
                     _num("standoff", "Stop short of the target (0 = follow directly)", "m", 0, 0, 1000, 5),
                     _num("min_alt", "Minimum height", "m", 20, 5, 500),
                     _num("cruise_alt", "Height when the track has none", "m", 40, 5, 500),
