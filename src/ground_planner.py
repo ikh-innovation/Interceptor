@@ -6,7 +6,11 @@ Two tabs:
   1. TEST  — Circle / Line / Draw path on the map, emits fake ASTERIX to Jetson
   2. ELKAK — Listens for real ASTERIX CAT062 from EKETA-EAB + manual target input
 
+Via UDP (Jetson on same network):
     python ground_planner.py --jetson 192.168.205.160
+
+Via RFD radio (ADSB_VEHICLE through FC):
+    python ground_planner.py --mavlink /dev/ttyUSB0
 
 Then open http://localhost:9000 in a browser.
 """
@@ -25,6 +29,7 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(__file__) or ".")
 from asterix_cue import encode_eketa_cat062, parse_eketa_block
+from asterix062_bridge import FT_TO_M, KT_PER_MS
 
 # ---- state ------------------------------------------------------------------
 
@@ -45,6 +50,28 @@ JETSON_AST = 8600
 LISTEN_PORT = 8600
 SOCK = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 _PKT_COUNT = [0]
+_MAV = None
+
+
+def _mav_send_tracks(tracks):
+    """Send tracks as ADSB_VEHICLE via the MAVLink/RFD link."""
+    if _MAV is None:
+        return
+    for t in tracks:
+        alt_m = t.get("h_msl_m", 50)
+        vx, vy = t.get("vx", 0), t.get("vy", 0)
+        gs = math.hypot(vx, vy)
+        hdg = math.degrees(math.atan2(vx, vy)) % 360.0 if gs > 0.01 else 0.0
+        tno = int(t.get("track_no", 1)) & 0xFFFF
+        mav_t = dict(icao=0xF00000 | tno, callsign=f"TRK{tno}",
+                     lat=t["lat"], lon=t["lon"],
+                     alt_ft=alt_m / FT_TO_M, gs_kt=gs * KT_PER_MS,
+                     track_deg=hdg, roc_fpm=None, squawk=None,
+                     synthetic_icao=True)
+        try:
+            _MAV.send(mav_t)
+        except Exception:
+            pass
 
 
 def _polar(lat0, lon0, h0, lat, lon, h_msl):
@@ -168,6 +195,13 @@ def _elkak_listener():
             SOCK.sendto(data, (JETSON_IP, JETSON_AST))
         except Exception:
             pass
+        mav_tracks = []
+        for t in tracks:
+            alt_m = t.get("sp", {}).get("h_msl_m") or (t.get("alt_ft", 0) * FT_TO_M if t.get("alt_ft") else 50)
+            mav_tracks.append(dict(lat=t["lat"], lon=t["lon"], h_msl_m=alt_m,
+                                   vx=t.get("vx", 0), vy=t.get("vy", 0),
+                                   track_no=t.get("track_no", 0)))
+        _mav_send_tracks(mav_tracks)
 
 
 # ---- emitter ----------------------------------------------------------------
@@ -196,6 +230,7 @@ def _emitter_loop():
                     SOCK.sendto(data, (JETSON_IP, JETSON_AST))
                 except Exception:
                     pass
+                _mav_send_tracks(tracks)
                 _PKT_COUNT[0] += 1
             time.sleep(1.0 / hz)
             continue
@@ -218,6 +253,7 @@ def _emitter_loop():
                 SOCK.sendto(data, (JETSON_IP, JETSON_AST))
             except Exception:
                 pass
+            _mav_send_tracks(tracks)
             _PKT_COUNT[0] += 1
         time.sleep(1.0 / hz)
 
@@ -1260,11 +1296,21 @@ def main():
     p.add_argument("--jetson-ast", type=int, default=8600, help="Jetson ASTERIX UDP port (default 8600)")
     p.add_argument("--listen", type=int, default=8600, help="UDP port to listen for ELKAK ASTERIX (default 8600)")
     p.add_argument("--port", type=int, default=9000, help="Local HTTP port (default 9000)")
+    p.add_argument("--mavlink",
+                   help="Send targets as ADSB_VEHICLE over this MAVLink connection "
+                        "(e.g. /dev/ttyUSB0 for the RFD radio)")
+    p.add_argument("--mav-sysid", type=int, default=250)
     args = p.parse_args()
     JETSON_IP = args.jetson
     JETSON_HTTP = args.jetson_http
     JETSON_AST = args.jetson_ast
     LISTEN_PORT = args.listen
+
+    global _MAV
+    if args.mavlink:
+        from asterix062_bridge import MavlinkSender
+        _MAV = MavlinkSender(args.mavlink, args.mav_sysid)
+        print(f"[GROUND PLANNER] RFD/MAVLink: sending ADSB_VEHICLE on {args.mavlink}")
 
     threading.Thread(target=_emitter_loop, daemon=True).start()
     threading.Thread(target=_elkak_listener, daemon=True).start()
@@ -1286,6 +1332,8 @@ def main():
     server = HTTPServer(("0.0.0.0", args.port), Handler)
     print(f"[GROUND PLANNER] http://localhost:{args.port}")
     print(f"[GROUND PLANNER] Jetson: {JETSON_IP}:{JETSON_HTTP} (HTTP), :{JETSON_AST} (ASTERIX UDP)")
+    if _MAV:
+        print(f"[GROUND PLANNER] RFD link: targets also sent as ADSB_VEHICLE via {args.mavlink}")
     print(f"[GROUND PLANNER] ELKAK listener: UDP :{LISTEN_PORT}")
     print(f"[GROUND PLANNER] Tabs: TEST (Circle/Line/Draw), ELKAK (live + manual)")
     print(f"[GROUND PLANNER] TX rate: 2 Hz (per EKETA ICD)")
