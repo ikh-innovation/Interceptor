@@ -73,6 +73,23 @@ def rfd_line(lat, lon, alt_m, frame="MSL", tid="0"):
     return f"${body}*{rfd_checksum(body)}"
 
 
+def rfd_sync_line(tids):
+    body = "RFDSYNC," + ",".join(str(t) for t in tids)
+    return f"${body}*{rfd_checksum(body)}"
+
+
+def parse_rfd_sync(line):
+    line = str(line).strip()
+    if not line.startswith("$") or "*" not in line:
+        return None
+    body, _, cs = line[1:].partition("*")
+    if len(cs.strip()) < 2 or rfd_checksum(body) != cs.strip().upper()[:2]:
+        return None
+    if not body.startswith("RFDSYNC,"):
+        return None
+    return [p.strip() for p in body.split(",")[1:] if p.strip()]
+
+
 def find_rfd_device():
     """RFD_DEV, else the first USB serial adapter that is not the flight controller."""
     dev = os.environ.get("RFD_DEV", "").strip()
@@ -179,8 +196,15 @@ class AsterixCue:
         return True
 
     def ingest_rfd(self, line, now=None):
-        """One $RFD line from the radio."""
+        """One $RFD or $RFDSYNC line from the radio."""
         now = perf_counter() if now is None else now
+        sync = parse_rfd_sync(line)
+        if sync is not None:
+            alive = {RFD_PREFIX + tid for tid in sync}
+            with self._lock:
+                for k in [k for k in self._tracks if k.startswith(RFD_PREFIX) and k not in alive]:
+                    del self._tracks[k]
+            return True
         fix = parse_rfd(line)
         with self._lock:
             if fix is None:

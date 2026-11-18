@@ -28,7 +28,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(__file__) or ".")
-from asterix_cue import encode_eketa_cat062, parse_eketa_block, rfd_line
+from asterix_cue import encode_eketa_cat062, parse_eketa_block, rfd_line, rfd_sync_line
 from asterix062_bridge import FT_TO_M, KT_PER_MS
 
 # ---- state ------------------------------------------------------------------
@@ -78,16 +78,18 @@ class _RfdWriter:
         while not self._stop.is_set():
             with self._lock:
                 snap = list(self._tracks.values())
-            for t in snap:
-                line = rfd_line(t["lat"], t["lon"], t["alt_m"], "MSL", tid=str(t["tid"])) + "\r\n"
-                try:
+            try:
+                sync = rfd_sync_line([t["tid"] for t in snap]) + "\r\n"
+                self.port.write(sync.encode())
+                for t in snap:
+                    line = rfd_line(t["lat"], t["lon"], t["alt_m"], "MSL", tid=str(t["tid"])) + "\r\n"
                     self.port.write(line.encode())
-                    with _RFD_STATUS_LOCK:
-                        _RFD_STATUS["tx"] += 1
-                        _RFD_STATUS["tx_last"] = time.time()
-                except Exception as exc:
-                    with _RFD_STATUS_LOCK:
-                        _RFD_STATUS["error"] = str(exc)[:80]
+                with _RFD_STATUS_LOCK:
+                    _RFD_STATUS["tx"] += len(snap)
+                    _RFD_STATUS["tx_last"] = time.time()
+            except Exception as exc:
+                with _RFD_STATUS_LOCK:
+                    _RFD_STATUS["error"] = str(exc)[:80]
             self._stop.wait(self.period)
 
 
@@ -592,7 +594,7 @@ L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/
 
 var COLORS = ["#2563eb","#d97706","#dc2626","#7c3aed","#16a34a","#ea580c","#0891b2","#c026d3"];
 var droneMarker = null, centered = false;
-var targets = [], elkakMarkers = {};
+var targets = [], elkakMarkers = {}, _nextTgtId = 0;
 var animStart = Date.now();
 var currentMode = "test";
 var modalOpen = false;
@@ -833,7 +835,7 @@ function clearElkakMarkers(){
 
 // ---- target data model ----
 function commitTarget(type, lat, lon, lat2, lon2, params){
-  var id = targets.length+1;
+  var id = ++_nextTgtId;
   var t = {id:id, enabled:true, type:type, lat:lat, lon:lon, alt:params.alt||50,
     lat2:lat2||0, lon2:lon2||0, speed:params.speed||10, radius:params.radius||200, layers:{}};
   if(params.waypoints) t.waypoints = params.waypoints;
@@ -844,7 +846,6 @@ function commitTarget(type, lat, lon, lat2, lon2, params){
 }
 function removeTarget(idx){
   clearLayers(idx); targets.splice(idx,1);
-  targets.forEach(function(t,i){t.id=i+1;});
   redrawAllLayers(); renderMode(); syncToServer();
 }
 function clearLayers(idx){
