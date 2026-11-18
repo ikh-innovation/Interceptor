@@ -123,10 +123,10 @@ def _mav_rx_loop():
 
 def _rfd_send_tracks(tracks):
     """Send all tracks as $RFD lines via serial."""
-    if _RFD is None or not tracks:
+    if _RFD is None:
         return
     rfd_tracks = []
-    for i, t in enumerate(tracks):
+    for i, t in enumerate(tracks or []):
         rfd_tracks.append(dict(tid=t.get("track_no", i), lat=t["lat"], lon=t["lon"],
                                alt_m=t.get("h_msl_m", 50)))
     _RFD.update_tracks(rfd_tracks)
@@ -327,6 +327,8 @@ def _emitter_loop():
                 _mav_send_tracks(tracks)
                 _rfd_send_tracks(tracks)
                 _PKT_COUNT[0] += 1
+            else:
+                _rfd_send_tracks([])
             time.sleep(1.0 / hz)
             continue
         elapsed = time.time() - start
@@ -342,6 +344,7 @@ def _emitter_loop():
             polar = _polar(ref[0], ref[1], ref[2], lat, lon, alt)
             tracks.append(dict(lat=lat, lon=lon, h_msl_m=alt, vx=vx, vy=vy,
                                track_no=t.get("id", 1), classif="unknown", **polar))
+        _rfd_send_tracks(tracks)
         if tracks:
             data = encode_eketa_cat062(tracks)
             try:
@@ -349,7 +352,6 @@ def _emitter_loop():
             except Exception:
                 pass
             _mav_send_tracks(tracks)
-            _rfd_send_tracks(tracks)
             _PKT_COUNT[0] += 1
         time.sleep(1.0 / hz)
 
@@ -598,6 +600,10 @@ header h1{font-size:16px;letter-spacing:.3px;font-weight:700}
     <div id="seek_panel" class="seek-panel">
       <h3 style="margin:8px 0 4px;font-size:12px;color:var(--accent);letter-spacing:.3px">CUE TARGETS</h3>
       <div id="cue_tracks"></div>
+      <div id="abort_bar" style="display:none;margin:6px 0;gap:6px">
+        <button class="stop-btn" id="btn_abort" style="flex:1;margin:0">ABORT</button>
+        <button class="stop-btn" id="btn_rtl" style="flex:1;margin:0;background:var(--warn)">RTL</button>
+      </div>
       <h3 id="fp_toggle">&#9656; SEEKER FLIGHT PARAMETERS</h3>
       <div id="fp_body" style="display:none"></div>
       <div id="msn_status"></div>
@@ -1182,12 +1188,15 @@ setInterval(function(){
 
 // ---- SEEKER integration ----
 var seekReady=false, seekRunning=false, seekChecksOk=false, seekWhy="", seekLastOfferN=null, fpOpen=false;
+var _seekSentKey=null, _seekActive=false, _knownKeys={}, _pendingOffer=null;
 
 function seekCmd(v){
   return fetch("/api/cmd?msn="+encodeURIComponent(v))
     .then(function(r){return r.json();})
     .catch(function(){return {};});
 }
+document.getElementById("btn_abort").onclick=function(){ seekCmd("abort"); _seekActive=false; _seekSentKey=null; document.getElementById("abort_bar").style.display="none"; };
+document.getElementById("btn_rtl").onclick=function(){ seekCmd("after:RTL"); _seekActive=false; _seekSentKey=null; document.getElementById("abort_bar").style.display="none"; };
 
 document.getElementById("fp_toggle").onclick=function(){
   fpOpen=!fpOpen;
@@ -1328,6 +1337,9 @@ function renderMsnStatus(run, cue, seek){
 
 function goSeek(key){
   _seekSent=key;
+  _seekSentKey=key;
+  _seekActive=true;
+  document.getElementById("abort_bar").style.display="flex";
   seekCmd("cue:select:"+key).then(function(){
     if(seekRunning) return;
     seekCmd("start:SEEK");
@@ -1338,6 +1350,31 @@ function renderCueTracks(cue, run){
   var tracks=(cue||{}).tracks||[];
   var sel=(cue||{}).selected||"";
   var running=run!=null && run.id==="SEEK";
+  document.getElementById("abort_bar").style.display=(running||_seekActive)?"flex":"none";
+  var curKeys={};
+  tracks.forEach(function(t){ curKeys[t.key]=t.label; });
+  if(Object.keys(_knownKeys).length>0){
+    tracks.forEach(function(t){
+      if(!_knownKeys[t.key] && !modalOpen){
+        var lbl=t.label||t.key;
+        _pendingOffer=t.key;
+        modalOpen=true;
+        var root=document.getElementById("modal_root");
+        root.innerHTML='<div class="modal-overlay" id="modal_overlay"><div class="modal">'
+          +'<h2>&#128386; New target detected</h2>'
+          +'<p style="font-size:13px;color:var(--muted);margin:0 0 16px;line-height:1.5">'
+          +'<b>'+lbl+'</b> appeared on the cue.<br>Follow this target?</p>'
+          +'<div class="btn-row">'
+          +'<button class="btn-cancel" id="m_dismiss">Dismiss</button>'
+          +'<button class="btn-send" id="m_follow">&#9654; Follow '+lbl+'</button>'
+          +'</div></div></div>';
+        document.getElementById("m_dismiss").onclick=function(){ closeModal(); _pendingOffer=null; };
+        document.getElementById("m_follow").onclick=function(){ closeModal(); goSeek(t.key); _pendingOffer=null; };
+        document.getElementById("modal_overlay").onclick=function(e){ if(e.target===this){ closeModal(); _pendingOffer=null; }};
+      }
+    });
+  }
+  _knownKeys=curKeys;
   var html="";
   tracks.forEach(function(t){
     var isSel=sel===t.key;
@@ -1358,7 +1395,7 @@ function renderCueTracks(cue, run){
   box.querySelectorAll(".cue-go").forEach(function(btn){
     btn.onclick=function(){
       var act=btn.dataset.action, k=btn.dataset.key;
-      if(act==="abort") seekCmd("abort");
+      if(act==="abort"){ seekCmd("abort"); _seekActive=false; _seekSentKey=null; document.getElementById("abort_bar").style.display="none"; }
       else if(act==="swap") seekCmd("cue:select:"+k);
       else goSeek(k);
     };
