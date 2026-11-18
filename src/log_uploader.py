@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import queue
+import socket
 import threading
 import time
 
@@ -74,13 +75,28 @@ class LogUploader:
             self.error = str(exc)
             log.error("LogUploader: Firestore connection failed: %s", exc)
 
+    @staticmethod
+    def _local_ip():
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return None
+
     def _heartbeat(self):
         try:
             doc = self._db.collection(self.collection_prefix).document(self.jetson_id)
             from google.cloud.firestore import SERVER_TIMESTAMP
-            doc.set({"jetson_id": self.jetson_id,
-                     "last_seen": SERVER_TIMESTAMP,
-                     "online": True}, merge=True)
+            data = {"jetson_id": self.jetson_id,
+                    "last_seen": SERVER_TIMESTAMP,
+                    "online": True}
+            ip = self._local_ip()
+            if ip:
+                data["ip"] = ip
+            doc.set(data, merge=True)
             log.info("LogUploader: heartbeat sent for %s", self.jetson_id)
         except Exception as exc:
             log.warning("LogUploader: heartbeat failed: %s", exc)

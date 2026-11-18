@@ -291,6 +291,7 @@ function renderDrones() {
       '<h2><span class="dot ' + (d.online ? 'on' : 'off') + '"></span>' + esc(d.jetson_id) + '</h2>' +
       '<div class="meta">' +
         'Status: <b style="color:var(' + (d.online ? '--ok' : '--muted') + ')">' + (d.online ? 'ONLINE' : 'OFFLINE') + '</b><br>' +
+        (d.ip ? 'IP: <b><code>' + esc(d.ip) + '</code></b><br>' : '') +
         'Last seen: ' + lastSeen + '<br>' +
         'Flights: ' + (d.flight_count || 0) +
       '</div>' +
