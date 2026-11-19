@@ -184,12 +184,7 @@ check("SEARCH state -> neutral sticks",
       c0["yaw_stick"] == 0.0 and c0["pitch_stick"] == 0.0)
 cmdr.close()
 csv = list(Path(tmp).glob("control_*.csv"))
-check("control CSV written", len(csv) == 1, str(csv))
-if csv:
-    rows = csv[0].read_text().strip().splitlines()
-    check("CSV has a header + rows", len(rows) > 1, f"{len(rows)} lines")
-    check("CSV header names sticks not velocities",
-          "yaw_stick" in rows[0] and "vz" not in rows[0], rows[0])
+check("control CSV not written when never armed", len(csv) == 0, str(csv))
 cmdr.close()
 check("close() is idempotent", True)
 

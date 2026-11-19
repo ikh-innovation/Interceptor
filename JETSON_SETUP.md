@@ -121,6 +121,16 @@ If it fails (different GPU/TensorRT), rebuild:
 
 ## Phase 5: Flight controller check
 
+**0. Install the udev rule** — ModemManager will probe and lock the ArduPilot
+USB port. This rule excludes it and disables USB autosuspend:
+
+```bash
+sudo cp "$PROJECT_ROOT/deploy/fc/99-ardupilot.rules" /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+Then unplug and replug the FC USB cable (or reboot) so the rule takes effect.
+
 1. Plug the FC into a Jetson USB port. Verify it appears:
 
 ```bash

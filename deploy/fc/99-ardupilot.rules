@@ -1,0 +1,4 @@
+# ArduPilot FC: exclude from ModemManager and disable USB autosuspend
+# Install: sudo cp deploy/fc/99-ardupilot.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="5740", ENV{ID_MM_DEVICE_IGNORE}="1"
+SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="5740", ATTR{power/autosuspend_delay_ms}="-1", ATTR{power/control}="on"

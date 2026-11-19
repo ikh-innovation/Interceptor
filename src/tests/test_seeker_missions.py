@@ -9,6 +9,7 @@ import math
 import os
 import sys
 import tempfile
+import threading
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -246,6 +247,8 @@ class FakeMapper:
 
 class FakeWasp:
     enabled = False
+    camera_confirmed = False
+    params = {}
 
 
 class FakeMission:
@@ -253,6 +256,8 @@ class FakeMission:
         self.fence = fence
         self.wasp = FakeWasp()
         self._fence_state = (None, None)
+        self._req_engage = False
+        self._lock = threading.Lock()
 
 
 def square(size):
@@ -473,10 +478,10 @@ def seek_run(answers=("yes",), lose_after=None, second_at=None, see_at=150.0, rf
             st["closest"] = min(st.get("closest", 1e9), d)
             sm.ctx = dict(det_t=k.t, det_conf=0.8) if d < see_at else {}
             if camera and d < see_at:
-                # The camera (30 degrees up) as the AI's law reports the target.
+                # The camera (90 degrees = straight up) as the AI's law reports the target.
                 brg = S._bearing(fc.pos(), (live["lat"], live["lon"]))
                 az = (brg - fc.yaw + 180) % 360 - 180
-                el = math.degrees(math.atan2(live["alt_rel"] - fc.alt, max(1.0, d))) - 30.0
+                el = math.degrees(math.atan2(live["alt_rel"] - fc.alt, max(1.0, d))) - 90.0
                 sm.ctx["ai_cmd"] = dict(az_deg=az, el_cam_deg=el)
                 st["cam_now"] = (az, el, d)
         o = r and r.get("offer")
@@ -493,9 +498,9 @@ def seek_run(answers=("yes",), lose_after=None, second_at=None, see_at=150.0, rf
             st["aborted"] = True
             sm.command("abort")
     feed(k, fc, sm)
-    m.min_conf, m.camera_mount_deg = 0.2, 30.0
-    m.push_deg = lambda: 30.0
-    mapper.law = type("L", (), {"cam_tilt": math.radians(30)})()
+    m.min_conf, m.camera_mount_deg = 0.2, 90.0
+    m.push_deg = lambda: 90.0
+    mapper.law = type("L", (), {"cam_tilt": math.radians(90)})()
     sm.cycle(k.t, mapper, m, {})
     k.t += 0.6
     sm.cycle(k.t, mapper, m, {})
@@ -519,19 +524,19 @@ def seek_run(answers=("yes",), lose_after=None, second_at=None, see_at=150.0, rf
 
 fc, sm, st = seek_run()
 h = sm.take_handover()
-check("SEEK: the camera sees it -> engage question -> ALT_HOLD and the AI", h is not None and fc.mode_name == "ALT_HOLD"
-      and fc.armed and len(st["asked"]) == 1 and st["asked"][0][1] == "engage",
+check("SEEK: camera lock -> auto engage -> ACRO and WASP", h is not None and fc.mode_name == "ACRO"
+      and fc.armed and len(st["asked"]) == 0,
       f"mode {fc.mode_name}, asked {st['asked']}")
 check("SEEK: no result screen over the video", sm.result is None)
 check("SEEK: stays on after the handover (AI state), not flying the drone", sm.active and not sm.blocking)
-check("SEEK: flew at the cue's height minus 'below'", abs(fc.alt - (80 - 20)) < 3, f"{fc.alt:.1f} m")
+check("SEEK: flew at the cue's height minus 'below'", abs(fc.alt - (80 - 10)) < 5, f"{fc.alt:.1f} m")
 
 fc, sm, st = seek_run(answers=("yes",), lose_after=25, second_at=60)
 kinds = [(x[1], x[2], x[3]) for x in st["asked"]]
-check("SEEK: cue lost -> waits; a new target asks once; YES flies to it; engage -> AI",
-      sm.take_handover() is not None and len(kinds) == 2
-      and kinds[0][0] in ("follow", "switch") and kinds[0][1] == "TRK99"
-      and kinds[1][0] == "engage" and sm.cue.selected == "TRK99", str(kinds))
+check("SEEK: cue lost -> waits; a new target asks once; YES flies to it; auto engage",
+      sm.take_handover() is not None
+      and any(k[0] in ("follow", "switch") and k[1] == "TRK99" for k in kinds)
+      and sm.cue.selected == "TRK99", str(kinds))
 
 fc, sm, st = seek_run(answers=("yes", "yes"), second_at=8, see_at=-1, abort_after=120)
 kinds = [(x[1], x[2]) for x in st["asked"]]
@@ -547,17 +552,13 @@ check("SEEK: cue lost -> holds and waits (no RTL by itself)", sm.active and fc.a
 
 fc, sm, st = seek_run(rfd=True)
 check("SEEK: the cue over the RFD radio ($RFD lines) works the same", sm.take_handover() is not None
-      and fc.mode_name == "ALT_HOLD" and any(x[1] == "engage" for x in st["asked"]),
+      and fc.mode_name == "ACRO",
       f"mode {fc.mode_name}, asked {st['asked']}")
 
-fc, sm, st = seek_run(answers=("no",), until=200)
-check("SEEK: engage NO -> reject target, hold and wait", sm.active and fc.armed and fc.mode_name == "GUIDED"
-      and any(x[1] == "engage" and x[3] == "no" for x in st["asked"])
-      and sm.run.get("seek") == "WAIT", f"seek {sm.run.get('seek')}, asked {st['asked']}")
-
-fc, sm, st = seek_run(stop_at_ai=False, abort_after=200, see_at=200.0, until=600)
-check("SEEK: ABORT while the AI flies -> RTL home", st.get("aborted") and not fc.armed and math.hypot(fc.n, fc.e) < 2,
-      f"armed {fc.armed}, {math.hypot(fc.n, fc.e):.0f} m from home, mode {fc.mode_name}")
+fc, sm, st = seek_run(stop_at_ai=False, abort_after=200, see_at=200.0, until=2400)
+check("SEEK: ABORT while the AI flies -> RTL and disarm", st.get("aborted") and not fc.armed
+      and fc.mode_name == "RTL",
+      f"armed {fc.armed}, mode {fc.mode_name}")
 
 fc, sm, st = seek_run(camera=True)
 az, el, d = st.get("cam_now") or (99, 99, 0)

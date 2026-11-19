@@ -227,8 +227,8 @@ try:
         check("knocked across north (355 -> 15): the correction turns LEFT (ch4 < 1480)",
               corr is not None and corr < 1480, f"ch4={corr}")
         check("...back within 1 deg by the short way (swept < 30 deg, not round the long way)",
-              abs(herr(YAW["psi"], L0)) < 1.0 and sweep < 30.0,
-              f"heading {YAW['psi']:.1f}, swept {sweep:.1f} deg")
+              L0 is not None and abs(herr(YAW["psi"], L0)) < 1.0 and sweep < 30.0,
+              f"heading {YAW['psi']:.1f}, swept {sweep:.1f} deg, L0={L0}")
         YAW["kick"] = 3.0
         seen = []
         for _ in range(90):
@@ -239,7 +239,7 @@ try:
               small is not None and abs(ap_norm(small) * 202.5) > 2.0,
               f"ch4={small} -> {ap_norm(small or 1500) * 202.5:.1f} deg/s")
         sleep(2.0)
-        check("...and settles within 1 deg", abs(herr(YAW["psi"], L0)) < 1.0, f"{YAW['psi']:.1f}")
+        check("...and settles within 1 deg", L0 is not None and abs(herr(YAW["psi"], L0)) < 1.0, f"{YAW['psi']:.1f}")
         fc.attitude = False
         YAW["kick"] = 30.0
         sleep(1.2)
@@ -252,8 +252,8 @@ try:
         check("...and LOCK stays on, waiting", M.lock_hdg is not None)
         fc.attitude = True
         sleep(3.5)
-        check("ATTITUDE back: it returns to the locked heading", abs(herr(YAW["psi"], L0)) < 1.0,
-              f"{YAW['psi']:.1f} vs {L0:.1f}")
+        check("ATTITUDE back: it returns to the locked heading", L0 is not None and abs(herr(YAW["psi"], L0)) < 1.0,
+              f"{YAW['psi']:.1f} vs {L0}")
         YAW["kick"] = 8.0
         sleep(0.2)
         before = fc.overrides.get(4)
@@ -265,8 +265,8 @@ try:
         s4 = [v for v in [before] + seq if v is not None]
         jumps = [abs(b - a) for a, b in zip(s4, s4[1:])]
         check("ENGAGE from LOCK: LOCK off, PUSH, yaw glides from the lock's correction (no step > 25 us)",
-              M.lock_hdg is None and M.phase == "PUSH" and max(jumps) <= 25,
-              f"{M.phase}, ch4 {before} -> {s4[-1]}, max step {max(jumps) if jumps else 0}")
+              s4 and jumps and M.lock_hdg is None and M.phase == "PUSH" and max(jumps) <= 25,
+              f"{M.phase}, ch4 {before} -> {s4[-1] if s4 else None}, max step {max(jumps) if jumps else 0}")
         M.request_abort()
         sleep(0.2)
         fc.mode = 0; sleep(.3)
@@ -355,7 +355,9 @@ check("CSV: CLIMB rows show ch1 only, plus height and vibration",
 
 
 if FAILED:
-
+    print(f"{len(FAILED)} FAILED:")
     for f in FAILED:
-        pass
+        print(f"  - {f}")
     sys.exit(1)
+else:
+    print("ALL OK")
