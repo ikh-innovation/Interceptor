@@ -565,11 +565,15 @@ class SeekerMissions:
         add("Pilot radio", sw is not None, f"mode switch: {sw[1] or sw[0]}" if sw else
             "no RC from the transmitter: the pilot could not take over")
         if sw is not None and mid not in GROUND:
-            # Switch UP (ALT_HOLD) before the flight: then UP -> MIDDLE (STABILIZE)
-            # takes over in every phase, the AI's ALT_HOLD included.
             up = sw[1] == "ALT_HOLD"
-            add("Mode switch UP (ALT_HOLD)", up, "takeover: switch to MIDDLE (throttle at middle by then)" if up else
-                f"switch is on {sw[1] or sw[0]}: put it UP", blocking=mid == "SEEK")
+            if mid == "SEEK":
+                add("Mode switch UP (ALT_HOLD)", up,
+                    "takeover: ACRO + throttle up" if up else
+                    f"switch is on {sw[1] or sw[0]}: put it UP", blocking=True)
+            else:
+                add("Mode switch UP (ALT_HOLD)", up,
+                    "takeover: switch to MIDDLE (throttle at middle by then)" if up else
+                    f"switch is on {sw[1] or sw[0]}: put it UP")
         if mid != "M2":
             # ArduCopter refuses ARM ("Throttle not neutral") with the stick up, even in GUIDED.
             thr = self._throttle()
@@ -995,6 +999,11 @@ class SeekerMissions:
         sw = b.pilot_mode_switch()
         moved = sw is not None and r["switch0"] is not None and sw[0] != r["switch0"]
         mode = b.mode_name
+        # In SEEK the pilot takes over via ACRO + throttle; STABILIZE has no
+        # altitude hold and must not trigger a handoff or interrupt the mission.
+        seek_stab = r["id"] == "SEEK" and (mode == "STABILIZE" or (sw is not None and sw[1] == "STABILIZE"))
+        if seek_stab and moved:
+            moved = False
         if (not r.get("hands_off") and mode == "ACRO"
                 and r["cmd_mode"] and mode != r["cmd_mode"]):
             thr = self._throttle()
@@ -1008,7 +1017,7 @@ class SeekerMissions:
                 self._replace(self._watch())
                 return
         late = self.now - r["cmd_t"] > 2.5
-        if moved or (r["cmd_mode"] and mode != r["cmd_mode"] and late and mode not in FAILSAFE_MODES):
+        if moved or (r["cmd_mode"] and mode != r["cmd_mode"] and late and mode not in FAILSAFE_MODES and not seek_stab):
             r["hands_off"] = True
             why = f"pilot switch to {sw[1] or sw[0]}" if moved else f"FC in {mode}"
             self._event(f"PILOT TAKEOVER ({why}): the mission sends nothing more")
