@@ -1101,6 +1101,13 @@ class SeekerMissions:
 
     def _arm(self):
         r, b = self.run, self.b
+        # Clear GCS failsafe pre-arm block: if another GCS (pilot controller)
+        # previously sent heartbeats and then stopped, the FC refuses to arm.
+        # Disable FS_GCS before arm, re-enable immediately after.
+        fs_gcs = b.params.get("FS_GCS_ENABLE")
+        if fs_gcs and float(fs_gcs) > 0:
+            r.setdefault("fs_gcs_restore", float(fs_gcs))
+            yield from self._set_param("FS_GCS_ENABLE", 0.0, 4.0)
         # GUIDED arms only from a GCS command, not from the arm switch's function.
         if not b.request_arm(mavlink=True):
             raise MissionFail("ARM: the FC link refused the command")
@@ -1117,6 +1124,10 @@ class SeekerMissions:
         sw = b.pilot_mode_switch()
         r["switch0"] = sw[0] if sw else None
         self.check("ARM", True, f"armed in {self.now - t0:.1f} s")
+        # Restore GCS failsafe now that we're armed — the FC will RTL if the Jetson dies.
+        restore = r.get("fs_gcs_restore")
+        if restore is not None:
+            yield from self._set_param("FS_GCS_ENABLE", restore, 4.0)
 
     def _wait(self, secs, step_mode=False):
         r = self.run
@@ -2054,6 +2065,9 @@ class SeekerMissions:
         b = self.b
         if b is not None and b.gcs_muted:
             b.gcs_muted = False
+        restore = (r or {}).get("fs_gcs_restore")
+        if restore is not None and b is not None and b.params.get("FS_GCS_ENABLE") != restore:
+            b.set_param("FS_GCS_ENABLE", restore)
         if r["id"] == "M6":
             br = r["breach"]
             if br is None or br["kind"] != "fence":
