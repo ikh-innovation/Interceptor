@@ -27,6 +27,14 @@ fi
 
 export YOLO_AUTOINSTALL=false
 
+# GCP Firestore cloud upload (dashboard heartbeats + flight logs)
+export GCP_PROJECT=${GCP_PROJECT:-ikh-drone-cloud}
+export JETSON_ID=${JETSON_ID:-jetson}
+_KEY="$WASP_SRC_DIR/../jetson-key.json"
+if [ -f "$_KEY" ]; then
+    export GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-$_KEY}
+fi
+
 CAM_WAIT_S=${CAM_WAIT_S:-8}
 if [ ! -e /dev/video0 ]; then
     for _ in $(seq "$CAM_WAIT_S"); do

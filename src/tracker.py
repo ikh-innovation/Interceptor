@@ -2276,9 +2276,21 @@ if __name__ == "__main__":
 
     os.environ.setdefault("TARGET_KIND", "DRONE")
 
-    # Flight logs are local CSV only: no cloud upload (it ran at ARM, next to
-    # the FC heartbeat, and the FC disarmed on GCS failsafe).
+    _uploader = None
+    if os.environ.get("GCP_PROJECT"):
+        try:
+            from log_uploader import LogUploader
+            _uploader = LogUploader(
+                project=os.environ["GCP_PROJECT"],
+                jetson_id=os.environ.get("JETSON_ID", "unknown"))
+            _uploader.start()
+        except Exception as _exc:
+            print(f"[cloud] LogUploader failed to start: {_exc}")
+            _uploader = None
+
     _commander = commander_from_env(log_dir=str(_DATA_DIR))
+    if _uploader is not None:
+        _commander.set_log_uploader(_uploader)
 
     DroneTracker(
         model_path   = model_pth,
@@ -2300,3 +2312,6 @@ if __name__ == "__main__":
         stream_fps     = float(os.environ.get("STREAM_FPS", "15")),
         commander    = _commander,
     ).run()
+
+    if _uploader is not None:
+        _uploader.stop()
