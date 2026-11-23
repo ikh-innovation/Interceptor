@@ -6,14 +6,14 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-WorkingDirectory=%h/Documents/wasp/src
+WorkingDirectory=%h/Documents/Interceptor/src
 
 
 
 
 ExecStartPre=/bin/sleep 15
 
-ExecStart=%h/Documents/wasp/src/start-wasp.sh
+ExecStart=%h/Documents/Interceptor/src/start-wasp.sh
 
 StandardOutput=append:%h/wasp-logs/wasp-tracker.log
 StandardError=append:%h/wasp-logs/wasp-tracker.log
