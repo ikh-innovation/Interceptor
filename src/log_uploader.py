@@ -145,12 +145,19 @@ class LogUploader:
     def _flush(self, items):
         try:
             fb = self._db.batch()
+            flights = f"{self.collection_prefix}/{self.jetson_id}/flights"
             for item in items:
                 kind = item["kind"]
                 flight_id = item["flight_id"]
-                col = f"{self.collection_prefix}/{self.jetson_id}/flights/{flight_id}/{kind}"
-                doc_ref = self._db.collection(col).document()
-                fb.set(doc_ref, item["data"])
+                if kind == "metadata":
+                    # One fixed doc per flight, merged so start/end updates
+                    # accumulate (status recording -> complete, etc.).
+                    doc_ref = self._db.collection(flights).document(flight_id)
+                    fb.set(doc_ref, item["data"], merge=True)
+                else:
+                    col = f"{flights}/{flight_id}/{kind}"
+                    doc_ref = self._db.collection(col).document()
+                    fb.set(doc_ref, item["data"])
             fb.commit()
             self.rows_uploaded += len(items)
         except Exception as exc:
@@ -164,13 +171,10 @@ class LogUploader:
         self._enqueue("events", flight_id, event_dict)
 
     def push_metadata(self, flight_id, meta_dict):
-        if self._db is None:
-            return
-        try:
-            col = f"{self.collection_prefix}/{self.jetson_id}/flights"
-            self._db.collection(col).document(flight_id).set(meta_dict, merge=True)
-        except Exception as exc:
-            self.error = str(exc)
+        # Queued like rows/events so the Firestore write happens on the upload
+        # thread, never synchronously on the caller's (steering) thread at the
+        # arm/disarm transition.
+        self._enqueue("metadata", flight_id, meta_dict)
 
     def _enqueue(self, kind, flight_id, data):
         if self._db is None:
