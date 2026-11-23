@@ -24,12 +24,13 @@ import sys
 import threading
 import time
 import urllib.request
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, os.path.dirname(__file__) or ".")
 from asterix_cue import encode_eketa_cat062, parse_eketa_block, rfd_line, rfd_sync_line, rfd_cmd_line
 from asterix062_bridge import FT_TO_M, KT_PER_MS
+from rfd_ground import RfdLink, EketaGateway, Prefetch, tile as map_tile, vendor as map_vendor
 
 # ---- state ------------------------------------------------------------------
 
@@ -53,51 +54,10 @@ _PKT_COUNT = [0]
 _MAV = None
 _MAV_STATUS = {"fc_hb": 0, "fc_last": 0, "tx": 0, "tx_last": 0, "linked": False}
 _MAV_STATUS_LOCK = threading.Lock()
-_RFD = None
-_RFD_STATUS = {"tx": 0, "tx_last": 0, "error": ""}
-_RFD_STATUS_LOCK = threading.Lock()
-
-
-class _RfdWriter:
-    """Write $RFD lines on the laptop's RFD serial port at a steady rate."""
-    def __init__(self, dev, baud=57600, hz=5.0):
-        import serial as _serial
-        self.port = _serial.Serial(dev, baud, timeout=0.2)
-        self.period = 1.0 / max(0.5, float(hz))
-        self._lock = threading.Lock()
-        self._tracks = {}
-        self._stop = threading.Event()
-        threading.Thread(target=self._run, daemon=True, name="rfd-tx").start()
-        print(f"[RFD] Sending $RFD lines on {dev} @{baud} ({hz:.0f} Hz)")
-
-    def update_tracks(self, tracks):
-        with self._lock:
-            self._tracks = {t["tid"]: t for t in tracks}
-
-    def send_cmd(self, cmd):
-        line = rfd_cmd_line(cmd) + "\r\n"
-        try:
-            self.port.write(line.encode())
-        except Exception:
-            pass
-
-    def _run(self):
-        while not self._stop.is_set():
-            with self._lock:
-                snap = list(self._tracks.values())
-            try:
-                sync = rfd_sync_line([t["tid"] for t in snap]) + "\r\n"
-                self.port.write(sync.encode())
-                for t in snap:
-                    line = rfd_line(t["lat"], t["lon"], t["alt_m"], "MSL", tid=str(t["tid"])) + "\r\n"
-                    self.port.write(line.encode())
-                with _RFD_STATUS_LOCK:
-                    _RFD_STATUS["tx"] += len(snap)
-                    _RFD_STATUS["tx_last"] = time.time()
-            except Exception as exc:
-                with _RFD_STATUS_LOCK:
-                    _RFD_STATUS["error"] = str(exc)[:80]
-            self._stop.wait(self.period)
+_RFD = None            # RfdLink: the only link to the drone after start
+_GW = None             # EketaGateway (ELKAK): ACKs + our drone's telemetry
+_PREFETCH = Prefetch() # map tiles cached while there is Wi-Fi
+ELKAK_FRESH_S = 5.0
 
 
 def _mav_rx_loop():
@@ -128,7 +88,7 @@ def _rfd_send_tracks(tracks):
     rfd_tracks = []
     for i, t in enumerate(tracks or []):
         rfd_tracks.append(dict(tid=t.get("track_no", i), lat=t["lat"], lon=t["lon"],
-                               alt_m=t.get("h_msl_m", 50)))
+                               alt_m=t.get("h_msl_m", 50), frame=t.get("frame", "MSL")))
     _RFD.update_tracks(rfd_tracks)
 
 
@@ -261,6 +221,8 @@ def _elkak_listener():
             continue
         except OSError:
             return
+        if _GW is not None:
+            _GW.ack(data)          # ICD 7: one ACK per datagram, even an undecodable one
         tracks = parse_eketa_block(data)
         if not tracks:
             continue
@@ -295,7 +257,6 @@ def _elkak_listener():
                                    vx=t.get("vx", 0), vy=t.get("vy", 0),
                                    track_no=t.get("track_no", 0)))
         _mav_send_tracks(mav_tracks)
-        _rfd_send_tracks(mav_tracks)
 
 
 # ---- emitter ----------------------------------------------------------------
@@ -309,7 +270,12 @@ def _emitter_loop():
             ref = STATE["ref"]
             hz = STATE["hz"]
             elkak_man = STATE.get("elkak_manual")
+            elkak_live = [dict(t) for t in STATE["elkak_tracks"] if time.time() - t.get("rx_t", 0) <= ELKAK_FRESH_S]
         if mode == "elkak":
+            _rfd_send_tracks([dict(lat=t["lat"], lon=t["lon"], h_msl_m=t.get("alt", 50), track_no=t.get("track_no", 0),
+                                   frame="MSL") for t in elkak_live]
+                             + ([dict(lat=elkak_man["lat"], lon=elkak_man["lon"], h_msl_m=elkak_man.get("alt", 50),
+                                      track_no=9999, frame="MSL")] if elkak_man and elkak_man.get("enabled") else []))
             if elkak_man and elkak_man.get("enabled"):
                 lat, lon, alt = elkak_man["lat"], elkak_man["lon"], elkak_man.get("alt", 50)
                 if ref is None:
@@ -325,10 +291,7 @@ def _emitter_loop():
                 except Exception:
                     pass
                 _mav_send_tracks(tracks)
-                _rfd_send_tracks(tracks)
                 _PKT_COUNT[0] += 1
-            else:
-                _rfd_send_tracks([])
             time.sleep(1.0 / hz)
             continue
         elapsed = time.time() - start
@@ -344,7 +307,7 @@ def _emitter_loop():
             polar = _polar(ref[0], ref[1], ref[2], lat, lon, alt)
             tracks.append(dict(lat=lat, lon=lon, h_msl_m=alt, vx=vx, vy=vy,
                                track_no=t.get("id", 1), classif="unknown", **polar))
-        _rfd_send_tracks(tracks)
+        _rfd_send_tracks([dict(t, frame="REL") for t in tracks])
         if tracks:
             data = encode_eketa_cat062(tracks)
             try:
@@ -362,8 +325,8 @@ HTML_PAGE = r"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Ground Planner</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link rel="stylesheet" href="/vendor/leaflet.min.css"/>
+<script src="/vendor/leaflet.min.js"></script>
 <style>
 :root{--bg:#ffffff;--panel:#f8f9fb;--text:#1e293b;--muted:#64748b;--accent:#2563eb;
   --ok:#16a34a;--warn:#d97706;--err:#dc2626;--border:#e2e8f0;--op:#7c3aed}
@@ -598,6 +561,11 @@ header h1{font-size:16px;letter-spacing:.3px;font-weight:700}
       <div id="mode_hint"></div>
     </div>
     <div id="seek_panel" class="seek-panel">
+      <div id="cmd_err" style="display:none;margin:6px 0;padding:6px 8px;border-radius:6px;background:#fee2e2;color:#991b1b;font-size:12px"></div>
+      <label style="display:flex;gap:6px;align-items:center;font-size:12px;margin:6px 0"><input type="checkbox" id="engage_on_lock"> AUTO ENGAGE on camera lock (off = follow only)</label>
+      <div style="display:flex;gap:6px;align-items:center;font-size:11px;color:var(--muted);margin:4px 0">
+        <button class="stop-btn" id="btn_cache" style="margin:0;padding:4px 8px;background:var(--accent)">Cache map here</button>
+        <span id="cache_st">map cache: --</span></div>
       <h3 style="margin:8px 0 4px;font-size:12px;color:var(--accent);letter-spacing:.3px">CUE TARGETS</h3>
       <div id="cue_tracks"></div>
       <div id="abort_bar" style="display:none;margin:6px 0;gap:6px">
@@ -615,8 +583,8 @@ header h1{font-size:16px;letter-spacing:.3px;font-weight:700}
 <script>
 var JETSON = "JETSON_PLACEHOLDER";
 var map = L.map("map", {zoomControl:true}).setView([37.9,23.7],16);
-L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
-  maxZoom:19, attribution:"Esri"
+L.tileLayer("/tiles/{z}/{y}/{x}", {
+  maxZoom:19, maxNativeZoom:18, attribution:"Esri (cached)"
 }).addTo(map);
 
 var COLORS = ["#2563eb","#d97706","#dc2626","#7c3aed","#16a34a","#ea580c","#0891b2","#c026d3"];
@@ -1083,7 +1051,10 @@ function pollDrone(){
     document.getElementById("d_mode").textContent=j.fc_mode||"--";
     document.getElementById("d_armed").textContent=j.armed?"YES":"no";
     document.getElementById("drone_st").className=j.linked?"":"off";
-    document.getElementById("drone_st").textContent=j.linked?"linked":"no FC";
+    document.getElementById("drone_st").textContent=(j.rfd_live===false?"RFD LOST "+Math.round(j.rfd_age)+"s":j.linked?"linked":"no FC")
+      +(j.rfd_age!=null&&j.rfd_live!==false?" (RFD "+j.rfd_age.toFixed(1)+"s)":"");
+    var hm=(j.mission||{}).home;
+    if(hm&&hm[0]&&!_cacheAsked){ _cacheAsked=true; cacheMap(hm[0],hm[1]); }
     var m=j.mission||{},pos=m.position,alt=m.height_m;
     document.getElementById("d_alt").textContent=alt!=null?alt.toFixed(1):"--";
     if(pos&&pos.length===2&&pos[0]) updateDrone(pos[0],pos[1],alt);
@@ -1191,10 +1162,28 @@ var seekReady=false, seekRunning=false, seekChecksOk=false, seekWhy="", seekLast
 var _seekSentKey=null, _seekActive=false, _knownKeys={}, _pendingOffer=null;
 
 function seekCmd(v){
+  // Over the RFD: the planner resends until the drone answers (up to ~4 s).
   return fetch("/api/cmd?msn="+encodeURIComponent(v))
     .then(function(r){return r.json();})
-    .catch(function(){return {};});
+    .then(function(j){ cmdErr(j&&j.ok===false ? (v.split(":")[0].toUpperCase()+": "+(j.error||"failed")) : ""); return j||{}; })
+    .catch(function(){ cmdErr("planner not reachable"); return {}; });
 }
+function cmdErr(t){
+  var e=document.getElementById("cmd_err"); if(!e)return;
+  e.textContent=t; e.style.display=t?"":"none";
+  if(t){ clearTimeout(cmdErr._t); cmdErr._t=setTimeout(function(){e.style.display="none";},8000); }
+}
+function seekStartCmd(){ return document.getElementById("engage_on_lock").checked ? "start:SEEK" : "start:SEEK:FOLLOW"; }
+var _cacheAsked=false;
+function cacheMap(lat,lon){
+  fetch("/api/prefetch?lat="+lat+"&lon="+lon).catch(function(){});
+}
+document.getElementById("btn_cache").onclick=function(){ var c=map.getCenter(); _cacheAsked=true; cacheMap(c.lat,c.lng); };
+setInterval(function(){
+  fetch("/api/prefetch").then(function(r){return r.json();}).then(function(j){
+    document.getElementById("cache_st").textContent="map cache: "+(j.total?(j.done-j.failed)+"/"+j.total+" tiles"+(j.running?" (downloading)":""):"empty");
+  }).catch(function(){});
+},2000);
 document.getElementById("btn_abort").onclick=function(){ seekCmd("abort"); _seekActive=false; _seekSentKey=null; document.getElementById("abort_bar").style.display="none"; };
 document.getElementById("btn_rtl").onclick=function(){ seekCmd("after:RTL"); _seekActive=false; _seekSentKey=null; document.getElementById("abort_bar").style.display="none"; };
 
@@ -1230,7 +1219,7 @@ document.getElementById("seek_btn").onclick=function(){
         +'<button class="btn-send" id="m_send">&#9678; Start SEEK</button>'
         +'</div></div></div>';
       document.getElementById("m_cancel").onclick=function(){closeModal();};
-      document.getElementById("m_send").onclick=function(){closeModal();seekCmd("start:SEEK");};
+      document.getElementById("m_send").onclick=function(){closeModal();seekCmd(seekStartCmd());};
       document.getElementById("modal_overlay").onclick=function(e){if(e.target===this)closeModal();};
     }
   }
@@ -1340,9 +1329,9 @@ function goSeek(key){
   _seekSentKey=key;
   _seekActive=true;
   document.getElementById("abort_bar").style.display="flex";
-  seekCmd("cue:select:"+key).then(function(){
-    if(seekRunning) return;
-    seekCmd("start:SEEK");
+  seekCmd("cue:select:"+key).then(function(j){
+    if(seekRunning || !j.ok) return;
+    seekCmd(seekStartCmd());
   });
 }
 function renderCueTracks(cue, run){
@@ -1425,8 +1414,35 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         elif path == "/drone/state":
-            qs = urlparse(self.path).query
-            self._proxy_json(f"http://{JETSON_IP}:{JETSON_HTTP}/state?{qs}")
+            if _RFD is not None:
+                st = _RFD.drone_state()
+                if st is None:
+                    self.send_error(503, "no status from the drone over the RFD yet")
+                else:
+                    self._json(st)
+            else:
+                qs = urlparse(self.path).query
+                self._proxy_json(f"http://{JETSON_IP}:{JETSON_HTTP}/state?{qs}")
+        elif path.startswith("/tiles/"):
+            parts = path.split("/")
+            data = None
+            if len(parts) == 5 and all(x.isdigit() for x in parts[2:5]):
+                data = map_tile(int(parts[2]), int(parts[3]), int(parts[4]))
+            self._bytes(data, "image/jpeg", 86400)
+        elif path.startswith("/vendor/"):
+            name = path[len("/vendor/"):]
+            self._bytes(map_vendor(name), "text/css" if name.endswith(".css") else "application/javascript", 86400)
+        elif path == "/api/prefetch":
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                lat, lon = float(q["lat"][0]), float(q["lon"][0])
+            except (KeyError, ValueError, IndexError):
+                lat = lon = None
+            if lat is not None and -90 <= lat <= 90 and -180 <= lon <= 180:
+                _PREFETCH.start(lat, lon)
+            self._json(_PREFETCH.status())
+        elif path == "/api/gateway":
+            self._json(_GW.status() if _GW is not None else {"enabled": False})
         elif path == "/drone/cmd":
             qs = urlparse(self.path).query
             self._proxy_json(f"http://{JETSON_IP}:{JETSON_HTTP}/cmd?{qs}")
@@ -1435,20 +1451,20 @@ class Handler(BaseHTTPRequestHandler):
             q = parse_qs(urlparse(self.path).query)
             msn = (q.get("msn") or [""])[0]
             if _RFD and msn:
-                _RFD.send_cmd(msn)
-                self._json({"ok": True, "sent": msn})
+                ok, why = _RFD.command(msn)
+                self._json({"ok": ok, "sent": msn, "error": "" if ok else why})
             else:
                 self._json({"ok": False, "error": "RFD not connected" if not _RFD else "no command"})
         elif path == "/api/rfd":
             with _MAV_STATUS_LOCK:
                 mst = dict(_MAV_STATUS)
-            with _RFD_STATUS_LOCK:
-                rst = dict(_RFD_STATUS)
             st = {"mav_enabled": _MAV is not None, "rfd_enabled": _RFD is not None,
                   "enabled": _MAV is not None or _RFD is not None}
             st.update(mst)
-            st["rfd_tx"] = rst["tx"]
-            st["rfd_error"] = rst["error"]
+            if _RFD is not None:
+                age = _RFD.age()
+                st.update(rfd_tx=_RFD.tx, rfd_rx=_RFD.rx_lines, rfd_bad=_RFD.rx_bad, rfd_error=_RFD.error,
+                          rfd_age=None if age is None else round(age, 1))
             self._json(st)
         elif path == "/api/status":
             with LOCK:
@@ -1516,6 +1532,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _bytes(self, data, ctype, max_age=0):
+        if data is None:
+            self.send_error(404, "not cached and no internet")
+            return
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            if max_age:
+                self.send_header("Cache-Control", f"max-age={max_age}")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
     def _proxy_json(self, url):
         try:
             req = urllib.request.Request(url)
@@ -1537,7 +1568,12 @@ def main():
     p.add_argument("--jetson", default="192.168.205.160", help="Jetson IP (default 192.168.205.160)")
     p.add_argument("--jetson-http", type=int, default=8080, help="Jetson HTTP port (default 8080)")
     p.add_argument("--jetson-ast", type=int, default=8600, help="Jetson ASTERIX UDP port (default 8600)")
-    p.add_argument("--listen", type=int, default=8600, help="UDP port to listen for ELKAK ASTERIX (default 8600)")
+    p.add_argument("--listen", type=int, default=18200,
+                   help="UDP port for the ELKAK CAT062 (default 18200, EKETA ICD v2.0)")
+    p.add_argument("--gateway", default="",
+                   help="EKETA gateway WebSocket for ACKs + our drone's telemetry, "
+                        "e.g. ws://192.168.1.10:18100/gcs (ELKAK only)")
+    p.add_argument("--drone-id", default="WASP-01", help="droneId in the EKETA telemetry (default WASP-01)")
     p.add_argument("--port", type=int, default=9000, help="Local HTTP port (default 9000)")
     p.add_argument("--mavlink",
                    help="Send targets as ADSB_VEHICLE over this MAVLink connection "
@@ -1560,8 +1596,16 @@ def main():
         _MAV = MavlinkSender(args.mavlink, args.mav_sysid)
         print(f"[GROUND PLANNER] RFD/MAVLink: sending ADSB_VEHICLE on {args.mavlink}")
         threading.Thread(target=_mav_rx_loop, daemon=True, name="rfd-rx").start()
+    global _GW
+    if args.gateway:
+        _GW = EketaGateway(args.gateway, args.drone_id)
+        print(f"[GROUND PLANNER] EKETA gateway: {args.gateway} as droneId {args.drone_id}")
     if args.rfd_dev:
-        _RFD = _RfdWriter(args.rfd_dev, args.rfd_baud, args.rfd_hz)
+        _RFD = RfdLink(args.rfd_dev, args.rfd_baud, args.rfd_hz)
+        if _RFD.error:
+            print(f"[RFD] {_RFD.error} (retrying every 1 s)")
+        if _GW is not None:
+            _RFD.on_tel = _GW.telemetry     # every drone status over the RFD -> EKETA telemetry
 
     threading.Thread(target=_emitter_loop, daemon=True).start()
     threading.Thread(target=_elkak_listener, daemon=True).start()
@@ -1580,7 +1624,7 @@ def main():
 
     import socketserver
     socketserver.TCPServer.allow_reuse_address = True
-    server = HTTPServer(("0.0.0.0", args.port), Handler)
+    server = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)
     print(f"[GROUND PLANNER] http://localhost:{args.port}")
     print(f"[GROUND PLANNER] Jetson: {JETSON_IP}:{JETSON_HTTP} (HTTP), :{JETSON_AST} (ASTERIX UDP)")
     if _MAV:

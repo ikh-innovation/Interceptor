@@ -28,7 +28,7 @@ import socket
 import threading
 from datetime import datetime, timezone
 
-from asterix_cue import AsterixCue
+from asterix_cue import AsterixCue, rfd_json, rfd_msg_line
 
 EARTH_R = 6371000.0
 
@@ -509,8 +509,11 @@ class SeekerMissions:
                 if verb == "start":
                     if self.run is not None:
                         return "a mission is already running"
-                    if rest.strip().upper() not in BY_ID:
+                    mid, _, opt = rest.strip().upper().partition(":")
+                    if mid not in BY_ID:
                         return "unknown mission"
+                    if opt and (mid, opt) != ("SEEK", "FOLLOW"):
+                        return "start: only SEEK:FOLLOW takes an option"
                 elif verb in ("next", "after") and self.run is None:
                     return "no mission running"
                 elif verb == "restart" and not (self.run and self.run.get("wait_restart")):
@@ -768,6 +771,12 @@ class SeekerMissions:
             self._cue_started = True
             self.cue.start()
             self.cue.cmd_callback = lambda v: self.command(v)
+        if now - self._tel_t >= self.TEL_S:
+            self._tel_t = now
+            try:
+                self._rfd_downlink(now)
+            except Exception:
+                pass
         if self.b is not None and not getattr(self.b, '_adsb_cue', False):
             self.b._adsb_cue = True
             self.b.adsb_callback = self.cue.ingest_adsb
@@ -811,11 +820,87 @@ class SeekerMissions:
             r["sample_t"] = now
             self._row("sample")
 
+    TEL_S = 0.5        # status to the laptop over the RFD, twice a second
+    PAR_S = 10.0       # SEEK settings, now and then (they rarely change)
+    _tel_t = _par_t = -1e9
+
+    def _rfd_downlink(self, now):
+        """The laptop's map and buttons, over the RFD (no Wi-Fi after start):
+        $RFDTEL,<json> twice a second, $RFDPAR,<json> every 10 s."""
+        if not self.cue.rfd_open:
+            return
+        b = self.b
+        tel = b.telemetry() if b is not None else {}
+        pos = tel.get("position")
+        home_amsl = self._home_amsl(tel)
+        home = b.home() if b is not None and callable(getattr(b, "home", None)) else None
+        gps = b.gps_status() if b is not None and callable(getattr(b, "gps_status", None)) else {}
+        tracks = self.cue.tracks(now, pos, home_amsl)
+        tgt = self.cue.target(now, pos, home_amsl)
+        with self._lock:
+            seek_pre = list(self.seek_pre)
+        bad = [c for c in seek_pre if c["blocking"] and not c["ok"]]
+        r = self.run
+        run = None
+        if r is not None:
+            t = r["tel"]
+            rpos, rhome = t.get("position"), r["home"]
+            o = r.get("offer")
+            run = dict(id=r["id"], st=r["state"], why=str(r["why"])[:100], seek=r.get("seek"),
+                       fo=bool(r.get("follow_only")),
+                       alt=None if t.get("rel_alt") is None else round(t["rel_alt"], 1),
+                       ta=None if r["target_alt"] is None else round(r["target_alt"], 1),
+                       gs=None if t.get("gs") is None else round(t["gs"], 1),
+                       hm=None if rpos is None or rhome is None else round(_dist(rhome, rpos)),
+                       el=round(now - r["t0"]), bat=t.get("battery_pct"),
+                       cue=(r.get("cue") or {}).get("key"),
+                       of=None if not o else dict(n=o["n"], k=o["kind"], tx=str(o["text"])[:140]),
+                       ev=[str(e[1] if isinstance(e, tuple) else e)[:90] for e in r["events"][-3:]])
+        res = self.result
+        if isinstance(res, dict):
+            res = {k: (str(v)[:120] if isinstance(v, str) else v) for k, v in res.items()
+                   if k in ("id", "ok", "state", "why", "verdict")}
+        al = self.alert
+        msg = dict(
+            fc=[bool(b and b.linked), bool(b and b.armed), None if b is None else b.mode_name],
+            p=None if pos is None else [round(pos[0], 7), round(pos[1], 7)],
+            h=None if tel.get("rel_alt") is None else round(tel["rel_alt"], 1),
+            hm=None if not home else [round(home[0], 7), round(home[1], 7)],
+            g=[gps.get("fix"), gps.get("sats")], bat=tel.get("battery_pct"),
+            hd=None if tel.get("heading") is None else round(tel["heading"] % 360, 1),
+            gs=None if tel.get("gs") is None else round(tel["gs"], 1),
+            co=None if tel.get("vn") is None or tel.get("ve") is None or (tel.get("gs") or 0) < 0.5
+            else round(math.degrees(math.atan2(tel["ve"], tel["vn"])) % 360, 1),
+            vz=None if tel.get("vd") is None else round(-tel["vd"], 1),
+            ms=None if home_amsl is None or tel.get("rel_alt") is None else round(home_amsl + tel["rel_alt"], 1),
+            sel=self.cue.selected, tg=None if tgt is None else tgt["key"],
+            tr=[[x["key"], x["label"], int(bool(x["fresh"])), x["dist_m"], x["alt_rel"], x["age_s"],
+                 round(x["lat"], 7), round(x["lon"], 7), x["speed"], x["bearing"]] for x in tracks[:6]],
+            rx=self.cue.rfd_lines,
+            rd=bool(seek_pre) and not bad,
+            why="; ".join(f"{c['name']}: {c['detail']}" for c in bad)[:160],
+            run=run, res=res,
+            al=None if al is None else dict(n=al.get("n"), k=al.get("kind"), tx=str(al.get("text", ""))[:120],
+                                            open=bool(al.get("open", True))))
+        self.cue.send_rfd(rfd_msg_line("RFDTEL", rfd_json(msg)))
+        if now - self._par_t >= self.PAR_S:
+            self._par_t = now
+            par = [[x["k"], x["t"], x["u"], self.params["SEEK"][x["k"]], x["lo"], x["hi"], x["step"]]
+                   for x in SEEK["params"] if "lo" in x]
+            self.cue.send_rfd(rfd_msg_line("RFDPAR", rfd_json(par)))
+
     def _request(self, verb, arg, mission):
         r = self.run
         if verb == "start":
             if r is None:
-                self._start(arg, mission)
+                mid, _, opt = arg.partition(":")
+                self._start(mid, mission)
+                if self.run is not None:
+                    # SEEK:FOLLOW (the laptop over the RFD): follow the cue
+                    # non-stop and never hand over to WASP on a camera lock.
+                    self.run["follow_only"] = opt == "FOLLOW"
+                    if opt == "FOLLOW":
+                        self._event("FOLLOW ONLY: no AUTO ENGAGE on a camera lock")
         elif verb == "next" and r is not None:
             r["next"] = True
         elif verb == "restart" and r is not None and r.get("wait_restart") and not r["hands_off"]:
@@ -1947,7 +2032,7 @@ class SeekerMissions:
             close = tgt is not None and pos is not None and d <= p["det_range"]
             seen = (det_t is not None and self.now - det_t < 0.3
                     and conf is not None and conf >= mission.min_conf and close)
-            det_since = (det_since or self.now) if seen and r["seek"] == "FOLLOW" else None
+            det_since = (det_since or self.now) if seen and r["seek"] == "FOLLOW" and not r.get("follow_only") else None
             if det_since is not None and self.now - det_since >= p["det_s"]:
                 cue_label = (r["cue"] or {}).get("label", "target")
                 self._event(f"Camera locked on {cue_label} ({d:.0f} m): AUTO ENGAGE")

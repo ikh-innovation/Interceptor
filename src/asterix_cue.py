@@ -107,6 +107,32 @@ def parse_rfd_cmd(line):
     return body[7:]
 
 
+def rfd_msg_line(kind, payload):
+    """$<kind>,<payload>*HH; the payload must not contain '*', '$' or a newline."""
+    body = f"{kind},{payload}"
+    return f"${body}*{rfd_checksum(body)}"
+
+
+def parse_rfd_msg(line, kind):
+    """The payload of one checksummed $<kind>,... line, or None."""
+    line = str(line).strip()
+    if not line.startswith("$") or "*" not in line:
+        return None
+    body, _, cs = line[1:].rpartition("*")
+    if len(cs.strip()) < 2 or rfd_checksum(body) != cs.strip().upper()[:2]:
+        return None
+    if not body.startswith(kind + ","):
+        return None
+    return body[len(kind) + 1:]
+
+
+def rfd_json(obj):
+    """Compact JSON safe inside an $RFD... line ('*' and '$' escaped)."""
+    import json
+    return (json.dumps(obj, separators=(",", ":"), ensure_ascii=True)
+            .replace("*", "\\u002a").replace("$", "\\u0024"))
+
+
 def find_rfd_device():
     """RFD_DEV, else the first USB serial adapter that is not the flight controller."""
     dev = os.environ.get("RFD_DEV", "").strip()
@@ -150,6 +176,10 @@ class AsterixCue:
         self.rfd_t = None
         self._rfd_thread = None
         self.cmd_callback = None
+        self._rfd_port = None
+        self._rfd_wlock = threading.Lock()
+        self._acks = {}               # seq -> ack line, so a resent command runs once
+        self.rfd_tx = 0
 
     @staticmethod
     def key(t):
@@ -181,10 +211,11 @@ class AsterixCue:
                 self._stop.wait(2.0)
                 continue
             self.rfd_dev, self.rfd_open, self.rfd_error = dev, True, ""
+            self._rfd_port = port
             buf = b""
             try:
                 while not self._stop.is_set():
-                    chunk = port.read(256)
+                    chunk = port.read(port.in_waiting or 1)   # returns as soon as bytes arrive
                     if not chunk:
                         continue
                     buf += chunk
@@ -196,11 +227,57 @@ class AsterixCue:
                 self.rfd_error = f"lost: {exc}"[:120]
             finally:
                 self.rfd_open = False
+                self._rfd_port = None
                 try:
                     port.close()
                 except Exception:
                     pass
             self._stop.wait(1.0)
+
+    def send_rfd(self, line):
+        """Write one line back to the laptop over the radio; False if no radio."""
+        port = self._rfd_port
+        if port is None:
+            return False
+        try:
+            with self._rfd_wlock:
+                port.write((line + "\r\n").encode("ascii", "replace"))
+            self.rfd_tx += 1
+            return True
+        except Exception:
+            return False
+
+    def _run_cmd(self, cmd):
+        """A numbered command (#<seq>,<cmd>) runs once and is acknowledged
+        ($RFDACK,<seq>,<1|0>,<message>); a resend gets the same ack again."""
+        if not cmd.startswith("#"):
+            cb = self.cmd_callback
+            if cb is not None:
+                try:
+                    cb(cmd)
+                except Exception:
+                    pass
+            return
+        seq, _, body = cmd[1:].partition(",")
+        seq = seq.strip()
+        if not seq.isdigit():
+            return
+        ack = self._acks.get(seq)
+        if ack is None:
+            cb = self.cmd_callback
+            why = "no command handler on the Jetson"
+            if cb is not None:
+                try:
+                    why = cb(body) or ""
+                except Exception as exc:
+                    why = f"error: {exc}"
+            msg = str(why).replace("*", "x").replace("$", "S").replace(",", ";").replace("\n", " ")[:120]
+            ack = rfd_msg_line("RFDACK", f"{seq},{0 if why else 1},{msg}")
+            self._acks[seq] = ack
+            if len(self._acks) > 256:
+                for k in list(self._acks)[:128]:
+                    del self._acks[k]
+        self.send_rfd(ack)
 
     def ingest_adsb(self, icao, lat, lon, alt_ft, gs_kt=None, track_deg=None, callsign=None, now=None):
         """One ADSB_VEHICLE message routed through the FC from the laptop RFD."""
@@ -218,12 +295,7 @@ class AsterixCue:
         now = perf_counter() if now is None else now
         cmd = parse_rfd_cmd(line)
         if cmd is not None:
-            cb = self.cmd_callback
-            if cb is not None:
-                try:
-                    cb(cmd)
-                except Exception:
-                    pass
+            self._run_cmd(cmd)
             return True
         sync = parse_rfd_sync(line)
         if sync is not None:
