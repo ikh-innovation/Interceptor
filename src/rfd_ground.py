@@ -229,6 +229,108 @@ class RfdLink:
                                      seek=dict(ready=bool(m.get("rd")) and live, why=why, params=params))))
 
 
+# ---- the drone's RFD wired to the flight controller: MAVLink TUNNEL ------------
+
+class MavTunnelPort:
+    """A serial-like port for RfdLink that carries our lines inside MAVLink TUNNEL
+    messages: for a drone whose RFD is wired to the FC's TELEM port (MAVLink2).
+    The FC forwards them to the Jetson and back (see rfd_tunnel.py).  A heartbeat
+    once a second (sysid 250, never the Jetson's 255) makes the FC route to us."""
+
+    def __init__(self, dev, baud=57600, sysid=None, compid=None):
+        import rfd_tunnel as T
+        os.environ.setdefault("MAVLINK20", "1")       # the FC's TELEM port speaks MAVLink 2
+        from pymavlink import mavutil
+        self.T, self.mavutil = T, mavutil
+        sysid, compid = sysid or T.LAPTOP_SYSID, compid or T.LAPTOP_COMPID
+        self.m = mavutil.mavlink_connection(dev, baud=int(baud), source_system=sysid, source_component=compid)
+        self.enc = T.encoder(self.m, sysid, compid)
+        self._buf = bytearray()
+        self._cv = threading.Condition()
+        self._wbuf = b""
+        self._tx = threading.Lock()
+        self._re = T.Reassembler()
+        self._id = 0
+        self._stop = threading.Event()
+        self.fc_hb_t = None             # the FC's own heartbeat heard over the radio
+        self.fc_sysid = None
+        self.tunnel_rx = self.tunnel_tx = 0
+        threading.Thread(target=self._rx, daemon=True, name="mav-tunnel-rx").start()
+        threading.Thread(target=self._hb, daemon=True, name="mav-tunnel-hb").start()
+
+    @property
+    def in_waiting(self):
+        with self._cv:
+            return len(self._buf)
+
+    def read(self, n):
+        with self._cv:
+            if not self._buf:
+                self._cv.wait(0.2)
+            out = bytes(self._buf[:n])
+            del self._buf[:n]
+            return out
+
+    def write(self, data):
+        self._wbuf += bytes(data)
+        while b"\n" in self._wbuf:
+            line, self._wbuf = self._wbuf.split(b"\n", 1)
+            line = line.rstrip(b"\r")
+            if line:
+                self._send_line(line)
+        return len(data)
+
+    def _send_line(self, line):
+        T = self.T
+        with self._tx:
+            self._id = (self._id + 1) & 0xFF
+            for frag in T.fragments(line, self._id):
+                self.enc.tunnel_send(0, 0, T.PAYLOAD_TYPE, len(frag), T.padded(frag))
+        self.tunnel_tx += 1
+
+    def _hb(self):
+        mav = self.mavutil.mavlink
+        while not self._stop.wait(1.0):
+            try:
+                with self._tx:
+                    self.enc.heartbeat_send(mav.MAV_TYPE_ONBOARD_CONTROLLER, mav.MAV_AUTOPILOT_INVALID, 0, 0, 0)
+            except Exception:
+                pass
+
+    def _rx(self):
+        T = self.T
+        mav = self.mavutil.mavlink
+        while not self._stop.is_set():
+            try:
+                msg = self.m.recv_match(blocking=True, timeout=0.5)
+            except Exception:
+                time.sleep(0.2)
+                continue
+            if msg is None:
+                continue
+            t = msg.get_type()
+            if t == "HEARTBEAT" and msg.autopilot != mav.MAV_AUTOPILOT_INVALID:
+                self.fc_hb_t, self.fc_sysid = time.monotonic(), msg.get_srcSystem()
+            elif t == "TUNNEL" and int(msg.payload_type) == T.PAYLOAD_TYPE:
+                n = max(0, min(int(msg.payload_length), T.PAYLOAD_MAX))
+                line = self._re.feed(bytes(msg.payload[:n]))
+                if line is not None:
+                    self.tunnel_rx += 1
+                    with self._cv:
+                        self._buf += line + b"\n"
+                        self._cv.notify_all()
+
+    def fc_age(self):
+        return None if self.fc_hb_t is None else time.monotonic() - self.fc_hb_t
+
+    def close(self):
+        self._stop.set()
+        try:
+            self.m.close()
+        except Exception:
+            pass
+
+
 # ---- EKETA-EAB gateway (WebSocket) -------------------------------------------
 
 def eketa_crc(datagram):

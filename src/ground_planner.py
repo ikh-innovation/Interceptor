@@ -1143,8 +1143,9 @@ setInterval(function(){
     var el=document.getElementById("rfd_st");
     if(!j.enabled){el.textContent="off";el.className="off";}
     else if(j.rfd_enabled){
-      el.textContent=j.rfd_tx>0?"TX "+j.rfd_tx+" lines":"ready";
-      el.className=j.rfd_tx>0?"":"off";
+      el.textContent=(j.rfd_tx>0?"TX "+j.rfd_tx+" lines":"ready")+", RX "+(j.rfd_rx||0)
+        +(j.rfd_mode==="mavlink"?(j.fc_hb_age!=null&&j.fc_hb_age<3?" · FC heard":" · FC NOT heard"):"");
+      el.className=j.rfd_rx>0?"":"off";
     }
     else if(j.linked){el.textContent="LINKED ("+j.tx+" tx, "+j.fc_hb+" rx)";el.className="";}
     else if(j.tx>0){el.textContent="TX only (no FC reply)";el.className="off";}
@@ -1483,6 +1484,10 @@ class Handler(BaseHTTPRequestHandler):
                 age = _RFD.age()
                 st.update(rfd_tx=_RFD.tx, rfd_rx=_RFD.rx_lines, rfd_bad=_RFD.rx_bad, rfd_error=_RFD.error,
                           rfd_age=None if age is None else round(age, 1))
+                fa = getattr(_RFD.port, "fc_age", None)
+                if callable(fa):
+                    a2 = fa()
+                    st.update(rfd_mode="mavlink", fc_hb_age=None if a2 is None else round(a2, 1))
             self._json(st)
         elif path == "/api/status":
             with LOCK:
@@ -1601,6 +1606,9 @@ def main():
                    help="Send $RFD lines on this serial device (e.g. /dev/ttyUSB0 for "
                         "RFD radio directly connected to the Jetson)")
     p.add_argument("--rfd-baud", type=int, default=57600)
+    p.add_argument("--rfd-mavlink", action="store_true",
+                   help="the drone's RFD is wired to the flight controller (TELEM, MAVLink2): carry "
+                        "our lines inside MAVLink TUNNEL; the FC forwards them to the Jetson")
     p.add_argument("--rfd-hz", type=float, default=5.0)
     args = p.parse_args()
     JETSON_IP = args.jetson
@@ -1619,7 +1627,13 @@ def main():
         _GW = EketaGateway(args.gateway, args.drone_id)
         print(f"[GROUND PLANNER] EKETA gateway: {args.gateway} as droneId {args.drone_id}")
     if args.rfd_dev:
-        _RFD = RfdLink(args.rfd_dev, args.rfd_baud, args.rfd_hz)
+        if args.rfd_mavlink:
+            from rfd_ground import MavTunnelPort
+            _RFD = RfdLink(args.rfd_dev, args.rfd_baud, args.rfd_hz,
+                           serial_factory=lambda: MavTunnelPort(args.rfd_dev, args.rfd_baud))
+            print(f"[RFD] MAVLink TUNNEL through the flight controller on {args.rfd_dev}")
+        else:
+            _RFD = RfdLink(args.rfd_dev, args.rfd_baud, args.rfd_hz)
         if _RFD.error:
             print(f"[RFD] {_RFD.error} (retrying every 1 s)")
         if _GW is not None:

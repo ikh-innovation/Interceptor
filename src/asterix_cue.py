@@ -180,6 +180,10 @@ class AsterixCue:
         self._rfd_wlock = threading.Lock()
         self._acks = {}               # seq -> ack line, so a resent command runs once
         self.rfd_tx = 0
+        # The laptop's RFD wired to the FC: lines through MAVLink TUNNEL (fc_control).
+        self.tunnel = None            # callable(line) -> bool, set when the FC link has it
+        self.tunnel_rx_t = None
+        self.tunnel_lines = 0
 
     @staticmethod
     def key(t):
@@ -234,11 +238,29 @@ class AsterixCue:
                     pass
             self._stop.wait(1.0)
 
+    def link_ok(self):
+        """A way back to the laptop: an RFD on this Jetson, or the FC's tunnel."""
+        return self.rfd_open or self.tunnel is not None
+
+    def ingest_tunnel(self, line, now=None):
+        """One whole line from the laptop that came through the FC (MAVLink TUNNEL)."""
+        now = perf_counter() if now is None else now
+        self.tunnel_rx_t = now
+        self.tunnel_lines += 1
+        return self.ingest_rfd(line, now)
+
     def send_rfd(self, line):
-        """Write one line back to the laptop over the radio; False if no radio."""
+        """Write one line back to the laptop: over this Jetson's RFD if it has one,
+        else through the FC (MAVLink TUNNEL); False if neither."""
         port = self._rfd_port
         if port is None:
-            return False
+            tun = self.tunnel
+            if tun is None:
+                return False
+            ok = bool(tun(line))
+            if ok:
+                self.rfd_tx += 1
+            return ok
         try:
             with self._rfd_wlock:
                 port.write((line + "\r\n").encode("ascii", "replace"))
@@ -464,7 +486,10 @@ class AsterixCue:
                     selected=self.selected,
                     rfd=dict(dev=self.rfd_dev, baud=self.rfd_baud, open=self.rfd_open, error=self.rfd_error,
                              lines=self.rfd_lines, bad=self.rfd_bad,
-                             rx_age=None if self.rfd_t is None else round(now - self.rfd_t, 1)))
+                             rx_age=None if self.rfd_t is None else round(now - self.rfd_t, 1),
+                             via="serial" if self.rfd_open else "mavlink" if self.tunnel is not None else None,
+                             tunnel_lines=self.tunnel_lines,
+                             tunnel_rx_age=None if self.tunnel_rx_t is None else round(now - self.tunnel_rx_t, 1)))
 
 
 # ---- CAT062 encoding, for the simulator and the tests ---------------------------
