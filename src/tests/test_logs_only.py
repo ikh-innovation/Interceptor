@@ -11,13 +11,29 @@ import tracker
 
 
 class LogsOnlyTests(unittest.TestCase):
-    def test_service_entrypoint_disables_video(self):
+    def test_service_entrypoint_records_video_locally(self):
         tree = ast.parse(Path(tracker.__file__).read_text())
         calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
                  and isinstance(node.func, ast.Name) and node.func.id == "DroneTracker"]
         self.assertEqual(len(calls), 1)
         keywords = {item.arg: item.value for item in calls[0].keywords}
-        self.assertIsNone(ast.literal_eval(keywords["record_dir"]))
+        record_dir = keywords["record_dir"]
+        # Video recording is ON by default now, env-gated, and written to a
+        # LOCAL directory -- not the constant None that used to disable it.
+        self.assertNotIsInstance(record_dir, ast.Constant)
+        source = ast.unparse(record_dir)
+        self.assertIn("RECORD_VIDEO", source)   # toggle to disable it
+        self.assertIn("RECORD_DIR", source)     # optional location override
+        self.assertIn("_DATA_DIR", source)      # default is local, under data/
+        self.assertIn("video", source)
+
+    def test_video_is_never_uploaded(self):
+        # Videos must stay on the Jetson: the cloud uploader only writes
+        # Firestore log documents and must not touch video files or storage.
+        uploader = (Path(tracker.__file__).resolve().parent
+                    / "log_uploader.py").read_text().lower()
+        for token in (".mp4", "storage", "bucket", "upload_from", "blob("):
+            self.assertNotIn(token, uploader)
 
     def test_logs_only_run_does_not_open_a_video_writer(self):
         t = tracker.DroneTracker.__new__(tracker.DroneTracker)

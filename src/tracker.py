@@ -1402,6 +1402,59 @@ class DroneTracker:
         if self._rec_dropped:
             pass
 
+    def _rec_open(self, out_dir, fourcc, src_fps, frame):
+        """Open a fresh per-flight writer (flight_<stamp>.mp4) in ``out_dir``.
+
+        Called while DISARMED to pre-open the next flight's file, so the
+        encoder/file open never lands on the arm transition.  Returns True on
+        success; on failure the caller disables recording for the session.
+        """
+        # Strictly-incrementing per-session sequence so a close+pre-open at
+        # DISARM (same wall-clock second) can never overwrite the file just
+        # finalized -- a second-resolution timestamp alone would collide.
+        self._rec_seq = getattr(self, "_rec_seq", 0) + 1
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_path = out_dir / f"flight_{stamp}_{self._rec_seq:03d}.mp4"
+        h, w = frame.shape[0], frame.shape[1]
+        writer = cv2.VideoWriter(str(out_path), fourcc, src_fps, (w, h))
+        if not writer.isOpened():
+            try:
+                writer.release()
+            except Exception:
+                pass
+            return False
+        self._rec_path = out_path.resolve()
+        self._rec_base = Path(out_path)
+        self._rec_fourcc = fourcc
+        self._rec_part = 1
+        self._rec_seg_n = 0
+        self._rec_frames = 0
+        self._rec_windows = 1
+        self._rec_size = (w, h)
+        self._writer = writer
+        return True
+
+    def _rec_close_writer(self):
+        """Finalize the current flight's file at DISARM.
+
+        Drops any frames still queued for the just-ended flight so they do not
+        bleed into the next file, then releases the writer.  The worker thread
+        keeps running; the next flight's writer is pre-opened separately.
+        """
+        q = getattr(self, "_rec_q", None)
+        if q is not None:
+            try:
+                while True:
+                    q.get_nowait()
+            except queue.Empty:
+                pass
+        writer, self._writer = self._writer, None
+        if writer is not None:
+            try:
+                writer.release()
+            except Exception:
+                pass
+
 
     def _lap(self, name, t_prev):
         if not self.PROFILE:
@@ -1986,27 +2039,21 @@ class DroneTracker:
 
             if rec_on:
                armed = bool(getattr(self.ap, "armed", False))
-               if armed and not self._rec_was_armed:
-                   flight_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                   out_path = out_dir / f"flight_{flight_stamp}.mp4"
-                   self._rec_path = out_path.resolve()
-                   self._rec_base = Path(out_path)
-                   self._rec_fourcc = fourcc
-                   self._rec_part = 1
-                   self._rec_seg_n = 0
-                   self._rec_frames = 0
-                   self._rec_windows = 1
-                   self._writer = cv2.VideoWriter(
-                       str(out_path), fourcc, src_fps,
-                       (frame_disp.shape[1], frame_disp.shape[0]))
-                   self._rec_size = (frame_disp.shape[1], frame_disp.shape[0])
-                   if not self._writer.isOpened():
+               # Finalize the flight's file the moment we disarm.
+               if not armed and self._rec_was_armed:
+                   self._rec_close_writer()
+               # Pre-open the NEXT flight's writer while DISARMED. The expensive
+               # VideoWriter open (encoder + file init) is paid here, during
+               # idle, never on the arm transition -- opening at ARM starved the
+               # FC's GCS-heartbeat thread and tripped the failsafe, disarming
+               # the drone right after every ARM. By arm time the writer is warm
+               # and we only feed frames; the open cost is already behind us.
+               if self._writer is None:
+                   out_dir = out_path.parent
+                   if not self._rec_open(out_dir, fourcc, src_fps, frame_disp):
                        self._rec_on = rec_on = False
-               elif not armed and self._rec_was_armed:
-                   if self._writer is not None:
-                       self._writer.release()
-                       self._writer = None
                self._rec_was_armed = armed
+               # Frames are written to disk only while ARMED (one file per flight).
                if armed and self._writer is not None:
                    self._rec_submit(frame_disp.copy())
                    self._rec_frames += 1
@@ -2302,7 +2349,11 @@ if __name__ == "__main__":
         skip_frames  = 0,
         show_sky     = False,
         use_sky_mask = True,
-        record_dir      = None,   # no onboard video recording (it started at ARM)
+        record_dir      = ((os.environ.get("RECORD_DIR") or str(_DATA_DIR / "video"))
+                            if env_bool("RECORD_VIDEO", True) else None),
+        # Onboard video recording: one flight_<stamp>.mp4 per flight, opened at
+        # ARM and closed at DISARM. On by default, saved locally under data/video.
+        # Disable with RECORD_VIDEO=0; override location with RECORD_DIR=/path.
         log_dir         = str(_DATA_DIR),
         run_stamp       = RUN_STAMP,
         headless     = os.environ.get("TRACKER_HEADLESS") == "1",
