@@ -263,7 +263,7 @@ CONF
 | `FC_BAUD` | `115200` | Different baud rate |
 | `CAM_SENSOR_ID` | `0` | Multiple CSI cameras |
 | `CAM_HFOV_DEG` / `CAM_VFOV_DEG` | IMX219 defaults | Different lens/sensor |
-| `MOUNT_TILT_DEG` | `30` (Seeker) / `90` (Wasp) | Different camera angle |
+| `MOUNT_TILT_DEG` | `90` (Seeker and Wasp) | The camera is fixed at 90°, looking at the sky |
 | `TARGET_CLASS` | `0` | Different YOLO class |
 | `TARGET_WIDTH_M` | configured in UI | Different target size |
 | `STREAM_QUALITY` | `70` | Trade bandwidth for quality |

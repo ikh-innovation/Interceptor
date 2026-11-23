@@ -6,7 +6,7 @@ cd "$WASP_SRC_DIR" || exit 1
 
 export PATH="$WASP_SRC_DIR/../.env/yolo/bin:$PATH"
 
-export CAM_TILT_DEG=${CAM_TILT_DEG:-30}
+export CAM_TILT_DEG=${CAM_TILT_DEG:-90}   # fixed 90 degree camera
 
 export TARGET_WIDTH_M=${TARGET_WIDTH_M:-0.30}
 

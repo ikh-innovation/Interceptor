@@ -25,7 +25,7 @@ COMMIT_CHAN = 0
 MODES = {
     "sky": {
         "label": "AIRBORNE TARGET (drone above)",
-        "cam_tilt_deg": 30,
+        "cam_tilt_deg": 90,          # fixed 90 degree camera, looking at the sky
         "target_width_m": 0.30,
         "max_lean_deg": 12,
         "roll_pn_gain": 35,

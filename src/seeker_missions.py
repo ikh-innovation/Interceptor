@@ -110,10 +110,8 @@ SEEK = dict(id="SEEK", name="Seek the ASTERIX target", short="Fly to the cue, th
                     _num("min_alt", "Minimum height", "m", 20, 5, 500),
                     _num("cruise_alt", "Height when the track has none", "m", 40, 5, 500),
                     _num("det_s", "Camera lock before ENGAGE", "s", 0.5, 0, 5, 0.1),
-                    _num("det_range", "Max distance for detection to count", "m", 150, 50, 2000, 10),
-                    _num("throttle", "ENGAGE throttle", "", 1.0, 0.5, 1.0, 0.05),
-                    _num("wasp_rate", "ENGAGE max steering rate", "°/s", 60, 30, 120),
-                    _num("wasp_gain", "ENGAGE steering gain", "", 2.0, 1.0, 6.0, 0.5)])
+                    _num("det_range", "Max distance for detection to count", "m", 150, 50, 2000, 10)])
+# ENGAGE hands over to WASP with WASP's own settings (PARAMETERS > WASP), not SEEK's.
 BY_ID = {m["id"]: m for m in CATALOG + [SEEK]}
 
 
@@ -214,8 +212,7 @@ def describe(mid, p, lim):
                            if p["standoff"] > 0 else
                            ", directly underneath (a new target on the feed: asks to switch)"),
                         f"Camera on the target {_fmt(p['det_s'])} s → AUTO ENGAGE: "
-                         f"ACRO, WASP takes over (throttle {_fmt(p['throttle'])}, "
-                         f"rate {_fmt(p['wasp_rate'])}°/s). "
+                         "ACRO, WASP takes over with its own settings (PARAMETERS > WASP). "
                          "ABORT or the geofence: RTL. "
                          "Pilot takeover: ACRO + throttle + CH8"]
     return []
@@ -2047,9 +2044,9 @@ class SeekerMissions:
         mission.wasp.enabled = True
         mission.wasp.camera_confirmed = True
         mission.camera_mount_deg = 90.0
-        mission.wasp.params["throttle"] = p.get("throttle", 1.0)
-        mission.wasp.params["rate"] = p.get("wasp_rate", 60.0)
-        mission.wasp.params["gain"] = p.get("wasp_gain", 2.0)
+        wp = mission.wasp.params           # WASP's own settings, untouched by SEEK
+        self._event(f"WASP settings: throttle {_fmt(wp.get('throttle'))}, rate {_fmt(wp.get('rate'))}°/s, "
+                    f"gain {_fmt(wp.get('gain'))}")
         with mission._lock:
             mission._req_engage = True
         self.check("WASP engage", True, f"ACRO; target {cue.get('label', '?')} "

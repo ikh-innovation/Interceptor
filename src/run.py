@@ -511,7 +511,7 @@ def main():
     for k, v in SEEKER_VIEW.items():
         os.environ.setdefault(k, v)
 
-    HARDCODED_CAM_TILT_DEG = "30"
+    HARDCODED_CAM_TILT_DEG = "90"      # the camera is fixed at 90 degrees, looking at the sky
     from flight_config import MOUNT_TILT_DEG
     os.environ.setdefault("CAMERA_MOUNT_DEG", str(MOUNT_TILT_DEG))
 

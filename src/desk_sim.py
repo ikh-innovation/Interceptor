@@ -264,7 +264,7 @@ class DeskSim:
                          gust=(0 if now >= self.kick_until else (-1 if self.kick_acc < 0 else 1)))
             seq = self.seq
         return dict(linked=True, armed=True, fc_mode="ALT_HOLD", detector="TensorRT", fps=15.0,
-                    lat_ms=None, tilt_deg=30.0, target="DRONE", mission=snap, console_seq=seq,
+                    lat_ms=None, tilt_deg=90.0, target="DRONE", mission=snap, console_seq=seq,
                     sky_gate=self.sky_gate, follower=self.follower,
                     cam_fps=self.cam, cam_default=30, cam_busy=False,
                     video_stabilization=self.video_stabilization,

@@ -1216,7 +1216,7 @@
     if (!LAST || LAST.armed || choosing || VIEW || LAST.control === "other") return;
     releaseAll();
     pendingMode = mode;
-    T("mode_degrees", mode === "wasp" ? "90°" : "30°");
+    T("mode_degrees", "90°");      // the camera is fixed at 90 degrees in every mode
     T("mode_note", "");
     $("modechange").classList.add("on");
     document.querySelector(".app").inert = true;
@@ -1267,7 +1267,7 @@
     });
   };
 
-  var HFOV = 62.2, VFOV = 48.8, TILT = 30, CAMAR = 4 / 3;
+  var HFOV = 62.2, VFOV = 48.8, TILT = 90, CAMAR = 4 / 3;
   var LEVELS = ["SLOW", "MEDIUM", "FAST"];
   var LAST = null, lastOk = 0, consoleSeq = 0, HDG = null, LOCKHDG = null;
   var VAL = null;
@@ -1957,7 +1957,7 @@
       x.disabled = arm || VIEW || ctl === "other" || (x.getAttribute("data-waspen") === "on" && !!m.auto_enabled);
     });
     document.querySelectorAll("[data-mount]").forEach(function (x) {
-      x.disabled = arm || VIEW || ctl === "other" || (wasp && x.getAttribute("data-mount") === "30");
+      x.disabled = arm || VIEW || ctl === "other" || x.getAttribute("data-mount") === "30";
       x.classList.toggle("on", Number(x.getAttribute("data-mount")) === m.camera_mount_deg && (!wasp || m.wasp_camera_confirmed));
     });
     syncAlign(m);
@@ -2669,7 +2669,7 @@
     if (/GPS/.test(why)) return "waiting for GPS";
     if (/Battery/.test(why)) return "battery";
     if (/radio/.test(why)) return "pilot radio off";
-    if (/Camera/.test(why)) return "camera 30°";
+    if (/Camera/.test(why)) return "camera 90°";
     return why.length > 24 ? why.slice(0, 23) + "…" : why;
   }
   var CUEBUILT = false;

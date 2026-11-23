@@ -3451,7 +3451,8 @@ class AcroCommander:
                     return False, why
         elif self.mission is not None and (abs(self.mission.camera_mount_deg - 30) > 0.1
                 or abs(math.degrees(getattr(self.law, "cam_tilt", math.pi/6)) - 30) > 0.1):
-            return False, "restore and confirm the 30 degree camera for AUTO / SEMI-AUTO"
+            return False, ("AUTO / SEMI-AUTO hover tracking was built for a 30 degree camera and is not "
+                           "available with the fixed 90 degree camera: use SEEK or WASP")
         elif b.mode_name != "ALT_HOLD":
             return False, f"FC in {b.mode_name}, not ALT_HOLD"
         if not wasp and not idle and self.mission_require_airborne and hasattr(b, "airborne"):
