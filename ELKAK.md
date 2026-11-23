@@ -1,151 +1,169 @@
-# Ground Planner: TEST και ΕΛΚΑΚ, βήμα βήμα
-
-## Η ιδέα με μία ματιά
+# Ground Planner: TEST και ΕΛΚΑΚ
 
 ```
-ΕΛΚΑΚ server ──Ethernet──► LAPTOP ──RFD──► DRONE (Jetson)
- (στόχοι)                  (χάρτης)  ◄─RFD── (θέση, κατάσταση)
+LAPTOP ──RFD──► DRONE (Jetson)      στόχοι + εντολές
+LAPTOP ◄─RFD─── DRONE               θέση + κατάσταση του drone
 ```
 
-- **Laptop ↔ drone: μόνο RFD.** Στόχοι, εντολές (SEEK, αλλαγή στόχου, ABORT, RTL) και η θέση του drone περνάνε όλα από το ραδιόφωνο. Δεν χρειάζεται Wi-Fi.
-- **Internet: μόνο από πριν**, για να αποθηκευτεί ο χάρτης στο laptop (βήμα 0). Στο πεδίο δεν χρειάζεται.
-- **Το drone ακολουθεί τον στόχο συνέχεια, 10 m από κάτω του.** Δεν κάνει ENGAGE, εκτός αν τσεκάρεις το «AUTO ENGAGE».
-
----
-
-## Βήμα 0: Στο γραφείο, με internet (μία φορά, πριν φύγεις)
-
-1. Πάρε τον καινούργιο κώδικα στο laptop:
-   ```bash
-   cd ~/Desktop/dev/Interceptor
-   git pull
-   ```
-2. Δικαίωμα για το RFD χωρίς sudo (μία φορά, μετά κάνε log out και log in):
-   ```bash
-   sudo usermod -aG dialout $USER
-   ```
-3. Αποθήκευσε τον χάρτη της περιοχής:
-   ```bash
-   python3 src/ground_planner.py --port 9002
-   ```
-   - Άνοιξε `http://localhost:9002`.
-   - Πήγαινε τον χάρτη πάνω από το σημείο της ΕΛΚΑΚ.
-   - Πάτα **«Cache map here»**.
-   - Περίμενε μέχρι το «map cache» να γράψει όλα τα tiles (π.χ. `900/900`).
-   - Κάν' το και για κάθε άλλο σημείο που θα πετάξεις.
-   - Κλείσε με `Ctrl+C`.
-
-Ο χάρτης μένει στο laptop (`~/.cache/wasp-planner`). Από εδώ και πέρα δουλεύει και χωρίς internet.
-
----
-
-## Βήμα 1: Το drone (κάθε φορά)
-
-1. Το RFD του drone είναι στο **USB του Jetson**.
-2. Ανάβεις το drone. Η εφαρμογή στο Jetson ξεκινά μόνη της.
-3. Μόνο αν άλλαξε κώδικας, τρέχεις στο Jetson:
-   ```bash
-   cd ~/Documents/Interceptor
-   git pull
-   sudo systemctl restart wasp-tracker
-   ```
-
----
-
-## Βήμα 2: Το RFD του laptop
-
-Βάζεις το RFD στο USB του laptop. Περίμενε μέχρι το πράσινο φως να μείνει σταθερό (είναι συνδεδεμένο με το RFD του drone).
-
-Έλεγχος ότι το βλέπει το laptop:
-```bash
-ls /dev/serial/by-id/
-```
-Πρέπει να δεις `usb-FTDI_FT232R_USB_UART_BG013VP7-if00-port0`.
-
----
-
-## A. TEST (ψεύτικοι στόχοι που σχεδιάζεις εσύ)
-
-Δεν χρειάζεται ούτε Ethernet ούτε internet.
-
-1. Τρέξε:
-   ```bash
-   cd ~/Desktop/dev/Interceptor
-   python3 src/ground_planner.py --port 9002 \
-       --rfd-dev /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_BG013VP7-if00-port0
-   ```
-2. Άνοιξε `http://localhost:9002`.
-3. Πάνω δεξιά πρέπει να δεις **Drone: linked (RFD 0.5s)**. Αν γράφει «RFD LOST», το drone δεν ακούγεται: δες το Βήμα 2.
-4. Καρτέλα **TEST**: σχεδίασε στόχο (Circle, Line ή Draw).
-   - Το **Altitude** είναι **ύψος πάνω από το σημείο απογείωσης** του drone.
-   - Παράδειγμα: στόχος στα 40 m, το drone πετά στα 30 m (10 m από κάτω).
-5. Στο **CUE TARGETS** εμφανίζεται ο στόχος (π.χ. `RFD-1`). Πάτα **GO**: το drone οπλίζει, απογειώνεται και τον ακολουθεί.
-
----
-
-## B. ΕΛΚΑΚ (πραγματικοί στόχοι από τον server της ΕΛΚΑΚ)
-
-### Μία φορά στο laptop: σταθερή IP στο Ethernet
-
-Βάλε την IP που σου έδωσαν. Εδώ υποθέτουμε GCS1 = `192.168.1.101`:
-```bash
-sudo nmcli con add type ethernet ifname enp130s0 con-name ELKAK \
-    ipv4.method manual ipv4.addresses 192.168.1.101/24 ipv6.method disabled
-```
-(Αν σου δώσουν άλλη IP, π.χ. `.102`, άλλαξε μόνο τον αριθμό.)
-
-### Στο πεδίο
-
-1. **Κλείσε το Wi-Fi** του laptop. Το δίκτυό τους είναι κι αυτό `192.168.1.x` και θα μπερδευτεί.
-2. **Καλώδιο Ethernet** από το laptop στο router τους (Teltonika).
-3. Ενεργοποίησε τη σύνδεση:
-   ```bash
-   sudo nmcli con up ELKAK
-   ping -c 3 192.168.1.10
-   ```
-   Το `ping` πρέπει να απαντά. Αυτός είναι ο server τους.
-4. Τρέξε:
-   ```bash
-   cd ~/Desktop/dev/Interceptor
-   python3 src/ground_planner.py --port 9002 \
-       --rfd-dev /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_BG013VP7-if00-port0 \
-       --gateway ws://192.168.1.10:18100/gcs --drone-id WASP-01
-   ```
-   - Στο terminal πρέπει να δεις `[EKETA] connected to ws://192.168.1.10:18100/gcs`.
-   - Αν δεν συνδέεται, ξαναδοκιμάζει μόνο του κάθε 1 s.
-5. Άνοιξε `http://localhost:9002` και πάτα την καρτέλα **ELKAK**.
-6. Οι στόχοι τους εμφανίζονται στο **CUE TARGETS**. Πάτα **GO** στον στόχο που θες.
-
-Τι κάνει μόνο του το πρόγραμμα, χωρίς να κάνεις τίποτα:
-- ακούει τους στόχους τους στη θύρα **UDP 18200**,
-- τους στέλνει «το πήρα» (ACK) για κάθε μήνυμα,
-- τους στέλνει τη θέση του drone μας κάθε δευτερόλεπτο, για να μη μας δουν σαν εχθρό.
-
----
-
-## Κουμπιά στην πτήση (TEST και ΕΛΚΑΚ)
-
-| Θέλω να… | Πατάω |
-|---|---|
-| Ξεκινήσω σε έναν στόχο | **GO** δίπλα στον στόχο |
-| Αλλάξω στόχο | **SWAP** δίπλα στον άλλο στόχο |
-| Νέος στόχος εμφανίστηκε | Βγαίνει ερώτηση «switch?»: **Yes** ή **No** |
-| Σταματήσω και να γυρίσει | **ABORT** |
-| Γυρίσει σπίτι | **RTL** |
-
-- Κάθε εντολή πάει από το RFD και περιμένει απάντηση από το drone (έως 4 s).
-- Αν δεν απαντήσει, βγαίνει **κόκκινο μήνυμα**. Τότε ξαναπάτα, ή ο πιλότος παίρνει τον έλεγχο από τον πομπό.
-- Αν χαθεί ο στόχος για 10 s, το drone μένει στη θέση του (ALT_HOLD) και περιμένει.
+- **Laptop ↔ drone: μόνο RFD.** Δεν χρειάζεται Wi-Fi.
+- **Internet μόνο από πριν**, για να αποθηκευτεί ο χάρτης.
+- **Το drone ακολουθεί τον στόχο συνέχεια, 10 m από κάτω του.** Δεν κάνει ENGAGE, εκτός αν τσεκάρεις «AUTO ENGAGE».
 - **Ο πιλότος με τον πομπό μπορεί πάντα να πάρει τον έλεγχο.**
 
 ---
 
-## Αν κάτι δεν πάει καλά
+# 1. TEST (ψεύτικοι στόχοι που σχεδιάζεις εσύ)
+
+Χρειάζεσαι: laptop, RFD στο laptop, drone με RFD στο Jetson.
+
+### Βήμα 1: Μία φορά, με internet
+
+```bash
+cd ~/Desktop/dev/Interceptor
+git pull
+sudo usermod -aG dialout $USER     # μετά κάνε log out και log in
+```
+
+### Βήμα 2: Ο χάρτης (μία φορά ανά περιοχή, με internet)
+
+```bash
+python3 src/ground_planner.py --port 9002
+```
+1. Άνοιξε `http://localhost:9002`.
+2. Πήγαινε τον χάρτη εκεί που θα πετάξεις.
+3. Πάτα **«Cache map here»** και περίμενε να γεμίσει (π.χ. `900/900`).
+4. Κλείσε με `Ctrl+C`.
+
+### Βήμα 3: Το drone
+
+1. Το RFD του drone είναι στο **USB του Jetson**.
+2. Ανάβεις το drone. Η εφαρμογή ξεκινά μόνη της.
+3. Μόνο αν άλλαξε κώδικας, στο Jetson:
+   ```bash
+   cd ~/Documents/Interceptor && git pull && sudo systemctl restart wasp-tracker
+   ```
+
+### Βήμα 4: Το RFD του laptop
+
+Βάζεις το RFD στο USB του laptop και περιμένεις το **πράσινο φως σταθερό**.
+
+### Βήμα 5: Ξεκινάς
+
+```bash
+cd ~/Desktop/dev/Interceptor
+python3 src/ground_planner.py --port 9002 \
+    --rfd-dev /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_BG013VP7-if00-port0
+```
+1. Άνοιξε `http://localhost:9002`.
+2. Πάνω δεξιά πρέπει να δεις **Drone: linked (RFD 0.5s)**.
+
+### Βήμα 6: Πετάς
+
+1. Καρτέλα **TEST**: σχεδίασε στόχο (Circle, Line ή Draw).
+   - Το **Altitude** είναι **ύψος πάνω από το σημείο απογείωσης**.
+   - Παράδειγμα: στόχος στα 40 m, το drone στα 30 m.
+2. Στο **CUE TARGETS** εμφανίζεται ο στόχος (`RFD-1`). Πάτα **GO**: οπλίζει, απογειώνεται και ακολουθεί.
+3. Τα κουμπιά στην πτήση είναι στον πίνακα στο τέλος.
+
+---
+
+# 2. ΕΛΚΑΚ (πραγματικοί στόχοι από τον server της ΕΛΚΑΚ)
+
+Χρειάζεσαι: laptop, καλώδιο Ethernet, RFD στο laptop, drone με RFD στο Jetson.
+
+```
+ΕΛΚΑΚ server (192.168.1.10) ──Ethernet──► LAPTOP ──RFD──► DRONE
+```
+
+### Βήμα 1: Μία φορά, στο γραφείο με internet
+
+```bash
+cd ~/Desktop/dev/Interceptor
+git pull
+sudo usermod -aG dialout $USER     # μετά κάνε log out και log in
+```
+
+Σταθερή IP στο Ethernet. Βάλε αυτή που σου έδωσαν, εδώ GCS1 = `192.168.1.101`:
+```bash
+sudo nmcli con add type ethernet ifname enp130s0 con-name ELKAK \
+    ipv4.method manual ipv4.addresses 192.168.1.101/24 ipv6.method disabled
+```
+
+### Βήμα 2: Ο χάρτης της ΕΛΚΑΚ (στο γραφείο, με internet)
+
+Εκεί **δεν έχει internet**, οπότε αυτό γίνεται πριν φύγεις.
+```bash
+python3 src/ground_planner.py --port 9002
+```
+1. Άνοιξε `http://localhost:9002`.
+2. Πήγαινε τον χάρτη **πάνω από την ΕΛΚΑΚ**.
+3. Πάτα **«Cache map here»** και περίμενε να γεμίσει.
+4. Κλείσε με `Ctrl+C`.
+
+### Βήμα 3: Το drone
+
+1. Το RFD του drone είναι στο **USB του Jetson**.
+2. Ανάβεις το drone. Η εφαρμογή ξεκινά μόνη της.
+
+### Βήμα 4: Το laptop στο δίκτυό τους
+
+1. **Κλείσε το Wi-Fi** του laptop (είναι κι αυτό `192.168.1.x` και μπερδεύεται).
+2. **Καλώδιο Ethernet** από το laptop στο router τους (Teltonika).
+3. Τρέξε:
+   ```bash
+   sudo nmcli con up ELKAK
+   ping -c 3 192.168.1.10
+   ```
+   Το `ping` πρέπει να απαντά.
+
+### Βήμα 5: Το RFD του laptop
+
+Βάζεις το RFD στο USB του laptop και περιμένεις το **πράσινο φως σταθερό**.
+
+### Βήμα 6: Ξεκινάς
+
+```bash
+cd ~/Desktop/dev/Interceptor
+python3 src/ground_planner.py --port 9002 \
+    --rfd-dev /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_BG013VP7-if00-port0 \
+    --gateway ws://192.168.1.10:18100/gcs --drone-id WASP-01
+```
+1. Στο terminal πρέπει να δεις `[EKETA] connected to ws://192.168.1.10:18100/gcs`.
+2. Άνοιξε `http://localhost:9002`.
+3. Πάνω δεξιά πρέπει να δεις **Drone: linked (RFD 0.5s)**.
+
+Από εδώ το πρόγραμμα κάνει μόνο του τα εξής:
+- ακούει τους στόχους τους στη θύρα **UDP 18200**,
+- απαντά «το πήρα» (ACK) σε κάθε μήνυμα,
+- στέλνει τη θέση του drone μας κάθε δευτερόλεπτο, για να μη μας δουν σαν εχθρό.
+
+### Βήμα 7: Πετάς
+
+1. Πάτα την καρτέλα **ELKAK**.
+2. Οι στόχοι τους εμφανίζονται στο **CUE TARGETS**.
+3. Πάτα **GO** στον στόχο που θες: οπλίζει, απογειώνεται και ακολουθεί 10 m από κάτω.
+
+---
+
+# Κουμπιά στην πτήση (TEST και ΕΛΚΑΚ)
+
+| Θέλω να… | Πατάω |
+|---|---|
+| Ξεκινήσω σε στόχο | **GO** |
+| Αλλάξω στόχο | **SWAP** δίπλα στον άλλο στόχο |
+| Νέος στόχος εμφανίστηκε | Ερώτηση «switch?»: **Yes** ή **No** |
+| Σταματήσω | **ABORT** |
+| Γυρίσει σπίτι | **RTL** |
+
+- Κάθε εντολή περιμένει απάντηση από το drone μέσω RFD (έως 4 s). Αν δεν έρθει, βγαίνει **κόκκινο μήνυμα**: ξαναπάτα, ή ο πιλότος παίρνει τον έλεγχο.
+- Αν χαθεί ο στόχος για 10 s, το drone μένει στη θέση του (ALT_HOLD).
+
+# Αν κάτι δεν πάει καλά
 
 | Βλέπω | Κάνω |
 |---|---|
-| `could not open port` | Το RFD δεν είναι στο USB, ή δεν έκανες το `usermod` + log out/in |
-| Drone: **RFD LOST** | Το RFD του drone δεν απαντά: δες τα φώτα και ότι το Jetson είναι αναμμένο |
-| Ο χάρτης είναι γκρι | Δεν τον αποθήκευσες εκεί (Βήμα 0) |
+| `could not open port` | Το RFD δεν είναι στο USB, ή δεν έκανες `usermod` + log out/in |
+| **RFD LOST** | Το RFD του drone δεν απαντά: φώτα, Jetson αναμμένο |
+| Γκρι χάρτης | Δεν τον αποθήκευσες εκεί (Βήμα 2) |
 | `[EKETA] disconnected` | Καλώδιο, IP (`ip a show enp130s0`), `ping 192.168.1.10` |
 | SEEK δεν πατιέται | Κάτω από τα κουμπιά γράφει τι λείπει (GPS, μπαταρία κ.λπ.) |
