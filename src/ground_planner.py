@@ -1466,7 +1466,6 @@ class Handler(BaseHTTPRequestHandler):
             qs = urlparse(self.path).query
             self._proxy_json(f"http://{JETSON_IP}:{JETSON_HTTP}/cmd?{qs}")
         elif path == "/api/cmd":
-            from urllib.parse import parse_qs
             q = parse_qs(urlparse(self.path).query)
             msn = (q.get("msn") or [""])[0]
             if _RFD and msn:
