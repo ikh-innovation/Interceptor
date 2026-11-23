@@ -1051,10 +1051,13 @@ function pollDrone(){
     document.getElementById("d_mode").textContent=j.fc_mode||"--";
     document.getElementById("d_armed").textContent=j.armed?"YES":"no";
     document.getElementById("drone_st").className=j.linked?"":"off";
-    document.getElementById("drone_st").textContent=(j.rfd_live===false?"RFD LOST "+Math.round(j.rfd_age)+"s":j.linked?"linked":"no FC")
-      +(j.rfd_age!=null&&j.rfd_live!==false?" (RFD "+j.rfd_age.toFixed(1)+"s)":"");
-    var hm=(j.mission||{}).home;
-    if(hm&&hm[0]&&!_cacheAsked){ _cacheAsked=true; cacheMap(hm[0],hm[1]); }
+    var gp=(j.mission||{}).gps||{};
+    document.getElementById("drone_st").textContent=(j.linked?"linked":"no FC")
+      +(j.via==="wifi"?" (Wi-Fi, RFD "+(j.rfd_age!=null?"lost":"not heard yet")+")"
+        :j.rfd_live===false?" (RFD LOST "+Math.round(j.rfd_age)+"s)":j.rfd_age!=null?" (RFD "+j.rfd_age.toFixed(1)+"s)":"")
+      +(gp.sats!=null?" · GPS "+gp.sats+" sat":"");
+    var mm=j.mission||{}, hm=(mm.home&&mm.home[0])?mm.home:((mm.position&&mm.position[0])?mm.position:null);
+    if(hm&&!_cacheAsked){ _cacheAsked=true; cacheMap(hm[0],hm[1]); }
     var m=j.mission||{},pos=m.position,alt=m.height_m;
     document.getElementById("d_alt").textContent=alt!=null?alt.toFixed(1):"--";
     if(pos&&pos.length===2&&pos[0]) updateDrone(pos[0],pos[1],alt);
@@ -1397,6 +1400,15 @@ renderMode();
 
 # ---- HTTP handler -----------------------------------------------------------
 
+def _jetson_http_state():
+    """The Jetson's /state over the network (--jetson), or None (4 s timeout)."""
+    try:
+        with urllib.request.urlopen(f"http://{JETSON_IP}:{JETSON_HTTP}/state", timeout=4) as r:
+            return json.loads(r.read())
+    except Exception:
+        return None
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -1414,15 +1426,22 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         elif path == "/drone/state":
-            if _RFD is not None:
-                st = _RFD.drone_state()
-                if st is None:
-                    self.send_error(503, "no status from the drone over the RFD yet")
-                else:
-                    self._json(st)
+            # The RFD first; while it says nothing, the Jetson over Wi-Fi/GCP
+            # (--jetson) only to show the drone. Commands always go over the RFD.
+            st = _RFD.drone_state() if _RFD is not None else None
+            if st is not None and st.get("rfd_live"):
+                self._json(st)
+                return
+            wifi = _jetson_http_state() if JETSON_IP else None
+            if wifi is not None:
+                wifi["via"] = "wifi"
+                if st is not None:
+                    wifi.update(rfd_age=st.get("rfd_age"), rfd_live=False)
+                self._json(wifi)
+            elif st is not None:
+                self._json(st)
             else:
-                qs = urlparse(self.path).query
-                self._proxy_json(f"http://{JETSON_IP}:{JETSON_HTTP}/state?{qs}")
+                self.send_error(503, "no drone status yet (RFD or Wi-Fi)")
         elif path.startswith("/tiles/"):
             parts = path.split("/")
             data = None
@@ -1565,7 +1584,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     global JETSON_IP, JETSON_HTTP, JETSON_AST, LISTEN_PORT
     p = argparse.ArgumentParser(description="Ground planner: TEST + ELKAK ground station")
-    p.add_argument("--jetson", default="192.168.205.160", help="Jetson IP (default 192.168.205.160)")
+    p.add_argument("--jetson", default="", help="Jetson address over Wi-Fi/GCP, only to show the drone before the RFD is heard (e.g. jetson.34-76-37-31.sslip.io with --jetson-http 80)")
     p.add_argument("--jetson-http", type=int, default=8080, help="Jetson HTTP port (default 8080)")
     p.add_argument("--jetson-ast", type=int, default=8600, help="Jetson ASTERIX UDP port (default 8600)")
     p.add_argument("--listen", type=int, default=18200,

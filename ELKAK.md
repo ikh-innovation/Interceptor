@@ -29,6 +29,7 @@ sudo usermod -aG dialout $USER     # μετά κάνε log out και log in
 ```bash
 python3 src/ground_planner.py --port 9002
 ```
+
 1. Άνοιξε `http://localhost:9002`.
 2. Πήγαινε τον χάρτη εκεί που θα πετάξεις.
 3. Πάτα **«Cache map here»** και περίμενε να γεμίσει (π.χ. `900/900`).
@@ -54,6 +55,7 @@ cd ~/Desktop/dev/Interceptor
 python3 src/ground_planner.py --port 9002 \
     --rfd-dev /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_BG013VP7-if00-port0
 ```
+
 1. Άνοιξε `http://localhost:9002`.
 2. Πάνω δεξιά πρέπει να δεις **Drone: linked (RFD 0.5s)**.
 
@@ -84,6 +86,7 @@ sudo usermod -aG dialout $USER     # μετά κάνε log out και log in
 ```
 
 Σταθερή IP στο Ethernet. Βάλε αυτή που σου έδωσαν, εδώ GCS1 = `192.168.1.101`:
+
 ```bash
 sudo nmcli con add type ethernet ifname enp130s0 con-name ELKAK \
     ipv4.method manual ipv4.addresses 192.168.1.101/24 ipv6.method disabled
@@ -92,9 +95,11 @@ sudo nmcli con add type ethernet ifname enp130s0 con-name ELKAK \
 ### Βήμα 2: Ο χάρτης της ΕΛΚΑΚ (στο γραφείο, με internet)
 
 Εκεί **δεν έχει internet**, οπότε αυτό γίνεται πριν φύγεις.
+
 ```bash
 python3 src/ground_planner.py --port 9002
 ```
+
 1. Άνοιξε `http://localhost:9002`.
 2. Πήγαινε τον χάρτη **πάνω από την ΕΛΚΑΚ**.
 3. Πάτα **«Cache map here»** και περίμενε να γεμίσει.
@@ -114,6 +119,7 @@ python3 src/ground_planner.py --port 9002
    sudo nmcli con up ELKAK
    ping -c 3 192.168.1.10
    ```
+
    Το `ping` πρέπει να απαντά.
 
 ### Βήμα 5: Το RFD του laptop
@@ -128,11 +134,13 @@ python3 src/ground_planner.py --port 9002 \
     --rfd-dev /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_BG013VP7-if00-port0 \
     --gateway ws://192.168.1.10:18100/gcs --drone-id WASP-01
 ```
+
 1. Στο terminal πρέπει να δεις `[EKETA] connected to ws://192.168.1.10:18100/gcs`.
 2. Άνοιξε `http://localhost:9002`.
 3. Πάνω δεξιά πρέπει να δεις **Drone: linked (RFD 0.5s)**.
 
 Από εδώ το πρόγραμμα κάνει μόνο του τα εξής:
+
 - ακούει τους στόχους τους στη θύρα **UDP 18200**,
 - απαντά «το πήρα» (ACK) σε κάθε μήνυμα,
 - στέλνει τη θέση του drone μας κάθε δευτερόλεπτο, για να μη μας δουν σαν εχθρό.
@@ -147,23 +155,23 @@ python3 src/ground_planner.py --port 9002 \
 
 # Κουμπιά στην πτήση (TEST και ΕΛΚΑΚ)
 
-| Θέλω να… | Πατάω |
-|---|---|
-| Ξεκινήσω σε στόχο | **GO** |
-| Αλλάξω στόχο | **SWAP** δίπλα στον άλλο στόχο |
+| Θέλω να…                              | Πατάω                                                |
+| -------------------------------------------- | --------------------------------------------------------- |
+| Ξεκινήσω σε στόχο             | **GO**                                              |
+| Αλλάξω στόχο                      | **SWAP** δίπλα στον άλλο στόχο    |
 | Νέος στόχος εμφανίστηκε | Ερώτηση «switch?»: **Yes** ή **No** |
-| Σταματήσω | **ABORT** |
-| Γυρίσει σπίτι | **RTL** |
+| Σταματήσω                           | **ABORT**                                           |
+| Γυρίσει σπίτι                    | **RTL**                                             |
 
 - Κάθε εντολή περιμένει απάντηση από το drone μέσω RFD (έως 4 s). Αν δεν έρθει, βγαίνει **κόκκινο μήνυμα**: ξαναπάτα, ή ο πιλότος παίρνει τον έλεγχο.
 - Αν χαθεί ο στόχος για 10 s, το drone μένει στη θέση του (ALT_HOLD).
 
 # Αν κάτι δεν πάει καλά
 
-| Βλέπω | Κάνω |
-|---|---|
-| `could not open port` | Το RFD δεν είναι στο USB, ή δεν έκανες `usermod` + log out/in |
-| **RFD LOST** | Το RFD του drone δεν απαντά: φώτα, Jetson αναμμένο |
-| Γκρι χάρτης | Δεν τον αποθήκευσες εκεί (Βήμα 2) |
-| `[EKETA] disconnected` | Καλώδιο, IP (`ip a show enp130s0`), `ping 192.168.1.10` |
+| Βλέπω                   | Κάνω                                                                                            |
+| ---------------------------- | --------------------------------------------------------------------------------------------------- |
+| `could not open port`      | Το RFD δεν είναι στο USB, ή δεν έκανες `usermod` + log out/in              |
+| **RFD LOST**           | Το RFD του drone δεν απαντά: φώτα, Jetson αναμμένο                        |
+| Γκρι χάρτης        | Δεν τον αποθήκευσες εκεί (Βήμα 2)                                          |
+| `[EKETA] disconnected`     | Καλώδιο, IP (`ip a show enp130s0`), `ping 192.168.1.10`                                  |
 | SEEK δεν πατιέται | Κάτω από τα κουμπιά γράφει τι λείπει (GPS, μπαταρία κ.λπ.) |
