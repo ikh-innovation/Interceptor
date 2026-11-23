@@ -10,7 +10,6 @@ from time import perf_counter, sleep
 from wasp import WaspGuidance, interpolate_rotation
 from flight_logging import BatteryLog, FlightLogs
 from safedown import SafeDown
-import rfd_tunnel
 
 try:
     from pymavlink import mavutil
@@ -922,12 +921,6 @@ class ArduPilotAcro(FcBackend):
         self._stop = threading.Event()
         self._rx = None
         self._hb = None
-        # The laptop's RFD on the FC: our lines arrive and leave as MAVLink TUNNEL.
-        self._tunnel_rx = rfd_tunnel.Reassembler()
-        self._tunnel_lock = threading.Lock()
-        self._tunnel_id = 0
-        self.tunnel_rx_n = self.tunnel_tx_n = 0
-        self.tunnel_rx_t = None
         self._sent_pwm = {}
         self._sent_hist = {}
         self._steer_since = None
@@ -1431,45 +1424,6 @@ class ArduPilotAcro(FcBackend):
                         self._att_hist.pop(0)
             elif t == "ADSB_VEHICLE":
                 self._rx_adsb(msg)
-            elif t == "TUNNEL":
-                self._rx_tunnel(msg)
-
-    def _rx_tunnel(self, msg):
-        """One TUNNEL piece from the laptop (forwarded by the FC from its RFD port)."""
-        if int(getattr(msg, "payload_type", -1)) != rfd_tunnel.PAYLOAD_TYPE:
-            return
-        n = max(0, min(int(msg.payload_length), rfd_tunnel.PAYLOAD_MAX))
-        line = self._tunnel_rx.feed(bytes(msg.payload[:n]))
-        if line is None:
-            return
-        self.tunnel_rx_n += 1
-        self.tunnel_rx_t = perf_counter()
-        cb = getattr(self, "tunnel_callback", None)
-        if cb is not None:
-            try:
-                cb(line.decode("ascii", "replace"))
-            except Exception:
-                pass
-
-    def tunnel_send(self, line):
-        """One of our lines to the laptop as broadcast TUNNEL(s); the FC forwards
-        it out of its RFD port.  Silent while the link-loss test mutes the GCS."""
-        if self.master is None or not self.linked or self.gcs_muted:
-            return False
-        data = str(line).encode("ascii", "replace")
-        try:
-            with self._tunnel_lock:
-                mav = self.master.mav
-                enc = getattr(self, "_tunnel_enc", None)
-                if enc is None or enc.srcSystem != mav.srcSystem:
-                    enc = self._tunnel_enc = rfd_tunnel.encoder(self.master, mav.srcSystem, mav.srcComponent)
-                self._tunnel_id = (self._tunnel_id + 1) & 0xFF
-                for frag in rfd_tunnel.fragments(data, self._tunnel_id):
-                    enc.tunnel_send(0, 0, rfd_tunnel.PAYLOAD_TYPE, len(frag), rfd_tunnel.padded(frag))
-            self.tunnel_tx_n += 1
-            return True
-        except Exception:
-            return False
 
     def _rx_adsb(self, msg):
         cb = getattr(self, "adsb_callback", None)

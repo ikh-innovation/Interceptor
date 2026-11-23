@@ -777,10 +777,6 @@ class SeekerMissions:
         if self.b is not None and not getattr(self.b, '_adsb_cue', False):
             self.b._adsb_cue = True
             self.b.adsb_callback = self.cue.ingest_adsb
-            if callable(getattr(self.b, "tunnel_send", None)):
-                # The laptop's RFD on the FC: our lines through MAVLink TUNNEL.
-                self.b.tunnel_callback = self.cue.ingest_tunnel
-                self.cue.tunnel = self.b.tunnel_send
         if self.run is None:
             if now - self._pre_t >= self.CHECK_S:
                 self._pre_t = now
@@ -828,7 +824,7 @@ class SeekerMissions:
     def _rfd_downlink(self, now):
         """The laptop's map and buttons, over the RFD (no Wi-Fi after start):
         $RFDTEL,<json> twice a second, $RFDPAR,<json> every 10 s."""
-        if not self.cue.link_ok():
+        if not self.cue.rfd_open:
             return
         b = self.b
         tel = b.telemetry() if b is not None else {}
