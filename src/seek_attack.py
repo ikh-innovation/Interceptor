@@ -58,6 +58,10 @@ class SeekAttack:
         if self.done is None:
             self.done = why
 
+    def hold(self, why):
+        """Stop attacking and hold a hover (sticks centred) from now on."""
+        self._finish(why)
+
     def output(self, mapper, now, ctx):
         """The four sticks (PWM) for ALT_HOLD, or {} when not attacking."""
         if not self.active:

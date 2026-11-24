@@ -2043,9 +2043,12 @@ class SeekerMissions:
         self._event(f"ENGAGE (conf {conf:.2f}), {cue.get('label')} {cue.get('dist_m')} m: ATTACK in ALT_HOLD")
         r["attack"] = True
         r["state"], r["why"] = "ATTACK", "climbing into the target (ALT_HOLD)"
-        mission.seek_attack.begin(self.now)
+        mission.seek_attack.begin(self.now)           # sticks from now on (ignored while still GUIDED)
         yield from self._mode("ALT_HOLD")
         while mission.seek_attack.active and mission.seek_attack.done is None:
+            if b.mode_name != "ALT_HOLD":
+                yield from self._attack_left(mission)
+                return
             yield
         why = mission.seek_attack.done or "attack stopped"
         closest = mission.seek_attack.closest_deg
@@ -2054,11 +2057,31 @@ class SeekerMissions:
         r["why"] = f"{why}: hovering"
         t0 = self.now
         while self.now - t0 < self.ATTACK_HOVER_S:      # sticks centred: ALT_HOLD holds it
+            if b.mode_name != "ALT_HOLD":
+                yield from self._attack_left(mission)
+                return
             yield
+        # RTL is asked for while the hover sticks are still held: the FC never sits
+        # in ALT_HOLD on the pilot's stick (down at ARM), not even for a moment.
+        r["state"], r["why"] = "RTL", "returning after the attack"
+        r["expect_disarm"] = True
+        yield from self._mode("RTL")
         r["attack"] = False
         mission.seek_attack.stop()
-        r["state"], r["why"] = "RTL", "returning after the attack"
-        yield from self._rtl("Return after the attack")
+        yield from self._land_watch("Return after the attack", 900)
+
+    def _attack_left(self, mission):
+        """The FC left ALT_HOLD during the attack without SEEK asking (the pilot's
+        switch, STABILIZE included, or an FC failsafe): stop the sticks, send nothing."""
+        r = self.run
+        mode = self.b.mode_name
+        r["attack"] = False
+        mission.seek_attack.stop()
+        r["hands_off"] = True
+        self._event(f"FC in {mode} during the attack: the pilot (or the FC) has it, the mission sends nothing more")
+        self.check("Attack", None, f"ended: FC in {mode}")
+        r["state"], r["why"] = "PILOT", f"FC in {mode}"
+        yield from self._watch()
 
     ATTACK_HOVER_S = 2.0
 
@@ -2067,7 +2090,13 @@ class SeekerMissions:
         """SEEK's ALT_HOLD attack (and its hover) owns the sticks; ABORT, RTL or a
         pilot takeover end it at once."""
         r = self.run
-        return bool(r is not None and r.get("attack") and not r["hands_off"] and not r["aborted"])
+        if r is None or not r.get("attack") or r["hands_off"]:
+            return False
+        if r["aborted"]:
+            # ABORT / RTL: keep the hover sticks until the FC is out of ALT_HOLD,
+            # so it never hangs on the pilot's stick (down at ARM) in between.
+            return self.b is not None and self.b.mode_name == "ALT_HOLD"
+        return True
 
     @property
     def blocking(self):

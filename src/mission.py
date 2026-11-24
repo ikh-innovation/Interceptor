@@ -1019,6 +1019,8 @@ class Mission:
                     self._reset_motion()
                     self._set_phase("PILOT", now, "Seeker mission")
                 if attacking:
+                    if (self.seeker.run or {}).get("aborted"):
+                        self.seek_attack.hold("ABORT / RTL")   # hover until the FC is out of ALT_HOLD
                     try:
                         return self.seek_attack.output(self.mapper, now, ctx)
                     except (ValueError, KeyError, TypeError, OverflowError, ZeroDivisionError):
