@@ -212,7 +212,7 @@ def describe(mid, p, lim):
                            if p["standoff"] > 0 else
                            ", directly underneath (a new target on the feed: asks to switch)"),
                         f"Camera on the target {_fmt(p['det_s'])} s → AUTO ENGAGE: "
-                         "ACRO, WASP takes over with its own settings (PARAMETERS > WASP). "
+                         "ATTACK in ALT_HOLD: climb into it, leaning toward it; then hover and RTL. "
                          "ABORT or the geofence: RTL. "
                          "Pilot takeover: ACRO + throttle + CH8"]
     return []
@@ -2037,26 +2037,37 @@ class SeekerMissions:
             yield
         self._at(5)
         cue = r["cue"] or {}
-        self._event(f"ENGAGE (conf {conf:.2f}), {cue.get('label')} {cue.get('dist_m')} m: "
-                    "ACRO, WASP takes over")
-        r["expect_disarm"] = True
-        yield from self._mode("ACRO")
-        mission.wasp.enabled = True
-        mission.wasp.camera_confirmed = True
-        mission.camera_mount_deg = 90.0
-        wp = mission.wasp.params           # WASP's own settings, untouched by SEEK
-        self._event(f"WASP settings: throttle {_fmt(wp.get('throttle'))}, rate {_fmt(wp.get('rate'))}°/s, "
-                    f"gain {_fmt(wp.get('gain'))}")
-        with mission._lock:
-            mission._req_engage = True
-        self.check("WASP engage", True, f"ACRO; target {cue.get('label', '?')} "
-                   f"{cue.get('dist_m')} m — WASP launched")
-        r["handover"] = True
-        self.handover = self.now
-        r["state"], r["why"] = "AI", "WASP engaged"
-        while self.b.armed:
+        # The camera has it, overhead: climb into it in ALT_HOLD (seek_attack.py),
+        # not ACRO.  The pilot's switch is already UP (ALT_HOLD), so this is no
+        # takeover, and if the sticks are ever released ALT_HOLD holds the height.
+        self._event(f"ENGAGE (conf {conf:.2f}), {cue.get('label')} {cue.get('dist_m')} m: ATTACK in ALT_HOLD")
+        r["attack"] = True
+        r["state"], r["why"] = "ATTACK", "climbing into the target (ALT_HOLD)"
+        mission.seek_attack.begin(self.now)
+        yield from self._mode("ALT_HOLD")
+        while mission.seek_attack.active and mission.seek_attack.done is None:
             yield
-        self._landed("Landed", at_home=False)
+        why = mission.seek_attack.done or "attack stopped"
+        closest = mission.seek_attack.closest_deg
+        self.check("Attack", None, why + ("" if closest is None else f"; closest {closest:.0f}° off the vertical"))
+        self._event(f"ATTACK over: {why}. Hover {self.ATTACK_HOVER_S:g} s, then RTL")
+        r["why"] = f"{why}: hovering"
+        t0 = self.now
+        while self.now - t0 < self.ATTACK_HOVER_S:      # sticks centred: ALT_HOLD holds it
+            yield
+        r["attack"] = False
+        mission.seek_attack.stop()
+        r["state"], r["why"] = "RTL", "returning after the attack"
+        yield from self._rtl("Return after the attack")
+
+    ATTACK_HOVER_S = 2.0
+
+    @property
+    def attacking(self):
+        """SEEK's ALT_HOLD attack (and its hover) owns the sticks; ABORT, RTL or a
+        pilot takeover end it at once."""
+        r = self.run
+        return bool(r is not None and r.get("attack") and not r["hands_off"] and not r["aborted"])
 
     @property
     def blocking(self):

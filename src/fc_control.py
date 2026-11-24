@@ -2127,6 +2127,24 @@ class ArduPilotAcro(FcBackend):
             return self.release()
         return self._steer_calibrated_pwm(pwm_by_axis)
 
+    def seek_attack_ready(self):
+        """SEEK's ALT_HOLD attack may drive the sticks: armed, ALT_HOLD (GUIDED for
+        the moment of the switch, where the FC ignores them), fresh attitude."""
+        if not self.linked or not self.armed:
+            return "the attack needs FC link + armed"
+        if self.mode_name not in ("ALT_HOLD", "GUIDED"):
+            return f"FC in {self.mode_name}: the attack flies ALT_HOLD"
+        if perf_counter() - getattr(self, "_heartbeat_t", -1e9) > 1.5:
+            return "no fresh FC heartbeat"
+        if self.wasp_attitude() is None:
+            return "no fresh attitude for the attack"
+        return ""
+
+    def steer_attack_pwm(self, pwm_by_axis):
+        if self.seek_attack_ready():
+            return self.release()
+        return self._steer_calibrated_pwm(pwm_by_axis)
+
     def steer_safedown_pwm(self, pwm_by_axis):
         if self.safedown_flight_ready():
             return self.release()
@@ -3149,7 +3167,8 @@ class AcroCommander:
         self._tx.start()
 
     def compute(self, err_x, err_y, state, fw, fh, bbox=None, capture_t=None):
-        if self.mission is not None and self.mission.wasp.enabled:
+        attack = self.mission is not None and getattr(getattr(self.mission, "seek_attack", None), "active", False)
+        if self.mission is not None and (self.mission.wasp.enabled or attack):
             cmd = self.law.neutral()
             if state == "SEARCH":
                 self.wasp_guidance.reset()
@@ -3449,6 +3468,12 @@ class AcroCommander:
                 why = b.wasp_ready()
                 if why:
                     return False, why
+        elif self.mission is not None and getattr(getattr(self.mission, "seek_attack", None), "active", False):
+            if not isinstance(b, ArduPilotAcro):
+                return False, "the SEEK attack requires ArduPilot MAVLink"
+            why = b.seek_attack_ready()
+            if why:
+                return False, why
         elif self.mission is not None and (abs(self.mission.camera_mount_deg - 30) > 0.1
                 or abs(math.degrees(getattr(self.law, "cam_tilt", math.pi/6)) - 30) > 0.1):
             return False, ("AUTO / SEMI-AUTO hover tracking was built for a 30 degree camera and is not "
@@ -3532,6 +3557,8 @@ class AcroCommander:
                 written = b.steer_safedown_pwm(out)
             elif self.mission.idle.active:
                 written = b.steer_idle_pwm(out, allow_acro=not self.mission.idle.confirmed)
+            elif getattr(getattr(self.mission, "seek_attack", None), "active", False):
+                written = b.steer_attack_pwm(out)
             else:
                 written = (b.steer_wasp_pwm(out, in_flight=self.mission.wasp.started is not None)
                            if self.mission.wasp.enabled else b.steer_pwm(out))

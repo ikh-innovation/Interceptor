@@ -14,6 +14,7 @@ import threading
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import seeker_missions as S
+from seek_attack import SeekAttack
 from geofence import Geofence
 
 FAILED = []
@@ -257,6 +258,7 @@ class FakeMission:
         self.wasp = FakeWasp()
         self._fence_state = (None, None)
         self._req_engage = False
+        self.seek_attack = SeekAttack()
         self._lock = threading.Lock()
 
 
@@ -444,7 +446,7 @@ def seek_run(answers=("yes",), lose_after=None, second_at=None, see_at=150.0, rf
     """answers: what the operator taps, in order, for each question."""
     k, fc, mapper, m, sm = setup()
     sm._cue_started = True                       # no UDP socket / radio in the test: data goes in directly
-    st = dict(asked=[], answers=list(answers))
+    st = dict(asked=[], answers=list(answers), m=m)
     t0 = k.t
 
     def track(n):
@@ -517,24 +519,28 @@ def seek_run(answers=("yes",), lose_after=None, second_at=None, see_at=150.0, rf
         started = started or sm.active
         if started and not sm.active:
             break
-        if stop_at_ai and sm.run and sm.run.get("state") == "AI":
+        if stop_at_ai and sm.run and sm.run.get("state") in ("AI", "ATTACK"):
             break
     return fc, sm, st
 
 
 fc, sm, st = seek_run()
-h = sm.take_handover()
-check("SEEK: camera lock -> auto engage -> ACRO and WASP", h is not None and fc.mode_name == "ACRO"
-      and fc.armed and len(st["asked"]) == 0,
-      f"mode {fc.mode_name}, asked {st['asked']}")
+for _ in range(40):                      # let the switch to ALT_HOLD go through
+    sm.cycle(sm.now + 0.05, sm.c, st["m"], sm.ctx)
+    fc.step(0.05)
+check("SEEK: camera lock -> auto engage -> ATTACK in ALT_HOLD (not ACRO / WASP)",
+      sm.run and sm.run.get("state") == "ATTACK" and fc.mode_name == "ALT_HOLD" and fc.armed
+      and st["m"].seek_attack.active and sm.attacking and not st["m"].wasp.enabled and len(st["asked"]) == 0,
+      f"state {sm.run and sm.run.get('state')}, mode {fc.mode_name}, asked {st['asked']}")
 check("SEEK: no result screen over the video", sm.result is None)
-check("SEEK: stays on after the handover (AI state), not flying the drone", sm.active and not sm.blocking)
+check("SEEK: the attack owns the sticks (blocking), nothing handed to the AI", sm.active and sm.blocking
+      and sm.take_handover() is None)
 check("SEEK: flew at the cue's height minus 'below'", abs(fc.alt - (80 - 10)) < 5, f"{fc.alt:.1f} m")
 
 fc, sm, st = seek_run(answers=("yes",), lose_after=25, second_at=60)
 kinds = [(x[1], x[2], x[3]) for x in st["asked"]]
 check("SEEK: cue lost -> waits; a new target asks once; YES flies to it; auto engage",
-      sm.take_handover() is not None
+      sm.run is not None and sm.run.get("state") == "ATTACK"
       and any(k[0] in ("follow", "switch") and k[1] == "TRK99" for k in kinds)
       and sm.cue.selected == "TRK99", str(kinds))
 
@@ -551,18 +557,19 @@ check("SEEK: cue lost -> holds and waits (no RTL by itself)", sm.active and fc.a
       f"active {sm.active} mode {fc.mode_name}")
 
 fc, sm, st = seek_run(rfd=True)
-check("SEEK: the cue over the RFD radio ($RFD lines) works the same", sm.take_handover() is not None
-      and fc.mode_name == "ACRO",
+check("SEEK: the cue over the RFD radio ($RFD lines) works the same",
+      sm.run is not None and sm.run.get("state") == "ATTACK",
       f"mode {fc.mode_name}, asked {st['asked']}")
 
 fc, sm, st = seek_run(stop_at_ai=False, abort_after=200, see_at=200.0, until=2400)
-check("SEEK: ABORT while the AI flies -> RTL and disarm", st.get("aborted") and not fc.armed
+check("SEEK: ABORT during the attack -> RTL and disarm", st.get("aborted") and not fc.armed
       and fc.mode_name == "RTL",
       f"armed {fc.armed}, mode {fc.mode_name}")
 
 fc, sm, st = seek_run(camera=True)
 az, el, d = st.get("cam_now") or (99, 99, 0)
-check("SEEK: the nose is on the target when the AI takes it", abs(az) < 10.0 and sm.take_handover() is not None,
+check("SEEK: the nose is on the target when the attack starts", abs(az) < 10.0
+      and sm.run is not None and sm.run.get("state") == "ATTACK",
       f"az {az:+.1f} deg at {d:.0f} m")
 
 # ---- settings are validated and saved ---------------------------------------------

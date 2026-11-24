@@ -10,6 +10,7 @@ from idle import Idle
 from safedown import Handover, SafeDown
 from geofence import Geofence, parse_points
 from seeker_missions import SeekerMissions
+from seek_attack import SeekAttack
 
 SPEEDS = {
     "climb":   {"SLOW": 1.0, "MEDIUM": 3.0, "FAST": 8.0},
@@ -400,6 +401,7 @@ class Mission:
         self._lock_rate = 0.0
         self._lock_still = 0.0
         self._req_engage = False
+        self.seek_attack = SeekAttack()     # SEEK's ALT_HOLD attack after the camera lock
         self._req_abort = False
         self._req_auto = None
         self.auto_enabled = False
@@ -1009,10 +1011,18 @@ class Mission:
             # Seeker test missions fly GUIDED by MAVLink commands: no stick
             # overrides while one runs (the empty output releases them).
             self.seeker.cycle(now, self.mapper, self, ctx)
+            attacking = getattr(self.seeker, "attacking", False)
+            if self.seek_attack.active and not attacking:
+                self.seek_attack.stop()             # ABORT, RTL, a takeover or the run's end
             if self.seeker.blocking:
                 if self.phase != "PILOT":
                     self._reset_motion()
                     self._set_phase("PILOT", now, "Seeker mission")
+                if attacking:
+                    try:
+                        return self.seek_attack.output(self.mapper, now, ctx)
+                    except (ValueError, KeyError, TypeError, OverflowError, ZeroDivisionError):
+                        return {}               # released: ALT_HOLD on the pilot's sticks
                 return {}
             handover = self.seeker.take_handover()
             if handover is not None:
