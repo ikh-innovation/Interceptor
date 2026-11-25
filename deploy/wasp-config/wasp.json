@@ -36,11 +36,21 @@
    "lead": 0.08,
    "camera_roll": 0.0,
    "centre_timer": 3.0
+  },
+  "dynamic": {
+   "straight": 0.0,
+   "blend": 0.15,
+   "rate": 140.0,
+   "gain": 3.2,
+   "lead": 0.0,
+   "camera_roll": 0.0,
+   "centre_timer": 3.0
   }
  },
  "shared": {
   "throttle": 1.0,
   "launch_s": 0.0,
-  "ramp": 0.1
+  "ramp": 0.1,
+  "steady": 0.0
  }
 }

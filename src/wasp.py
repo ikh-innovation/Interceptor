@@ -94,26 +94,29 @@ class WaspGuidance:
 
     @staticmethod
     def rates(observation, att, now, gain=2.0, lead_s=0.08, max_rate_dps=90.0):
-        age = now - observation["capture_t"]
-        if not 0 <= age <= 0.25:
-            raise ValueError("camera observation stale")
-        world = observation["bearing"]
-        velocity = observation["bearing_rate"]
-
-
-        predicted = unit(tuple(v + (age+lead_s)*d for v, d in zip(world, velocity)))
-        mat = rotation(att)
-        body = rotate(mat, predicted, inverse=True)
-        if body[2] >= -0.15:
-            raise ValueError("target outside thrust-axis guidance cone")
-
-        error = cross((0.0, 0.0, -1.0), body)
-        ff = rotate(mat, cross(world, velocity), inverse=True)
+        error, ff = WaspGuidance.aim(observation, att, now, lead_s)
         rates = (gain*error[0]+ff[0], gain*error[1]+ff[1], 0.0)
         norm = math.hypot(*rates[:2])
         limit = math.radians(max_rate_dps)
         scale = min(1.0, limit / max(norm, 1e-9))
         return tuple(v*scale for v in rates)
+
+    @staticmethod
+    def aim(observation, att, now, lead_s=0.08):
+        """Body error and line-of-sight rate, the same pair `rates` commands from."""
+        age = now - observation["capture_t"]
+        if not 0 <= age <= 0.25:
+            raise ValueError("camera observation stale")
+        world = observation["bearing"]
+        velocity = observation["bearing_rate"]
+        predicted = unit(tuple(v + (age+lead_s)*d for v, d in zip(world, velocity)))
+        mat = rotation(att)
+        body = rotate(mat, predicted, inverse=True)
+        if body[2] >= -0.15:
+            raise ValueError("target outside thrust-axis guidance cone")
+        error = cross((0.0, 0.0, -1.0), body)
+        ff = rotate(mat, cross(world, velocity), inverse=True)
+        return error, ff
 
 
 class Wasp:
@@ -124,15 +127,43 @@ class Wasp:
     SETTINGS = {"throttle": (0.75, 0.85, 1.0), "ramp": (0.0, 0.1, 0.25, 0.5),
                 "straight": (0.0, 0.5, 1.0, 2.0), "blend": (0.25, 0.5, 1.0),
                 "rate": (30.0, 45.0, 60.0, 90.0, 120.0), "gain": (2.0, 4.0, 6.0),
-                "lead": (0.0, 0.08, 0.15), "camera_roll": (0.0, 90.0, 180.0, 270.0)}
+                "lead": (0.0, 0.08, 0.15), "camera_roll": (0.0, 90.0, 180.0, 270.0),
+                "steady": (0.0, 1.0)}
     LAUNCH_SECONDS_MIN = 0.0
     LAUNCH_SECONDS_MAX = 60.0
-    SHARED_KEYS = ("throttle", "launch_s", "ramp")
+    SHARED_KEYS = ("throttle", "launch_s", "ramp", "steady")
+    # Steady steering: a large miss is eased in, and a reversal waits until the
+    # picture has stayed on the new side.  Off leaves the command untouched.
+    STEADY_KNEE = math.radians(8.0)
+    STEADY_DEADBAND = math.radians(0.4)
+    STEADY_HOLD_S = 0.12
+    STEADY_BRAKE_S = 0.45
+    STEADY_ACCEL = math.radians(80.0)
+    # Dynamic keeps the lock on the crosshair.  The numbers are fixed: the
+    # picture is reprojected with the current attitude between frames, and the
+    # gyro rate is braked even while the chase is still fading in.
+    CLASSIC_PROFILES = ("smooth", "standard", "responsive", "extra")
+    LOCKED_STEERING = ("straight", "blend", "rate", "gain", "lead")
+    DYN_KP = 3.2
+    DYN_KD = 1.4
+    DYN_BRAKE = math.radians(280.0)
+    DYN_RATE = 140.0
+    DYN_SLEW = math.radians(420.0)
+    DYN_DEAD = math.radians(0.35)
+    DYN_GYRO_TAU = 0.04
+    # Line-of-sight rate of the target itself, after a cap and a short filter.
+    # Gain 1 holds a steady crossing on the crosshair.  The cap stops a bad
+    # velocity sample from throwing the stick.
+    DYN_FF_GAIN = 1.0
+    DYN_FF_CAP = math.radians(45.0)
+    DYN_FF_TAU = 0.08
     STEERING_PROFILES = {
         "smooth": dict(blend=1.0, rate=45.0, gain=2.0),
         "standard": dict(blend=0.5, rate=60.0, gain=2.0),
         "responsive": dict(blend=0.5, rate=90.0, gain=4.0),
         "extra": dict(blend=0.25, rate=120.0, gain=6.0, lead=0.08, camera_roll=0.0),
+        "dynamic": dict(straight=0.0, blend=0.15, rate=DYN_RATE, gain=DYN_KP,
+                        lead=0.0, camera_roll=0.0, dynamic=1.0),
     }
 
     def __init__(self):
@@ -140,7 +171,7 @@ class Wasp:
         self.camera_confirmed = False
         self.params = dict(throttle=1.0, ramp=0.1, straight=0.5, blend=0.5,
                            rate=60.0, gain=2.0, lead=0.08, camera_roll=0.0, launch_s=0.0,
-                           centre_timer=3.0)
+                           centre_timer=3.0, steady=0.0)
         profile_defaults = {key: value for key, value in self.params.items() if key not in self.SHARED_KEYS}
         self.profiles = {name: dict(profile_defaults, **settings)
                          for name, settings in self.STEERING_PROFILES.items()}
@@ -151,9 +182,13 @@ class Wasp:
         self.used = False
         self._output_t = None
         self._rates = (0.0, 0.0, 0.0)
+        self._reset_steady()
 
     def steering_profile(self):
         return self.active_profile
+
+    def dynamic_active(self):
+        return bool(self.params.get("dynamic"))
 
     @classmethod
     def valid_param(cls, key, value):
@@ -170,7 +205,9 @@ class Wasp:
                 if name not in self.profiles or not isinstance(settings, dict):
                     continue
                 for key, value in settings.items():
-                    if key in self.SHARED_KEYS:
+                    if key in self.SHARED_KEYS or key == "dynamic":
+                        continue
+                    if name == "dynamic" and key in self.LOCKED_STEERING:
                         continue
                     try:
                         value = float(value)
@@ -178,6 +215,7 @@ class Wasp:
                         continue
                     if self.valid_param(key, value):
                         self.profiles[name][key] = value
+        self.params.pop("dynamic", None)
         self.params.update(self.profiles[self.active_profile])
 
 
@@ -204,6 +242,7 @@ class Wasp:
         self.used = True
         self._output_t = now
         self._rates = (0.0, 0.0, 0.0)
+        self._reset_steady()
 
     def progress(self, now):
         if self.launch_t is not None:
@@ -229,11 +268,138 @@ class Wasp:
                     straight_remaining_s=round(remaining, 2), steering_blend=blend,
                     target_acquired=True)
 
+    def _reset_steady(self):
+        self._steady_allow = [0, 0]
+        self._steady_hold = [0.0, 0.0]
+        self._steady_prev = None
+        self._steady_rate = [0.0, 0.0]
+        self._gyro_f = None
+        self._ff_f = None
+
+    def _steady_desired(self, desired, error, dt):
+        # A correction stays until the picture has kept the new side.  Braking
+        # only shrinks a command; it cannot flip it.  The small axis waits
+        # while one axis is still far from the target.
+        knee, dead = self.STEADY_KNEE, self.STEADY_DEADBAND
+        cmd = [0.0, 0.0, 0.0]
+        prev = self._steady_prev
+        alpha = 0.0 if dt <= 0 else dt / (0.08 + dt)
+        for i in (0, 1):
+            e = error[i]
+            de = 0.0 if prev is None or dt <= 0 else (e - prev[i]) / dt
+            self._steady_rate[i] += alpha * (de - self._steady_rate[i])
+            if abs(e) <= dead:
+                shaped, sign = 0.0, 0
+            else:
+                sign = 1 if e > 0 else -1
+                scale = 1.0 if abs(e) <= knee else (knee + 0.25 * (abs(e) - knee)) / abs(e)
+                shaped = desired[i] * scale
+                braked = shaped + self.STEADY_BRAKE_S * self._steady_rate[i]
+                if shaped == 0 or braked * shaped < 0:
+                    braked = 0.0
+                elif abs(braked) > abs(shaped):
+                    braked = shaped
+                shaped = braked
+            if sign == 0 or self._steady_allow[i] in (0, sign):
+                if sign:
+                    self._steady_allow[i] = sign
+                self._steady_hold[i] = 0.0
+                cmd[i] = shaped
+            else:
+                self._steady_hold[i] += dt
+                if self._steady_hold[i] >= self.STEADY_HOLD_S:
+                    self._steady_allow[i] = sign
+                    self._steady_hold[i] = 0.0
+                    cmd[i] = shaped
+                else:
+                    cmd[i] = 0.0
+        major = 0 if abs(error[0]) >= abs(error[1]) else 1
+        minor = 1 - major
+        if abs(error[major]) > knee and abs(error[major]) > 2 * abs(error[minor]):
+            cmd[minor] = 0.0
+        self._steady_prev = (error[0], error[1])
+        return tuple(cmd)
+
+    def _gyro_sample(self, att):
+        sample = []
+        for key in ("rollspeed", "pitchspeed"):
+            try:
+                value = float((att or {}).get(key) or 0.0)
+            except (TypeError, ValueError):
+                value = 0.0
+            sample.append(value if math.isfinite(value) else 0.0)
+        return sample
+
+    def _los_feedforward(self, ff, dt):
+        if self._ff_f is None:
+            self._ff_f = [0.0, 0.0]
+        cap = self.DYN_FF_CAP
+        alpha = 0.0 if dt <= 0.0 else dt / (self.DYN_FF_TAU + dt)
+        out = []
+        for i in (0, 1):
+            try:
+                sample = float(ff[i] if ff is not None else 0.0)
+            except (TypeError, ValueError, IndexError):
+                sample = 0.0
+            if not math.isfinite(sample):
+                sample = 0.0
+            sample = max(-cap, min(cap, sample))
+            self._ff_f[i] += alpha * (sample - self._ff_f[i])
+            out.append(self.DYN_FF_GAIN * self._ff_f[i])
+        return out
+
+    def _dynamic_rates(self, error, att, dt, blend, ff=None):
+        # Chase only as fast as the airframe can stop, and cancel gyro rate
+        # that is already carrying the lock through the crosshair.  The brake
+        # is not slewed and is not limited by the stop distance: the launch
+        # pitch arrives before the next camera frame.
+        kp, kd = self.DYN_KP, self.DYN_KD
+        cap = math.radians(self.DYN_RATE)
+        measured = self._gyro_sample(att)
+        if self._gyro_f is None:
+            self._gyro_f = measured
+        elif dt > 0.0:
+            alpha = dt / (self.DYN_GYRO_TAU + dt)
+            for i in (0, 1):
+                self._gyro_f[i] += alpha * (measured[i] - self._gyro_f[i])
+        pursuit = [0.0, 0.0]
+        for i in (0, 1):
+            e = 0.0 if abs(error[i]) <= self.DYN_DEAD else error[i]
+            stop = math.sqrt(max(0.0, 2.0 * self.DYN_BRAKE * abs(e)))
+            pursuit[i] = max(-cap, min(cap, max(-stop, min(stop, kp * e))))
+            delta = pursuit[i] - self._rates[i]
+            limit = self.DYN_SLEW * dt
+            if abs(delta) > limit:
+                delta = math.copysign(limit, delta)
+            pursuit[i] = self._rates[i] + delta
+        self._rates = (pursuit[0], pursuit[1], 0.0)
+        los = self._los_feedforward(ff, dt)
+        cmd = [0.0, 0.0, 0.0]
+        for i in (0, 1):
+            e = 0.0 if abs(error[i]) <= self.DYN_DEAD else error[i]
+            stop = math.sqrt(max(0.0, 2.0 * self.DYN_BRAKE * abs(e)))
+            target = blend * pursuit[i]
+            gyro = self._gyro_f[i]
+            # Rate relative to the target's own motion.  A fixed target has
+            # none, so a climb that is already too fast drops the chase and brakes.
+            relative = gyro - los[i]
+            if e * relative > 0.0 and abs(target) > 1e-3 and abs(relative) > abs(target):
+                fast = min(1.0, (abs(relative) - abs(target)) / abs(target))
+                target *= 1.0 - fast
+            out = target - kd * (relative - target)
+            # Same sign means the nose is still closing on the picture.
+            # The opposite sign means it is already crossing, so brake in full.
+            if e != 0.0 and out * e > 0.0 and relative * e >= 0.0:
+                out = math.copysign(min(abs(out), stop), out)
+            cmd[i] = max(-cap, min(cap, out + los[i]))
+        return tuple(cmd)
+
     def lose_target(self):
 
 
         self.acquired_t = None
         self._rates = (0.0, 0.0, 0.0)
+        self._reset_steady()
 
     def acquire(self, now, ctx):
 
@@ -262,17 +428,46 @@ class Wasp:
 
 
 
+        dt = max(0.0, min(0.1, now-self._output_t))
+        blend = self.progress(now)["steering_blend"]
+        if self.dynamic_active() and self.acquired_t is not None:
+            # Keep the target's own motion.  A wild velocity sample is clamped
+            # so it cannot push the aim point out of the guidance cone or
+            # silence the gyro brake.  Lead stays 0: attitude lag must not
+            # be added again on top of the gyro.
+            held = dict(ctx["ai_cmd"])
+            raw_rate = held.get("bearing_rate") or (0.0, 0.0, 0.0)
+            clamped = []
+            for value in list(raw_rate)[:3]:
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    value = 0.0
+                if not math.isfinite(value):
+                    value = 0.0
+                clamped.append(max(-8.0, min(8.0, value)))
+            held["bearing_rate"] = tuple(clamped)
+            error, ff = WaspGuidance.aim(held, ctx["att"], now, lead_s=0.0)
+            commanded = self._dynamic_rates(error, ctx.get("att"), dt, blend, ff)
+            self._output_t = now
+            ramp = p.get("ramp", 0.0)
+            elapsed = now - self.started
+            fraction = 1.0 if ramp <= 0 or elapsed >= ramp - 1e-6 else max(0.0, elapsed/ramp)
+            return mapper.wasp_pwm(commanded, p["throttle"]*fraction)
         rates = ((0.0, 0.0, 0.0) if self.acquired_t is None else
                  WaspGuidance.rates(ctx["ai_cmd"], ctx["att"], now,
                                     gain=p["gain"], lead_s=p["lead"], max_rate_dps=p["rate"]))
-        blend = self.progress(now)["steering_blend"]
         desired = tuple(v*blend for v in rates)
-
-
-        dt = max(0.0, min(0.1, now-self._output_t))
+        if p.get("steady") and self.acquired_t is not None:
+            error, _ff = WaspGuidance.aim(ctx["ai_cmd"], ctx["att"], now, lead_s=p["lead"])
+            desired = self._steady_desired(desired, error, dt)
         delta = tuple(a-b for a, b in zip(desired, self._rates))
         norm = math.hypot(*delta[:2])
-        scale = min(1.0, 2*math.radians(p["rate"])/p["blend"]*dt/max(norm, 1e-9))
+        # Off: the stick acceleration is the one this profile has always used.
+        cap = 2*math.radians(p["rate"])/p["blend"]
+        if p.get("steady"):
+            cap = min(cap, self.STEADY_ACCEL)
+        scale = min(1.0, cap*dt/max(norm, 1e-9))
         self._rates = tuple(v+d*scale for v, d in zip(self._rates, delta))
         self._output_t = now
         # Optional ramp from the pilot's zero stick.  Off by default: the FC

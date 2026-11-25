@@ -38,7 +38,15 @@ class SettingsTests(unittest.TestCase):
             path.write_text(original)
             with patch.dict(os.environ, WASP_DEFAULTS=str(path), CAM_HFOV_DEG='70', CAM_VFOV_DEG='nan'):
                 result = settings()
-            self.assertEqual(result['profiles'], profiles)
+            classic = {name: result['profiles'][name] for name in Wasp.CLASSIC_PROFILES}
+            self.assertEqual(classic, {name: profiles[name] for name in Wasp.CLASSIC_PROFILES})
+            dynamic = result['profiles']['dynamic']
+            self.assertEqual(dynamic['camera_roll'], 270)
+            self.assertEqual(dynamic['centre_timer'], 4.5)
+            self.assertEqual(dynamic['straight'], 0.0)
+            self.assertEqual(dynamic['lead'], 0.0)
+            self.assertEqual(dynamic['rate'], Wasp.DYN_RATE)
+            self.assertEqual(dynamic['gain'], Wasp.DYN_KP)
             self.assertEqual(result['profile_choices'], {k: v for k, v in Wasp.SETTINGS.items() if k != 'throttle'})
             self.assertEqual(result['camera'], dict(hfov=70, vfov=48.8))
             self.assertEqual(path.read_text(), original)
@@ -123,9 +131,11 @@ class BrowserTests(unittest.TestCase):
 
         cases = []
         for name, profile in Wasp().profiles.items():
+            if profile.get('dynamic'):
+                continue
             variants = [('default', profile)]
             for key, choices in Wasp.SETTINGS.items():
-                if key != 'throttle':
+                if key not in ('throttle', 'steady'):
                     variants.extend((f'{key}={value}', dict(profile, **{key: value})) for value in choices)
             cases.extend(dict(name=f'{name}/{label}', profile=params) for label, params in variants)
         results = self.driver.execute_script("""
@@ -267,7 +277,7 @@ class BrowserTests(unittest.TestCase):
     def test_default_flight_turns_and_profiles_change_the_curve(self):
         from selenium.webdriver.support.ui import WebDriverWait
         self.assertEqual(self.js("return document.querySelectorAll('#steering,#bank,#neutral,[data-key]').length"), 0)
-        self.assertEqual(self.js("return document.querySelectorAll('[data-profile]').length"), 4)
+        self.assertEqual(self.js("return document.querySelectorAll('[data-profile]').length"), 5)
         self.js("$('launch').value=0;$('playback').value=2;$('play').click()")
         WebDriverWait(self.driver, 8).until(lambda d: self.js('return flight.t>3'))
         self.js("$('play').click()")
@@ -283,9 +293,10 @@ class BrowserTests(unittest.TestCase):
         """)
         for trajectory in result:
             self.assertGreater(trajectory['bend'], .1, trajectory['name'])
-        by_name = {r['name']: r for r in result}
+        classic = [r for r in result if r['name'] != 'dynamic']
+        by_name = {r['name']: r for r in classic}
         self.assertGreater(by_name['extra']['side'], by_name['smooth']['side'] + 1)
-        self.assertEqual(len({round(r['side'], 5) for r in result}), 4)
+        self.assertEqual(len({round(r['side'], 5) for r in classic}), 4)
         self.js("$('follow').click()")
         self.assertTrue(self.js('return follow'))
 

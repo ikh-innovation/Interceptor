@@ -674,7 +674,7 @@ class Mission:
         if key == "profile":
             profile = str(value).strip().lower()
             if profile not in self.wasp.profiles:
-                return "steering response: smooth, standard, responsive or extra"
+                return "steering response: smooth, standard, responsive, extra or dynamic"
         else:
             try:
                 v = float(value)
@@ -691,11 +691,18 @@ class Mission:
             if error:
                 return error
             profile = profile if key == "profile" else self.wasp.active_profile
+            if key in Wasp.LOCKED_STEERING and profile == "dynamic":
+                return "dynamic steering is fixed"
             settings = dict(self.wasp.params)
+            settings.pop("dynamic", None)
             if key == "profile":
                 settings.update(self.wasp.profiles[profile])
             else:
                 settings[key] = v
+            if profile == "dynamic":
+                for locked in Wasp.LOCKED_STEERING:
+                    settings[locked] = self.wasp.profiles["dynamic"][locked]
+                settings["dynamic"] = 1.0
             profile_settings = {k: value for k, value in settings.items() if k not in Wasp.SHARED_KEYS}
             profiles = dict(self.wasp.profiles, **{profile: profile_settings})
             shared = {k: settings[k] for k in Wasp.SHARED_KEYS}
@@ -703,6 +710,9 @@ class Mission:
                 return "could not save WASP defaults on the Jetson"
             self.wasp.profiles = profiles
             self.wasp.active_profile = profile
+            # update() does not delete keys.  A leftover dynamic flag would
+            # keep the gyro law after the pilot selects a classic profile.
+            self.wasp.params.pop("dynamic", None)
             self.wasp.params.update(settings)
         return ""
 

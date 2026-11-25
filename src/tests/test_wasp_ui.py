@@ -255,7 +255,7 @@ async function main(){
  closePop();await until(()=>(q('#align_img').getAttribute('src')||'').startsWith('data:'));
  await check('closing the popup stops the alignment stream',!(q('#align_img').getAttribute('src')||'').startsWith('/stream'));
  openPop('pop_flight');
- await check('Wasp has eight parameter groups including the throttle ramp',q('#pp_wasp').querySelectorAll('[data-wp]').length===8&&q('#pp_wasp [data-wp="ramp"] [data-wv="0.1"]').classList.contains('on'));
+ await check('Wasp has nine parameter groups including the throttle ramp',q('#pp_wasp').querySelectorAll('[data-wp]').length===9&&q('#pp_wasp [data-wp="ramp"] [data-wv="0.1"]').classList.contains('on')&&q('[data-wp="steady"] [data-wv="0"]').classList.contains('on'));
  q('[data-wp="rate"] [data-wv="45"]').click();await until(()=>q('[data-wp="rate"] [data-wv="45"]').classList.contains('on'));
  await check('45-degree choice applies to backend',(await req('/state')).mission.wasp_params.rate===45);
  await check('Wasp throttle choices are 75, 85 and 100 percent',[...q('[data-wp="throttle"]').children].map(b=>b.textContent).join(',')==='75%,85%,100%');

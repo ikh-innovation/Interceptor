@@ -2,6 +2,7 @@
 import math
 import os
 import json
+import random
 from pathlib import Path
 import sys
 import tempfile
@@ -236,7 +237,8 @@ class LifecycleTests(unittest.TestCase):
     def test_shipped_defaults_ramp_in_0_1_s_and_go_straight_0_5_s(self):
         w = Wasp()
         self.assertEqual((w.params["throttle"], w.params["ramp"], w.params["straight"]), (1.0, 0.1, 0.5))
-        self.assertTrue(all(p["straight"] == 0.5 for p in w.profiles.values()))
+        for name, profile in w.profiles.items():
+            self.assertEqual(profile["straight"], 0.0 if name == "dynamic" else 0.5)
         sent = []
         mapper = type("M", (), {"wasp_pwm": lambda _s, rates, throttle: sent.append((rates, throttle)) or {}})()
         w.begin(100, target_acquired=False)
@@ -369,7 +371,7 @@ class LifecycleTests(unittest.TestCase):
     def test_saved_throttle_presets_migrate_to_new_choices(self):
         legacy = {"smooth": dict(throttle=.25, launch_s=7), "standard": dict(throttle=.5, launch_s=4),
                   "responsive": dict(throttle=.85, launch_s=2), "extra": dict(throttle=1, launch_s=3)}
-        for name, throttle in zip(Wasp.STEERING_PROFILES, (.75, .85, .85, 1)):
+        for name, throttle in zip(Wasp.CLASSIC_PROFILES, (.75, .85, .85, 1)):
             wasp = Wasp()
             wasp.load_defaults(dict(selected=name, profiles=legacy))
             self.assertEqual(wasp.params["throttle"], throttle)
@@ -546,23 +548,35 @@ class LifecycleTests(unittest.TestCase):
                 self.assertEqual(self.m.set_wasp_param("launch_s", 2.25+index), "")
                 self.assertEqual(self.m.set_wasp_param("throttle", .85), "")
                 self.assertEqual(self.m.set_wasp_param("centre_timer", 1.5+index), "")
-                self.assertEqual(self.m.set_wasp_param("rate", 45), "")
-                self.assertEqual(self.m.set_wasp_param("gain", 6), "")
+                if profile == "dynamic":
+                    self.assertTrue(self.m.set_wasp_param("rate", 45))
+                    self.assertTrue(self.m.set_wasp_param("gain", 6))
+                    self.assertEqual(self.m.wasp.params["rate"], Wasp.DYN_RATE)
+                    self.assertEqual(self.m.wasp.params["gain"], Wasp.DYN_KP)
+                else:
+                    self.assertEqual(self.m.set_wasp_param("rate", 45), "")
+                    self.assertEqual(self.m.set_wasp_param("gain", 6), "")
             restored = Mission(Mapper(), wasp_path=path)
-            self.assertEqual(restored.wasp.active_profile, "extra")
+            self.assertEqual(restored.wasp.active_profile, "dynamic")
             for index, profile in enumerate(Wasp.STEERING_PROFILES):
                 self.assertEqual(restored.set_wasp_param("profile", profile), "")
                 self.assertEqual(restored.wasp.params["launch_s"], 0.0)  # the timer is not kept
                 self.assertEqual(restored.wasp.params["throttle"], .85)
                 self.assertEqual(restored.wasp.params["centre_timer"], 1.5+index)
-                self.assertEqual(restored.wasp.params["rate"], 45)
-                self.assertEqual(restored.wasp.params["gain"], 6)
+                if profile == "dynamic":
+                    self.assertEqual(restored.wasp.params["rate"], Wasp.DYN_RATE)
+                    self.assertEqual(restored.wasp.params["gain"], Wasp.DYN_KP)
+                    self.assertEqual(restored.wasp.params["straight"], 0.0)
+                    self.assertEqual(restored.wasp.params["lead"], 0.0)
+                else:
+                    self.assertEqual(restored.wasp.params["rate"], 45)
+                    self.assertEqual(restored.wasp.params["gain"], 6)
             before = dict(restored.wasp.params)
             with patch("mission._write_json", return_value=False):
                 self.assertTrue(restored.set_wasp_param("rate", 120))
             self.assertEqual(restored.wasp.params, before)
             saved = json.loads(Path(path).read_text())
-            self.assertEqual(saved["shared"], dict(launch_s=0.0, throttle=.85, ramp=0.0))
+            self.assertEqual(saved["shared"], dict(launch_s=0.0, throttle=.85, ramp=0.0, steady=0.0))
             self.assertTrue(all(not any(key in settings for key in Wasp.SHARED_KEYS)
                                 for settings in saved["profiles"].values()))
 
@@ -593,8 +607,8 @@ class LifecycleTests(unittest.TestCase):
 
     def test_snapshot_exposes_saved_profile_matrix_without_mutable_references(self):
         initial = self.m.snapshot(100)["wasp_profiles"]
-        self.assertEqual(list(initial), ["smooth", "standard", "responsive", "extra"])
-        self.assertEqual([p["rate"] for p in initial.values()], [45, 60, 90, 120])
+        self.assertEqual(list(initial), ["smooth", "standard", "responsive", "extra", "dynamic"])
+        self.assertEqual([p["rate"] for p in initial.values()], [45, 60, 90, 120, Wasp.DYN_RATE])
         self.assertEqual(self.m.set_wasp_param("rate", 45), "")
         current = self.m.snapshot(101)["wasp_profiles"]
         self.assertEqual(current["standard"]["rate"], 45)
@@ -1321,6 +1335,485 @@ class PhoneRoutingTests(unittest.TestCase):
         self.assertEqual(unrouted, [])
         for key in ("safedown", "arm", "fence"):
             self.assertIn(key, tracker.MISSION_KEYS)
+
+
+class SteadySteeringTests(unittest.TestCase):
+    def _wasp(self, profile, steady):
+        w = Wasp()
+        w.params.update(w.profiles[profile])
+        w.params["steady"] = float(steady)
+        w.params["straight"] = 0.0
+        return w
+
+    def _fly(self, w, points):
+        g = WaspGuidance()
+
+        class Mapper:
+            @staticmethod
+            def wasp_pwm(rates, throttle):
+                return rates
+
+        rows = []
+        for t, x, y in points:
+            if w.started is None:
+                w.begin(t, target_acquired=True)
+            cmd = observe(g, x=x, y=y, t=t)
+            rows.append((t, w.output(Mapper, t, dict(ai_cmd=cmd, att=ATT))))
+        return rows
+
+    def test_off_matches_the_existing_command_for_every_profile(self):
+        for profile in Wasp.CLASSIC_PROFILES:
+            points = [(100 + i * 0.02, 180 if i < 40 else -180, 30 if i < 40 else -20)
+                      for i in range(80)]
+            w = self._wasp(profile, 0)
+            g = WaspGuidance()
+            expected = (0.0, 0.0, 0.0)
+            prev_t = None
+            for t, x, y in points:
+                if prev_t is None:
+                    w.begin(t, target_acquired=True)
+                    prev_t = t
+                cmd = observe(g, x=x, y=y, t=t)
+                got = w.output(type("M", (), {"wasp_pwm": staticmethod(lambda rates, throttle: rates)})(),
+                               t, dict(ai_cmd=cmd, att=ATT))
+                full = WaspGuidance.rates(cmd, ATT, t, gain=w.params["gain"],
+                                           lead_s=w.params["lead"], max_rate_dps=w.params["rate"])
+                desired = tuple(v * w.progress(t)["steering_blend"] for v in full)
+                dt = max(0.0, min(0.1, t - prev_t))
+                delta = tuple(a - b for a, b in zip(desired, expected))
+                norm = math.hypot(*delta[:2])
+                cap = 2 * math.radians(w.params["rate"]) / w.params["blend"]
+                scale = min(1.0, cap * dt / max(norm, 1e-9))
+                expected = tuple(v + d * scale for v, d in zip(expected, delta))
+                prev_t = t
+                for actual, want in zip(got, expected):
+                    self.assertAlmostEqual(actual, want, places=9, msg=profile)
+
+    def test_on_waits_to_reverse_and_still_follows_for_every_profile(self):
+        points = [(i * 0.01, 180 if i < 80 else -180, 0) for i in range(260)]
+        for profile in Wasp.CLASSIC_PROFILES:
+            off = self._fly(self._wasp(profile, 0), points)
+            on = self._fly(self._wasp(profile, 1), points)
+
+            def first_negative(rows):
+                for t, rates in rows:
+                    if t > 0.8 and rates[0] < -math.radians(1):
+                        return t
+                return None
+
+            t_off, t_on = first_negative(off), first_negative(on)
+            self.assertIsNotNone(t_off, profile)
+            self.assertIsNotNone(t_on, profile)
+            self.assertLess(t_on, 2.0, profile)
+            # The fast profiles can reverse inside a quarter second. Steady must
+            # take longer. Smooth is already near the steady stick limit.
+            settings = Wasp.STEERING_PROFILES[profile]
+            blend = settings.get("blend", 0.5)
+            rate = settings.get("rate", 60.0)
+            if 2 * rate / blend > 100:
+                self.assertGreaterEqual(t_on, t_off + 0.08, profile)
+            for t, rates in on:
+                if 0.8 < t <= 0.92:
+                    self.assertGreaterEqual(rates[0], -1e-9, profile)
+
+    def test_on_eases_a_large_miss_and_leaves_the_small_axis_alone(self):
+        points = [(i * 0.02, 30, 220) for i in range(100)]
+        for profile in Wasp.CLASSIC_PROFILES:
+            off = self._fly(self._wasp(profile, 0), points)[-1][1]
+            on = self._fly(self._wasp(profile, 1), points)[-1][1]
+            self.assertGreater(abs(off[0]), math.radians(1), profile)
+            self.assertAlmostEqual(on[0], 0, places=6, msg=profile)
+            self.assertLess(abs(on[1]), abs(off[1]) * 0.75, profile)
+            self.assertLess(on[1], -math.radians(2), profile)
+
+    def test_on_keeps_profile_gain_for_a_small_miss(self):
+        points = [(i * 0.02, 20, -12) for i in range(120)]
+        for profile in Wasp.CLASSIC_PROFILES:
+            off = self._fly(self._wasp(profile, 0), points)[-1][1]
+            on = self._fly(self._wasp(profile, 1), points)[-1][1]
+            for actual, want in zip(on, off):
+                self.assertAlmostEqual(actual, want, places=6, msg=profile)
+
+    def test_on_reaches_a_fixed_target_for_every_profile(self):
+        target = unit((0.34, 0.08, -1))
+
+        class Mapper:
+            @staticmethod
+            def wasp_pwm(rates, throttle):
+                return rates
+
+        for profile in Wasp.CLASSIC_PROFILES:
+            w = self._wasp(profile, 1)
+            g = WaspGuidance()
+            mat = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+            rate = [0.0, 0.0]
+            delay = []
+            dt = 0.02
+            end_err = None
+            for i in range(400):
+                t = round(i * dt, 10)
+                att = {"rotation": mat}
+                x, y = project(target, att)
+                if w.started is None:
+                    w.begin(t, target_acquired=True)
+                cmd = observe(g, x=x, y=y, att=att, t=t)
+                commanded = w.output(Mapper, t, dict(ai_cmd=cmd, att=att))
+                delay.append(commanded)
+                applied = delay.pop(0) if len(delay) > 4 else (0.0, 0.0, 0.0)
+                for k in (0, 1):
+                    rate[k] += dt / 0.10 * (applied[k] - rate[k])
+                omega = (rate[0], rate[1], 0.0)
+                angle = math.sqrt(sum(v * v for v in omega)) * dt
+                if math.hypot(*omega) > 1e-8:
+                    axis = unit(omega)
+
+                    def turn(v, axis=axis, angle=angle):
+                        dot = sum(a * b for a, b in zip(axis, v))
+                        return tuple(v[j] * math.cos(angle) + cross(axis, v)[j] * math.sin(angle)
+                                     + axis[j] * dot * (1 - math.cos(angle)) for j in range(3))
+
+                    mat = tuple(zip(*(rotate(mat, turn(v)) for v in ((1, 0, 0), (0, 1, 0), (0, 0, 1)))))
+                bore = rotate(mat, (0.0, 0.0, -1.0))
+                end_err = math.acos(min(1.0, max(-1.0, sum(a * b for a, b in zip(bore, target)))))
+            self.assertLess(end_err, math.radians(2.0), profile)
+
+    def test_steady_is_shared_defaults_off_and_old_files_stay_off(self):
+        m = Mission(Mapper(), log=lambda *_: None)
+        self.assertEqual(m.wasp.params["steady"], 0.0)
+        self.assertEqual(m.set_wasp_param("steady", 1), "")
+        for name in Wasp.STEERING_PROFILES:
+            self.assertEqual(m.set_wasp_param("profile", name), "")
+            self.assertEqual(m.wasp.params["steady"], 1.0)
+            self.assertNotIn("steady", m.wasp.profiles[name])
+        self.assertTrue(m.set_wasp_param("steady", 2))
+        self.assertEqual(m.wasp.params["steady"], 1.0)
+        self.assertEqual(m.set_wasp_param("steady", 0), "")
+        fresh = Wasp()
+        fresh.load_defaults(dict(selected="responsive", profiles={"responsive": dict(rate=90)}))
+        self.assertEqual(fresh.params["steady"], 0.0)
+        fresh.load_defaults(dict(selected="extra", shared=dict(steady=1, throttle=0.85)))
+        self.assertEqual(fresh.params["steady"], 1.0)
+        self.assertEqual(fresh.params["throttle"], 0.85)
+        for name in Wasp.STEERING_PROFILES:
+            fresh.params.update(fresh.profiles[name])
+            self.assertEqual(fresh.params["steady"], 1.0)
+
+
+class DynamicSteeringTests(unittest.TestCase):
+    """Closed-loop plant: ACRO rate lag, camera slower than the stick, gyro fed back."""
+
+    def _wasp(self, profile="dynamic", **overrides):
+        w = Wasp()
+        w.active_profile = profile
+        w.params.pop("dynamic", None)
+        w.params.update(w.profiles[profile])
+        w.params.update(overrides)
+        return w
+
+    def _fly(self, body, seconds=2.4, pitch0=0.0, roll0=0.0, tau=0.10,
+             cam_dt=0.05, ctrl_dt=0.02, delay=0.06, gyro=True, profile="dynamic",
+             step_at=None, step_body=None, steady=0.0, straight=None, disturb=None,
+             spin=0.0, pix_noise=0.0, gyro_noise=0.0, seed=1, cam_hold=None,
+             att_lag=0.0):
+        w = self._wasp(profile, steady=steady)
+        if straight is not None:
+            w.params["straight"] = straight
+        g = WaspGuidance()
+
+        class Mapper:
+            @staticmethod
+            def wasp_pwm(rates, throttle):
+                return rates
+
+        def spun(v, angle):
+            # World +Y rotation moves a bore-sight target up and down in pitch.
+            c, s = math.cos(angle), math.sin(angle)
+            return (v[0] * c + v[2] * s, v[1], -v[0] * s + v[2] * c)
+
+        target = unit(body)
+        mat = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+        rate = [roll0, pitch0]
+        delay_n = max(1, int(round(delay / ctrl_dt)))
+        queue = []
+        held = None
+        last_cam = -1.0
+        stepped = False
+        pose_hist = []
+        rng = random.Random(seed)
+        rows = []
+        for i in range(int(round(seconds / ctrl_dt))):
+            t = round(i * ctrl_dt, 10)
+            if spin:
+                target = unit(spun(target, spin * ctrl_dt))
+            if step_at is not None and not stepped and t >= step_at:
+                target = rotate(mat, unit(step_body))
+                g.reset()
+                held = None
+                stepped = True
+            noisy_roll = rate[0] + (rng.gauss(0.0, gyro_noise) if gyro_noise else 0.0)
+            noisy_pitch = rate[1] + (rng.gauss(0.0, gyro_noise) if gyro_noise else 0.0)
+            pose_hist.append((t, mat))
+            cam_mat = mat
+            if att_lag > 0.0:
+                for ts, old in pose_hist:
+                    if t - ts >= att_lag - 1e-12:
+                        cam_mat = old
+                    else:
+                        break
+            att = {"rotation": cam_mat, "rollspeed": noisy_roll, "pitchspeed": noisy_pitch, "yawspeed": 0.0}
+            seen = {"rotation": mat, "rollspeed": noisy_roll, "pitchspeed": noisy_pitch, "yawspeed": 0.0} if gyro else {"rotation": mat}
+            frozen = cam_hold is not None and cam_hold[0] <= t < cam_hold[1] and held is not None
+            if not frozen and (held is None or t - last_cam >= cam_dt - 1e-12):
+                x, y = project(target, att)
+                if pix_noise:
+                    x += rng.gauss(0.0, pix_noise)
+                    y += rng.gauss(0.0, pix_noise)
+                held = observe(g, x=x, y=y, att=att, t=t)
+                last_cam = t
+            if w.started is None:
+                w.begin(t, target_acquired=True)
+            commanded = w.output(Mapper, t, dict(ai_cmd=held, att=seen))
+            queue.append(commanded)
+            applied = queue.pop(0) if len(queue) > delay_n else (0.0, 0.0, 0.0)
+            extra = disturb(t) if disturb else (0.0, 0.0)
+            for k in (0, 1):
+                rate[k] += ctrl_dt / tau * (applied[k] - rate[k]) + ctrl_dt * extra[k]
+            omega = (rate[0], rate[1], 0.0)
+            angle = math.sqrt(sum(v * v for v in omega)) * ctrl_dt
+            if math.hypot(*omega) > 1e-8:
+                axis = unit(omega)
+
+                def turn(v, axis=axis, angle=angle):
+                    dot = sum(a * b for a, b in zip(axis, v))
+                    return tuple(v[j] * math.cos(angle) + cross(axis, v)[j] * math.sin(angle)
+                                 + axis[j] * dot * (1 - math.cos(angle)) for j in range(3))
+
+                mat = tuple(zip(*(rotate(mat, turn(v)) for v in ((1, 0, 0), (0, 1, 0), (0, 0, 1)))))
+            body_now = rotate(mat, target, inverse=True)
+            # aim() error is (body_y, -body_x): pitch error is -body_x.
+            rows.append(dict(t=t, roll=body_now[1], pitch=-body_now[0],
+                             cmd=commanded, gyro=tuple(rate),
+                             miss=math.acos(min(1.0, max(-1.0, -body_now[2])))))
+        return rows
+
+    @staticmethod
+    def _launch_moment(t):
+        # Flight 001: sticks stayed centered and the climb still pitched the
+        # low lock through the crosshair, then the nose swung back.
+        if t < 0.30:
+            return (0.0, math.radians(-1100.0))
+        if t < 0.62:
+            return (0.0, math.radians(650.0))
+        return (0.0, 0.0)
+
+    @staticmethod
+    def _overshoot(rows, key, sign):
+        """Largest error on the far side of the crosshair, in radians."""
+        far = 0.0
+        for row in rows:
+            value = row[key]
+            if sign < 0 and value > 0:
+                far = max(far, value)
+            if sign > 0 and value < 0:
+                far = max(far, -value)
+        return far
+
+    @staticmethod
+    def _crossings(rows, key, after=0.0):
+        sign = 0
+        count = 0
+        for row in rows:
+            if row["t"] < after:
+                continue
+            value = row[key]
+            if abs(value) < math.radians(0.6):
+                continue
+            now = 1 if value > 0 else -1
+            if sign and now != sign:
+                count += 1
+            sign = now
+        return count
+
+    def test_centers_a_low_lock_without_hunting(self):
+        low = (math.tan(math.radians(18)), 0.02, -1)
+        rows = self._fly(low)
+        self.assertLess(rows[-1]["miss"], math.radians(1.0))
+        self.assertLess(self._overshoot(rows, "pitch", -1), math.radians(2.5))
+        self.assertLessEqual(self._crossings(rows, "pitch"), 1)
+        self.assertLess(min(row["miss"] for row in rows if row["t"] > 1.2), math.radians(1.5))
+
+    def _assert_locked(self, rows, over_deg, end_deg, crossings, late_deg=None, key="pitch", sign=-1):
+        over = math.degrees(self._overshoot(rows, key, sign))
+        end = math.degrees(rows[-1]["miss"])
+        late_rows = [row["miss"] for row in rows if row["t"] > 1.2]
+        late = math.degrees(min(late_rows)) if late_rows else end
+        crossed = self._crossings(rows, key)
+        self.assertLess(over, over_deg, f"overshoot {over:.2f}°")
+        self.assertLess(end, end_deg, f"end miss {end:.2f}°")
+        self.assertLessEqual(crossed, crossings, f"crossings {crossed}")
+        if late_deg is not None:
+            self.assertLess(late, late_deg, f"miss after 1.2 s {late:.2f}°")
+        peak = max(max(abs(c) for c in row["cmd"][:2]) for row in rows)
+        self.assertLessEqual(peak, math.radians(Wasp.DYN_RATE) + 1e-6)
+        return over
+
+    def test_brakes_the_launch_pitch_before_it_crosses(self):
+        # Clip 001: target 18° low.  A centered stick lets the climb rotate
+        # through the crosshair.  Dynamic has to brake that and the swing back.
+        low = (math.tan(math.radians(18)), 0.0, -1)
+        plants = (
+            dict(tau=0.10, delay=0.06, cam_dt=0.05),
+            dict(tau=0.08, delay=0.04, cam_dt=0.04),
+            dict(tau=0.14, delay=0.08, cam_dt=0.08),
+        )
+        for plant in plants:
+            with self.subTest(**plant):
+                rows = self._fly(low, seconds=2.2, disturb=self._launch_moment, **plant)
+                classic = self._fly(low, seconds=2.2, disturb=self._launch_moment,
+                                    profile="responsive", steady=1.0, straight=0.5, **plant)
+                dynamic_over = self._overshoot(rows, "pitch", -1)
+                classic_over = self._overshoot(classic, "pitch", -1)
+                if plant["tau"] == 0.10:
+                    self.assertGreater(math.degrees(classic_over), 6.0,
+                                       f"classic only crossed {math.degrees(classic_over):.2f}°")
+                self.assertLess(dynamic_over, classic_over,
+                                f"dynamic {math.degrees(dynamic_over):.2f}° classic {math.degrees(classic_over):.2f}°")
+                limit = 4.0 if plant["tau"] <= 0.10 else 6.0
+                self._assert_locked(rows, limit, 1.5, 2, late_deg=2.0)
+
+    def test_brakes_a_pitch_that_is_already_fast(self):
+        low = (math.tan(math.radians(18)), 0.0, -1)
+        rows = self._fly(low, pitch0=math.radians(-120), seconds=2.2)
+        self._assert_locked(rows, 4.0, 1.2, 2, late_deg=1.5)
+
+    def test_tracks_a_moving_target_without_hunting(self):
+        near = (0.0, 0.0, -1)
+        for deg_s in (12.0, 25.0):
+            with self.subTest(spin=deg_s):
+                rows = self._fly(near, seconds=2.4, spin=math.radians(deg_s))
+                late = [row for row in rows if row["t"] > 0.8]
+                peak = math.degrees(max(row["miss"] for row in late))
+                self.assertLess(peak, 3.5, f"tracking miss {peak:.2f}°")
+                self.assertLessEqual(self._crossings(late, "pitch", after=0.8), 2)
+                self.assertLess(math.degrees(late[-1]["miss"]), 2.5)
+
+    def test_noise_and_a_stale_camera_still_settle(self):
+        low = (math.tan(math.radians(15)), -0.08, -1)
+        noisy = self._fly(low, seconds=2.6, pix_noise=3.0, gyro_noise=math.radians(8.0), seed=7)
+        self._assert_locked(noisy, 3.5, 2.0, 3, late_deg=2.5)
+        frozen = self._fly(low, seconds=2.4, cam_hold=(0.40, 0.62))
+        self._assert_locked(frozen, 3.0, 1.2, 2, late_deg=1.5)
+        # Capture attitude a bit late, the way a busy flight controller delivers it.
+        # The gyro the brake uses is still the fresh one.
+        lagged = self._fly(low, seconds=2.4, disturb=self._launch_moment, att_lag=0.06)
+        self._assert_locked(lagged, 4.5, 1.5, 2, late_deg=2.0)
+
+    def test_both_axes_survive_the_launch_moment(self):
+        body = (math.tan(math.radians(16)), 0.18, -1)
+
+        def moment(t, base=self._launch_moment):
+            roll, pitch = base(t)
+            kick = math.radians(-700.0) if t < 0.20 else (math.radians(350.0) if t < 0.45 else 0.0)
+            return (roll + kick, pitch)
+
+        rows = self._fly(body, seconds=2.4, disturb=moment)
+        self._assert_locked(rows, 5.0, 1.5, 2, late_deg=2.0)
+        self._assert_locked(rows, 5.0, 1.5, 2, key="roll", sign=1)
+
+    def test_brake_is_immediate_and_a_wild_bearing_rate_cannot_silence_it(self):
+        class Mapper:
+            @staticmethod
+            def wasp_pwm(rates, throttle):
+                return rates
+
+        att = dict(roll=0.0, pitch=0.0, yaw=0.0, rollspeed=0.0,
+                   pitchspeed=math.radians(-90.0), yawspeed=0.0)
+        held = observe(WaspGuidance(), x=0, y=80, att=att, t=10.0)
+        held["bearing_rate"] = (120.0, 0.0, 0.0)
+        classic = self._wasp("responsive", steady=0.0)
+        classic.begin(10.0, True)
+        with self.assertRaises(ValueError):
+            classic.output(Mapper, 10.0, dict(ai_cmd=dict(held), att=att))
+        dynamic = self._wasp()
+        dynamic.begin(10.0, True)
+        cmd = dynamic.output(Mapper, 10.0, dict(ai_cmd=dict(held), att=att))
+        self.assertGreater(cmd[1], math.radians(40.0))
+        self.assertLess(abs(cmd[0]), math.radians(15.0))
+        self.assertAlmostEqual(cmd[2], 0.0)
+
+    def test_throttle_ramp_still_scales_the_launch(self):
+        seen = {}
+
+        class Mapper:
+            @staticmethod
+            def wasp_pwm(rates, throttle):
+                seen["throttle"] = throttle
+                return rates
+
+        w = self._wasp(ramp=0.5, throttle=0.85)
+        att = dict(roll=0.0, pitch=0.0, yaw=0.0, rollspeed=0.0, pitchspeed=0.0, yawspeed=0.0)
+        w.begin(0.0, True)
+        held = observe(WaspGuidance(), t=0.0, att=att)
+        w.output(Mapper, 0.0, dict(ai_cmd=held, att=att))
+        self.assertAlmostEqual(seen["throttle"], 0.0)
+        w.output(Mapper, 0.25, dict(ai_cmd=held, att=att))
+        self.assertAlmostEqual(seen["throttle"], 0.425)
+        held = observe(WaspGuidance(), t=0.5, att=att)
+        w.output(Mapper, 0.5, dict(ai_cmd=held, att=att))
+        self.assertAlmostEqual(seen["throttle"], 0.85)
+
+    def test_both_axes_and_a_step_settle_once(self):
+        rows = self._fly((0.22, 0.16, -1), seconds=2.2)
+        self.assertLess(rows[-1]["miss"], math.radians(1.0))
+        self.assertLess(self._overshoot(rows, "pitch", -1), math.radians(2.5))
+        self.assertLess(self._overshoot(rows, "roll", 1), math.radians(2.5))
+        stepped = self._fly((0.05, 0.0, -1), seconds=3.0, step_at=1.2,
+                            step_body=(math.tan(math.radians(-12)), 0.04, -1))
+        late = [row for row in stepped if row["t"] > 1.2]
+        self.assertLess(late[-1]["miss"], math.radians(1.2))
+        self.assertLessEqual(self._crossings(late, "pitch", after=1.2), 2)
+
+    def test_still_centers_when_the_gyro_sample_is_missing(self):
+        rows = self._fly((math.tan(math.radians(15)), -0.1, -1), gyro=False, seconds=2.6)
+        self.assertLess(rows[-1]["miss"], math.radians(1.5))
+
+    def test_steady_switch_does_not_change_dynamic_and_launch_params_still_work(self):
+        body = (0.2, -0.1, -1)
+        off = self._fly(body, steady=0.0)
+        on = self._fly(body, steady=1.0)
+        for a, b in zip(off, on):
+            self.assertEqual(a["cmd"], b["cmd"])
+        m = Mission(Mapper(), log=lambda *_: None)
+        self.assertEqual(m.set_wasp_param("profile", "dynamic"), "")
+        self.assertTrue(m.wasp.dynamic_active())
+        self.assertEqual(m.wasp.params["throttle"], 1.0)
+        self.assertEqual(m.set_wasp_param("throttle", 0.85), "")
+        self.assertEqual(m.set_wasp_param("ramp", 0.25), "")
+        self.assertEqual(m.set_wasp_param("camera_roll", 90), "")
+        self.assertEqual(m.set_wasp_param("centre_timer", 4), "")
+        for key in Wasp.LOCKED_STEERING:
+            self.assertTrue(m.set_wasp_param(key, Wasp.SETTINGS[key][0]), key)
+        self.assertEqual(m.wasp.params["rate"], Wasp.DYN_RATE)
+        self.assertEqual(m.wasp.params["lead"], 0.0)
+        self.assertEqual(m.wasp.params["straight"], 0.0)
+        self.assertEqual(m.wasp.params["throttle"], 0.85)
+        self.assertEqual(m.wasp.params["ramp"], 0.25)
+        self.assertEqual(m.wasp.params["camera_roll"], 90)
+        self.assertEqual(m.wasp.params["centre_timer"], 4)
+        self.assertEqual(m.set_wasp_param("profile", "responsive"), "")
+        self.assertFalse(m.wasp.dynamic_active())
+        self.assertEqual(m.wasp.params["gain"], 4)
+        self.assertEqual(m.wasp.params["throttle"], 0.85)
+        saved = dict(selected="responsive", profiles={"dynamic": dict(rate=45, gain=6, lead=0.15, straight=2)})
+        fresh = Wasp()
+        fresh.load_defaults(saved)
+        fresh.params.pop("dynamic", None)
+        fresh.params.update(fresh.profiles["dynamic"])
+        self.assertEqual(fresh.params["rate"], Wasp.DYN_RATE)
+        self.assertEqual(fresh.params["gain"], Wasp.DYN_KP)
+        self.assertEqual(fresh.params["lead"], 0.0)
+        self.assertEqual(fresh.params["straight"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
