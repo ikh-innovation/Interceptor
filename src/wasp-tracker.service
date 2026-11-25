@@ -7,6 +7,9 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 WorkingDirectory=%h/Documents/Interceptor/src
+Environment=GCP_PROJECT=ikh-drone-cloud
+Environment=JETSON_ID=wasp-02
+Environment=GOOGLE_APPLICATION_CREDENTIALS=%h/gcp-sa-key.json
 
 
 
