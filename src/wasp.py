@@ -139,17 +139,34 @@ class Wasp:
     STEADY_HOLD_S = 0.12
     STEADY_BRAKE_S = 0.45
     STEADY_ACCEL = math.radians(80.0)
-    # Dynamic keeps the lock on the crosshair.  The numbers are fixed: the
-    # picture is reprojected with the current attitude between frames, and the
-    # gyro rate is braked even while the chase is still fading in.
+    # Dynamic centers the box on the first sample, wherever it sits: low,
+    # off to one side, or both.  Roll and pitch are what move the box.
+    # Yaw only turns the nose onto the target's bearing, and only when that
+    # bearing is off the nose; it is not what centers the picture.  Steady
+    # on or off does not enter this law: the rate below already refuses to hunt.
     CLASSIC_PROFILES = ("smooth", "standard", "responsive", "extra")
     LOCKED_STEERING = ("straight", "blend", "rate", "gain", "lead")
-    DYN_KP = 3.2
-    DYN_KD = 1.4
-    DYN_BRAKE = math.radians(280.0)
+    # One design lag for the rate loop (seconds).  A proportional chase
+    # k = 1/(4 τ) is critically damped on q' = (u-q)/τ, e' = -q, before the
+    # camera delay.  DYN_LAM is a little quicker; the prediction below gives
+    # the delay back so the stick still does not cross the crosshair.
+    DYN_TAU = 0.12
+    DYN_LAM = 3.2
+    DYN_KP = DYN_LAM
+    DYN_KD = 0.35
+    # Residual rate past the wanted rate.  The stick may reverse only when
+    # that extra will carry the lock through the crosshair, or a hard
+    # acceleration (the climb) is still adding to it.  Below this, a look-up
+    # may only ease off to zero.
+    DYN_KICK = math.radians(50.0)
+    DYN_KICK_ACCEL = math.radians(450.0)
+    DYN_BRAKE_KD = 1.2
+    DYN_PRED = 0.08
     DYN_RATE = 140.0
-    DYN_SLEW = math.radians(420.0)
+    DYN_YAW_LAM = 2.0
+    DYN_YAW_RATE = 90.0
     DYN_DEAD = math.radians(0.35)
+    DYN_NOSE_DEAD = math.radians(1.5)
     DYN_GYRO_TAU = 0.04
     # Line-of-sight rate of the target itself, after a cap and a short filter.
     # Gain 1 holds a steady crossing on the crosshair.  The cap stops a bad
@@ -274,7 +291,9 @@ class Wasp:
         self._steady_prev = None
         self._steady_rate = [0.0, 0.0]
         self._gyro_f = None
+        self._gyro_dot = (0.0, 0.0, 0.0)
         self._ff_f = None
+        self._axis_hist = [[], [], []]
 
     def _steady_desired(self, desired, error, dt):
         # A correction stays until the picture has kept the new side.  Braking
@@ -322,7 +341,7 @@ class Wasp:
 
     def _gyro_sample(self, att):
         sample = []
-        for key in ("rollspeed", "pitchspeed"):
+        for key in ("rollspeed", "pitchspeed", "yawspeed"):
             try:
                 value = float((att or {}).get(key) or 0.0)
             except (TypeError, ValueError):
@@ -348,51 +367,144 @@ class Wasp:
             out.append(self.DYN_FF_GAIN * self._ff_f[i])
         return out
 
-    def _dynamic_rates(self, error, att, dt, blend, ff=None):
-        # Chase only as fast as the airframe can stop, and cancel gyro rate
-        # that is already carrying the lock through the crosshair.  The brake
-        # is not slewed and is not limited by the stop distance: the launch
-        # pitch arrives before the next camera frame.
-        kp, kd = self.DYN_KP, self.DYN_KD
-        cap = math.radians(self.DYN_RATE)
+    def _filtered_gyro(self, att, dt):
         measured = self._gyro_sample(att)
-        if self._gyro_f is None:
+        prev = None if self._gyro_f is None else tuple(self._gyro_f)
+        if self._gyro_f is None or len(self._gyro_f) != 3:
             self._gyro_f = measured
         elif dt > 0.0:
             alpha = dt / (self.DYN_GYRO_TAU + dt)
-            for i in (0, 1):
+            for i in range(3):
                 self._gyro_f[i] += alpha * (measured[i] - self._gyro_f[i])
-        pursuit = [0.0, 0.0]
-        for i in (0, 1):
-            e = 0.0 if abs(error[i]) <= self.DYN_DEAD else error[i]
-            stop = math.sqrt(max(0.0, 2.0 * self.DYN_BRAKE * abs(e)))
-            pursuit[i] = max(-cap, min(cap, max(-stop, min(stop, kp * e))))
-            delta = pursuit[i] - self._rates[i]
-            limit = self.DYN_SLEW * dt
-            if abs(delta) > limit:
-                delta = math.copysign(limit, delta)
-            pursuit[i] = self._rates[i] + delta
-        self._rates = (pursuit[0], pursuit[1], 0.0)
+        if prev is not None and dt > 1e-4:
+            self._gyro_dot = tuple((a - b) / dt for a, b in zip(self._gyro_f, prev))
+        else:
+            self._gyro_dot = (0.0, 0.0, 0.0)
+        return self._gyro_f
+
+    def _damped_axis(self, err, gyro, feed, cap, lam, gyro_dot=0.0, hist=None):
+        # Positive gyro closes a positive error (e' = -q on that axis).
+        # `feed` is the target's own rate and is matched, not braked.
+        # The residual rate is what would carry the box through the crosshair.
+        if abs(err) <= self.DYN_DEAD:
+            err = 0.0
+        rel = gyro - feed
+        e_hat = err - rel * self.DYN_PRED
+        if err * e_hat < 0.0:
+            # The residual rate reaches the crosshair before this command lands.
+            e_hat = 0.0
+        # Coast distance of a rate q with the stick released is about q*τ.
+        # Stay under that, and under the critical gain, and under the cap.
+        coast = abs(e_hat) / self.DYN_TAU
+        g_des = max(-coast, min(coast, lam * e_hat))
+        # The command we send now arrives one prediction later, and a kick
+        # keeps accelerating until then.  Judge the brake on that future rate.
+        rel_soon = rel + gyro_dot * self.DYN_PRED
+        excess = rel_soon - g_des
+        # Releasing the stick stops a rate q in about q*τ.  A saturated chase
+        # is still inside that distance for a long time: ease off, do not slam
+        # the other way.  Full opposite stick is for a kick that will cross
+        # anyway, or for an acceleration still speeding the gyro up.
+        will_cross = abs(rel_soon) * self.DYN_TAU > abs(e_hat) and err * rel_soon > 0.0
+        # The stick from ~80 ms ago is what the rate loop is reacting to now.
+        # Acceleration beyond that is a kick (the climb), not the command
+        # still arriving.
+        delayed = 0.0 if not hist or len(hist) < 4 else hist[-4]
+        a_extra = gyro_dot - (delayed - gyro) / self.DYN_TAU
+        launched = err * a_extra > 0.0 and abs(a_extra) > self.DYN_KICK_ACCEL
+        if err * excess > 0.0 and (
+            (will_cross and abs(excess) > self.DYN_KICK)
+            or (launched and abs(excess) > math.radians(35.0))
+        ):
+            u = feed - math.copysign(cap, excess)
+        elif err * excess > 0.0:
+            # A little fast: ease the command down.  Do not cross zero.  Crossing
+            # zero here is what made the stick hunt up and down on a still target.
+            u = feed + g_des - self.DYN_BRAKE_KD * excess
+            if err != 0.0 and u * err < 0.0:
+                u = 0.0
+        else:
+            u = feed + g_des + self.DYN_KD * (g_des - rel)
+            if err != 0.0 and u * err < 0.0 and abs(excess) <= self.DYN_KICK:
+                u = 0.0
+        u = max(-cap, min(cap, u))
+        if hist is not None:
+            hist.append(u)
+            if len(hist) > 8:
+                del hist[:-8]
+        return u
+
+    def _nose_heading_error(self, error, att):
+        # Radians the nose must yaw to face the target's bearing.  Positive
+        # means the target is to the right of the nose.  Roll can center the
+        # box and leave this bearing untouched, so the yaw loop uses the
+        # bearing and not the picture angle.  Nearly overhead, the bearing
+        # is meaningless and the nose stays where it is.
+        alpha, beta = -error[1], error[0]
+        level = alpha * alpha + beta * beta
+        if level >= 1.0:
+            return 0.0
+        body = (alpha, beta, -math.sqrt(1.0 - level))
+        try:
+            mat = rotation(att)
+            world = rotate(mat, body)
+            nose = rotate(mat, (1.0, 0.0, 0.0))
+        except (TypeError, ValueError, KeyError):
+            return 0.0
+        if math.hypot(world[0], world[1]) < 0.08 or math.hypot(nose[0], nose[1]) < 0.20:
+            return 0.0
+        err = math.atan2(world[1], world[0]) - math.atan2(nose[1], nose[0])
+        err = math.atan2(math.sin(err), math.cos(err))
+        if abs(err) <= self.DYN_NOSE_DEAD:
+            return 0.0
+        return err
+
+    def _dynamic_rates(self, error, att, dt, blend, ff=None):
+        # `blend` is unused on purpose.  Dynamic centers on the first sample,
+        # wherever the box sits.  Steady is not applied either: this rate
+        # already dies at the crosshair instead of reversing the stick.
+        del blend
+        cap = math.radians(self.DYN_RATE)
+        ycap = math.radians(self.DYN_YAW_RATE)
+        gyro = self._filtered_gyro(att, dt)
         los = self._los_feedforward(ff, dt)
-        cmd = [0.0, 0.0, 0.0]
-        for i in (0, 1):
-            e = 0.0 if abs(error[i]) <= self.DYN_DEAD else error[i]
-            stop = math.sqrt(max(0.0, 2.0 * self.DYN_BRAKE * abs(e)))
-            target = blend * pursuit[i]
-            gyro = self._gyro_f[i]
-            # Rate relative to the target's own motion.  A fixed target has
-            # none, so a climb that is already too fast drops the chase and brakes.
-            relative = gyro - los[i]
-            if e * relative > 0.0 and abs(target) > 1e-3 and abs(relative) > abs(target):
-                fast = min(1.0, (abs(relative) - abs(target)) / abs(target))
-                target *= 1.0 - fast
-            out = target - kd * (relative - target)
-            # Same sign means the nose is still closing on the picture.
-            # The opposite sign means it is already crossing, so brake in full.
-            if e != 0.0 and out * e > 0.0 and relative * e >= 0.0:
-                out = math.copysign(min(abs(out), stop), out)
-            cmd[i] = max(-cap, min(cap, out + los[i]))
-        return tuple(cmd)
+        # Roll moves the box sideways, pitch moves it along the nose.  Either
+        # or both, on the first sample.  The stop-limited rate makes that one
+        # move onto the crosshair.
+        dot = self._gyro_dot or (0.0, 0.0, 0.0)
+        # Heading.  φ' = -ψ for the bearing, so the same damped axis turns the
+        # nose once and stops on it.  A target already on the nose line gives
+        # φ = 0 and the yaw stick stays centered.
+        alpha, beta = -error[1], error[0]
+        spin = gyro[2]
+        phi = self._nose_heading_error(error, att)
+        yaw = self._damped_axis(phi, spin, 0.0, ycap, self.DYN_YAW_LAM, dot[2], self._axis_hist[2])
+        # Body rates p, q and a yaw rate ψ move the picture as
+        # α' = q + ψ β, β' = -p - ψ α.  The closing rates are p+ψα and q+ψβ.
+        # Brake those.  Then take the yaw part back off the stick, using the
+        # yaw the gyro is actually doing, so the box stays on a straight path
+        # while the nose turns underneath it.
+        close_roll = gyro[0] + spin * alpha
+        close_pitch = gyro[1] + spin * beta
+        # Kick from the body gyro's own acceleration.  The picture-rate
+        # derivative also contains the yaw spooling up, and that is not a kick.
+        roll = self._damped_axis(error[0], close_roll, los[0], cap, self.DYN_LAM, dot[0], self._axis_hist[0])
+        pitch = self._damped_axis(error[1], close_pitch, los[1], cap, self.DYN_LAM, dot[1], self._axis_hist[1])
+        # Yaw trim.  It may shrink a centering stick.  It may not flip one:
+        # a flip is the stick hunting left and right against the box.  A brake
+        # the axis already chose (the climb) keeps its sign.
+        centered = (roll, pitch)
+        roll -= spin * alpha
+        pitch -= spin * beta
+        kept = []
+        for axis, cmd_axis, err in ((0, roll, error[0]), (1, pitch, error[1])):
+            if err != 0.0 and cmd_axis * err < 0.0 and centered[axis] * err >= 0.0:
+                cmd_axis = 0.0
+            kept.append(cmd_axis)
+        roll, pitch = kept
+        cmd = (max(-cap, min(cap, roll)), max(-cap, min(cap, pitch)), yaw)
+        self._rates = cmd
+        return cmd
 
     def lose_target(self):
 

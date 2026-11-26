@@ -1514,7 +1514,7 @@ class DynamicSteeringTests(unittest.TestCase):
              cam_dt=0.05, ctrl_dt=0.02, delay=0.06, gyro=True, profile="dynamic",
              step_at=None, step_body=None, steady=0.0, straight=None, disturb=None,
              spin=0.0, pix_noise=0.0, gyro_noise=0.0, seed=1, cam_hold=None,
-             att_lag=0.0):
+             att_lag=0.0, with_yaw=False):
         w = self._wasp(profile, steady=steady)
         if straight is not None:
             w.params["straight"] = straight
@@ -1532,7 +1532,7 @@ class DynamicSteeringTests(unittest.TestCase):
 
         target = unit(body)
         mat = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-        rate = [roll0, pitch0]
+        rate = [roll0, pitch0, 0.0] if with_yaw else [roll0, pitch0]
         delay_n = max(1, int(round(delay / ctrl_dt)))
         queue = []
         held = None
@@ -1552,6 +1552,7 @@ class DynamicSteeringTests(unittest.TestCase):
                 stepped = True
             noisy_roll = rate[0] + (rng.gauss(0.0, gyro_noise) if gyro_noise else 0.0)
             noisy_pitch = rate[1] + (rng.gauss(0.0, gyro_noise) if gyro_noise else 0.0)
+            noisy_yaw = rate[2] + (rng.gauss(0.0, gyro_noise) if gyro_noise and with_yaw else 0.0) if with_yaw else 0.0
             pose_hist.append((t, mat))
             cam_mat = mat
             if att_lag > 0.0:
@@ -1560,8 +1561,8 @@ class DynamicSteeringTests(unittest.TestCase):
                         cam_mat = old
                     else:
                         break
-            att = {"rotation": cam_mat, "rollspeed": noisy_roll, "pitchspeed": noisy_pitch, "yawspeed": 0.0}
-            seen = {"rotation": mat, "rollspeed": noisy_roll, "pitchspeed": noisy_pitch, "yawspeed": 0.0} if gyro else {"rotation": mat}
+            att = {"rotation": cam_mat, "rollspeed": noisy_roll, "pitchspeed": noisy_pitch, "yawspeed": noisy_yaw}
+            seen = {"rotation": mat, "rollspeed": noisy_roll, "pitchspeed": noisy_pitch, "yawspeed": noisy_yaw} if gyro else {"rotation": mat}
             frozen = cam_hold is not None and cam_hold[0] <= t < cam_hold[1] and held is not None
             if not frozen and (held is None or t - last_cam >= cam_dt - 1e-12):
                 x, y = project(target, att)
@@ -1576,9 +1577,9 @@ class DynamicSteeringTests(unittest.TestCase):
             queue.append(commanded)
             applied = queue.pop(0) if len(queue) > delay_n else (0.0, 0.0, 0.0)
             extra = disturb(t) if disturb else (0.0, 0.0)
-            for k in (0, 1):
-                rate[k] += ctrl_dt / tau * (applied[k] - rate[k]) + ctrl_dt * extra[k]
-            omega = (rate[0], rate[1], 0.0)
+            for k in range(len(rate)):
+                rate[k] += ctrl_dt / tau * (applied[k] - rate[k]) + ctrl_dt * (extra[k] if k < len(extra) else 0.0)
+            omega = (rate[0], rate[1], rate[2] if with_yaw else 0.0)
             angle = math.sqrt(sum(v * v for v in omega)) * ctrl_dt
             if math.hypot(*omega) > 1e-8:
                 axis = unit(omega)
@@ -1590,10 +1591,14 @@ class DynamicSteeringTests(unittest.TestCase):
 
                 mat = tuple(zip(*(rotate(mat, turn(v)) for v in ((1, 0, 0), (0, 1, 0), (0, 0, 1)))))
             body_now = rotate(mat, target, inverse=True)
+            nose = rotate(mat, (1.0, 0.0, 0.0))
+            heading = math.atan2(target[1], target[0]) - math.atan2(nose[1], nose[0])
+            heading = math.atan2(math.sin(heading), math.cos(heading))
             # aim() error is (body_y, -body_x): pitch error is -body_x.
             rows.append(dict(t=t, roll=body_now[1], pitch=-body_now[0],
-                             cmd=commanded, gyro=tuple(rate),
-                             miss=math.acos(min(1.0, max(-1.0, -body_now[2])))))
+                             cmd=commanded, gyro=tuple(rate[:2] if not with_yaw else rate),
+                             miss=math.acos(min(1.0, max(-1.0, -body_now[2]))),
+                             heading=heading))
         return rows
 
     @staticmethod
@@ -1634,6 +1639,20 @@ class DynamicSteeringTests(unittest.TestCase):
             sign = now
         return count
 
+    @staticmethod
+    def _cmd_reversals(rows, axis, thr=math.radians(4.0)):
+        """Sign flips of one stick.  Letting the stick fall through zero does not count."""
+        count = 0
+        prev = 0
+        for row in rows:
+            value = row["cmd"][axis]
+            sign = 0 if abs(value) < thr else (1 if value > 0 else -1)
+            if sign and prev and sign != prev:
+                count += 1
+            if sign:
+                prev = sign
+        return count
+
     def test_centers_a_low_lock_without_hunting(self):
         low = (math.tan(math.radians(18)), 0.02, -1)
         rows = self._fly(low)
@@ -1641,6 +1660,27 @@ class DynamicSteeringTests(unittest.TestCase):
         self.assertLess(self._overshoot(rows, "pitch", -1), math.radians(2.5))
         self.assertLessEqual(self._crossings(rows, "pitch"), 1)
         self.assertLess(min(row["miss"] for row in rows if row["t"] > 1.2), math.radians(1.5))
+        self.assertEqual(self._cmd_reversals(rows, 1), 0)
+        self.assertEqual(self._cmd_reversals(rows, 0), 0)
+
+    def test_centers_off_axis_immediately_and_yaws_the_nose_once(self):
+        # The box is not always low on the nose line.  Roll and pitch take it
+        # to the crosshair.  Yaw only brings the nose onto the bearing, once.
+        side = (math.tan(math.radians(8)), math.tan(math.radians(22)), -1)
+        rows = self._fly(side, seconds=3.0, with_yaw=True)
+        self.assertLess(rows[-1]["miss"], math.radians(1.2))
+        self.assertLess(abs(rows[-1]["heading"]), math.radians(4.0))
+        self.assertLess(self._overshoot(rows, "heading", 1), math.radians(4.0))
+        self.assertLess(self._overshoot(rows, "pitch", -1), math.radians(2.5))
+        self.assertLess(self._overshoot(rows, "roll", 1), math.radians(2.5))
+        self.assertEqual(self._cmd_reversals(rows, 2), 0)
+        self.assertEqual(self._cmd_reversals(rows, 1), 0)
+        self.assertEqual(self._cmd_reversals(rows, 0), 0)
+        # A target already on the nose line does not get a yaw stick.
+        low = self._fly((math.tan(math.radians(18)), 0.0, -1), seconds=2.2, with_yaw=True)
+        self.assertLess(max(abs(row["cmd"][2]) for row in low), math.radians(8.0))
+        self.assertLess(max(abs(row["heading"]) for row in low), math.radians(3.0))
+        self.assertEqual(self._cmd_reversals(low, 1), 0)
 
     def _assert_locked(self, rows, over_deg, end_deg, crossings, late_deg=None, key="pitch", sign=-1):
         over = math.degrees(self._overshoot(rows, key, sign))
